@@ -2,6 +2,7 @@ plugins {
     id "org.gradle.test-retry" version "1.5.9"
     id "org.sonarqube" version "2.6"
     id "com.gorylenko.gradle-git-properties" version "2.4.1"
+    id "com.google.protobuf" version "0.8.18"
 }
 
 gitProperties.failOnNoGitDirectory = false;
@@ -39,6 +40,15 @@ dependencies {
     implementation fileTree(dir: 'libs', include: '*.jar')
     // end local libraries
     testImplementation group: 'org.hamcrest', name: 'hamcrest-junit', version: '1.0.0.1'
+
+    // gRPC dependencies
+    implementation 'io.grpc:grpc-netty-shaded:1.53.0'
+    implementation 'io.grpc:grpc-protobuf:1.53.0'
+    implementation 'io.grpc:grpc-stub:1.53.0'
+    compileOnly 'org.apache.tomcat:annotations-api:6.0.53'
+    
+    // Protobuf
+    implementation 'com.google.protobuf:protobuf-java:3.21.12'
 
     implementation group: 'com.google.inject', name: 'guice', version: '4.1.0'
     implementation group: 'io.dropwizard.metrics', name: 'metrics-core', version: '3.1.2'
@@ -257,3 +267,30 @@ task copyToParent(type: Copy) {
 }
 
 build.finalizedBy(copyToParent)
+
+// Protobuf configuration
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:3.21.12"
+    }
+    plugins {
+        grpc {
+            artifact = 'io.grpc:protoc-gen-grpc-java:1.53.0'
+        }
+    }
+    generateProtoTasks {
+        all()*.plugins {
+            grpc {}
+        }
+    }
+}
+
+// Ensure generated sources are included in compilation
+sourceSets {
+    main {
+        java {
+            srcDirs 'build/generated/source/proto/main/grpc'
+            srcDirs 'build/generated/source/proto/main/java'
+        }
+    }
+}
