@@ -12,24 +12,33 @@ alwaysApply: false
 ## Overview
 将 java-tron 当前嵌入式 LevelDB/RocksDB 存储替换为 Rust 实现，并评估单进程 FFI 与多进程 IPC 两种方案。
 
+**DECISION: 选择 Plan B - Multi-Process gRPC + Rust DB Node**
+
 ## High-level Plan
 1. 定义 Storage SPI，抽象出 get/put/delete/iterator/transaction 等接口。
 2. PoC 评估阶段：
-   • 方案 A：进程内 JNI + Rust RocksDB
-   • 方案 B：多进程 gRPC + Rust DB Node
+   • ~~方案 A：进程内 JNI + Rust RocksDB~~
+   • **方案 B：多进程 gRPC + Rust DB Node** ✓
 3. 组建跨语言小组（Java ×1, Rust ×1, DevOps ×1）。
 4. 完成 PoC（功能等价、性能 ≥ 80% 现有 TPS）。
 5. 灰度上线并逐步替换旧实现。
 
 ## TODOs
-[ ] 制定 Storage SPI 设计文档，梳理所有 DB 调用场景。
-[ ] 选择并确认 PoC 路线（方案 A 或 B）。
+[X] 选择并确认 PoC 路线（方案 B）。
+[X] 制定 Storage SPI 设计文档，梳理所有 DB 调用场景。
 [ ] 搭建 PoC 开发环境（Gradle + Cargo，Docker compose for IPC）。
 [ ] 实现 PoC & 单元/集成测试。
 [ ] 性能压测与指标对比（延迟、TPS、资源消耗）。
 [ ] 评审 PoC 结果并调整计划。
 [ ] 灰度部署到测试网并监控。
 [ ] 正式切换并删除旧 RocksDB-Java 依赖。
+
+## Progress Notes
+- ✅ 完成存储层架构分析，识别出 7 个核心组件和 30+ 个关键操作
+- ✅ 设计了完整的 StorageSPI 接口，支持异步操作和事务管理
+- ✅ 定义了 gRPC 协议规范，包含所有必要的 RPC 方法
+- ✅ 制定了 4 阶段实施策略：SPI抽象层 → gRPC客户端 → Rust服务 → 集成测试
+- ✅ 文档保存在 `docs/storage-spi-design.md`
 
 ## Pros & Cons of Candidate Solutions
 
