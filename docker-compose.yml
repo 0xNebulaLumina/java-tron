@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  rust-storage:
+    build:
+      context: ./rust-storage-service
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"  # gRPC port
+      - "9090:9090"    # Metrics port
+    volumes:
+      - ./data:/app/data
+      - ./rust-storage-service/config.toml:/app/config.toml:ro
+    environment:
+      - TRON_STORAGE_HOST=0.0.0.0
+      - TRON_STORAGE_PORT=50051
+      - TRON_STORAGE_DATA_DIR=/app/data
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=localhost:50051"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  java-tron:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-tron
+    ports:
+      - "8090:8090"    # HTTP API
+      - "18888:18888"  # gRPC API
+      - "50052:50052"  # P2P
+    volumes:
+      - ./output-directory:/app/output-directory
+      - ./framework/src/main/resources/config.conf:/app/config.conf:ro
+    environment:
+      - JAVA_OPTS=-Xmx4g -Xms2g
+      - TRON_STORAGE_PROVIDER=GRPC
+      - TRON_STORAGE_GRPC_HOST=rust-storage
+      - TRON_STORAGE_GRPC_PORT=50051
+    depends_on:
+      rust-storage:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/wallet/getnowblock"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  data:
+    driver: local 

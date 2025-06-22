@@ -26,7 +26,7 @@ alwaysApply: false
 ## TODOs
 [X] 选择并确认 PoC 路线（方案 B）。
 [X] 制定 Storage SPI 设计文档，梳理所有 DB 调用场景。
-[ ] 搭建 PoC 开发环境（Gradle + Cargo，Docker compose for IPC）。
+[X] 搭建 PoC 开发环境（Gradle + Cargo，Docker compose for IPC）。
 [ ] 实现 PoC & 单元/集成测试。
 [ ] 性能压测与指标对比（延迟、TPS、资源消耗）。
 [ ] 评审 PoC 结果并调整计划。
@@ -39,6 +39,17 @@ alwaysApply: false
 - ✅ 定义了 gRPC 协议规范，包含所有必要的 RPC 方法
 - ✅ 制定了 4 阶段实施策略：SPI抽象层 → gRPC客户端 → Rust服务 → 集成测试
 - ✅ 文档保存在 `docs/storage-spi-design.md`
+- ✅ 创建了完整的 Rust 存储服务框架：
+  - Cargo.toml 配置，包含所有必要依赖
+  - 完整的 gRPC Proto 定义文件 (300+ 行)
+  - Docker 和 Docker Compose 配置
+  - 配置管理和日志系统
+  - Makefile 开发工具链
+- ✅ 搭建了多进程开发环境：
+  - rust-storage-service/ - Rust gRPC 存储服务
+  - docker-compose.yml - 编排 Java + Rust 服务
+  - Dockerfile.java-tron - Java 节点容器化
+  - Makefile - 统一开发工具链
 
 ## Pros & Cons of Candidate Solutions
 
