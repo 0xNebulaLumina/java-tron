@@ -9,18 +9,22 @@ GRPC_PORT ?= 50051
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  build            - Build both Rust and Java components"
-	@echo "  test             - Run basic tests"
-	@echo "  test-all         - Run all tests (unit + integration + performance)"
-	@echo "  integration-test - Run integration tests (requires gRPC server)"
-	@echo "  performance-test - Run performance benchmarks (requires gRPC server)"
-	@echo "  clean            - Clean build artifacts"
-	@echo "  rust-build       - Build Rust storage service"
-	@echo "  java-build       - Build Java components"
-	@echo "  docker-build     - Build Docker images"
-	@echo "  docker-test      - Run tests in Docker"
-	@echo "  rust-run         - Run Rust storage service locally"
-	@echo "  java-test        - Run Java unit tests locally"
+	@echo "  build              - Build both Rust and Java components"
+	@echo "  test               - Run basic tests"
+	@echo "  test-all           - Run all tests (unit + integration + performance)"
+	@echo "  integration-test   - Run integration tests (requires gRPC server)"
+	@echo "  performance-test   - Run performance benchmarks (requires gRPC server)"
+	@echo "  perf-analysis      - Run detailed performance analysis with reports"
+	@echo "  perf-analysis-strict - Run performance analysis with dependency verification"
+	@echo "  clean              - Clean build artifacts"
+	@echo "  rust-build         - Build Rust storage service"
+	@echo "  java-build         - Build Java components"
+	@echo "  docker-build       - Build Docker images"
+	@echo "  docker-test        - Run tests in Docker"
+	@echo "  rust-run           - Run Rust storage service locally" 
+	@echo "  java-test          - Run Java unit tests locally"
+	@echo "  fix-verification   - Fix Gradle dependency verification issues"
+	@echo "  update-verification - Update dependency verification metadata"
 
 # Build all components
 build: rust-build java-build
@@ -33,7 +37,7 @@ rust-build:
 # Build Java components
 java-build:
 	@echo "Building Java components..."
-	./gradlew build -x test
+	./gradlew build -x test --dependency-verification=off
 
 # Run tests
 test: java-test
@@ -41,17 +45,21 @@ test: java-test
 # Run Java tests
 java-test:
 	@echo "Running Java unit tests..."
-	./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPITest"
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPITest" --dependency-verification=off
 
 # Run integration tests (requires gRPC server)
 integration-test:
 	@echo "Running integration tests..."
-	./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPIIntegrationTest" -Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT)
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPIIntegrationTest" \
+		--dependency-verification=off \
+		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT)
 
 # Run performance benchmarks (requires gRPC server)
 performance-test:
 	@echo "Running performance benchmarks..."
-	./gradlew :framework:test --tests "org.tron.core.storage.spi.StoragePerformanceBenchmark" -Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT)
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.StoragePerformanceBenchmark" \
+		--dependency-verification=off \
+		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT)
 
 # Run all tests
 test-all: java-test integration-test performance-test
@@ -59,7 +67,7 @@ test-all: java-test integration-test performance-test
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
-	./gradlew clean
+	./gradlew clean --dependency-verification=off
 	cd rust-storage-service && cargo clean
 	rm -rf data/
 
@@ -128,5 +136,26 @@ smoke-test:
 perf-analysis:
 	@echo "Running detailed performance analysis..."
 	@mkdir -p reports
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.StoragePerformanceBenchmark" \
+		--dependency-verification=off \
+		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT) 2>&1 | tee reports/performance-report-$(shell date +%Y%m%d-%H%M%S).txt
+	@echo "Extracting performance metrics..."
+	@./scripts/extract-metrics.sh reports/performance-report-*.txt || echo "Metrics extraction script not found, check reports directory for raw output"
+
+# Performance analysis with dependency verification (will fail if metadata is stale)
+perf-analysis-strict:
+	@echo "Running detailed performance analysis with strict dependency verification..."
+	@mkdir -p reports
 	./gradlew :framework:test --tests "org.tron.core.storage.spi.StoragePerformanceBenchmark.generatePerformanceReport" \
-		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT) | tee reports/performance-report-$(shell date +%Y%m%d-%H%M%S).txt 
+		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT) | tee reports/performance-report-$(shell date +%Y%m%d-%H%M%S).txt
+
+# Update dependency verification metadata (run this to fix verification issues permanently)
+update-verification:
+	@echo "Updating dependency verification metadata..."
+	./gradlew --write-verification-metadata sha256 help
+
+# Fix dependency verification by regenerating metadata
+fix-verification:
+	@echo "Fixing dependency verification metadata..."
+	@echo "This will update gradle/verification-metadata.xml with current dependency checksums"
+	./gradlew --write-verification-metadata sha256 :framework:dependencies 

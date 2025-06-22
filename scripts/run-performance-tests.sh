@@ -170,11 +170,63 @@ run_performance_benchmarks() {
         log_info "Running benchmark: $test"
         ./gradlew :framework:test --tests "org.tron.core.storage.spi.StoragePerformanceBenchmark.$test" \
             -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT --dependency-verification=off \
-            | tee "$REPORTS_DIR/benchmark-$test.log"
+            2>&1 | tee "$REPORTS_DIR/benchmark-$test.log"
     done
     
     log_success "Performance benchmarks completed"
     log_info "Reports saved to: $REPORTS_DIR"
+    
+    # Extract and analyze metrics from logs
+    extract_metrics_from_logs
+}
+
+# Extract metrics from log files
+extract_metrics_from_logs() {
+    log_info "Extracting metrics from benchmark logs..."
+    
+    local metrics_summary="$REPORTS_DIR/extracted-metrics.txt"
+    local metrics_csv="$REPORTS_DIR/extracted-metrics.csv"
+    
+    # Initialize metrics files
+    echo "# Extracted Performance Metrics" > "$metrics_summary"
+    echo "Timestamp: $(date)" >> "$metrics_summary"
+    echo "" >> "$metrics_summary"
+    
+    echo "TestName,MetricName,Value,Unit,ExtractedAt" > "$metrics_csv"
+    
+    # Extract metrics from each log file
+    for log_file in "$REPORTS_DIR"/benchmark-*.log; do
+        if [ -f "$log_file" ]; then
+            local test_name=$(basename "$log_file" .log | sed 's/benchmark-//')
+            log_info "Extracting metrics from $test_name"
+            
+            echo "## $test_name" >> "$metrics_summary"
+            echo "" >> "$metrics_summary"
+            
+            # Extract METRIC: lines
+            grep "METRIC:" "$log_file" | while IFS= read -r line; do
+                # Parse METRIC: TestName.MetricName = Value Unit
+                if [[ $line =~ METRIC:\ ([^.]+)\.([^\ ]+)\ =\ ([0-9.]+)\ ([^\ ]+) ]]; then
+                    local test="${BASH_REMATCH[1]}"
+                    local metric="${BASH_REMATCH[2]}"
+                    local value="${BASH_REMATCH[3]}"
+                    local unit="${BASH_REMATCH[4]}"
+                    
+                    echo "  $metric: $value $unit" >> "$metrics_summary"
+                    echo "$test,$metric,$value,$unit,$(date '+%Y-%m-%d %H:%M:%S')" >> "$metrics_csv"
+                fi
+            done
+            
+            # Extract BENCHMARK: headers and summaries
+            grep -A 20 "BENCHMARK:" "$log_file" | grep -E "(Average|Throughput|Latency)" | while IFS= read -r line; do
+                echo "  $line" >> "$metrics_summary"
+            done
+            
+            echo "" >> "$metrics_summary"
+        fi
+    done
+    
+    log_success "Metrics extracted to $metrics_summary and $metrics_csv"
 }
 
 # Generate summary report
@@ -216,6 +268,30 @@ EOF
             echo "- [$(basename "$report")]($(basename "$report"))" >> "$summary_file"
         fi
     done
+    
+    # Add links to metrics files
+    if [ -f "$REPORTS_DIR/extracted-metrics.txt" ]; then
+        echo "- [Extracted Metrics Summary](extracted-metrics.txt)" >> "$summary_file"
+    fi
+    if [ -f "$REPORTS_DIR/extracted-metrics.csv" ]; then
+        echo "- [Metrics CSV Data](extracted-metrics.csv)" >> "$summary_file"
+    fi
+    if [ -f "$REPORTS_DIR/performance-metrics.json" ]; then
+        echo "- [Performance Metrics JSON](performance-metrics.json)" >> "$summary_file"
+    fi
+    if [ -f "$REPORTS_DIR/performance-metrics.csv" ]; then
+        echo "- [Performance Metrics CSV](performance-metrics.csv)" >> "$summary_file"
+    fi
+    
+    # Add key metrics summary if available
+    if [ -f "$REPORTS_DIR/extracted-metrics.txt" ]; then
+        echo "" >> "$summary_file"
+        echo "## Key Performance Metrics" >> "$summary_file"
+        echo "" >> "$summary_file"
+        echo "\`\`\`" >> "$summary_file"
+        head -50 "$REPORTS_DIR/extracted-metrics.txt" >> "$summary_file"
+        echo "\`\`\`" >> "$summary_file"
+    fi
     
     cat >> "$summary_file" << EOF
 
