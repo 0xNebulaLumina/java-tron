@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::net::SocketAddr;
 use tonic::transport::Server;
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber;
 
 mod service;
@@ -9,6 +9,7 @@ mod storage;
 mod config;
 
 use service::StorageServiceImpl;
+use storage::storage_service_server::StorageServiceServer;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,7 +28,7 @@ async fn main() -> Result<()> {
     info!("Storage service listening on {}", addr);
 
     Server::builder()
-        .add_service(storage::storage_service_server::StorageServiceServer::new(storage_service))
+        .add_service(StorageServiceServer::new(storage_service))
         .serve(addr)
         .await?;
 

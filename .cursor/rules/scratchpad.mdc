@@ -27,7 +27,7 @@ alwaysApply: false
 [X] 选择并确认 PoC 路线（方案 B）。
 [X] 制定 Storage SPI 设计文档，梳理所有 DB 调用场景。
 [X] 搭建 PoC 开发环境（Gradle + Cargo，Docker compose for IPC）。
-[ ] 实现 PoC & 单元/集成测试。
+[X] 实现 PoC & 单元/集成测试。
 [ ] 性能压测与指标对比（延迟、TPS、资源消耗）。
 [ ] 评审 PoC 结果并调整计划。
 [ ] 灰度部署到测试网并监控。
@@ -50,6 +50,11 @@ alwaysApply: false
   - docker-compose.yml - 编排 Java + Rust 服务
   - Dockerfile.java-tron - Java 节点容器化
   - Makefile - 统一开发工具链
+- ✅ 完成 PoC 实现：
+  - 完整的 Rust 存储服务实现 (storage.rs, service.rs)
+  - Java StorageSPI 接口层和 gRPC 客户端实现
+  - 单元测试验证功能正确性
+  - Docker 编排和 Makefile 开发工具
 
 ## Pros & Cons of Candidate Solutions
 

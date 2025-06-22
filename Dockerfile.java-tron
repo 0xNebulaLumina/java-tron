@@ -1,50 +1,22 @@
-# Build stage
-FROM openjdk:17-jdk-slim as builder
+FROM openjdk:8-jdk-alpine
 
+# Install required packages
+RUN apk add --no-cache bash curl
+
+# Set working directory
 WORKDIR /app
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    unzip \
-    && rm -rf /var/lib/apt/lists/*
 
 # Copy source code
 COPY . .
 
-# Build the application
+# Make gradlew executable
+RUN chmod +x gradlew
+
+# Build the project (this will compile the new StorageSPI classes)
 RUN ./gradlew build -x test
 
-# Runtime stage
-FROM openjdk:17-jre-slim
-
-WORKDIR /app
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy built artifacts
-COPY --from=builder /app/build/libs/*.jar /app/java-tron.jar
-COPY --from=builder /app/framework/src/main/resources/config.conf /app/config.conf
-
-# Create necessary directories
-RUN mkdir -p /app/output-directory
-
-# Expose ports
+# Expose ports (if needed for full node testing)
 EXPOSE 8090 18888 50052
 
-# Set environment variables
-ENV JAVA_OPTS="-Xmx4g -Xms2g"
-ENV TRON_STORAGE_PROVIDER="EMBEDDED"
-ENV TRON_STORAGE_GRPC_HOST="rust-storage"
-ENV TRON_STORAGE_GRPC_PORT="50051"
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8090/wallet/getnowblock || exit 1
-
-# Run the application
-CMD ["sh", "-c", "java $JAVA_OPTS -jar java-tron.jar -c config.conf"] 
+# Default command
+CMD ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.StorageSPITest"] 

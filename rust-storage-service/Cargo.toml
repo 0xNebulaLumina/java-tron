@@ -32,6 +32,9 @@ config = "0.13"
 # Metrics
 prometheus = "0.13"
 
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
 [build-dependencies]
 tonic-build = "0.10"
 

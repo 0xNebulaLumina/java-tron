@@ -1,104 +1,84 @@
-# Tron Storage Service Development Makefile
+# Makefile for java-tron storage PoC
 
-.PHONY: help build test clean run docker-build docker-run compose-up compose-down
+.PHONY: help build test clean rust-build java-build docker-build docker-test
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  build         - Build the Rust storage service"
-	@echo "  test          - Run tests"
-	@echo "  clean         - Clean build artifacts"
-	@echo "  run           - Run the storage service locally"
-	@echo "  docker-build  - Build Docker images"
-	@echo "  docker-run    - Run with Docker"
-	@echo "  compose-up    - Start services with Docker Compose"
-	@echo "  compose-down  - Stop Docker Compose services"
-	@echo "  proto-gen     - Generate protobuf code"
+	@echo "  build        - Build both Rust and Java components"
+	@echo "  test         - Run tests"
+	@echo "  clean        - Clean build artifacts"
+	@echo "  rust-build   - Build Rust storage service"
+	@echo "  java-build   - Build Java components"
+	@echo "  docker-build - Build Docker images"
+	@echo "  docker-test  - Run tests in Docker"
+	@echo "  rust-run     - Run Rust storage service locally"
+	@echo "  java-test    - Run Java tests locally"
 
-# Build the Rust storage service
-build:
+# Build all components
+build: rust-build java-build
+
+# Build Rust storage service
+rust-build:
+	@echo "Building Rust storage service..."
 	cd rust-storage-service && cargo build --release
 
+# Build Java components
+java-build:
+	@echo "Building Java components..."
+	./gradlew build -x test
+
 # Run tests
-test:
-	cd rust-storage-service && cargo test
-	./gradlew test
+test: java-test
+
+# Run Java tests
+java-test:
+	@echo "Running Java tests..."
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.*"
 
 # Clean build artifacts
 clean:
-	cd rust-storage-service && cargo clean
+	@echo "Cleaning build artifacts..."
 	./gradlew clean
-	docker system prune -f
-
-# Run the storage service locally
-run:
-	cd rust-storage-service && RUST_LOG=info cargo run
+	cd rust-storage-service && cargo clean
+	rm -rf data/
 
 # Build Docker images
 docker-build:
-	docker build -t tron-storage-service rust-storage-service/
-	docker build -t java-tron -f Dockerfile.java-tron .
+	@echo "Building Docker images..."
+	docker compose build
 
-# Run with Docker
-docker-run:
-	docker run -d --name tron-storage \
-		-p 50051:50051 -p 9090:9090 \
-		-v $(PWD)/data:/app/data \
-		tron-storage-service
+# Run tests in Docker
+docker-test:
+	@echo "Running tests in Docker..."
+	mkdir -p data/rust-storage data/java-tron
+	docker compose up --build --exit-code-from java-tron-test
 
-# Start services with Docker Compose
-compose-up:
-	docker-compose up -d
+# Run Rust storage service locally
+rust-run:
+	@echo "Starting Rust storage service..."
+	mkdir -p data/rust-storage
+	cd rust-storage-service && RUST_LOG=info DATA_PATH=../data/rust-storage cargo run
 
-# Stop Docker Compose services
-compose-down:
-	docker-compose down -v
-
-# Generate protobuf code
-proto-gen:
-	cd rust-storage-service && cargo build
+# Check Rust service health
+rust-health:
+	@echo "Checking Rust service health..."
+	curl -s http://localhost:50051 || echo "Service not responding"
 
 # Development setup
 dev-setup:
 	@echo "Setting up development environment..."
-	@echo "1. Installing Rust dependencies..."
-	cd rust-storage-service && cargo fetch
-	@echo "2. Building Java dependencies..."
-	./gradlew build -x test
-	@echo "3. Creating data directories..."
-	mkdir -p data output-directory
-	@echo "Development setup complete!"
+	mkdir -p data/rust-storage data/java-tron
+	@echo "Development environment ready!"
 
-# Performance test
-perf-test:
-	@echo "Running performance tests..."
-	cd rust-storage-service && cargo test --release -- --ignored perf_tests
+# Generate protobuf files (if needed)
+proto-gen:
+	@echo "Generating protobuf files..."
+	cd rust-storage-service && cargo build
 
-# Check code style
-lint:
-	cd rust-storage-service && cargo clippy -- -D warnings
-	cd rust-storage-service && cargo fmt --check
+# Run integration test
+integration-test: docker-test
 
-# Fix code style
-fmt:
-	cd rust-storage-service && cargo fmt
-
-# Generate documentation
-docs:
-	cd rust-storage-service && cargo doc --open
-
-# Monitor logs
+# Show logs from Docker services
 logs:
-	docker-compose logs -f
-
-# Health check
-health:
-	@echo "Checking storage service health..."
-	@curl -f http://localhost:9090/metrics > /dev/null && echo "✓ Metrics endpoint OK" || echo "✗ Metrics endpoint failed"
-	@grpc_health_probe -addr=localhost:50051 && echo "✓ gRPC service OK" || echo "✗ gRPC service failed"
-
-# Backup data
-backup:
-	@echo "Creating backup..."
-	tar -czf backup-$(shell date +%Y%m%d-%H%M%S).tar.gz data/
-	@echo "Backup created: backup-$(shell date +%Y%m%d-%H%M%S).tar.gz" 
+	docker compose logs -f 
