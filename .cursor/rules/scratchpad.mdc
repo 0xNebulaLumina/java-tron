@@ -9,6 +9,7 @@ alwaysApply: false
 - **Import Strategy**: Use wildcard import `storage.Storage.*` to access all nested protobuf classes without conflicts.
 - **Type Conversion**: Java `StorageConfig` uses `Map<String, Object>` but protobuf expects `Map<String, String>`. Convert values using `String.valueOf()`.
 - **Error Handling**: Wrap gRPC `StatusRuntimeException` in `RuntimeException` with descriptive messages for proper error propagation.
+- **Health Check**: gRPC services need gRPC-based health checks, not HTTP. The performance testing script was failing because it was trying to use HTTP health check on a gRPC service.
 
 # Current Task: Replace Java RocksDB with Rust implementation
 

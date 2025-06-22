@@ -80,4 +80,23 @@ public class StorageSPITest {
         Assert.assertNotNull(HealthStatus.DEGRADED);
         Assert.assertNotNull(HealthStatus.UNHEALTHY);
     }
+    
+    @Test
+    public void testHealthCheck() throws ExecutionException, InterruptedException {
+        // Simple health check test for script validation
+        String host = System.getProperty("storage.grpc.host", "localhost");
+        int port = Integer.parseInt(System.getProperty("storage.grpc.port", "50051"));
+        
+        GrpcStorageSPI storage = new GrpcStorageSPI(host, port);
+        
+        try {
+            // Try to connect and perform health check
+            CompletableFuture<HealthStatus> healthFuture = storage.healthCheck();
+            HealthStatus health = healthFuture.get();
+            Assert.assertNotNull(health);
+            System.out.println("Health check successful: " + health);
+        } finally {
+            storage.close();
+        }
+    }
 } 

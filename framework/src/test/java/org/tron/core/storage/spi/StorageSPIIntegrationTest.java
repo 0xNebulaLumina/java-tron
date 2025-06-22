@@ -115,11 +115,37 @@ public class StorageSPIIntegrationTest {
         Map<byte[], byte[]> batchResult = storage.batchGet(testDbName, keys).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
         Assert.assertEquals("Should return 4 results", 4, batchResult.size());
         
-        // Verify retrieved values
-        Assert.assertArrayEquals("value-0".getBytes(), batchResult.get("key-0".getBytes()));
-        Assert.assertArrayEquals("value-5".getBytes(), batchResult.get("key-5".getBytes()));
-        Assert.assertArrayEquals("value-9".getBytes(), batchResult.get("key-9".getBytes()));
-        Assert.assertNull("Non-existent key should return null", batchResult.get("non-existent-key".getBytes()));
+        // Verify retrieved values using iteration (to avoid byte[] key matching issues)
+        boolean foundKey0 = false, foundKey5 = false, foundKey9 = false, foundNonExistent = false;
+        
+        for (Map.Entry<byte[], byte[]> entry : batchResult.entrySet()) {
+            String keyStr = new String(entry.getKey());
+            byte[] value = entry.getValue();
+            
+            switch (keyStr) {
+                case "key-0":
+                    Assert.assertArrayEquals("value-0".getBytes(), value);
+                    foundKey0 = true;
+                    break;
+                case "key-5":
+                    Assert.assertArrayEquals("value-5".getBytes(), value);
+                    foundKey5 = true;
+                    break;
+                case "key-9":
+                    Assert.assertArrayEquals("value-9".getBytes(), value);
+                    foundKey9 = true;
+                    break;
+                case "non-existent-key":
+                    Assert.assertNull("Non-existent key should return null", value);
+                    foundNonExistent = true;
+                    break;
+            }
+        }
+        
+        Assert.assertTrue("Should find key-0", foundKey0);
+        Assert.assertTrue("Should find key-5", foundKey5);
+        Assert.assertTrue("Should find key-9", foundKey9);
+        Assert.assertTrue("Should find non-existent-key", foundNonExistent);
     }
     
     @Test

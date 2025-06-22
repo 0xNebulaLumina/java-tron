@@ -120,7 +120,9 @@ start_rust_service() {
     # Wait for service to be ready
     log_info "Waiting for service to be ready..."
     for i in {1..30}; do
-        if curl -s --max-time 2 http://${GRPC_HOST}:${GRPC_PORT}/health &>/dev/null; then
+        # Try to connect to the gRPC service by testing TCP connection
+        if timeout 5 bash -c "echo > /dev/tcp/${GRPC_HOST}/${GRPC_PORT}" 2>/dev/null; then
+            log_info "Port ${GRPC_PORT} is open, service appears to be ready"
             log_success "Rust storage service is ready"
             return 0
         fi

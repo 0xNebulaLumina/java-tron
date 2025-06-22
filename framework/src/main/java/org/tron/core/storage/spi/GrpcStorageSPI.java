@@ -170,6 +170,8 @@ public class GrpcStorageSPI implements StorageSPI {
                 for (KeyValue kv : response.getPairsList()) {
                     if (kv.getFound()) {
                         result.put(kv.getKey().toByteArray(), kv.getValue().toByteArray());
+                    } else {
+                        result.put(kv.getKey().toByteArray(), null);
                     }
                 }
                 

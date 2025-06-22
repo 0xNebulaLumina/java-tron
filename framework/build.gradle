@@ -41,10 +41,12 @@ dependencies {
     // end local libraries
     testImplementation group: 'org.hamcrest', name: 'hamcrest-junit', version: '1.0.0.1'
 
-    // gRPC dependencies
-    implementation 'io.grpc:grpc-netty-shaded:1.53.0'
+    // gRPC dependencies - updated for better compatibility
+    implementation 'io.grpc:grpc-netty:1.53.0'
     implementation 'io.grpc:grpc-protobuf:1.53.0'
     implementation 'io.grpc:grpc-stub:1.53.0'
+    implementation 'io.grpc:grpc-services:1.53.0' // Add health check service
+    runtimeOnly 'io.grpc:grpc-netty:1.53.0' // Ensure runtime availability
     compileOnly 'org.apache.tomcat:annotations-api:6.0.53'
     
     // Protobuf

@@ -28,6 +28,7 @@ struct TransactionInfo {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)] // Used in transaction operations
 enum BatchOp {
     Put { key: Vec<u8>, value: Vec<u8> },
     Delete { key: Vec<u8> },
