@@ -1,0 +1,34 @@
+{
+  "testRun": {
+    "timestamp": "20250623-004620",
+    "grpcHost": "localhost",
+    "grpcPort": 50051,
+    "javaVersion": "1.8.0_452",
+    "availableProcessors": 8,
+    "maxMemoryMB": 1024
+  },
+  "benchmarks": {
+    "BatchOperationThroughput": {
+      "batchSize10": {
+        "size": 10,
+        "valueSize": 256
+      },
+      "batchSize50": {
+        "size": 50,
+        "valueSize": 256
+      },
+      "batchSize100": {
+        "size": 100,
+        "valueSize": 256
+      },
+      "batchSize500": {
+        "size": 500,
+        "valueSize": 256
+      },
+      "batchSize1000": {
+        "size": 1000,
+        "valueSize": 256
+      }
+    },
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "testRun": {
+    "timestamp": "20250623-004611",
+    "grpcHost": "localhost",
+    "grpcPort": 50051,
+    "javaVersion": "1.8.0_452",
+    "availableProcessors": 8,
+    "maxMemoryMB": 1024
+  },
+  "benchmarks": {
+    "SingleOperationLatency": {
+      "put": {
+        "avgLatencyMs": 1.240071,
+        "minLatencyMs": 0.633396,
+        "maxLatencyMs": 24.780390,
+        "throughputOpsPerSec": 806.40,
+        "iterations": 1000
+      },
+      "get": {
+        "avgLatencyMs": 0.728479,
+        "minLatencyMs": 0.446057,
+        "maxLatencyMs": 9.709075,
+        "throughputOpsPerSec": 1372.72,
+        "iterations": 1000
+      }
+    },
+  }
+}
