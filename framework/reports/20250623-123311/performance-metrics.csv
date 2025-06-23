@@ -1,0 +1,7 @@
+TestName,Metric,Value,Unit,Timestamp
+PerformanceReport,max_memory,1024.000000,MB,1750681992948
+PerformanceReport,used_memory,221.000000,MB,1750681992949
+PerformanceReport,available_processors,8.000000,count,1750681992949
+PerformanceReport,active_databases,2.000000,count,1750681992949
+PerformanceReport,basic_put_latency,11.881032,ms,1750681992975
+PerformanceReport,basic_get_latency,13.574354,ms,1750681992975

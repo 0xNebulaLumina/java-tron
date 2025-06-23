@@ -1,9 +1,0 @@
-TestName,Metric,Value,Unit,Timestamp
-SingleOperationLatency,put_avg_latency,1.240071,ms,1750639576006
-SingleOperationLatency,put_min_latency,0.633396,ms,1750639576007
-SingleOperationLatency,put_max_latency,24.780390,ms,1750639576007
-SingleOperationLatency,put_throughput,806.404911,ops/sec,1750639576007
-SingleOperationLatency,get_avg_latency,0.728479,ms,1750639576008
-SingleOperationLatency,get_min_latency,0.446057,ms,1750639576008
-SingleOperationLatency,get_max_latency,9.709075,ms,1750639576008
-SingleOperationLatency,get_throughput,1372.721518,ops/sec,1750639576008
