@@ -153,9 +153,31 @@ run_integration_tests() {
     log_success "Integration tests completed"
 }
 
+# Run embedded benchmarks (no external service needed)
+run_embedded_benchmarks() {
+    log_info "Running embedded RocksDB performance benchmarks..."
+    
+    mkdir -p "$REPORTS_DIR"
+    
+    local tests=(
+        "benchmarkSingleOperationLatency"
+        "benchmarkBatchOperationThroughput"
+        "generatePerformanceReport"
+    )
+    
+    for test in "${tests[@]}"; do
+        log_info "Running embedded benchmark: $test"
+        ./gradlew :framework:test --tests "org.tron.core.storage.spi.EmbeddedStoragePerformanceBenchmark.$test" \
+            --dependency-verification=off \
+            2>&1 | tee "$REPORTS_DIR/embedded-$test.log"
+    done
+    
+    log_success "Embedded benchmarks completed"
+}
+
 # Run performance benchmarks
 run_performance_benchmarks() {
-    log_info "Running performance benchmarks..."
+    log_info "Running gRPC performance benchmarks..."
     
     mkdir -p "$REPORTS_DIR"
     
@@ -167,13 +189,13 @@ run_performance_benchmarks() {
     )
     
     for test in "${tests[@]}"; do
-        log_info "Running benchmark: $test"
-        ./gradlew :framework:test --tests "org.tron.core.storage.spi.StoragePerformanceBenchmark.$test" \
+        log_info "Running gRPC benchmark: $test"
+        ./gradlew :framework:test --tests "org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark.$test" \
             -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT --dependency-verification=off \
             2>&1 | tee "$REPORTS_DIR/benchmark-$test.log"
     done
     
-    log_success "Performance benchmarks completed"
+    log_success "gRPC performance benchmarks completed"
     log_info "Reports saved to: $REPORTS_DIR"
     
     # Extract and analyze metrics from logs
@@ -194,10 +216,10 @@ extract_metrics_from_logs() {
     
     echo "TestName,MetricName,Value,Unit,ExtractedAt" > "$metrics_csv"
     
-    # Extract metrics from each log file
-    for log_file in "$REPORTS_DIR"/benchmark-*.log; do
+    # Extract metrics from each log file (both embedded and gRPC)
+    for log_file in "$REPORTS_DIR"/*-*.log; do
         if [ -f "$log_file" ]; then
-            local test_name=$(basename "$log_file" .log | sed 's/benchmark-//')
+            local test_name=$(basename "$log_file" .log | sed 's/benchmark-//' | sed 's/embedded-//')
             log_info "Extracting metrics from $test_name"
             
             echo "## $test_name" >> "$metrics_summary"
@@ -330,6 +352,11 @@ main() {
     
     run_unit_tests
     run_integration_tests
+    
+    # Run embedded benchmarks first (no external service needed)
+    run_embedded_benchmarks
+    
+    # Then run gRPC benchmarks
     run_performance_benchmarks
     
     # Step 5: Generate reports
