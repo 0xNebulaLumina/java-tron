@@ -79,6 +79,33 @@ CachingStorageSPI
 ## Overview
 将 java-tron 当前嵌入式 LevelDB/RocksDB 存储替换为 Rust 实现，并评估单进程 FFI 与多进程 IPC 两种方案。
 
+## Pros & Cons of Candidate Solutions
+
+### Plan A – In-Process JNI + Rust RocksDB
+**Pros**
+1. 延迟最低：单进程内存调用，无 IPC/序列化成本。
+2. 替换成本低：仅重写 JNI 包装层，可沿用现有 DB 调用逻辑。
+3. 代码路径短：事务/批处理语义保持一致，最少业务改动。
+
+**Cons**
+1. 故障隔离差：Rust panic 或 native 崩溃会直接终止 JVM。
+2. 调优复杂：JVM GC 与 Rust allocator 共享进程内存，易出现 OOM/碎片。
+3. 热升级困难：更新 Rust 库需重启整条 Java 节点，运维窗口大。
+4. 开发体验一般：JNI/FFI 需要手工管理内存、错误码与异常映射。
+
+### Plan B – Multi-Process gRPC + Rust DB Node
+**Pros**
+1. 崩溃隔离：Rust 进程异常不影响 JVM，可自动重启/切流。
+2. 易于扩缩：可复用同一 DB 服务供多 Java 节点访问，也便于集群化。
+3. 运维友好：分别打包镜像，滚动升级与资源限制更灵活。
+4. 监控可观测：Rust 进程单独暴露 Metrics，链路追踪清晰。
+
+**Cons**
+1. 额外时延：IPC + 序列化 开销，对小 KV 负载影响明显。
+2. 代码改动大：Java 侧需重写存储访问层并处理网络异常重试。
+3. 数据一致性：需重新设计事务/批量接口，保证语义不变。
+4. 部署复杂度：端口、TLS、本地权限管理、进程编排皆需处理。
+
 **DECISION: 选择 Plan B - Multi-Process gRPC + Rust DB Node**
 
 ## High-level Plan
@@ -217,30 +244,3 @@ CachingStorageSPI
 - **Week 2**: Automatic Batching Layer (Target: 10-50x for multi-op workloads)
 - **Week 3**: Caching Layer Implementation (Target: 100x for cache hits)
 - **Expected Outcome**: 5-10x overall performance improvement (500-1000 ops/sec)
-
-## Pros & Cons of Candidate Solutions
-
-### Plan A – In-Process JNI + Rust RocksDB
-**Pros**
-1. 延迟最低：单进程内存调用，无 IPC/序列化成本。
-2. 替换成本低：仅重写 JNI 包装层，可沿用现有 DB 调用逻辑。
-3. 代码路径短：事务/批处理语义保持一致，最少业务改动。
-
-**Cons**
-1. 故障隔离差：Rust panic 或 native 崩溃会直接终止 JVM。
-2. 调优复杂：JVM GC 与 Rust allocator 共享进程内存，易出现 OOM/碎片。
-3. 热升级困难：更新 Rust 库需重启整条 Java 节点，运维窗口大。
-4. 开发体验一般：JNI/FFI 需要手工管理内存、错误码与异常映射。
-
-### Plan B – Multi-Process gRPC + Rust DB Node
-**Pros**
-1. 崩溃隔离：Rust 进程异常不影响 JVM，可自动重启/切流。
-2. 易于扩缩：可复用同一 DB 服务供多 Java 节点访问，也便于集群化。
-3. 运维友好：分别打包镜像，滚动升级与资源限制更灵活。
-4. 监控可观测：Rust 进程单独暴露 Metrics，链路追踪清晰。
-
-**Cons**
-1. 额外时延：IPC + 序列化 开销，对小 KV 负载影响明显。
-2. 代码改动大：Java 侧需重写存储访问层并处理网络异常重试。
-3. 数据一致性：需重新设计事务/批量接口，保证语义不变。
-4. 部署复杂度：端口、TLS、本地权限管理、进程编排皆需处理。
