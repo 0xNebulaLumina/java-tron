@@ -138,7 +138,9 @@ start_rust_service() {
 run_unit_tests() {
     log_info "Running unit tests..."
     
-    ./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPITest" -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off
+    ./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPITest" \
+        -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
+        --console=plain
     
     log_success "Unit tests completed"
 }
@@ -148,7 +150,8 @@ run_integration_tests() {
     log_info "Running integration tests..."
     
     ./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPIIntegrationTest" \
-        -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off
+        -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
+        --console=plain
     
     log_success "Integration tests completed"
 }
@@ -169,6 +172,7 @@ run_embedded_benchmarks() {
         log_info "Running embedded benchmark: $test"
         ./gradlew :framework:test --tests "org.tron.core.storage.spi.EmbeddedStoragePerformanceBenchmark.$test" \
             -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
+            --console=plain --info \
             2>&1 | tee "$REPORTS_DIR/embedded-$test.log"
     done
     
@@ -192,6 +196,7 @@ run_performance_benchmarks() {
         log_info "Running gRPC benchmark: $test"
         ./gradlew :framework:test --tests "org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark.$test" \
             -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
+            --console=plain --info \
             2>&1 | tee "$REPORTS_DIR/benchmark-$test.log"
     done
     
