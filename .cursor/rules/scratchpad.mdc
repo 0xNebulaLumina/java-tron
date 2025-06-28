@@ -15,6 +15,7 @@ alwaysApply: false
 - **Gradle Test Output**: Gradle suppresses test console output by default. Metrics need to be written to dedicated files (JSON/CSV) rather than relying on console output extraction.
 - **Performance Analysis**: Current ~10-12ms latency represents ~100x overhead vs embedded storage, but architectural benefits (crash isolation, operational flexibility) justify the trade-off with planned optimizations.
 - **RocksDB Embedded Implementation**: Use `RocksdbStorage` class for embedded benchmarks, need to identify constructor parameters and configuration.
+- **JUnit @Test Inheritance**: Methods in abstract base classes without @Test annotations are not recognized as tests by Gradle, even if inherited. Subclasses must override and add @Test annotations to inherited test methods.
 
 # Current Task: Add Embedded RocksDB Performance Benchmarks
 

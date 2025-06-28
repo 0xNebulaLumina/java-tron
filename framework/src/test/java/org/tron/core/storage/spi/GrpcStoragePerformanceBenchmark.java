@@ -72,7 +72,21 @@ public class GrpcStoragePerformanceBenchmark extends BasePerformanceBenchmark {
         return 20.0; // 20ms threshold for gRPC GET operations
     }
     
-
+    // Test methods inherited from BasePerformanceBenchmark need @Test annotations
+    @Test
+    public void benchmarkSingleOperationLatency() throws Exception {
+        super.benchmarkSingleOperationLatency();
+    }
+    
+    @Test
+    public void benchmarkBatchOperationThroughput() throws Exception {
+        super.benchmarkBatchOperationThroughput();
+    }
+    
+    @Test
+    public void generatePerformanceReport() throws Exception {
+        super.generatePerformanceReport();
+    }
     
     // These benchmark methods are inherited from BasePerformanceBenchmark:
     // - benchmarkSingleOperationLatency()
@@ -290,8 +304,6 @@ public class GrpcStoragePerformanceBenchmark extends BasePerformanceBenchmark {
         Assert.assertTrue("Load time should be reasonable", loadDurationMs < 30000); // 30 seconds
         Assert.assertTrue("Memory increase should be reasonable", memoryIncrease < 500 * 1024 * 1024); // 500MB
     }
-    
-    // generatePerformanceReport() is inherited from BasePerformanceBenchmark
     
     // Helper methods are inherited from BasePerformanceBenchmark
 } 
