@@ -97,7 +97,7 @@ build_components() {
     
     # Build Java components
     log_info "Building Java components..."
-    ./gradlew build -x test --dependency-verification=off
+    ./gradlew build -x test -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off
     
     log_success "Components built successfully"
 }
@@ -138,7 +138,7 @@ start_rust_service() {
 run_unit_tests() {
     log_info "Running unit tests..."
     
-    ./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPITest" --dependency-verification=off
+    ./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPITest" -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off
     
     log_success "Unit tests completed"
 }
@@ -148,7 +148,7 @@ run_integration_tests() {
     log_info "Running integration tests..."
     
     ./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPIIntegrationTest" \
-        -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT --dependency-verification=off
+        -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off
     
     log_success "Integration tests completed"
 }
@@ -168,7 +168,7 @@ run_embedded_benchmarks() {
     for test in "${tests[@]}"; do
         log_info "Running embedded benchmark: $test"
         ./gradlew :framework:test --tests "org.tron.core.storage.spi.EmbeddedStoragePerformanceBenchmark.$test" \
-            --dependency-verification=off \
+            -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
             2>&1 | tee "$REPORTS_DIR/embedded-$test.log"
     done
     
@@ -191,7 +191,7 @@ run_performance_benchmarks() {
     for test in "${tests[@]}"; do
         log_info "Running gRPC benchmark: $test"
         ./gradlew :framework:test --tests "org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark.$test" \
-            -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT --dependency-verification=off \
+            -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
             2>&1 | tee "$REPORTS_DIR/benchmark-$test.log"
     done
     

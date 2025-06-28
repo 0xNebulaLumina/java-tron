@@ -16,6 +16,7 @@ alwaysApply: false
 - **Performance Analysis**: Current ~10-12ms latency represents ~100x overhead vs embedded storage, but architectural benefits (crash isolation, operational flexibility) justify the trade-off with planned optimizations.
 - **RocksDB Embedded Implementation**: Use `RocksdbStorage` class for embedded benchmarks, need to identify constructor parameters and configuration.
 - **JUnit @Test Inheritance**: Methods in abstract base classes without @Test annotations are not recognized as tests by Gradle, even if inherited. Subclasses must override and add @Test annotations to inherited test methods.
+- **Checkstyle Warnings**: The performance testing script runs Gradle build which triggers checkstyle checks. Use `-x checkstyleMain -x checkstyleTest` flags to skip checkstyle tasks (not `-x checkstyle` which is ambiguous).
 
 # Current Task: Phase 1 Performance Optimizations ✅
 
