@@ -1,0 +1,9 @@
+TestName,Metric,Value,Unit,Timestamp
+GrpcSingleOperationLatency,put_avg_latency,1.165272,ms,1751112571536
+GrpcSingleOperationLatency,put_min_latency,0.712436,ms,1751112571537
+GrpcSingleOperationLatency,put_max_latency,7.082735,ms,1751112571537
+GrpcSingleOperationLatency,put_throughput,858.168373,ops/sec,1751112571537
+GrpcSingleOperationLatency,get_avg_latency,0.758637,ms,1751112571537
+GrpcSingleOperationLatency,get_min_latency,0.463669,ms,1751112571537
+GrpcSingleOperationLatency,get_max_latency,10.713625,ms,1751112571537
+GrpcSingleOperationLatency,get_throughput,1318.152663,ops/sec,1751112571537

@@ -1,0 +1,484 @@
+Initialized native services in: /root/.gradle/native
+Initialized jansi services in: /root/.gradle/native
+Received JVM installation metadata from '/usr/lib/jvm/java-8-openjdk-amd64': {JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64/jre, JAVA_VERSION=1.8.0_452, JAVA_VENDOR=Private Build, RUNTIME_NAME=OpenJDK Runtime Environment, RUNTIME_VERSION=1.8.0_452-8u452-ga~us1-0ubuntu1~24.04-b09, VM_NAME=OpenJDK 64-Bit Server VM, VM_VERSION=25.452-b09, VM_VENDOR=Private Build, OS_ARCH=amd64}
+The client will now receive all logging from the daemon (pid: 1298). The daemon log file: /root/.gradle/daemon/7.6.4/daemon-1298.out.log
+Starting 7th build in daemon [uptime: 2 mins 32.09 secs, performance: 99%, GC rate: 0.07/s, heap usage: 1% of 3.9 GiB]
+Using 8 worker leases.
+Now considering [/root/gitfiles/0xNebulaLumina/java-tron] as hierarchies to watch
+Watching the file system is configured to be enabled if available
+File system watching is active
+Starting Build
+Settings evaluated using settings file '/root/gitfiles/0xNebulaLumina/java-tron/settings.gradle'.
+Projects loaded. Root project using build file '/root/gitfiles/0xNebulaLumina/java-tron/build.gradle'.
+Included projects: [root project 'java-tron', project ':actuator', project ':chainbase', project ':common', project ':consensus', project ':crypto', project ':example', project ':framework', project ':plugins', project ':protocol', project ':example:actuator-example']
+
+> Configure project :
+Evaluating root project 'java-tron' using build file '/root/gitfiles/0xNebulaLumina/java-tron/build.gradle'.
+
+> Configure project :actuator
+Evaluating project ':actuator' using build file '/root/gitfiles/0xNebulaLumina/java-tron/actuator/build.gradle'.
+
+> Configure project :chainbase
+Evaluating project ':chainbase' using build file '/root/gitfiles/0xNebulaLumina/java-tron/chainbase/build.gradle'.
+
+> Configure project :common
+Evaluating project ':common' using build file '/root/gitfiles/0xNebulaLumina/java-tron/common/build.gradle'.
+
+> Configure project :consensus
+Evaluating project ':consensus' using build file '/root/gitfiles/0xNebulaLumina/java-tron/consensus/build.gradle'.
+
+> Configure project :crypto
+Evaluating project ':crypto' using build file '/root/gitfiles/0xNebulaLumina/java-tron/crypto/build.gradle'.
+
+> Configure project :example
+Evaluating project ':example' using build file '/root/gitfiles/0xNebulaLumina/java-tron/example/build.gradle'.
+
+> Configure project :framework
+Evaluating project ':framework' using build file '/root/gitfiles/0xNebulaLumina/java-tron/framework/build.gradle'.
+The com.google.protobuf plugin was already applied to the project: :framework and will not be applied again after plugin: java-library
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/app/build/reports', not found
+------------------------------------------------------------------------
+Detecting the operating system and CPU architecture
+------------------------------------------------------------------------
+os.detected.name=linux
+os.detected.arch=x86_64
+os.detected.bitness=64
+os.detected.version=6.8
+os.detected.version.major=6
+os.detected.version.minor=8
+os.detected.release=ubuntu
+os.detected.release.version=24.04
+os.detected.release.like.ubuntu=true
+os.detected.release.like.debian=true
+os.detected.classifier=linux-x86_64
+
+> Configure project :plugins
+Evaluating project ':plugins' using build file '/root/gitfiles/0xNebulaLumina/java-tron/plugins/build.gradle'.
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/app/build/reports', not found
+
+> Configure project :protocol
+Evaluating project ':protocol' using build file '/root/gitfiles/0xNebulaLumina/java-tron/protocol/build.gradle'.
+The com.google.protobuf plugin was already applied to the project: :protocol and will not be applied again after plugin: java-library
+------------------------------------------------------------------------
+Detecting the operating system and CPU architecture
+------------------------------------------------------------------------
+os.detected.name=linux
+os.detected.arch=x86_64
+os.detected.bitness=64
+os.detected.version=6.8
+os.detected.version.major=6
+os.detected.version.minor=8
+os.detected.release=ubuntu
+os.detected.release.version=24.04
+os.detected.release.like.ubuntu=true
+os.detected.release.like.debian=true
+os.detected.classifier=linux-x86_64
+
+> Configure project :example:actuator-example
+Evaluating project ':example:actuator-example' using build file '/root/gitfiles/0xNebulaLumina/java-tron/example/actuator-example/build.gradle'.
+All projects evaluated.
+Task path ':framework:test' matched project ':framework'
+Task name matched 'test'
+Selected primary task 'test' from project :framework
+Failed to get resource: GET. [HTTP HTTP/1.1 401 : https://repo.spring.io/plugins-release/com/aliyun/tea-rpc-util/maven-metadata.xml)]
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Failed to get resource: GET. [HTTP HTTP/1.1 401 : https://repo.spring.io/plugins-release/com/aliyun/tea-rpc-util/maven-metadata.xml)]
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Tasks to be executed: [task ':protocol:extractIncludeProto', task ':protocol:extractProto', task ':protocol:generateProto', task ':protocol:compileJava', task ':common:compileJava', task ':crypto:compileJava', task ':chainbase:compileJava', task ':actuator:compileJava', task ':actuator:processResources', task ':actuator:classes', task ':actuator:jar', task ':chainbase:processResources', task ':chainbase:classes', task ':chainbase:jar', task ':common:processResources', task ':common:classes', task ':common:jar', task ':consensus:compileJava', task ':consensus:processResources', task ':consensus:classes', task ':consensus:jar', task ':crypto:processResources', task ':crypto:classes', task ':crypto:jar', task ':protocol:processResources', task ':framework:extractIncludeProto', task ':framework:extractProto', task ':framework:generateProto', task ':framework:compileJava', task ':framework:generateGitProperties', task ':framework:processResources', task ':framework:classes', task ':framework:extractIncludeTestProto', task ':framework:extractTestProto', task ':framework:generateTestProto', task ':framework:compileTestJava', task ':framework:processTestResources', task ':framework:testClasses', task ':protocol:classes', task ':protocol:jar', task ':framework:test']
+Tasks that were excluded: []
+Resolve mutations for :protocol:extractIncludeProto (Thread[Execution worker,5,main]) started.
+Resolve mutations for :actuator:processResources (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :chainbase:processResources (Thread[Execution worker Thread 3,5,main]) started.
+:actuator:processResources (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :common:processResources (Thread[Execution worker Thread 4,5,main]) started.
+Resolve mutations for :consensus:processResources (Thread[Execution worker Thread 5,5,main]) started.
+Resolve mutations for :crypto:processResources (Thread[Execution worker Thread 6,5,main]) started.
+Resolve mutations for :framework:extractProto (Thread[included builds,5,main]) started.
+:protocol:extractIncludeProto (Thread[Execution worker Thread 3,5,main]) started.
+:chainbase:processResources (Thread[Execution worker,5,main]) started.
+:consensus:processResources (Thread[Execution worker Thread 5,5,main]) started.
+:crypto:processResources (Thread[Execution worker Thread 6,5,main]) started.
+:common:processResources (Thread[Execution worker Thread 4,5,main]) started.
+:framework:extractProto (Thread[included builds,5,main]) started.
+
+> Task :chainbase:processResources NO-SOURCE
+Skipping task ':chainbase:processResources' as it has no source files and no previous output files.
+
+> Task :crypto:processResources NO-SOURCE
+Skipping task ':crypto:processResources' as it has no source files and no previous output files.
+
+> Task :consensus:processResources NO-SOURCE
+Skipping task ':consensus:processResources' as it has no source files and no previous output files.
+work action resolve main (project :chainbase) (Thread[Execution worker,5,main]) started.
+work action resolve main (project :crypto) (Thread[Execution worker Thread 6,5,main]) started.
+work action resolve main (project :consensus) (Thread[Execution worker Thread 5,5,main]) started.
+
+> Task :framework:extractProto UP-TO-DATE
+Caching disabled for task ':framework:extractProto' because:
+  Build cache is disabled
+Skipping task ':framework:extractProto' as it is up-to-date.
+Resolve mutations for :framework:generateGitProperties (Thread[included builds,5,main]) started.
+
+> Task :common:processResources NO-SOURCE
+Skipping task ':common:processResources' as it has no source files and no previous output files.
+work action resolve main (project :common) (Thread[Execution worker Thread 6,5,main]) started.
+
+> Task :actuator:processResources NO-SOURCE
+Skipping task ':actuator:processResources' as it has no source files and no previous output files.
+work action resolve main (project :actuator) (Thread[Execution worker Thread 6,5,main]) started.
+:framework:generateGitProperties (Thread[included builds,5,main]) started.
+
+> Task :protocol:extractIncludeProto UP-TO-DATE
+Caching disabled for task ':protocol:extractIncludeProto' because:
+  Build cache is disabled
+Skipping task ':protocol:extractIncludeProto' as it is up-to-date.
+Resolve mutations for :protocol:extractProto (Thread[Execution worker Thread 3,5,main]) started.
+:protocol:extractProto (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :protocol:extractProto UP-TO-DATE
+Caching disabled for task ':protocol:extractProto' because:
+  Build cache is disabled
+Skipping task ':protocol:extractProto' as it is up-to-date.
+Resolve mutations for :protocol:generateProto (Thread[Execution worker Thread 2,5,main]) started.
+:protocol:generateProto (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :protocol:generateProto UP-TO-DATE
+Caching disabled for task ':protocol:generateProto' because:
+  Build cache is disabled
+Skipping task ':protocol:generateProto' as it is up-to-date.
+Resolve mutations for :protocol:compileJava (Thread[Execution worker Thread 2,5,main]) started.
+:protocol:compileJava (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :protocol:compileJava UP-TO-DATE
+Caching disabled for task ':protocol:compileJava' because:
+  Build cache is disabled
+Skipping task ':protocol:compileJava' as it is up-to-date.
+work action resolve main (project :protocol) (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :common:compileJava (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :protocol:processResources (Thread[Execution worker Thread 7,5,main]) started.
+:common:compileJava (Thread[Execution worker Thread 2,5,main]) started.
+:protocol:processResources (Thread[Execution worker Thread 7,5,main]) started.
+
+> Task :protocol:processResources UP-TO-DATE
+Caching disabled for task ':protocol:processResources' because:
+  Build cache is disabled
+Skipping task ':protocol:processResources' as it is up-to-date.
+work action resolve main (project :protocol) (Thread[Execution worker Thread 7,5,main]) started.
+Resolve mutations for :protocol:classes (Thread[Execution worker Thread 6,5,main]) started.
+:protocol:classes (Thread[Execution worker Thread 6,5,main]) started.
+
+> Task :protocol:classes UP-TO-DATE
+Skipping task ':protocol:classes' as it has no actions.
+Resolve mutations for :protocol:jar (Thread[Execution worker Thread 7,5,main]) started.
+:protocol:jar (Thread[Execution worker Thread 7,5,main]) started.
+
+> Task :protocol:jar UP-TO-DATE
+Caching disabled for task ':protocol:jar' because:
+  Build cache is disabled
+Skipping task ':protocol:jar' as it is up-to-date.
+work action resolve protocol.jar (project :protocol) (Thread[Execution worker Thread 7,5,main]) started.
+
+> Task :common:compileJava UP-TO-DATE
+Caching disabled for task ':common:compileJava' because:
+  Build cache is disabled
+Skipping task ':common:compileJava' as it is up-to-date.
+work action resolve main (project :common) (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :crypto:compileJava (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :common:classes (Thread[Execution worker Thread 3,5,main]) started.
+:common:classes (Thread[Execution worker Thread 3,5,main]) started.
+:crypto:compileJava (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :common:classes UP-TO-DATE
+Skipping task ':common:classes' as it has no actions.
+Resolve mutations for :common:jar (Thread[Execution worker Thread 3,5,main]) started.
+:common:jar (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :common:jar UP-TO-DATE
+Caching disabled for task ':common:jar' because:
+  Build cache is disabled
+Skipping task ':common:jar' as it is up-to-date.
+work action resolve common.jar (project :common) (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :crypto:compileJava UP-TO-DATE
+Caching disabled for task ':crypto:compileJava' because:
+  Build cache is disabled
+Skipping task ':crypto:compileJava' as it is up-to-date.
+work action resolve main (project :crypto) (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :chainbase:compileJava (Thread[Execution worker Thread 2,5,main]) started.
+:chainbase:compileJava (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :crypto:classes (Thread[Execution worker Thread 4,5,main]) started.
+:crypto:classes (Thread[Execution worker Thread 4,5,main]) started.
+
+> Task :crypto:classes UP-TO-DATE
+Skipping task ':crypto:classes' as it has no actions.
+Resolve mutations for :crypto:jar (Thread[Execution worker Thread 4,5,main]) started.
+:crypto:jar (Thread[Execution worker Thread 4,5,main]) started.
+
+> Task :crypto:jar UP-TO-DATE
+Caching disabled for task ':crypto:jar' because:
+  Build cache is disabled
+Skipping task ':crypto:jar' as it is up-to-date.
+work action resolve crypto.jar (project :crypto) (Thread[Execution worker Thread 4,5,main]) started.
+
+> Task :chainbase:compileJava UP-TO-DATE
+Caching disabled for task ':chainbase:compileJava' because:
+  Build cache is disabled
+Skipping task ':chainbase:compileJava' as it is up-to-date.
+work action resolve main (project :chainbase) (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :actuator:compileJava (Thread[Execution worker Thread 2,5,main]) started.
+:actuator:compileJava (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :chainbase:classes (Thread[Execution worker Thread 5,5,main]) started.
+Resolve mutations for :consensus:compileJava (Thread[Execution worker Thread 6,5,main]) started.
+:chainbase:classes (Thread[Execution worker Thread 5,5,main]) started.
+
+> Task :chainbase:classes UP-TO-DATE
+Skipping task ':chainbase:classes' as it has no actions.
+Resolve mutations for :chainbase:jar (Thread[Execution worker Thread 5,5,main]) started.
+:consensus:compileJava (Thread[Execution worker Thread 6,5,main]) started.
+:chainbase:jar (Thread[Execution worker Thread 5,5,main]) started.
+
+> Task :chainbase:jar UP-TO-DATE
+Caching disabled for task ':chainbase:jar' because:
+  Build cache is disabled
+Skipping task ':chainbase:jar' as it is up-to-date.
+work action resolve chainbase.jar (project :chainbase) (Thread[Execution worker Thread 5,5,main]) started.
+
+> Task :consensus:compileJava UP-TO-DATE
+Caching disabled for task ':consensus:compileJava' because:
+  Build cache is disabled
+Skipping task ':consensus:compileJava' as it is up-to-date.
+work action resolve main (project :consensus) (Thread[Execution worker Thread 6,5,main]) started.
+Resolve mutations for :consensus:classes (Thread[Execution worker Thread 6,5,main]) started.
+:consensus:classes (Thread[Execution worker Thread 6,5,main]) started.
+
+> Task :consensus:classes UP-TO-DATE
+Skipping task ':consensus:classes' as it has no actions.
+Resolve mutations for :consensus:jar (Thread[Execution worker Thread 6,5,main]) started.
+:consensus:jar (Thread[Execution worker Thread 6,5,main]) started.
+
+> Task :actuator:compileJava UP-TO-DATE
+Caching disabled for task ':actuator:compileJava' because:
+  Build cache is disabled
+Skipping task ':actuator:compileJava' as it is up-to-date.
+work action resolve main (project :actuator) (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :actuator:classes (Thread[Execution worker Thread 2,5,main]) started.
+:actuator:classes (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :actuator:classes UP-TO-DATE
+Skipping task ':actuator:classes' as it has no actions.
+Resolve mutations for :actuator:jar (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :consensus:jar UP-TO-DATE
+Caching disabled for task ':consensus:jar' because:
+  Build cache is disabled
+Skipping task ':consensus:jar' as it is up-to-date.
+work action resolve consensus.jar (project :consensus) (Thread[Execution worker Thread 6,5,main]) started.
+:actuator:jar (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :actuator:jar UP-TO-DATE
+Caching disabled for task ':actuator:jar' because:
+  Build cache is disabled
+Skipping task ':actuator:jar' as it is up-to-date.
+work action resolve actuator.jar (project :actuator) (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :framework:generateGitProperties
+dotGitDirectory = [/root/gitfiles/0xNebulaLumina/java-tron/.git]
+Caching disabled for task ':framework:generateGitProperties' because:
+  Build cache is disabled
+Task ':framework:generateGitProperties' is not up-to-date because:
+  Task.upToDateWhen is false.
+Watching 966 directories to track changes
+git.properties location = [/root/gitfiles/0xNebulaLumina/java-tron/framework/build/resources/main/git.properties]
+Skip writing properties to [property(org.gradle.api.file.RegularFile, fixed(class org.gradle.api.internal.file.DefaultFilePropertyFactory$FixedFile, /root/gitfiles/0xNebulaLumina/java-tron/framework/build/resources/main/git.properties))] as it is up-to-date.
+Watching 966 directories to track changes
+Resolve mutations for :framework:extractIncludeProto (Thread[included builds,5,main]) started.
+:framework:extractIncludeProto (Thread[included builds,5,main]) started.
+
+> Task :framework:extractIncludeProto UP-TO-DATE
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Caching disabled for task ':framework:extractIncludeProto' because:
+  Build cache is disabled
+Skipping task ':framework:extractIncludeProto' as it is up-to-date.
+Resolve mutations for :framework:generateProto (Thread[included builds,5,main]) started.
+:framework:generateProto (Thread[included builds,5,main]) started.
+
+> Task :framework:generateProto UP-TO-DATE
+Caching disabled for task ':framework:generateProto' because:
+  Build cache is disabled
+Skipping task ':framework:generateProto' as it is up-to-date.
+Resolve mutations for :framework:compileJava (Thread[included builds,5,main]) started.
+:framework:compileJava (Thread[included builds,5,main]) started.
+
+> Task :framework:compileJava UP-TO-DATE
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Caching disabled for task ':framework:compileJava' because:
+  Build cache is disabled
+Skipping task ':framework:compileJava' as it is up-to-date.
+Resolve mutations for :framework:processResources (Thread[included builds,5,main]) started.
+:framework:processResources (Thread[included builds,5,main]) started.
+
+> Task :framework:processResources UP-TO-DATE
+Watching 966 directories to track changes
+Caching disabled for task ':framework:processResources' because:
+  Build cache is disabled
+Skipping task ':framework:processResources' as it is up-to-date.
+Resolve mutations for :framework:classes (Thread[included builds,5,main]) started.
+:framework:classes (Thread[Execution worker,5,main]) started.
+
+> Task :framework:classes
+Skipping task ':framework:classes' as it has no actions.
+Resolve mutations for :framework:extractIncludeTestProto (Thread[Execution worker,5,main]) started.
+:framework:extractIncludeTestProto (Thread[Execution worker,5,main]) started.
+
+> Task :framework:extractIncludeTestProto UP-TO-DATE
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Caching disabled for task ':framework:extractIncludeTestProto' because:
+  Build cache is disabled
+Skipping task ':framework:extractIncludeTestProto' as it is up-to-date.
+Resolve mutations for :framework:extractTestProto (Thread[Execution worker,5,main]) started.
+:framework:extractTestProto (Thread[Execution worker,5,main]) started.
+
+> Task :framework:extractTestProto UP-TO-DATE
+Caching disabled for task ':framework:extractTestProto' because:
+  Build cache is disabled
+Skipping task ':framework:extractTestProto' as it is up-to-date.
+Resolve mutations for :framework:generateTestProto (Thread[Execution worker,5,main]) started.
+:framework:generateTestProto (Thread[Execution worker,5,main]) started.
+
+> Task :framework:generateTestProto NO-SOURCE
+Skipping task ':framework:generateTestProto' as it has no source files and no previous output files.
+Resolve mutations for :framework:compileTestJava (Thread[Execution worker,5,main]) started.
+:framework:compileTestJava (Thread[Execution worker,5,main]) started.
+
+> Task :framework:compileTestJava UP-TO-DATE
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Caching disabled for task ':framework:compileTestJava' because:
+  Build cache is disabled
+Skipping task ':framework:compileTestJava' as it is up-to-date.
+Resolve mutations for :framework:processTestResources (Thread[Execution worker,5,main]) started.
+:framework:processTestResources (Thread[Execution worker,5,main]) started.
+
+> Task :framework:processTestResources UP-TO-DATE
+Caching disabled for task ':framework:processTestResources' because:
+  Build cache is disabled
+Skipping task ':framework:processTestResources' as it is up-to-date.
+Resolve mutations for :framework:testClasses (Thread[Execution worker,5,main]) started.
+:framework:testClasses (Thread[Execution worker Thread 6,5,main]) started.
+
+> Task :framework:testClasses UP-TO-DATE
+Skipping task ':framework:testClasses' as it has no actions.
+Resolve mutations for :framework:test (Thread[Execution worker Thread 2,5,main]) started.
+:framework:test (Thread[Execution worker Thread 2,5,main]) started.
+Gradle Test Executor 5 started executing tests.
+Gradle Test Executor 5 finished executing tests.
+
+> Task :framework:test
+Failed to get resource: GET. [HTTP HTTP/1.1 401 : https://repo.spring.io/plugins-release/com/aliyun/tea-rpc-util/maven-metadata.xml)]
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Caching disabled for task ':framework:test' because:
+  Build cache is disabled
+Task ':framework:test' is not up-to-date because:
+  Value of input property 'filter.commandLineIncludePatterns' has changed for task ':framework:test'
+Watching 965 directories to track changes
+Watching 964 directories to track changes
+Watching 959 directories to track changes
+Watching 958 directories to track changes
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Starting process 'Gradle Test Executor 5'. Working directory: /root/gitfiles/0xNebulaLumina/java-tron/framework Command: /usr/lib/jvm/java-8-openjdk-amd64/bin/java -Djava.security.manager=worker.org.gradle.process.internal.worker.child.BootstrapSecurityManager -Dorg.gradle.internal.worker.tmpdir=/root/gitfiles/0xNebulaLumina/java-tron/framework/build/tmp/test/work -Dorg.gradle.native=false -XX:MetaspaceSize=128m -XX:MaxMetaspaceSize=256m -XX:+UseG1GC -javaagent:build/tmp/expandedArchives/org.jacoco.agent-0.8.12.jar_ff7bf8f04f99dc306508d1c81e47a68b/jacocoagent.jar=destfile=build/jacoco/jacocoTest.exec,append=true,inclnolocationclasses=false,dumponexit=true,output=file,classdumpdir=build/jacoco/classpathdumps,jmx=false -Xmx1024m -Dfile.encoding=UTF-8 -Duser.country=US -Duser.language=en -Duser.variant -ea -cp /root/.gradle/caches/7.6.4/workerMain/gradle-worker.jar worker.org.gradle.process.internal.worker.GradleWorkerMain 'Gradle Test Executor 5'
+Successfully started process 'Gradle Test Executor 5'
+
+org.tron.core.storage.spi.EmbeddedStoragePerformanceBenchmark > generatePerformanceReport STANDARD_OUT
+    12:09:23.965 INFO [ROCKSDB] benchmark-db-1751112563620 [db/db_impl_open.cc:223] Creating manifest 1 
+
+    12:09:24.095 INFO [ROCKSDB] benchmark-db-1751112563620 [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    12:09:24.096 INFO [ROCKSDB] benchmark-db-1751112563620 [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    12:09:24.096 INFO [ROCKSDB] benchmark-db-1751112563620 [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    12:09:24.097 INFO [ROCKSDB] benchmark-db-1751112563620 [db/version_set.cc:3529] Recovered from manifest file:data/rocksdb-embedded/20250628-120923/benchmark-db-1751112563620/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    12:09:24.097 INFO [ROCKSDB] benchmark-db-1751112563620 [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    12:09:24.101 INFO [ROCKSDB] benchmark-db-1751112563620 [db/db_impl_open.cc:1221] DB pointer 0x744958504010
+
+    ============================================================
+    BENCHMARK: EmbeddedPerformanceReport
+    ============================================================
+    Test Environment:
+      Implementation: Embedded
+      Java Version: 1.8.0_452
+      Available Processors: 8
+      Max Memory: 1024 MB
+      Used Memory: 70 MB
+      OS: Linux 6.8.0-62-generic
+      Architecture: amd64
+      Storage Health: HEALTHY
+      Active Databases: 1
+    METRIC: EmbeddedPerformanceReport.max_memory = 1024.000000 MB
+    METRIC: EmbeddedPerformanceReport.used_memory = 70.000000 MB
+    METRIC: EmbeddedPerformanceReport.available_processors = 8.000000 count
+    METRIC: EmbeddedPerformanceReport.active_databases = 1.000000 count
+
+    Running basic performance test...
+    METRIC: EmbeddedPerformanceReport.basic_put_latency = 1.519955 ms
+    METRIC: EmbeddedPerformanceReport.basic_get_latency = 0.523935 ms
+      Basic PUT latency: 1.52 ms
+      Basic GET latency: 0.52 ms
+
+    Recommendations:
+      - Compare results with other storage implementations
+      - Monitor resource usage during peak loads
+      - Test with production-like data patterns
+      - Check reports/20250628-120923/ for detailed metrics files
+    12:09:24.113 INFO [ROCKSDB] benchmark-db-1751112563620 [db/db_impl.cc:294] Shutdown: canceling all background work
+    12:09:24.113 INFO [ROCKSDB] benchmark-db-1751112563620 [db/db_impl.cc:440] Shutdown complete
+    12:09:24.121 INFO [ROCKSDB] benchmark-db-1751112563620 [db/db_impl_open.cc:223] Creating manifest 1 
+
+    12:09:24.127 INFO [ROCKSDB] benchmark-db-1751112563620 [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    12:09:24.128 INFO [ROCKSDB] benchmark-db-1751112563620 [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    12:09:24.128 INFO [ROCKSDB] benchmark-db-1751112563620 [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    12:09:24.128 INFO [ROCKSDB] benchmark-db-1751112563620 [db/version_set.cc:3529] Recovered from manifest file:data/rocksdb-embedded/20250628-120923/benchmark-db-1751112563620/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    12:09:24.129 INFO [ROCKSDB] benchmark-db-1751112563620 [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    12:09:24.133 INFO [ROCKSDB] benchmark-db-1751112563620 [db/db_impl_open.cc:1221] DB pointer 0x744958504010
+    12:09:24.134 INFO [ROCKSDB] benchmark-db-1751112563620 [db/db_impl.cc:294] Shutdown: canceling all background work
+    12:09:24.135 INFO [ROCKSDB] benchmark-db-1751112563620 [db/db_impl.cc:440] Shutdown complete
+Finished generating test XML results (0.001 secs) into: /root/gitfiles/0xNebulaLumina/java-tron/framework/build/test-results/test
+Generating HTML test report...
+Finished generating test html results (0.002 secs) into: /root/gitfiles/0xNebulaLumina/java-tron/framework/build/reports/tests/test
+Watching 959 directories to track changes
+Watching 960 directories to track changes
+Watching 965 directories to track changes
+Watching 966 directories to track changes
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 8.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+See https://docs.gradle.org/7.6.4/userguide/command_line_interface.html#sec:command_line_warnings
+
+BUILD SUCCESSFUL in 4s
+27 actionable tasks: 2 executed, 25 up-to-date
