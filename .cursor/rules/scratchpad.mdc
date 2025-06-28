@@ -18,63 +18,7 @@ alwaysApply: false
 - **JUnit @Test Inheritance**: Methods in abstract base classes without @Test annotations are not recognized as tests by Gradle, even if inherited. Subclasses must override and add @Test annotations to inherited test methods.
 - **Checkstyle Warnings**: The performance testing script runs Gradle build which triggers checkstyle checks. Use `-x checkstyleMain -x checkstyleTest` flags to skip checkstyle tasks (not `-x checkstyle` which is ambiguous).
 
-## PHASE 9: Performance Optimization Implementation
-
-### 🔍 Current Focus: Phase 1 Optimizations
-**Objective**: Achieve 5-10x performance improvement to reach 500-1000 ops/sec
-
-### 📈 Implementation Strategy
-1. **Week 1 - Connection Pooling**: 
-   - `PooledGrpcStorageSPI` with round-robin connection selection
-   - `ConcurrentBatchExecutor` for parallel operations
-   - Target: 3-5x throughput improvement
-
-2. **Week 2 - Automatic Batching**:
-   - `BatchingStorageSPI` with time/size-based batching
-   - 10ms batching windows, 100 operation max batches
-   - Target: 10-50x improvement for multi-operation workloads
-
-3. **Week 3 - Caching Layer**:
-   - `CachingStorageSPI` with read-through caching
-   - Separate caches for data and existence checks
-   - Target: 100x improvement for cache hits (90%+ hit rate)
-
-### 🛠️ Technical Architecture
-**Optimization Chain**:
-```
-CachingStorageSPI 
-  -> BatchingStorageSPI 
-    -> PooledGrpcStorageSPI 
-      -> Rust gRPC Service
-```
-
-### 🎯 Success Criteria
-- **Single Operation Throughput**: 500+ ops/sec (5x improvement)
-- **Batch Operation Throughput**: 2,000+ ops/sec (20x improvement)  
-- **Cache Hit Performance**: 5,000+ ops/sec (50x improvement)
-- **Memory Usage**: <400MB total (including caches)
-
-### 📋 Dependencies
-- **Caffeine**: High-performance caching library
-- **Micrometer**: Metrics collection framework
-- **gRPC Netty**: Connection pooling optimization
-- **Java Concurrent Utils**: Thread pool management
-
-## Progress Notes
-- ✅ **Performance Baseline**: Established with actual test data (10.48ms PUT, 12.48ms GET)
-- ✅ **Architecture Validation**: Multi-process benefits confirmed (crash isolation, operational flexibility)
-- ✅ **Optimization Strategy**: Detailed 3-week implementation plan created
-- ✅ **Technical Design**: Complete implementation specifications for all optimization layers
-- 🔄 **Ready for Implementation**: All planning and analysis completed
-
-## Performance Summary (Current Baseline)
-- **gRPC Storage Service**: Functional and stable
-- **Single Operation Latency**: PUT ~10.5ms, GET ~12.5ms (acceptable for network storage)
-- **System Resources**: 217MB memory usage (21% utilization) - very efficient
-- **Architecture Benefits**: Crash isolation, operational flexibility, monitoring clarity
-- **Optimization Potential**: 5-10x improvement through systematic optimizations
-
-# Current Task: Replace Java RocksDB with Rust implementation
+# High-level Task: Replace Java RocksDB with Rust implementation
 
 ## Overview
 将 java-tron 当前嵌入式 LevelDB/RocksDB 存储替换为 Rust 实现，并评估单进程 FFI 与多进程 IPC 两种方案。
@@ -216,8 +160,6 @@ CachingStorageSPI
 [X] **生产就绪评估** - 安全性、监控、部署考虑完成
 [X] **实施计划创建** - 3周详细优化实施计划
 
-## Current Status: PHASE 9 - PERFORMANCE OPTIMIZATION IMPLEMENTATION
-
 **PHASE 8 COMPLETED**: 性能分析和优化规划
 
 ### 📋 Phase 8 Summary:
@@ -226,6 +168,8 @@ CachingStorageSPI
 - ✅ **优化策略制定**: 详细的3阶段优化实施计划
 - ✅ **技术方案设计**: 完整的连接池、批处理、缓存实现规范
 - ✅ **成功标准定义**: 明确的性能目标和验证标准
+
+## Current Status: PHASE 9 - PERFORMANCE OPTIMIZATION IMPLEMENTATION
 
 ### 🎯 PHASE 9: Performance Optimization Implementation
 **当前行动**: 实施 Phase 1 性能优化 (连接池、批处理、缓存)
@@ -244,3 +188,52 @@ CachingStorageSPI
 - **Week 2**: Automatic Batching Layer (Target: 10-50x for multi-op workloads)
 - **Week 3**: Caching Layer Implementation (Target: 100x for cache hits)
 - **Expected Outcome**: 5-10x overall performance improvement (500-1000 ops/sec)
+
+## PHASE 9: Performance Optimization Implementation
+
+### 🔍 Current Focus: Phase 1 Optimizations
+**Objective**: Achieve 5-10x performance improvement to reach 500-1000 ops/sec
+
+### 📈 Implementation Strategy
+1. **Week 1 - Connection Pooling**: 
+   - `PooledGrpcStorageSPI` with round-robin connection selection
+   - `ConcurrentBatchExecutor` for parallel operations
+   - Target: 3-5x throughput improvement
+
+2. **Week 2 - Automatic Batching**:
+   - `BatchingStorageSPI` with time/size-based batching
+   - 10ms batching windows, 100 operation max batches
+   - Target: 10-50x improvement for multi-operation workloads
+
+3. **Week 3 - Caching Layer**:
+   - `CachingStorageSPI` with read-through caching
+   - Separate caches for data and existence checks
+   - Target: 100x improvement for cache hits (90%+ hit rate)
+
+### 🛠️ Technical Architecture
+**Optimization Chain**:
+```
+CachingStorageSPI 
+  -> BatchingStorageSPI 
+    -> PooledGrpcStorageSPI 
+      -> Rust gRPC Service
+```
+
+### 🎯 Success Criteria
+- **Single Operation Throughput**: 500+ ops/sec (5x improvement)
+- **Batch Operation Throughput**: 2,000+ ops/sec (20x improvement)  
+- **Cache Hit Performance**: 5,000+ ops/sec (50x improvement)
+- **Memory Usage**: <400MB total (including caches)
+
+### 📋 Dependencies
+- **Caffeine**: High-performance caching library
+- **Micrometer**: Metrics collection framework
+- **gRPC Netty**: Connection pooling optimization
+- **Java Concurrent Utils**: Thread pool management
+
+## Progress Notes
+- ✅ **Performance Baseline**: Established with actual test data (10.48ms PUT, 12.48ms GET)
+- ✅ **Architecture Validation**: Multi-process benefits confirmed (crash isolation, operational flexibility)
+- ✅ **Optimization Strategy**: Detailed 3-week implementation plan created
+- ✅ **Technical Design**: Complete implementation specifications for all optimization layers
+- 🔄 **Ready for Implementation**: All planning and analysis completed
