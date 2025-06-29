@@ -135,11 +135,11 @@ public class DualModePerformanceBenchmark extends BasePerformanceBenchmark {
     }
     
     @Test
-    public void benchmarkEmbeddedConcurrentOperations() throws Exception {
+    public void benchmarkEmbeddedBatchOperations() throws Exception {
         currentMode = "embedded";
         setUp();
         try {
-            super.benchmarkConcurrentOperations();
+            super.benchmarkBatchOperationThroughput();
         } finally {
             tearDown();
         }
@@ -180,11 +180,11 @@ public class DualModePerformanceBenchmark extends BasePerformanceBenchmark {
     }
     
     @Test
-    public void benchmarkRemoteConcurrentOperations() throws Exception {
+    public void benchmarkRemoteBatchOperations() throws Exception {
         currentMode = "remote";
         setUp();
         try {
-            super.benchmarkConcurrentOperations();
+            super.benchmarkBatchOperationThroughput();
         } finally {
             tearDown();
         }
@@ -204,9 +204,9 @@ public class DualModePerformanceBenchmark extends BasePerformanceBenchmark {
     // Comparative test that runs both modes
     @Test
     public void generateComparativePerformanceReport() throws Exception {
-        System.out.println("\n" + "=".repeat(80));
+        System.out.println("\n" + repeatString("=", 80));
         System.out.println("COMPARATIVE PERFORMANCE REPORT: EMBEDDED vs REMOTE");
-        System.out.println("=".repeat(80));
+        System.out.println(repeatString("=", 80));
         
         // Results storage
         double embeddedPutLatency = 0, embeddedGetLatency = 0;
@@ -276,7 +276,7 @@ public class DualModePerformanceBenchmark extends BasePerformanceBenchmark {
         System.out.println("  - Higher latency (gRPC overhead)");
         System.out.println("  - More complex deployment");
         
-        System.out.println("\n" + "=".repeat(80));
+        System.out.println("\n" + repeatString("=", 80));
     }
     
     private void runBasicPerformanceTest() throws Exception {
@@ -331,5 +331,16 @@ public class DualModePerformanceBenchmark extends BasePerformanceBenchmark {
             }
             dir.delete();
         }
+    }
+    
+    /**
+     * Helper method to repeat a string (Java 8 compatible alternative to String.repeat())
+     */
+    private String repeatString(String str, int count) {
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            result.append(str);
+        }
+        return result.toString();
     }
 } 

@@ -107,9 +107,9 @@ public class EmbeddedStorageSPI implements StorageSPI {
             Map<byte[], byte[]> results = new HashMap<>();
             for (byte[] key : keys) {
                 byte[] value = db.getData(key);
-                if (value != null) {
-                    results.put(key, value);
-                }
+                // Always put the key in the results map, even if value is null
+                // This matches the behavior expected by the tests and the gRPC implementation
+                results.put(key, value);
             }
             return results;
         });
