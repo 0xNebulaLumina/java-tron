@@ -29,12 +29,54 @@ services:
       rust-storage-service:
         condition: service_healthy
     environment:
-      - STORAGE_PROVIDER=GRPC
+      - STORAGE_MODE=remote
       - STORAGE_GRPC_HOST=rust-storage-service
       - STORAGE_GRPC_PORT=50051
     volumes:
       - ./data/java-tron:/data
-    command: ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.StorageSPITest"]
+    command: ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.DualStorageModeIntegrationTest.testRemoteStorageMode", "--dependency-verification=off"]
+
+  java-tron-embedded-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-tron
+    environment:
+      - STORAGE_MODE=embedded
+      - STORAGE_EMBEDDED_BASE_PATH=/data/embedded
+    volumes:
+      - ./data/java-tron:/data
+    command: ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.DualStorageModeIntegrationTest.testEmbeddedStorageMode", "--dependency-verification=off"]
+
+  java-tron-dual-mode-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-tron
+    depends_on:
+      rust-storage-service:
+        condition: service_healthy
+    environment:
+      - STORAGE_GRPC_HOST=rust-storage-service
+      - STORAGE_GRPC_PORT=50051
+      - STORAGE_EMBEDDED_BASE_PATH=/data/embedded
+    volumes:
+      - ./data/java-tron:/data
+    command: ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.DualStorageModeIntegrationTest", "--dependency-verification=off"]
+
+  java-tron-performance:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-tron
+    depends_on:
+      rust-storage-service:
+        condition: service_healthy
+    environment:
+      - STORAGE_GRPC_HOST=rust-storage-service
+      - STORAGE_GRPC_PORT=50051
+      - STORAGE_EMBEDDED_BASE_PATH=/data/embedded
+    volumes:
+      - ./data/java-tron:/data
+      - ./reports:/reports
+    command: ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.DualModePerformanceBenchmark.generateComparativePerformanceReport", "--dependency-verification=off"]
 
 volumes:
   rust-storage-data:
