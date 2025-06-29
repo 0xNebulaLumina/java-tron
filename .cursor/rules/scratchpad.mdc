@@ -13,109 +13,42 @@ alwaysApply: false
 - **Gradle Dependency Verification**: When Gradle dependency verification fails, it's usually due to stale verification metadata that needs to be updated for new or changed dependencies.
 - **Performance Metrics Collection**: System.out.println() metrics get buried in Gradle test output. Need dedicated metrics files or better output parsing to extract actual performance data.
 - **Gradle Test Output**: Gradle suppresses test console output by default. Metrics need to be written to dedicated files (JSON/CSV) rather than relying on console output extraction.
-- **Performance Analysis**: Current ~10-12ms latency represents ~100x overhead vs embedded storage, but architectural benefits (crash isolation, operational flexibility) justify the trade-off with planned optimizations.
+- **Performance Analysis**: Current ~1.17ms PUT / 0.76ms GET latency represents ~20x overhead vs embedded storage (0.054ms PUT / 0.045ms GET), but architectural benefits (crash isolation, operational flexibility) justify the trade-off with planned optimizations.
+- **RocksDB Embedded Implementation**: Use `RocksdbStorage` class for embedded benchmarks, need to identify constructor parameters and configuration.
+- **JUnit @Test Inheritance**: Methods in abstract base classes without @Test annotations are not recognized as tests by Gradle, even if inherited. Subclasses must override and add @Test annotations to inherited test methods.
+- **Checkstyle Warnings**: The performance testing script runs Gradle build which triggers checkstyle checks. Use `-x checkstyleMain -x checkstyleTest` flags to skip checkstyle tasks (not `-x checkstyle` which is ambiguous).
 
-# Current Task: Phase 1 Performance Optimizations ✅
-
-## PHASE 8 COMPLETED: Performance Analysis and Optimization Planning
-
-### 🎯 Analysis Results
-**Performance Baseline Established:**
-- **PUT Operations**: 10.48ms average (~95 ops/sec)
-- **GET Operations**: 12.48ms average (~80 ops/sec)
-- **Memory Usage**: 217MB (21% utilization) - very efficient
-- **Architecture**: Multi-process gRPC + Rust RocksDB validated and working
-
-**Performance Gap Analysis:**
-- **Current vs Embedded**: ~100x latency overhead (10-12ms vs ~0.1ms)
-- **Architecture Benefits**: Crash isolation, operational flexibility, monitoring clarity
-- **Optimization Potential**: 5-10x improvement through connection pooling, batching, caching
-
-### ✅ Deliverables Completed
-- ✅ **Performance Analysis Report**: `docs/performance-analysis-report.md` (comprehensive analysis)
-- ✅ **Optimization Implementation Plan**: `docs/optimization-implementation-plan.md` (detailed 3-week plan)
-- ✅ **Architecture Decision Validation**: Multi-process benefits justify performance trade-off
-- ✅ **Success Criteria Definition**: 500-1000 ops/sec target for Phase 1
-- ✅ **Risk Assessment**: Technical and performance risks identified with mitigation strategies
-
-### 📊 Key Findings
-1. **Architecture Validation**: Multi-process separation provides significant operational benefits
-2. **Performance Trade-off**: Acceptable latency overhead for network storage architecture
-3. **Optimization Roadmap**: Clear path to 5-10x improvement through systematic optimizations
-4. **Resource Efficiency**: Excellent memory utilization with good scalability potential
-
-## TODOs
-[X] 分析性能特征和潜在瓶颈
-[X] 与嵌入式存储性能对比
-[X] 识别优化机会和改进建议
-[X] 制定生产就绪性评估
-[ ] **CURRENT: Phase 1 优化实施 - Connection Pooling, Batching, Caching**
-  [ ] Week 1: Connection Pooling and Concurrency (Target: 3-5x improvement)
-  [ ] Week 2: Automatic Batching Layer (Target: 10-50x for multi-op workloads)
-  [ ] Week 3: Caching Layer Implementation (Target: 100x for cache hits)
-[ ] 负载测试 - 真实 java-tron 工作负载
-[ ] 评审 PoC 结果并调整计划
-
-## PHASE 9: Performance Optimization Implementation
-
-### 🔍 Current Focus: Phase 1 Optimizations
-**Objective**: Achieve 5-10x performance improvement to reach 500-1000 ops/sec
-
-### 📈 Implementation Strategy
-1. **Week 1 - Connection Pooling**: 
-   - `PooledGrpcStorageSPI` with round-robin connection selection
-   - `ConcurrentBatchExecutor` for parallel operations
-   - Target: 3-5x throughput improvement
-
-2. **Week 2 - Automatic Batching**:
-   - `BatchingStorageSPI` with time/size-based batching
-   - 10ms batching windows, 100 operation max batches
-   - Target: 10-50x improvement for multi-operation workloads
-
-3. **Week 3 - Caching Layer**:
-   - `CachingStorageSPI` with read-through caching
-   - Separate caches for data and existence checks
-   - Target: 100x improvement for cache hits (90%+ hit rate)
-
-### 🛠️ Technical Architecture
-**Optimization Chain**:
-```
-CachingStorageSPI 
-  -> BatchingStorageSPI 
-    -> PooledGrpcStorageSPI 
-      -> Rust gRPC Service
-```
-
-### 🎯 Success Criteria
-- **Single Operation Throughput**: 500+ ops/sec (5x improvement)
-- **Batch Operation Throughput**: 2,000+ ops/sec (20x improvement)  
-- **Cache Hit Performance**: 5,000+ ops/sec (50x improvement)
-- **Memory Usage**: <400MB total (including caches)
-
-### 📋 Dependencies
-- **Caffeine**: High-performance caching library
-- **Micrometer**: Metrics collection framework
-- **gRPC Netty**: Connection pooling optimization
-- **Java Concurrent Utils**: Thread pool management
-
-## Progress Notes
-- ✅ **Performance Baseline**: Established with actual test data (10.48ms PUT, 12.48ms GET)
-- ✅ **Architecture Validation**: Multi-process benefits confirmed (crash isolation, operational flexibility)
-- ✅ **Optimization Strategy**: Detailed 3-week implementation plan created
-- ✅ **Technical Design**: Complete implementation specifications for all optimization layers
-- 🔄 **Ready for Implementation**: All planning and analysis completed
-
-## Performance Summary (Current Baseline)
-- **gRPC Storage Service**: Functional and stable
-- **Single Operation Latency**: PUT ~10.5ms, GET ~12.5ms (acceptable for network storage)
-- **System Resources**: 217MB memory usage (21% utilization) - very efficient
-- **Architecture Benefits**: Crash isolation, operational flexibility, monitoring clarity
-- **Optimization Potential**: 5-10x improvement through systematic optimizations
-
-# Current Task: Replace Java RocksDB with Rust implementation
+# High-level Task: Replace Java RocksDB with Rust implementation
 
 ## Overview
 将 java-tron 当前嵌入式 LevelDB/RocksDB 存储替换为 Rust 实现，并评估单进程 FFI 与多进程 IPC 两种方案。
+
+## Pros & Cons of Candidate Solutions
+
+### Plan A – In-Process JNI + Rust RocksDB
+**Pros**
+1. 延迟最低：单进程内存调用，无 IPC/序列化成本。
+2. 替换成本低：仅重写 JNI 包装层，可沿用现有 DB 调用逻辑。
+3. 代码路径短：事务/批处理语义保持一致，最少业务改动。
+
+**Cons**
+1. 故障隔离差：Rust panic 或 native 崩溃会直接终止 JVM。
+2. 调优复杂：JVM GC 与 Rust allocator 共享进程内存，易出现 OOM/碎片。
+3. 热升级困难：更新 Rust 库需重启整条 Java 节点，运维窗口大。
+4. 开发体验一般：JNI/FFI 需要手工管理内存、错误码与异常映射。
+
+### Plan B – Multi-Process gRPC + Rust DB Node
+**Pros**
+1. 崩溃隔离：Rust 进程异常不影响 JVM，可自动重启/切流。
+2. 易于扩缩：可复用同一 DB 服务供多 Java 节点访问，也便于集群化。
+3. 运维友好：分别打包镜像，滚动升级与资源限制更灵活。
+4. 监控可观测：Rust 进程单独暴露 Metrics，链路追踪清晰。
+
+**Cons**
+1. 额外时延：IPC + 序列化 开销，对小 KV 负载影响明显。
+2. 代码改动大：Java 侧需重写存储访问层并处理网络异常重试。
+3. 数据一致性：需重新设计事务/批量接口，保证语义不变。
+4. 部署复杂度：端口、TLS、本地权限管理、进程编排皆需处理。
 
 **DECISION: 选择 Plan B - Multi-Process gRPC + Rust DB Node**
 
@@ -227,16 +160,16 @@ CachingStorageSPI
 [X] **生产就绪评估** - 安全性、监控、部署考虑完成
 [X] **实施计划创建** - 3周详细优化实施计划
 
-## Current Status: PHASE 9 - PERFORMANCE OPTIMIZATION IMPLEMENTATION
-
 **PHASE 8 COMPLETED**: 性能分析和优化规划
 
 ### 📋 Phase 8 Summary:
-- ✅ **性能基线分析**: 建立了准确的性能特征 (PUT ~10.5ms, GET ~12.5ms)
+- ✅ **性能基线分析**: 建立了准确的性能特征 (PUT ~1.17ms, GET ~0.76ms)
 - ✅ **架构效益验证**: 确认多进程架构的运维和稳定性优势
 - ✅ **优化策略制定**: 详细的3阶段优化实施计划
 - ✅ **技术方案设计**: 完整的连接池、批处理、缓存实现规范
 - ✅ **成功标准定义**: 明确的性能目标和验证标准
+
+## Current Status: PHASE 9 - PERFORMANCE OPTIMIZATION IMPLEMENTATION
 
 ### 🎯 PHASE 9: Performance Optimization Implementation
 **当前行动**: 实施 Phase 1 性能优化 (连接池、批处理、缓存)
@@ -254,31 +187,53 @@ CachingStorageSPI
 - **Week 1**: Connection Pooling and Concurrency (Target: 3-5x improvement)
 - **Week 2**: Automatic Batching Layer (Target: 10-50x for multi-op workloads)
 - **Week 3**: Caching Layer Implementation (Target: 100x for cache hits)
-- **Expected Outcome**: 5-10x overall performance improvement (500-1000 ops/sec)
+- **Expected Outcome**: 3-5x overall performance improvement (2,000-5,000 ops/sec from current 858-1,318 ops/sec)
 
-## Pros & Cons of Candidate Solutions
+## PHASE 9: Performance Optimization Implementation
 
-### Plan A – In-Process JNI + Rust RocksDB
-**Pros**
-1. 延迟最低：单进程内存调用，无 IPC/序列化成本。
-2. 替换成本低：仅重写 JNI 包装层，可沿用现有 DB 调用逻辑。
-3. 代码路径短：事务/批处理语义保持一致，最少业务改动。
+### 🔍 Current Focus: Phase 1 Optimizations
+**Objective**: Achieve 3-5x performance improvement to reach 2,000-5,000 ops/sec
 
-**Cons**
-1. 故障隔离差：Rust panic 或 native 崩溃会直接终止 JVM。
-2. 调优复杂：JVM GC 与 Rust allocator 共享进程内存，易出现 OOM/碎片。
-3. 热升级困难：更新 Rust 库需重启整条 Java 节点，运维窗口大。
-4. 开发体验一般：JNI/FFI 需要手工管理内存、错误码与异常映射。
+### 📈 Implementation Strategy
+1. **Week 1 - Connection Pooling**: 
+   - `PooledGrpcStorageSPI` with round-robin connection selection
+   - `ConcurrentBatchExecutor` for parallel operations
+   - Target: 3-5x throughput improvement
 
-### Plan B – Multi-Process gRPC + Rust DB Node
-**Pros**
-1. 崩溃隔离：Rust 进程异常不影响 JVM，可自动重启/切流。
-2. 易于扩缩：可复用同一 DB 服务供多 Java 节点访问，也便于集群化。
-3. 运维友好：分别打包镜像，滚动升级与资源限制更灵活。
-4. 监控可观测：Rust 进程单独暴露 Metrics，链路追踪清晰。
+2. **Week 2 - Automatic Batching**:
+   - `BatchingStorageSPI` with time/size-based batching
+   - 10ms batching windows, 100 operation max batches
+   - Target: 10-50x improvement for multi-operation workloads
 
-**Cons**
-1. 额外时延：IPC + 序列化 开销，对小 KV 负载影响明显。
-2. 代码改动大：Java 侧需重写存储访问层并处理网络异常重试。
-3. 数据一致性：需重新设计事务/批量接口，保证语义不变。
-4. 部署复杂度：端口、TLS、本地权限管理、进程编排皆需处理。
+3. **Week 3 - Caching Layer**:
+   - `CachingStorageSPI` with read-through caching
+   - Separate caches for data and existence checks
+   - Target: 100x improvement for cache hits (90%+ hit rate)
+
+### 🛠️ Technical Architecture
+**Optimization Chain**:
+```
+CachingStorageSPI 
+  -> BatchingStorageSPI 
+    -> PooledGrpcStorageSPI 
+      -> Rust gRPC Service
+```
+
+### 🎯 Success Criteria
+- **Single Operation Throughput**: 2,000-5,000 ops/sec (3-5x improvement from current 858-1,318)
+- **Batch Operation Throughput**: 100K+ ops/sec (2x improvement from current 79K)  
+- **Cache Hit Performance**: 50,000+ ops/sec (100x improvement for cache hits)
+- **Memory Usage**: <400MB total (including caches, current 222MB)
+
+### 📋 Dependencies
+- **Caffeine**: High-performance caching library
+- **Micrometer**: Metrics collection framework
+- **gRPC Netty**: Connection pooling optimization
+- **Java Concurrent Utils**: Thread pool management
+
+## Progress Notes
+- ✅ **Performance Baseline**: Established with actual test data (1.17ms PUT, 0.76ms GET)
+- ✅ **Architecture Validation**: Multi-process benefits confirmed (crash isolation, operational flexibility)
+- ✅ **Optimization Strategy**: Detailed 3-week implementation plan created
+- ✅ **Technical Design**: Complete implementation specifications for all optimization layers
+- 🔄 **Ready for Implementation**: All planning and analysis completed

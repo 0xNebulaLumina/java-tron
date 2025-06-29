@@ -1,0 +1,155 @@
+# Extracted Performance Metrics
+Timestamp: Sat Jun 28 02:09:43 PM CEST 2025
+
+## benchmarkBatchOperationThroughput
+
+  batch_write_10_latency: 18.132944 ms
+  batch_write_10_throughput: 551.482429 ops/sec
+  batch_write_10_bandwidth: 0.134639 MB/sec
+  batch_get_10_latency: 16.669088 ms
+  batch_get_10_throughput: 599.912845 ops/sec
+  batch_get_10_bandwidth: 0.146463 MB/sec
+  batch_write_50_latency: 5.328588 ms
+  batch_write_50_throughput: 9383.348835 ops/sec
+  batch_write_50_bandwidth: 2.290857 MB/sec
+  batch_get_50_latency: 4.169537 ms
+  batch_get_50_throughput: 11991.739131 ops/sec
+  batch_get_50_bandwidth: 2.927671 MB/sec
+  batch_write_100_latency: 5.876988 ms
+  batch_write_100_throughput: 17015.518834 ops/sec
+  batch_write_100_bandwidth: 4.154179 MB/sec
+  batch_get_100_latency: 4.685516 ms
+  batch_get_100_throughput: 21342.366561 ops/sec
+  batch_get_100_bandwidth: 5.210539 MB/sec
+  batch_write_500_latency: 12.444127 ms
+  batch_write_500_throughput: 40179.596367 ops/sec
+  batch_write_500_bandwidth: 9.809472 MB/sec
+  batch_get_500_latency: 10.688303 ms
+  batch_get_500_throughput: 46780.110931 ops/sec
+  batch_get_500_bandwidth: 11.420926 MB/sec
+  batch_write_1000_latency: 16.992087 ms
+  batch_write_1000_throughput: 58850.922785 ops/sec
+  batch_write_1000_bandwidth: 14.367901 MB/sec
+  batch_get_1000_latency: 12.556272 ms
+  batch_get_1000_throughput: 79641.473202 ops/sec
+  batch_get_1000_bandwidth: 19.443719 MB/sec
+      BENCHMARK: GrpcBatchOperationThroughput
+      METRIC: GrpcBatchOperationThroughput.batch_write_10_latency = 18.132944 ms
+      METRIC: GrpcBatchOperationThroughput.batch_write_10_throughput = 551.482429 ops/sec
+      METRIC: GrpcBatchOperationThroughput.batch_write_10_bandwidth = 0.134639 MB/sec
+      METRIC: GrpcBatchOperationThroughput.batch_get_10_latency = 16.669088 ms
+      METRIC: GrpcBatchOperationThroughput.batch_get_10_throughput = 599.912845 ops/sec
+      METRIC: GrpcBatchOperationThroughput.batch_get_10_bandwidth = 0.146463 MB/sec
+      METRIC: GrpcBatchOperationThroughput.batch_write_50_latency = 5.328588 ms
+      METRIC: GrpcBatchOperationThroughput.batch_write_50_throughput = 9383.348835 ops/sec
+      METRIC: GrpcBatchOperationThroughput.batch_write_50_bandwidth = 2.290857 MB/sec
+      METRIC: GrpcBatchOperationThroughput.batch_get_50_latency = 4.169537 ms
+      METRIC: GrpcBatchOperationThroughput.batch_get_50_throughput = 11991.739131 ops/sec
+      METRIC: GrpcBatchOperationThroughput.batch_get_50_bandwidth = 2.927671 MB/sec
+
+## benchmarkSingleOperationLatency
+
+  put_avg_latency: 1.165272 ms
+  put_min_latency: 0.712436 ms
+  put_max_latency: 7.082735 ms
+  put_throughput: 858.168373 ops/sec
+  get_avg_latency: 0.758637 ms
+  get_min_latency: 0.463669 ms
+  get_max_latency: 10.713625 ms
+  get_throughput: 1318.152663 ops/sec
+      BENCHMARK: GrpcSingleOperationLatency
+      METRIC: GrpcSingleOperationLatency.put_avg_latency = 1.165272 ms
+      METRIC: GrpcSingleOperationLatency.put_min_latency = 0.712436 ms
+      METRIC: GrpcSingleOperationLatency.put_max_latency = 7.082735 ms
+      METRIC: GrpcSingleOperationLatency.put_throughput = 858.168373 ops/sec
+      METRIC: GrpcSingleOperationLatency.get_avg_latency = 0.758637 ms
+      METRIC: GrpcSingleOperationLatency.get_min_latency = 0.463669 ms
+      METRIC: GrpcSingleOperationLatency.get_max_latency = 10.713625 ms
+      METRIC: GrpcSingleOperationLatency.get_throughput = 1318.152663 ops/sec
+      SUMMARY: GrpcSingleOperationLatency
+
+## generatePerformanceReport
+
+  max_memory: 1024.000000 MB
+  used_memory: 222.000000 MB
+  available_processors: 8.000000 count
+  active_databases: 2.000000 count
+  basic_put_latency: 10.607440 ms
+  basic_get_latency: 22.647441 ms
+
+## benchmarkBatchOperationThroughput
+
+  batch_write_10_latency: 4.766088 ms
+  batch_write_10_throughput: 2098.156811 ops/sec
+  batch_write_10_bandwidth: 0.512245 MB/sec
+  batch_get_10_latency: 0.868766 ms
+  batch_get_10_throughput: 11510.579374 ops/sec
+  batch_get_10_bandwidth: 2.810200 MB/sec
+  batch_write_50_latency: 0.310806 ms
+  batch_write_50_throughput: 160872.055237 ops/sec
+  batch_write_50_bandwidth: 39.275404 MB/sec
+  batch_get_50_latency: 0.332648 ms
+  batch_get_50_throughput: 150309.035377 ops/sec
+  batch_get_50_bandwidth: 36.696542 MB/sec
+  batch_write_100_latency: 0.471095 ms
+  batch_write_100_throughput: 212271.410225 ops/sec
+  batch_write_100_bandwidth: 51.824075 MB/sec
+  batch_get_100_latency: 0.530017 ms
+  batch_get_100_throughput: 188673.193501 ops/sec
+  batch_get_100_bandwidth: 46.062791 MB/sec
+  batch_write_500_latency: 1.664405 ms
+  batch_write_500_throughput: 300407.653185 ops/sec
+  batch_write_500_bandwidth: 73.341712 MB/sec
+  batch_get_500_latency: 2.526459 ms
+  batch_get_500_throughput: 197905.447902 ops/sec
+  batch_get_500_bandwidth: 48.316760 MB/sec
+  batch_write_1000_latency: 1.894196 ms
+  batch_write_1000_throughput: 527928.472027 ops/sec
+  batch_write_1000_bandwidth: 128.888787 MB/sec
+  batch_get_1000_latency: 2.080123 ms
+  batch_get_1000_throughput: 480740.802347 ops/sec
+  batch_get_1000_bandwidth: 117.368360 MB/sec
+      BENCHMARK: EmbeddedBatchOperationThroughput
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_10_latency = 4.766088 ms
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_10_throughput = 2098.156811 ops/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_10_bandwidth = 0.512245 MB/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_10_latency = 0.868766 ms
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_10_throughput = 11510.579374 ops/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_10_bandwidth = 2.810200 MB/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_50_latency = 0.310806 ms
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_50_throughput = 160872.055237 ops/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_50_bandwidth = 39.275404 MB/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_50_latency = 0.332648 ms
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_50_throughput = 150309.035377 ops/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_50_bandwidth = 36.696542 MB/sec
+
+## benchmarkSingleOperationLatency
+
+  put_avg_latency: 0.053942 ms
+  put_min_latency: 0.024928 ms
+  put_max_latency: 0.678784 ms
+  put_throughput: 18538.320191 ops/sec
+  get_avg_latency: 0.045145 ms
+  get_min_latency: 0.015089 ms
+  get_max_latency: 1.751635 ms
+  get_throughput: 22150.778087 ops/sec
+      BENCHMARK: EmbeddedSingleOperationLatency
+      METRIC: EmbeddedSingleOperationLatency.put_avg_latency = 0.053942 ms
+      METRIC: EmbeddedSingleOperationLatency.put_min_latency = 0.024928 ms
+      METRIC: EmbeddedSingleOperationLatency.put_max_latency = 0.678784 ms
+      METRIC: EmbeddedSingleOperationLatency.put_throughput = 18538.320191 ops/sec
+      METRIC: EmbeddedSingleOperationLatency.get_avg_latency = 0.045145 ms
+      METRIC: EmbeddedSingleOperationLatency.get_min_latency = 0.015089 ms
+      METRIC: EmbeddedSingleOperationLatency.get_max_latency = 1.751635 ms
+      METRIC: EmbeddedSingleOperationLatency.get_throughput = 22150.778087 ops/sec
+      SUMMARY: EmbeddedSingleOperationLatency
+
+## generatePerformanceReport
+
+  max_memory: 1024.000000 MB
+  used_memory: 70.000000 MB
+  available_processors: 8.000000 count
+  active_databases: 1.000000 count
+  basic_put_latency: 1.519955 ms
+  basic_get_latency: 0.523935 ms
+

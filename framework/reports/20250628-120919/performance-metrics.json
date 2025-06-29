@@ -1,14 +1,13 @@
 {
   "testRun": {
-    "timestamp": "20250623-123305",
-    "grpcHost": "localhost",
-    "grpcPort": 50051,
+    "timestamp": "20250628-120919",
+    "implementation": "Embedded",
     "javaVersion": "1.8.0_452",
     "availableProcessors": 8,
     "maxMemoryMB": 1024
   },
   "benchmarks": {
-    "BatchOperationThroughput": {
+    "EmbeddedBatchOperationThroughput": {
       "batchSize10": {
         "size": 10,
         "valueSize": 256
