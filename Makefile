@@ -16,6 +16,10 @@ help:
 	@echo "  performance-test   - Run performance benchmarks (requires gRPC server)"
 	@echo "  perf-analysis      - Run detailed performance analysis with reports"
 	@echo "  perf-analysis-strict - Run performance analysis with dependency verification"
+	@echo "  dual-mode-test     - Test both embedded and remote storage modes"
+	@echo "  embedded-test      - Test embedded storage mode only"
+	@echo "  remote-test        - Test remote storage mode only (requires gRPC server)"
+	@echo "  dual-mode-perf     - Compare performance of embedded vs remote modes"
 	@echo "  clean              - Clean build artifacts"
 	@echo "  rust-build         - Build Rust storage service"
 	@echo "  java-build         - Build Java components"
@@ -158,4 +162,55 @@ update-verification:
 fix-verification:
 	@echo "Fixing dependency verification metadata..."
 	@echo "This will update gradle/verification-metadata.xml with current dependency checksums"
-	./gradlew --write-verification-metadata sha256 :framework:dependencies 
+	./gradlew --write-verification-metadata sha256 :framework:dependencies
+
+# Dual-mode testing targets
+dual-mode-test:
+	@echo "Running dual-mode storage tests..."
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSpiFactoryTest" \
+		--dependency-verification=off
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.DualStorageModeIntegrationTest" \
+		--dependency-verification=off \
+		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT)
+
+# Test embedded storage mode only
+embedded-test:
+	@echo "Running embedded storage tests..."
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.DualStorageModeIntegrationTest.testEmbeddedStorageMode" \
+		--dependency-verification=off
+
+# Test remote storage mode only (requires gRPC server)
+remote-test:
+	@echo "Running remote storage tests..."
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.DualStorageModeIntegrationTest.testRemoteStorageMode" \
+		--dependency-verification=off \
+		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT)
+
+# Compare performance of embedded vs remote modes
+dual-mode-perf:
+	@echo "Running dual-mode performance comparison..."
+	@mkdir -p reports
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.DualModePerformanceBenchmark.generateComparativePerformanceReport" \
+		--dependency-verification=off \
+		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT) 2>&1 | tee reports/dual-mode-performance-$(shell date +%Y%m%d-%H%M%S).txt
+
+# Test embedded mode performance only
+embedded-perf:
+	@echo "Running embedded mode performance tests..."
+	@mkdir -p reports
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.DualModePerformanceBenchmark.generateEmbeddedPerformanceReport" \
+		--dependency-verification=off 2>&1 | tee reports/embedded-performance-$(shell date +%Y%m%d-%H%M%S).txt
+
+# Test remote mode performance only (requires gRPC server)
+remote-perf:
+	@echo "Running remote mode performance tests..."
+	@mkdir -p reports
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.DualModePerformanceBenchmark.generateRemotePerformanceReport" \
+		--dependency-verification=off \
+		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT) 2>&1 | tee reports/remote-performance-$(shell date +%Y%m%d-%H%M%S).txt
+
+# Show storage configuration info
+storage-config:
+	@echo "Displaying current storage configuration..."
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSpiFactoryTest.testConfigurationInfo" \
+		--dependency-verification=off 
