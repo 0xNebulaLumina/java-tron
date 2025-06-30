@@ -11,7 +11,7 @@ import org.tron.core.db.common.DbSourceInter;
 import org.tron.core.db2.common.WrappedByteArray;
 
 /**
- * Adapter that implements DbSourceInter<byte[]> using StorageSPI backend. This bridges the gap
+ * Adapter that implements DbSourceInter&lt;byte[]&gt; using StorageSPI backend. This bridges the gap
  * between the existing TronDatabase interface and our new StorageSPI.
  */
 @Slf4j(topic = "DB")

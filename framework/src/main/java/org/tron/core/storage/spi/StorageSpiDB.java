@@ -8,7 +8,7 @@ import org.tron.core.db.common.DbSourceInter;
 import org.tron.core.db2.common.DB;
 
 /**
- * Adapter that implements DB<byte[], byte[]> using StorageSPI backend. This is used for
+ * Adapter that implements DB&lt;byte[], byte[]&gt; using StorageSPI backend. This is used for
  * TronStoreWithRevoking's revoking database functionality.
  */
 @Slf4j(topic = "DB")

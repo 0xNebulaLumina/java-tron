@@ -201,6 +201,9 @@ public class StorageSpiFactory {
         info.append("  gRPC Host: ").append(getGrpcHost()).append("\n");
         info.append("  gRPC Port: ").append(getGrpcPort()).append("\n");
         break;
+      default:
+        info.append("  Unknown mode configuration\n");
+        break;
     }
 
     return info.toString();
