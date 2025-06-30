@@ -19,6 +19,9 @@ import org.tron.core.services.interfaceOnPBFT.RpcApiServiceOnPBFT;
 import org.tron.core.services.interfaceOnPBFT.http.PBFT.HttpApiOnPBFTService;
 import org.tron.core.services.interfaceOnSolidity.RpcApiServiceOnSolidity;
 import org.tron.core.services.interfaceOnSolidity.http.solidity.HttpApiOnSolidityService;
+import org.tron.core.storage.spi.StorageBackendFactoryImpl;
+
+import javax.annotation.PostConstruct;
 
 @Slf4j(topic = "app")
 @Configuration
@@ -28,6 +31,15 @@ public class DefaultConfig {
   static {
     RocksDB.loadLibrary();
     ParserConfig.getGlobalInstance().setSafeMode(true);
+    
+    // Initialize StorageBackendFactory as early as possible during class loading
+    // This ensures it's available when database constructors are called during Spring bean creation
+    try {
+      StorageBackendFactoryImpl.initialize();
+      logger.info("StorageBackendFactory initialized during static class loading");
+    } catch (Exception e) {
+      logger.warn("Failed to initialize StorageBackendFactory during static loading, will retry in @PostConstruct", e);
+    }
   }
 
   @Autowired
@@ -37,6 +49,25 @@ public class DefaultConfig {
   public CommonConfig commonConfig;
 
   public DefaultConfig() {
+  }
+
+  /**
+   * Initialize StorageBackendFactory early in Spring lifecycle.
+   * This is a backup initialization in case the static block failed.
+   */
+  @PostConstruct
+  public void initializeStorageBackend() {
+    try {
+      // Check if already initialized
+      if (org.tron.core.storage.spi.StorageBackendFactory.getInstance() == null) {
+        StorageBackendFactoryImpl.initialize();
+        logger.info("StorageBackendFactory initialized in @PostConstruct");
+      } else {
+        logger.debug("StorageBackendFactory already initialized");
+      }
+    } catch (Exception e) {
+      logger.error("Failed to initialize StorageBackendFactory in @PostConstruct", e);
+    }
   }
 
   @Bean(destroyMethod = "")

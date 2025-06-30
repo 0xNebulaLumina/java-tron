@@ -11,7 +11,6 @@ import org.tron.core.db.Manager;
 import org.tron.core.metrics.MetricsUtil;
 import org.tron.core.net.TronNetService;
 import org.tron.core.services.event.EventService;
-import org.tron.core.storage.spi.StorageBackendFactoryImpl;
 
 @Slf4j(topic = "app")
 @Component
@@ -41,9 +40,6 @@ public class ApplicationImpl implements Application {
    * start up the app.
    */
   public void startup() {
-    // Initialize the storage backend factory early in startup
-    StorageBackendFactoryImpl.initialize();
-    
     this.startServices();
     eventService.init();
     consensusService.start();
