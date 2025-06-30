@@ -38,7 +38,8 @@ public class DefaultConfig {
       logger.info("StorageBackendFactory initialized during static class loading");
     } catch (Exception e) {
       logger.warn(
-          "Failed to initialize StorageBackendFactory during static loading, will retry in @PostConstruct",
+          "Failed to initialize StorageBackendFactory during static loading, "
+              + "will retry in @PostConstruct",
           e);
     }
   }
