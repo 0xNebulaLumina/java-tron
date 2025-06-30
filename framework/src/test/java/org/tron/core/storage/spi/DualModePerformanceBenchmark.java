@@ -209,8 +209,10 @@ public class DualModePerformanceBenchmark extends BasePerformanceBenchmark {
     System.out.println(repeatString("=", 80));
 
     // Results storage
-    double embeddedPutLatency = 0, embeddedGetLatency = 0;
-    double remotePutLatency = 0, remoteGetLatency = 0;
+    double embeddedPutLatency = 0;
+    double embeddedGetLatency = 0;
+    double remotePutLatency = 0;
+    double remoteGetLatency = 0;
 
     // Test embedded mode
     try {

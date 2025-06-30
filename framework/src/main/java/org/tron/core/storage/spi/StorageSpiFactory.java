@@ -69,7 +69,7 @@ public class StorageSpiFactory {
     if (mode == null) {
       throw new IllegalArgumentException("Storage mode cannot be null");
     }
-    
+
     logger.info("Creating storage implementation for specified mode: {}", mode);
 
     try {

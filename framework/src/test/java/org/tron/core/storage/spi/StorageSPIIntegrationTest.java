@@ -117,7 +117,10 @@ public class StorageSPIIntegrationTest {
     Assert.assertEquals("Should return 4 results", 4, batchResult.size());
 
     // Verify retrieved values using iteration (to avoid byte[] key matching issues)
-    boolean foundKey0 = false, foundKey5 = false, foundKey9 = false, foundNonExistent = false;
+    boolean foundKey0 = false;
+    boolean foundKey5 = false;
+    boolean foundKey9 = false;
+    boolean foundNonExistent = false;
 
     for (Map.Entry<byte[], byte[]> entry : batchResult.entrySet()) {
       String keyStr = new String(entry.getKey());
@@ -139,6 +142,9 @@ public class StorageSPIIntegrationTest {
         case "non-existent-key":
           Assert.assertNull("Non-existent key should return null", value);
           foundNonExistent = true;
+          break;
+        default:
+          // No action needed for unexpected keys
           break;
       }
     }
