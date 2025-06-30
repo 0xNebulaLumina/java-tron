@@ -59,6 +59,35 @@ public class StorageSpiFactory {
   }
 
   /**
+   * Create a StorageSPI implementation for the specified mode.
+   *
+   * @param mode The storage mode to use (EMBEDDED or REMOTE)
+   * @return Configured StorageSPI implementation
+   * @throws RuntimeException if configuration is invalid or implementation cannot be created
+   */
+  public static StorageSPI createStorage(StorageMode mode) {
+    if (mode == null) {
+      throw new IllegalArgumentException("Storage mode cannot be null");
+    }
+    
+    logger.info("Creating storage implementation for specified mode: {}", mode);
+
+    try {
+      switch (mode) {
+        case EMBEDDED:
+          return createEmbeddedStorage();
+        case REMOTE:
+          return createRemoteStorage();
+        default:
+          throw new IllegalStateException("Unsupported storage mode: " + mode);
+      }
+    } catch (Exception e) {
+      logger.error("Failed to create storage implementation for mode: {}", mode, e);
+      throw new RuntimeException("Storage initialization failed", e);
+    }
+  }
+
+  /**
    * Determine storage mode from configuration sources.
    *
    * @return Configured StorageMode
