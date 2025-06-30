@@ -35,6 +35,8 @@ import org.tron.core.db2.core.ITronChainBase;
 import org.tron.core.db2.core.SnapshotRoot;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.ItemNotFoundException;
+import org.tron.core.storage.spi.StorageMode;
+import org.tron.core.storage.spi.StorageBackendFactory;
 
 
 @Slf4j(topic = "DB")
@@ -55,25 +57,52 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
   private final DB<byte[], byte[]> db;
 
   protected TronStoreWithRevoking(String dbName) {
-    String dbEngine = CommonParameter.getInstance().getStorage().getDbEngine();
-    if ("LEVELDB".equals(dbEngine.toUpperCase())) {
-      this.db =  new LevelDB(
-          new LevelDbDataSourceImpl(StorageUtils.getOutputDirectoryByDbName(dbName),
-              dbName,
-              getOptionsByDbNameForLevelDB(dbName),
-              new WriteOptions().sync(CommonParameter.getInstance()
-                  .getStorage().isDbSync())));
-    } else if ("ROCKSDB".equals(dbEngine.toUpperCase())) {
-      String parentPath = Paths
-          .get(StorageUtils.getOutputDirectoryByDbName(dbName), CommonParameter
-              .getInstance().getStorage().getDbDirectory()).toString();
-      this.db =  new RocksDB(
-          new RocksDbDataSourceImpl(parentPath,
-              dbName, CommonParameter.getInstance()
-              .getRocksDBCustomSettings(), getDirectComparator()));
-    } else {
-      throw new RuntimeException(String.format("db engine %s is error", dbEngine));
+    DB<byte[], byte[]> database = null;
+    
+    // Check if we should use the new dual storage mode
+    String storageMode = CommonParameter.getInstance().getStorage().getStorageMode();
+    if (storageMode != null && ("embedded".equalsIgnoreCase(storageMode) || "remote".equalsIgnoreCase(storageMode))) {
+      try {
+        // Use the new StorageBackend factory
+        StorageBackendFactory factory = StorageBackendFactory.getInstance();
+        if (factory != null) {
+          StorageMode mode = StorageMode.fromString(storageMode);
+          StorageBackendDbSource dbSource = new StorageBackendDbSource(dbName, factory.createStorageBackend(mode, dbName));
+          database = new StorageBackendDB(dbSource);
+          logger.info("Initialized revoking database {} using StorageBackend with mode: {}", dbName, mode);
+        } else {
+          logger.warn("StorageBackendFactory not initialized, falling back to legacy storage for revoking database: {}", dbName);
+        }
+      } catch (Exception e) {
+        logger.error("Failed to initialize StorageBackend for revoking database: {}, falling back to legacy storage", dbName, e);
+        // Fall through to legacy initialization
+      }
     }
+
+    // Legacy storage initialization if dual mode failed or not configured
+    if (database == null) {
+      String dbEngine = CommonParameter.getInstance().getStorage().getDbEngine();
+      if ("LEVELDB".equals(dbEngine.toUpperCase())) {
+        database =  new LevelDB(
+            new LevelDbDataSourceImpl(StorageUtils.getOutputDirectoryByDbName(dbName),
+                dbName,
+                getOptionsByDbNameForLevelDB(dbName),
+                new WriteOptions().sync(CommonParameter.getInstance()
+                    .getStorage().isDbSync())));
+      } else if ("ROCKSDB".equals(dbEngine.toUpperCase())) {
+        String parentPath = Paths
+            .get(StorageUtils.getOutputDirectoryByDbName(dbName), CommonParameter
+                .getInstance().getStorage().getDbDirectory()).toString();
+        database =  new RocksDB(
+            new RocksDbDataSourceImpl(parentPath,
+                dbName, CommonParameter.getInstance()
+                .getRocksDBCustomSettings(), getDirectComparator()));
+      } else {
+        throw new RuntimeException(String.format("db engine %s is error", dbEngine));
+      }
+    }
+    
+    this.db = database;
     this.revokingDB = new Chainbase(new SnapshotRoot(this.db));
   }
 

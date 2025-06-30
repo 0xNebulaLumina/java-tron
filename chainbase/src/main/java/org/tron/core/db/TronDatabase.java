@@ -22,6 +22,8 @@ import org.tron.core.db2.common.WrappedByteArray;
 import org.tron.core.db2.core.ITronChainBase;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.ItemNotFoundException;
+import org.tron.core.storage.spi.StorageMode;
+import org.tron.core.storage.spi.StorageBackendFactory;
 
 @Slf4j(topic = "DB")
 public abstract class TronDatabase<T> implements ITronChainBase<T> {
@@ -38,6 +40,28 @@ public abstract class TronDatabase<T> implements ITronChainBase<T> {
   protected TronDatabase(String dbName) {
     this.dbName = dbName;
 
+    // Check if we should use the new dual storage mode
+    String storageMode = CommonParameter.getInstance().getStorage().getStorageMode();
+    if (storageMode != null && ("embedded".equalsIgnoreCase(storageMode) || "remote".equalsIgnoreCase(storageMode))) {
+      try {
+        // Use the new StorageBackend factory
+        StorageBackendFactory factory = StorageBackendFactory.getInstance();
+        if (factory != null) {
+          StorageMode mode = StorageMode.fromString(storageMode);
+          dbSource = new StorageBackendDbSource(dbName, factory.createStorageBackend(mode, dbName));
+          dbSource.initDB();
+          logger.info("Initialized database {} using StorageBackend with mode: {}", dbName, mode);
+          return;
+        } else {
+          logger.warn("StorageBackendFactory not initialized, falling back to legacy storage for database: {}", dbName);
+        }
+      } catch (Exception e) {
+        logger.error("Failed to initialize StorageBackend for database: {}, falling back to legacy storage", dbName, e);
+        // Fall through to legacy initialization
+      }
+    }
+
+    // Legacy storage initialization
     if ("LEVELDB".equals(CommonParameter.getInstance().getStorage()
         .getDbEngine().toUpperCase())) {
       dbSource =

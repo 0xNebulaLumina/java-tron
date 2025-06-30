@@ -47,6 +47,7 @@ public class Storage {
   /**
    * Keys (names) of database config
    */
+  private static final String STORAGE_MODE_CONFIG_KEY = "storage.mode";
   private static final String DB_DIRECTORY_CONFIG_KEY = "storage.db.directory";
   private static final String DB_ENGINE_CONFIG_KEY = "storage.db.engine";
   private static final String DB_SYNC_CONFIG_KEY = "storage.db.sync";
@@ -86,6 +87,7 @@ public class Storage {
   /**
    * Default values of directory
    */
+  private static final String DEFAULT_STORAGE_MODE = "embedded";
   private static final String DEFAULT_DB_ENGINE = "LEVELDB";
   private static final boolean DEFAULT_DB_SYNC = false;
   private static final boolean DEFAULT_EVENT_SUBSCRIBE_CONTRACT_PARSE = true;
@@ -104,6 +106,10 @@ public class Storage {
   @Getter
   @Setter
   private String dbDirectory;
+
+  @Getter
+  @Setter
+  private String storageMode;
 
   @Getter
   @Setter
@@ -169,6 +175,11 @@ public class Storage {
 
   // db root
   private final Map<String, Sha256Hash> dbRoots = Maps.newConcurrentMap();
+
+  public static String getStorageModeFromConfig(final Config config) {
+    return config.hasPath(STORAGE_MODE_CONFIG_KEY)
+        ? config.getString(STORAGE_MODE_CONFIG_KEY) : DEFAULT_STORAGE_MODE;
+  }
 
   public static String getDbEngineFromConfig(final Config config) {
     return config.hasPath(DB_ENGINE_CONFIG_KEY)
