@@ -1,6 +1,7 @@
 package org.tron.core.config;
 
 import com.alibaba.fastjson.parser.ParserConfig;
+import javax.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.rocksdb.RocksDB;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,8 +22,6 @@ import org.tron.core.services.interfaceOnSolidity.RpcApiServiceOnSolidity;
 import org.tron.core.services.interfaceOnSolidity.http.solidity.HttpApiOnSolidityService;
 import org.tron.core.storage.spi.StorageBackendFactoryImpl;
 
-import javax.annotation.PostConstruct;
-
 @Slf4j(topic = "app")
 @Configuration
 @Import(CommonConfig.class)
@@ -31,29 +30,28 @@ public class DefaultConfig {
   static {
     RocksDB.loadLibrary();
     ParserConfig.getGlobalInstance().setSafeMode(true);
-    
+
     // Initialize StorageBackendFactory as early as possible during class loading
     // This ensures it's available when database constructors are called during Spring bean creation
     try {
       StorageBackendFactoryImpl.initialize();
       logger.info("StorageBackendFactory initialized during static class loading");
     } catch (Exception e) {
-      logger.warn("Failed to initialize StorageBackendFactory during static loading, will retry in @PostConstruct", e);
+      logger.warn(
+          "Failed to initialize StorageBackendFactory during static loading, will retry in @PostConstruct",
+          e);
     }
   }
 
-  @Autowired
-  public ApplicationContext appCtx;
+  @Autowired public ApplicationContext appCtx;
 
-  @Autowired
-  public CommonConfig commonConfig;
+  @Autowired public CommonConfig commonConfig;
 
-  public DefaultConfig() {
-  }
+  public DefaultConfig() {}
 
   /**
-   * Initialize StorageBackendFactory early in Spring lifecycle.
-   * This is a backup initialization in case the static block failed.
+   * Initialize StorageBackendFactory early in Spring lifecycle. This is a backup initialization in
+   * case the static block failed.
    */
   @PostConstruct
   public void initializeStorageBackend() {
@@ -73,13 +71,11 @@ public class DefaultConfig {
   @Bean(destroyMethod = "")
   public RevokingDatabase revokingDatabase() {
     try {
-      return new SnapshotManager(
-          StorageUtils.getOutputDirectoryByDbName("block"));
+      return new SnapshotManager(StorageUtils.getOutputDirectoryByDbName("block"));
     } finally {
       logger.info("key-value data source created.");
     }
   }
-
 
   @Bean
   public RpcApiServiceOnSolidity getRpcApiServiceOnSolidity() {
