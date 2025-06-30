@@ -45,7 +45,7 @@ public enum StorageMode {
    * @return Default StorageMode
    */
   public static StorageMode getDefault() {
-    return REMOTE;
+    return EMBEDDED;
   }
 
   @Override

@@ -8,7 +8,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Configuration precedence (highest to lowest): 1. Java system property:
  * -Dstorage.mode=embedded|remote 2. Environment variable: STORAGE_MODE=embedded|remote 3. Config
- * file property: storage.mode=embedded|remote 4. Default: REMOTE
+ * file property: storage.mode=embedded|remote 4. Default: EMBEDDED
  */
 public class StorageSpiFactory {
   private static final Logger logger = LoggerFactory.getLogger(StorageSpiFactory.class);

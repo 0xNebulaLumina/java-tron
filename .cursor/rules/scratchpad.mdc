@@ -309,7 +309,7 @@ Week 2 – Docs, CI wiring, review & merge ✅
 7. **Documentation**: Complete dual-storage-mode.md with usage examples, troubleshooting, best practices
 
 #### Key Features:
-- **Configuration Precedence**: System property → Environment variable → Config file → Default (REMOTE)
+- **Configuration Precedence**: System property → Environment variable → Config file → Default (EMBEDDED)
 - **Transparent API**: Same StorageSPI interface regardless of mode
 - **Error Handling**: Proper validation and meaningful error messages
 - **Performance Testing**: Comparative benchmarks showing ~20x latency difference

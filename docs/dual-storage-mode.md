@@ -60,7 +60,7 @@ The storage mode is determined by the following precedence (highest to lowest):
 1. **Java System Property**: `-Dstorage.mode=embedded|remote`
 2. **Environment Variable**: `STORAGE_MODE=embedded|remote`
 3. **Config File Property**: `storage.mode=embedded|remote` (future)
-4. **Default**: `REMOTE`
+4. **Default**: `EMBEDDED`
 
 ### Embedded Mode Configuration
 
