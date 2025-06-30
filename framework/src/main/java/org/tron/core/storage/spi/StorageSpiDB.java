@@ -51,18 +51,8 @@ public class StorageSpiDB implements DB<byte[], byte[]> {
   }
 
   @Override
-  public DbSourceInter<byte[]> getDbSource() {
-    return dbSource;
-  }
-
-  @Override
-  public void close() {
-    dbSource.closeDB();
-  }
-
-  @Override
-  public void reset() {
-    dbSource.resetDb();
+  public void stat() {
+    dbSource.stat();
   }
 
   @Override
@@ -71,12 +61,37 @@ public class StorageSpiDB implements DB<byte[], byte[]> {
   }
 
   @Override
+  public void close() {
+    dbSource.closeDB();
+  }
+
+  @Override
+  public DB<byte[], byte[]> newInstance() {
+    // Create a new instance with the same configuration
+    try {
+      StorageSPI newStorageSPI = StorageSpiFactory.createStorage();
+      StorageSpiDbSource newDbSource = new StorageSpiDbSource(dbSource.getDBName(), newStorageSPI);
+      return new StorageSpiDB(newDbSource);
+    } catch (Exception e) {
+      logger.error("Failed to create new instance of StorageSpiDB", e);
+      throw new RuntimeException("Failed to create new instance", e);
+    }
+  }
+
+  // Remove these methods - they're not part of the DB interface
+  public void reset() {
+    dbSource.resetDb();
+  }
+
   public Set<byte[]> allKeys() {
     return dbSource.allKeys();
   }
 
-  @Override
   public Set<byte[]> allValues() {
     return dbSource.allValues();
+  }
+
+  public DbSourceInter<byte[]> getDbSource() {
+    return dbSource;
   }
 }

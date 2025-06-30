@@ -12,7 +12,7 @@ public class StorageBackendFactoryImpl implements StorageBackendFactory {
   @Override
   public StorageBackend createStorageBackend(StorageMode mode, String dbName) throws Exception {
     // Create the full StorageSPI using the existing factory
-    StorageSPI storageSPI = StorageSpiFactory.createStorageSPI(mode);
+    StorageSPI storageSPI = StorageSpiFactory.createStorage();
 
     // Wrap it in an adapter that implements the simplified StorageBackend interface
     return new StorageSpiBackendAdapter(storageSPI, dbName);

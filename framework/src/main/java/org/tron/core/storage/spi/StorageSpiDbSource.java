@@ -1,6 +1,7 @@
 package org.tron.core.storage.spi;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
@@ -11,8 +12,8 @@ import org.tron.core.db.common.DbSourceInter;
 import org.tron.core.db2.common.WrappedByteArray;
 
 /**
- * Adapter that implements DbSourceInter&lt;byte[]&gt; using StorageSPI backend. This bridges the gap
- * between the existing TronDatabase interface and our new StorageSPI.
+ * Adapter that implements DbSourceInter&lt;byte[]&gt; using StorageSPI backend. This bridges the
+ * gap between the existing TronDatabase interface and our new StorageSPI.
  */
 @Slf4j(topic = "DB")
 public class StorageSpiDbSource implements DbSourceInter<byte[]> {
@@ -40,8 +41,9 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public void initDB() {
     try {
-      // Initialize the storage SPI
-      storageSPI.initialize(new StorageConfig()).get();
+      // Initialize the database using StorageSPI
+      StorageConfig config = new StorageConfig();
+      storageSPI.initDB(dbName, config).get();
       alive = true;
       logger.info("Initialized StorageSPI database: {}", dbName);
     } catch (Exception e) {
@@ -52,13 +54,18 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
 
   @Override
   public boolean isAlive() {
-    return alive;
+    try {
+      return storageSPI.isAlive(dbName).get();
+    } catch (Exception e) {
+      logger.warn("Failed to check if database {} is alive", dbName, e);
+      return alive;
+    }
   }
 
   @Override
   public void closeDB() {
     try {
-      storageSPI.close().get();
+      storageSPI.closeDB(dbName).get();
       alive = false;
       logger.info("Closed StorageSPI database: {}", dbName);
     } catch (Exception e) {
@@ -69,8 +76,8 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public void resetDb() {
     try {
-      // Clear all data in the database
-      storageSPI.clear().get();
+      // Reset the database using StorageSPI
+      storageSPI.resetDB(dbName).get();
       logger.info("Reset StorageSPI database: {}", dbName);
     } catch (Exception e) {
       logger.error("Failed to reset StorageSPI database: {}", dbName, e);
@@ -81,7 +88,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public void putData(byte[] key, byte[] value) {
     try {
-      storageSPI.put(key, value).get();
+      storageSPI.put(dbName, key, value).get();
     } catch (Exception e) {
       logger.error("Failed to put data in database: {}", dbName, e);
       throw new RuntimeException("Failed to put data", e);
@@ -91,7 +98,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public byte[] getData(byte[] key) {
     try {
-      return storageSPI.get(key).get();
+      return storageSPI.get(dbName, key).get();
     } catch (Exception e) {
       logger.error("Failed to get data from database: {}", dbName, e);
       return null;
@@ -101,7 +108,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public void deleteData(byte[] key) {
     try {
-      storageSPI.delete(key).get();
+      storageSPI.delete(dbName, key).get();
     } catch (Exception e) {
       logger.error("Failed to delete data from database: {}", dbName, e);
       throw new RuntimeException("Failed to delete data", e);
@@ -111,8 +118,8 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public boolean flush() {
     try {
-      storageSPI.flush().get();
-      return true;
+      // StorageSPI doesn't have a direct flush method, but we can check if database is alive
+      return storageSPI.isAlive(dbName).get();
     } catch (Exception e) {
       logger.error("Failed to flush database: {}", dbName, e);
       return false;
@@ -127,7 +134,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public void updateByBatch(Map<byte[], byte[]> rows, WriteOptionsWrapper writeOptions) {
     try {
-      storageSPI.batchPut(rows).get();
+      storageSPI.batchWrite(dbName, rows).get();
     } catch (Exception e) {
       logger.error("Failed to batch update database: {}", dbName, e);
       throw new RuntimeException("Failed to batch update", e);
@@ -137,7 +144,9 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public Set<byte[]> allKeys() throws RuntimeException {
     try {
-      return storageSPI.getAllKeys().get();
+      // Use prefixQuery with empty prefix to get all keys
+      Map<byte[], byte[]> allData = storageSPI.prefixQuery(dbName, new byte[0]).get();
+      return allData.keySet();
     } catch (Exception e) {
       logger.error("Failed to get all keys from database: {}", dbName, e);
       throw new RuntimeException("Failed to get all keys", e);
@@ -147,7 +156,9 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public Set<byte[]> allValues() throws RuntimeException {
     try {
-      return storageSPI.getAllValues().get();
+      // Use prefixQuery with empty prefix to get all values
+      Map<byte[], byte[]> allData = storageSPI.prefixQuery(dbName, new byte[0]).get();
+      return new HashSet<>(allData.values());
     } catch (Exception e) {
       logger.error("Failed to get all values from database: {}", dbName, e);
       throw new RuntimeException("Failed to get all values", e);
@@ -157,7 +168,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public long getTotal() throws RuntimeException {
     try {
-      return storageSPI.getSize().get();
+      return storageSPI.size(dbName).get();
     } catch (Exception e) {
       logger.error("Failed to get total count from database: {}", dbName, e);
       throw new RuntimeException("Failed to get total count", e);
@@ -167,7 +178,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public void stat() {
     try {
-      Map<String, String> stats = storageSPI.getStats().get();
+      StorageStats stats = storageSPI.getStats(dbName).get();
       logger.info("Database {} stats: {}", dbName, stats);
     } catch (Exception e) {
       logger.error("Failed to get stats from database: {}", dbName, e);
@@ -177,7 +188,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public Map<WrappedByteArray, byte[]> prefixQuery(byte[] key) {
     try {
-      Map<byte[], byte[]> results = storageSPI.prefixScan(key, Integer.MAX_VALUE).get();
+      Map<byte[], byte[]> results = storageSPI.prefixQuery(dbName, key).get();
       return results.entrySet().stream()
           .collect(
               Collectors.toMap(entry -> WrappedByteArray.of(entry.getKey()), Map.Entry::getValue));
@@ -190,7 +201,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
   @Override
   public Iterator<Map.Entry<byte[], byte[]>> iterator() {
     try {
-      StorageIterator storageIterator = storageSPI.iterator().get();
+      StorageIterator storageIterator = storageSPI.iterator(dbName).get();
       return new StorageIteratorAdapter(storageIterator);
     } catch (Exception e) {
       logger.error("Failed to create iterator for database: {}", dbName, e);
@@ -212,7 +223,11 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
     public boolean hasNext() {
       if (!hasCheckedNext) {
         try {
-          nextEntry = storageIterator.next().get();
+          if (storageIterator.hasNext().get()) {
+            nextEntry = storageIterator.next().get();
+          } else {
+            nextEntry = null;
+          }
           hasCheckedNext = true;
         } catch (Exception e) {
           nextEntry = null;
