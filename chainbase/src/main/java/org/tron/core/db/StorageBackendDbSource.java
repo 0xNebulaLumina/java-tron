@@ -28,6 +28,14 @@ public class StorageBackendDbSource implements DbSourceInter<byte[]> {
         this.storageBackend = storageBackend;
     }
 
+    /**
+     * Get the underlying storage backend. This is used by StorageBackendDB
+     * to implement the Flusher interface.
+     */
+    public StorageBackend getStorageBackend() {
+        return storageBackend;
+    }
+
     @Override
     public String getDBName() {
         return dbName;

@@ -36,14 +36,40 @@ public class EmbeddedStorageSPI implements StorageSPI {
     logger.info("Initialized embedded storage with base path: {}", basePath);
   }
 
+  /**
+   * Get or create a database instance. This method provides lazy initialization
+   * to ensure databases are available when needed, even if initDB() wasn't called explicitly.
+   */
+  private RocksDbDataSourceImpl getOrCreateDatabase(String dbName) {
+    RocksDbDataSourceImpl db = databases.get(dbName);
+    if (db == null) {
+      synchronized (this) {
+        // Double-check locking pattern
+        db = databases.get(dbName);
+        if (db == null) {
+          try {
+            logger.info("Auto-initializing database: {}", dbName);
+            // Use default settings for auto-initialized databases
+            RocksDbSettings settings = RocksDbSettings.getDefaultSettings();
+            db = new RocksDbDataSourceImpl(basePath, dbName, settings);
+            db.initDB();
+            databases.put(dbName, db);
+            logger.info("Auto-initialized embedded database: {} at {}/{}", dbName, basePath, dbName);
+          } catch (Exception e) {
+            logger.error("Failed to auto-initialize embedded database: {}", dbName, e);
+            throw new RuntimeException("Database auto-initialization failed: " + dbName, e);
+          }
+        }
+      }
+    }
+    return db;
+  }
+
   @Override
   public CompletableFuture<byte[]> get(String dbName, byte[] key) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           return db.getData(key);
         });
   }
@@ -52,10 +78,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<Void> put(String dbName, byte[] key, byte[] value) {
     return CompletableFuture.runAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           db.putData(key, value);
         });
   }
@@ -64,10 +87,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<Void> delete(String dbName, byte[] key) {
     return CompletableFuture.runAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           db.deleteData(key);
         });
   }
@@ -76,10 +96,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<Boolean> has(String dbName, byte[] key) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           return db.getData(key) != null;
         });
   }
@@ -88,10 +105,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<Void> batchWrite(String dbName, Map<byte[], byte[]> operations) {
     return CompletableFuture.runAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           db.updateByBatch(operations);
         });
   }
@@ -100,10 +114,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<Map<byte[], byte[]>> batchGet(String dbName, List<byte[]> keys) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
 
           Map<byte[], byte[]> results = new HashMap<>();
           for (byte[] key : keys) {
@@ -120,10 +131,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<StorageIterator> iterator(String dbName) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           return new EmbeddedStorageIterator(db.iterator());
         });
   }
@@ -132,10 +140,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<StorageIterator> iterator(String dbName, byte[] startKey) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           DBIterator iter = db.iterator();
           iter.seek(startKey);
           return new EmbeddedStorageIterator(iter);
@@ -146,10 +151,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<List<byte[]>> getKeysNext(String dbName, byte[] startKey, int limit) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           return db.getKeysNext(startKey, limit);
         });
   }
@@ -158,10 +160,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<List<byte[]>> getValuesNext(String dbName, byte[] startKey, int limit) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           return new ArrayList<>(db.getValuesNext(startKey, limit));
         });
   }
@@ -170,10 +169,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<Map<byte[], byte[]>> getNext(String dbName, byte[] startKey, int limit) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           return db.getNext(startKey, limit);
         });
   }
@@ -182,10 +178,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<Map<byte[], byte[]>> prefixQuery(String dbName, byte[] prefix) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
 
           Map<byte[], byte[]> results = new HashMap<>();
           Map<org.tron.core.db2.common.WrappedByteArray, byte[]> prefixResults =
@@ -202,6 +195,12 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<Void> initDB(String dbName, StorageConfig config) {
     return CompletableFuture.runAsync(
         () -> {
+          // Check if database is already initialized
+          if (databases.containsKey(dbName)) {
+            logger.debug("Database {} already initialized, skipping", dbName);
+            return;
+          }
+          
           try {
             // Configure RocksDB settings based on StorageConfig
             RocksDbSettings settings = RocksDbSettings.getDefaultSettings();
@@ -269,10 +268,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<Long> size(String dbName) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           return db.getTotal();
         });
   }
@@ -281,10 +277,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<Boolean> isEmpty(String dbName) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
           return db.getTotal() == 0;
         });
   }
@@ -333,10 +326,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
   public CompletableFuture<StorageStats> getStats(String dbName) {
     return CompletableFuture.supplyAsync(
         () -> {
-          RocksDbDataSourceImpl db = databases.get(dbName);
-          if (db == null) {
-            throw new RuntimeException("Database not found: " + dbName);
-          }
+          RocksDbDataSourceImpl db = getOrCreateDatabase(dbName);
 
           long totalKeys = db.getTotal();
           long totalSize = totalKeys * 256; // Approximate size estimation
