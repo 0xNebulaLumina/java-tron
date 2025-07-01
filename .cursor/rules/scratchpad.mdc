@@ -76,68 +76,6 @@ This iteration makes gRPC calls to the Rust storage service to fetch all databas
 - Java-Tron expects to be able to iterate over all database entries during checkpoint recovery
 - The Rust storage service needs proper streaming support for large database iterations
 
-# Current Task: Fix gRPC LoadBalancerProvider Error
-
-## Problem Analysis
-User is running java-tron in remote mode but getting this error:
-```
-java.lang.IllegalStateException: Could not find policy 'pick_first'. Make sure its implementation is either registered to LoadBalancerRegistry or included in META-INF/services/io.grpc.LoadBalancerProvider from your jar files.
-```
-
-## Root Cause
-The `GrpcStorageSPI` class is missing the LoadBalancerProvider registration that's required for gRPC clients. The existing `DatabaseGrpcClient` has the correct pattern:
-
-```java
-static {
-  LoadBalancerRegistry
-      .getDefaultRegistry()
-      .register(new PickFirstLoadBalancerProvider());
-}
-```
-
-## Solution Plan
-[X] Identify the missing LoadBalancerProvider registration
-[X] Add the static block to GrpcStorageSPI
-[X] Test the fix and verify gRPC connection works
-[X] Address the minor database initialization issue
-
-## Progress Update
-✅ **LoadBalancerProvider Fix Completed**: Successfully added the missing static block to `GrpcStorageSPI.java`. The gRPC connection now works properly.
-
-✅ **Auto-Initialization Fix Completed**: Added auto-initialization functionality to the Rust storage service. Now databases are automatically created with default settings when first accessed, eliminating the "Database not found" errors.
-
-## Final Solution
-1. **Java-side fix**: Added LoadBalancerProvider registration to GrpcStorageSPI
-2. **Rust-side fix**: Added `ensure_db_initialized()` method that auto-creates databases on first access
-3. **Result**: Java-tron can now successfully run in remote mode with the Rust storage service
-
-# Current Task: Help User Run Remote gRPC Mode
-
-## User Question
-The user wants to know:
-1. How to run java-tron with remote (gRPC) mode
-2. Whether they need to start rust-storage-service manually
-
-## Task Analysis
-Based on the scratchpad and codebase search, I can see that:
-- The project has dual storage mode support (EMBEDDED vs REMOTE)
-- REMOTE mode uses a separate Rust gRPC storage service
-- The rust-storage-service needs to be running for REMOTE mode to work
-- Configuration is done via environment variables, system properties, or config files
-
-## Plan
-[X] Explain the two storage modes (EMBEDDED vs REMOTE)
-[X] Show how to start the rust-storage-service
-[X] Show how to configure java-tron for REMOTE mode
-[X] Provide Docker Compose example for easy setup
-[X] Explain configuration options and troubleshooting
-
-## Implementation Steps
-[X] Explain storage modes and when to use each
-[X] Provide step-by-step instructions for REMOTE mode setup
-[X] Show configuration examples
-[X] Point to relevant documentation and tools
-
 # High-level Task: Replace Java RocksDB with Rust implementation
 
 ## Overview
@@ -363,30 +301,6 @@ CachingStorageSPI
 ### PHASE 10 COMPLETED: MAIN APPLICATION INTEGRATION ✅
 
 **Status**: Dual storage mode is now fully integrated into the main java-tron application. The FullNode.jar will automatically use the configured storage mode (embedded/remote) while maintaining backward compatibility with legacy storage.
-
-### Implementation Plan
-[X] **Create Early Initializer**: Add `@PostConstruct` method to `DefaultConfig` or create dedicated config class
-[X] **Remove Late Initialization**: Remove `StorageBackendFactoryImpl.initialize()` from `ApplicationImpl.startup()`
-[X] **Test Integration**: Verify factory is available during database construction
-[X] **Fix Database Initialization**: EmbeddedStorageSPI needs to auto-initialize databases on first access
-[ ] **Fix newInstance Method**: StorageBackendDB.newInstance() needs proper implementation
-[ ] **Verify Fallback**: Ensure legacy storage still works when dual mode disabled
-
-### Expected Outcome
-After fix:
-- Database constructors will find initialized `StorageBackendFactory` ✅ **COMPLETED**
-- Dual storage mode will work correctly based on configuration ✅ **COMPLETED** 
-- No more "StorageBackendFactory not initialized" warnings ✅ **COMPLETED**
-- No more "Database not found" errors ✅ **COMPLETED**
-- No more ClassCastException for Flusher interface ✅ **COMPLETED**
-- Smooth integration with existing FullNode.jar application
-
-### CURRENT ISSUE: newInstance Method
-**Problem**: `StorageBackendDB.newInstance()` throws `UnsupportedOperationException` when called by `AssetUpdateHelper.init()` during application startup.
-
-**Root Cause**: The `newInstance()` method in `StorageBackendDB` was implemented as a placeholder that throws an exception, but it's actually needed by the revoking database system.
-
-**Solution**: Implement a proper `newInstance()` method that creates a new `StorageBackendDB` instance with the same configuration.
 
 # Current Task: Fix Database Lock Management in Rust Storage Service
 
