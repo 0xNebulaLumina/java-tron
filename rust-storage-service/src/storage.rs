@@ -52,6 +52,42 @@ impl StorageEngine {
         })
     }
 
+    // Auto-initialize database with default configuration if it doesn't exist
+    fn ensure_db_initialized(&self, db_name: &str) -> Result<()> {
+        let databases = self.databases.read().unwrap();
+        if databases.contains_key(db_name) {
+            return Ok(());
+        }
+        drop(databases); // Release read lock before acquiring write lock
+
+        // Double-check pattern to avoid race conditions
+        let mut databases = self.databases.write().unwrap();
+        if databases.contains_key(db_name) {
+            return Ok(());
+        }
+
+        // Auto-initialize with default configuration
+        let db_path = format!("{}/{}", self.base_path, db_name);
+        
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.set_max_open_files(1000); // Default value
+        
+        // Set default block cache
+        let cache = rocksdb::Cache::new_lru_cache(8 * 1024 * 1024); // 8MB default
+        let mut block_opts = rocksdb::BlockBasedOptions::default();
+        block_opts.set_block_cache(&cache);
+        opts.set_block_based_table_factory(&block_opts);
+
+        let db = DB::open(&opts, &db_path)?;
+        let db_arc = Arc::new(db);
+        
+        databases.insert(db_name.to_string(), db_arc);
+        info!("Auto-initialized database: {} with default configuration", db_name);
+        
+        Ok(())
+    }
+
     pub fn init_db(&self, db_name: &str, config: &StorageConfig) -> Result<()> {
         let db_path = format!("{}/{}", self.base_path, db_name);
         
@@ -96,13 +132,16 @@ impl StorageEngine {
         let db = DB::open(&opts, &db_path)?;
         let db_arc = Arc::new(db);
         
+        // Close existing database if it exists
         self.databases.write().unwrap().insert(db_name.to_string(), db_arc);
-        info!("Initialized database: {}", db_name);
+        info!("Initialized database: {} with custom configuration", db_name);
         
         Ok(())
     }
 
     pub fn get(&self, db_name: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -114,6 +153,8 @@ impl StorageEngine {
     }
 
     pub fn put(&self, db_name: &str, key: &[u8], value: &[u8]) -> Result<()> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -123,6 +164,8 @@ impl StorageEngine {
     }
 
     pub fn delete(&self, db_name: &str, key: &[u8]) -> Result<()> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -132,6 +175,8 @@ impl StorageEngine {
     }
 
     pub fn has(&self, db_name: &str, key: &[u8]) -> Result<bool> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -140,6 +185,8 @@ impl StorageEngine {
     }
 
     pub fn batch_write(&self, db_name: &str, operations: &[BatchOperation]) -> Result<()> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -162,6 +209,8 @@ impl StorageEngine {
     }
 
     pub fn batch_get(&self, db_name: &str, keys: &[Vec<u8>]) -> Result<Vec<KeyValue>> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -191,6 +240,8 @@ impl StorageEngine {
     }
 
     pub fn get_keys_next(&self, db_name: &str, start_key: &[u8], limit: i32) -> Result<Vec<Vec<u8>>> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -210,6 +261,8 @@ impl StorageEngine {
     }
 
     pub fn get_values_next(&self, db_name: &str, start_key: &[u8], limit: i32) -> Result<Vec<Vec<u8>>> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -229,6 +282,8 @@ impl StorageEngine {
     }
 
     pub fn get_next(&self, db_name: &str, start_key: &[u8], limit: i32) -> Result<Vec<KeyValue>> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -252,6 +307,8 @@ impl StorageEngine {
     }
 
     pub fn prefix_query(&self, db_name: &str, prefix: &[u8]) -> Result<Vec<KeyValue>> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -298,6 +355,8 @@ impl StorageEngine {
     }
 
     pub fn size(&self, db_name: &str) -> Result<i64> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -314,6 +373,8 @@ impl StorageEngine {
     }
 
     pub fn begin_transaction(&self, db_name: &str) -> Result<String> {
+        self.ensure_db_initialized(db_name)?;
+        
         let transaction_id = Uuid::new_v4().to_string();
         
         let transaction = TransactionInfo {
@@ -357,6 +418,8 @@ impl StorageEngine {
     }
 
     pub fn create_snapshot(&self, db_name: &str) -> Result<String> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let _db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
@@ -389,6 +452,8 @@ impl StorageEngine {
     }
 
     pub fn get_stats(&self, db_name: &str) -> Result<StorageStats> {
+        self.ensure_db_initialized(db_name)?;
+        
         let databases = self.databases.read().unwrap();
         let db = databases.get(db_name)
             .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;

@@ -1,9 +1,11 @@
 package org.tron.core.storage.spi;
 
 import com.google.protobuf.ByteString;
+import io.grpc.LoadBalancerRegistry;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.StatusRuntimeException;
+import io.grpc.internal.PickFirstLoadBalancerProvider;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -65,6 +67,13 @@ import storage.StorageServiceGrpc;
  */
 public class GrpcStorageSPI implements StorageSPI {
   private static final Logger logger = LoggerFactory.getLogger(GrpcStorageSPI.class);
+
+  // Register the PickFirstLoadBalancerProvider to avoid "Could not find policy 'pick_first'" errors
+  static {
+    LoadBalancerRegistry
+        .getDefaultRegistry()
+        .register(new PickFirstLoadBalancerProvider());
+  }
 
   private final ManagedChannel channel;
   private final StorageServiceGrpc.StorageServiceBlockingStub blockingStub;
