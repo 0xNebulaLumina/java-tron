@@ -4,7 +4,7 @@
 
 # Configuration
 GRPC_HOST ?= localhost
-GRPC_PORT ?= 50051
+GRPC_PORT ?= 50011
 
 # Default target
 help:
@@ -95,7 +95,7 @@ rust-run:
 # Check Rust service health
 rust-health:
 	@echo "Checking Rust service health..."
-	curl -s http://localhost:50051 || echo "Service not responding"
+	curl -s http://localhost:50011 || echo "Service not responding"
 
 # Development setup
 dev-setup:
