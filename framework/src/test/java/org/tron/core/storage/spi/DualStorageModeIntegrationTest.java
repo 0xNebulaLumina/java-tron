@@ -76,7 +76,7 @@ public class DualStorageModeIntegrationTest {
     // Configure for remote mode
     System.setProperty("storage.mode", "remote");
     System.setProperty("storage.grpc.host", "localhost");
-    System.setProperty("storage.grpc.port", "50051");
+    System.setProperty("storage.grpc.port", "50011");
 
     StorageSPI storage = StorageSpiFactory.createStorage();
     Assert.assertTrue("Should create GrpcStorageSPI", storage instanceof GrpcStorageSPI);

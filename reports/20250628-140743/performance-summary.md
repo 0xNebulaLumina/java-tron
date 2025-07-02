@@ -1,7 +1,7 @@
 # Performance Testing Summary
 
 **Test Date:** Sat Jun 28 02:09:43 PM CEST 2025
-**gRPC Server:** localhost:50051
+**gRPC Server:** localhost:50011
 **Java Version:** openjdk version "1.8.0_452"
 **System Info:** Linux kvm12956.bero-host.de 6.8.0-62-generic #65-Ubuntu SMP PREEMPT_DYNAMIC Mon May 19 17:15:03 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux
 

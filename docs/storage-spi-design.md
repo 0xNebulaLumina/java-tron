@@ -258,7 +258,7 @@ storage {
     provider = "EMBEDDED" // or "GRPC"
     grpc {
         host = "localhost"
-        port = 50051
+        port = 50011
         connection_pool_size = 10
         timeout_ms = 5000
     }

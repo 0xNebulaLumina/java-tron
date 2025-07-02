@@ -16,13 +16,13 @@ import org.junit.Test;
 
 /**
  * Integration tests for StorageSPI with real gRPC server. Requires rust-storage-service to be
- * running on localhost:50051
+ * running on localhost:50011
  */
 public class StorageSPIIntegrationTest {
 
   private static final String GRPC_HOST = System.getProperty("storage.grpc.host", "localhost");
   private static final int GRPC_PORT =
-      Integer.parseInt(System.getProperty("storage.grpc.port", "50051"));
+      Integer.parseInt(System.getProperty("storage.grpc.port", "50011"));
   private static final int TIMEOUT_SECONDS = 10;
 
   private GrpcStorageSPI storage;

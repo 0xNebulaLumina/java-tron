@@ -25,7 +25,7 @@ alwaysApply: false
 - **Main Application Integration**: The dual storage mode factory pattern was implemented but not integrated into the main java-tron application. The actual FullNode application still uses hardcoded storage initialization in TronDatabase.java and TronStoreWithRevoking.java constructors.
 - When compile, always add `--dependency-verification=off` to avoid dependency check
 - **Dual Storage Mode**: The project now supports both EMBEDDED (local RocksDB) and REMOTE (gRPC Rust service) storage modes. Configuration is via STORAGE_MODE env var, system property, or config file.
-- **Remote Storage Service**: The rust-storage-service must be started separately when using REMOTE mode. It runs on port 50051 by default.
+- **Remote Storage Service**: The rust-storage-service must be started separately when using REMOTE mode. It runs on port 50011 by default.
 - **gRPC LoadBalancerProvider**: gRPC clients must register the PickFirstLoadBalancerProvider in a static block to avoid "Could not find policy 'pick_first'" errors. The existing DatabaseGrpcClient shows the correct pattern.
 - **Application Blocking Issue**: The java-tron application gets stuck during initialization at Manager.init() phase (around line 488 in logs). The application successfully initializes all 40+ storage databases via gRPC but then blocks during the Manager initialization phase, specifically after "mortgageService.initStore completed" and "accountStateCallBack and trieService setup completed". This suggests the blocking occurs during blockchain state initialization or consensus mechanism setup, not during storage operations themselves.
 
