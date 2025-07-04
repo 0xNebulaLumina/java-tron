@@ -21,7 +21,7 @@ import org.tron.protos.contract.StorageContract.UpdateBrokerageContract;
 @Slf4j
 public class DelegationServiceTest {
 
-  private static String fullnode = "127.0.0.1:50051";
+  private static String fullnode = "127.0.0.1:50011";
   private MortgageService mortgageService;
   private Manager manager;
 

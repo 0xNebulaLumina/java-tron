@@ -55,7 +55,7 @@ public class DualModePerformanceBenchmark extends BasePerformanceBenchmark {
       new File(dataDir).mkdirs();
     } else if ("remote".equals(currentMode)) {
       System.setProperty("storage.grpc.host", "localhost");
-      System.setProperty("storage.grpc.port", "50051");
+      System.setProperty("storage.grpc.port", "50011");
     }
 
     StorageSPI storage = StorageSpiFactory.createStorage();

@@ -2,7 +2,7 @@
 
 # Server configuration
 host = "127.0.0.1"
-port = 50051
+port = 50011
 data_dir = "./data"
 default_engine = "ROCKSDB"
 

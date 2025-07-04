@@ -7,7 +7,7 @@ set -e
 
 # Configuration
 GRPC_HOST="${STORAGE_GRPC_HOST:-localhost}"
-GRPC_PORT="${STORAGE_GRPC_PORT:-50051}"
+GRPC_PORT="${STORAGE_GRPC_PORT:-50011}"
 RUST_SERVICE_PID=""
 REPORTS_DIR="reports/$(date +%Y%m%d-%H%M%S)"
 
@@ -390,7 +390,7 @@ Options:
     
 Environment Variables:
     STORAGE_GRPC_HOST   gRPC server host (default: localhost)
-    STORAGE_GRPC_PORT   gRPC server port (default: 50051)
+    STORAGE_GRPC_PORT   gRPC server port (default: 50011)
     KEEP_RUNNING        Keep services running after tests (default: false)
 
 Examples:

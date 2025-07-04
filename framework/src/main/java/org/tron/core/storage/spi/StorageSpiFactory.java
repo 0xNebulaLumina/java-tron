@@ -26,7 +26,7 @@ public class StorageSpiFactory {
 
   // Default gRPC settings
   private static final String DEFAULT_GRPC_HOST = "localhost";
-  private static final int DEFAULT_GRPC_PORT = 50051;
+  private static final int DEFAULT_GRPC_PORT = 50011;
 
   // Embedded storage settings
   private static final String EMBEDDED_BASE_PATH_PROPERTY = "storage.embedded.basePath";

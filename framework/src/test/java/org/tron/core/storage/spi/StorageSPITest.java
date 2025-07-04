@@ -11,7 +11,7 @@ public class StorageSPITest {
   @Test
   public void testGrpcStorageSPIBasicOperations() throws ExecutionException, InterruptedException {
     // Create a gRPC storage client (will fail to connect but should not crash)
-    GrpcStorageSPI storage = new GrpcStorageSPI("localhost", 50051);
+    GrpcStorageSPI storage = new GrpcStorageSPI("localhost", 50011);
 
     try {
       // Test basic operations (these are placeholder implementations)
@@ -83,7 +83,7 @@ public class StorageSPITest {
   public void testHealthCheck() throws ExecutionException, InterruptedException {
     // Simple health check test for script validation
     String host = System.getProperty("storage.grpc.host", "localhost");
-    int port = Integer.parseInt(System.getProperty("storage.grpc.port", "50051"));
+    int port = Integer.parseInt(System.getProperty("storage.grpc.port", "50011"));
 
     GrpcStorageSPI storage = new GrpcStorageSPI(host, port);
 

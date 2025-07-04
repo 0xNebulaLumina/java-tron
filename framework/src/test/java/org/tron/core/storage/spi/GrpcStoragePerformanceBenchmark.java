@@ -21,7 +21,7 @@ public class GrpcStoragePerformanceBenchmark extends BasePerformanceBenchmark {
 
   private static final String GRPC_HOST = System.getProperty("storage.grpc.host", "localhost");
   private static final int GRPC_PORT =
-      Integer.parseInt(System.getProperty("storage.grpc.port", "50051"));
+      Integer.parseInt(System.getProperty("storage.grpc.port", "50011"));
 
   @Override
   protected StorageSPI createStorageImplementation() throws Exception {

@@ -33,7 +33,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             host: "127.0.0.1".to_string(),
-            port: 50051,
+            port: 50011,
             data_dir: "./data".to_string(),
             default_engine: "ROCKSDB".to_string(),
             rocksdb: RocksDbConfig::default(),
@@ -70,7 +70,7 @@ pub fn load_config() -> Result<Config> {
     let settings = config::Config::builder()
         // Start with default values
         .set_default("host", "127.0.0.1")?
-        .set_default("port", 50051)?
+        .set_default("port", 50011)?
         .set_default("data_dir", "./data")?
         .set_default("default_engine", "ROCKSDB")?
         

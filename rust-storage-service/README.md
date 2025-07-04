@@ -39,7 +39,7 @@ cargo run
 docker build -t tron-storage-service .
 
 # Run the container
-docker run -p 50051:50051 -p 9090:9090 tron-storage-service
+docker run -p 50011:50011 -p 9090:9090 tron-storage-service
 ```
 
 ### Using Docker Compose
@@ -62,7 +62,7 @@ The service can be configured using:
 ```toml
 # Server configuration
 host = "127.0.0.1"
-port = 50051
+port = 50011
 data_dir = "./data"
 default_engine = "ROCKSDB"
 
@@ -86,7 +86,7 @@ path = "/metrics"
 ### Environment Variables
 
 - `TRON_STORAGE_HOST`: Server host (default: 127.0.0.1)
-- `TRON_STORAGE_PORT`: Server port (default: 50051)
+- `TRON_STORAGE_PORT`: Server port (default: 50011)
 - `TRON_STORAGE_DATA_DIR`: Data directory (default: ./data)
 - `TRON_STORAGE_DEFAULT_ENGINE`: Database engine (default: ROCKSDB)
 - `RUST_LOG`: Log level (debug, info, warn, error)
@@ -136,7 +136,7 @@ The service provides health check endpoints:
 
 ```bash
 # gRPC health check
-grpc_health_probe -addr=localhost:50051
+grpc_health_probe -addr=localhost:50011
 
 # HTTP health check (if metrics enabled)
 curl http://localhost:9090/health

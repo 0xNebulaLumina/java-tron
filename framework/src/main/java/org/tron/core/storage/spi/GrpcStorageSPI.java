@@ -193,13 +193,19 @@ public class GrpcStorageSPI implements StorageSPI {
                 BatchWriteRequest.newBuilder().setDbName(dbName);
 
             for (Map.Entry<byte[], byte[]> entry : operations.entrySet()) {
-              BatchOperation op =
+              BatchOperation.Builder opBuilder =
                   BatchOperation.newBuilder()
-                      .setType(BatchOperation.Type.PUT)
-                      .setKey(ByteString.copyFrom(entry.getKey()))
-                      .setValue(ByteString.copyFrom(entry.getValue()))
-                      .build();
-              requestBuilder.addOperations(op);
+                      .setKey(ByteString.copyFrom(entry.getKey()));
+              
+              // Handle null values as delete operations
+              if (entry.getValue() == null) {
+                opBuilder.setType(BatchOperation.Type.DELETE);
+              } else {
+                opBuilder.setType(BatchOperation.Type.PUT)
+                         .setValue(ByteString.copyFrom(entry.getValue()));
+              }
+              
+              requestBuilder.addOperations(opBuilder.build());
             }
 
             blockingStub.batchWrite(requestBuilder.build());
@@ -748,6 +754,7 @@ public class GrpcStorageSPI implements StorageSPI {
     private byte[] currentKey;
     private boolean hasNextCached = false;
     private Map.Entry<byte[], byte[]> nextEntry = null;
+    private boolean reachedEnd = false;
 
     public GrpcStorageIterator(String dbName, byte[] startKey) {
       this.dbName = dbName;
@@ -757,7 +764,7 @@ public class GrpcStorageSPI implements StorageSPI {
 
     @Override
     public CompletableFuture<Boolean> hasNext() {
-      if (closed) {
+      if (closed || reachedEnd) {
         return CompletableFuture.completedFuture(false);
       }
 
@@ -769,6 +776,7 @@ public class GrpcStorageSPI implements StorageSPI {
           .thenApply(
               entries -> {
                 if (entries.isEmpty()) {
+                  reachedEnd = true;
                   return false;
                 } else {
                   Map.Entry<byte[], byte[]> firstEntry = entries.entrySet().iterator().next();
@@ -777,7 +785,12 @@ public class GrpcStorageSPI implements StorageSPI {
                   hasNextCached = true;
                   return true;
                 }
-              });
+              })
+          .exceptionally(throwable -> {
+            logger.error("Error in hasNext() for iterator on db={}", dbName, throwable);
+            reachedEnd = true;
+            return false;
+          });
     }
 
     @Override
@@ -786,41 +799,102 @@ public class GrpcStorageSPI implements StorageSPI {
           .thenCompose(
               hasNext -> {
                 if (!hasNext) {
-                  throw new RuntimeException("No more elements");
+                  throw new RuntimeException("No more elements in iterator for db: " + dbName);
                 }
 
                 Map.Entry<byte[], byte[]> result = nextEntry;
-                currentKey = result.getKey();
+                
+                // CRITICAL FIX: Properly advance the iterator position
+                currentKey = incrementKey(result.getKey());
+                
                 hasNextCached = false;
                 nextEntry = null;
 
+                logger.debug("Iterator next: db={}, key.length={}, value.length={}", 
+                    dbName, result.getKey().length, result.getValue().length);
+
                 return CompletableFuture.completedFuture(result);
-              });
+              })
+          .exceptionally(throwable -> {
+            logger.error("Error in next() for iterator on db={}", dbName, throwable);
+            throw new RuntimeException("Iterator next() failed for db: " + dbName, throwable);
+          });
     }
 
     @Override
     public CompletableFuture<Void> seek(byte[] key) {
-      this.currentKey = key;
-      this.hasNextCached = false;
-      this.nextEntry = null;
-      return CompletableFuture.completedFuture(null);
+      return CompletableFuture.runAsync(() -> {
+        currentKey = key;
+        hasNextCached = false;
+        nextEntry = null;
+        reachedEnd = false;
+        logger.debug("Iterator seek: db={}, key.length={}", dbName, key.length);
+      });
     }
 
     @Override
     public CompletableFuture<Void> seekToFirst() {
-      return seek(new byte[0]);
+      return CompletableFuture.runAsync(() -> {
+        currentKey = new byte[0]; // Empty key means start from beginning
+        hasNextCached = false;
+        nextEntry = null;
+        reachedEnd = false;
+        logger.debug("Iterator seekToFirst: db={}", dbName);
+      });
     }
 
     @Override
     public CompletableFuture<Void> seekToLast() {
-      // This is a simplified implementation
-      // In a real implementation, you would need to find the last key
-      return CompletableFuture.completedFuture(null);
+      return CompletableFuture.runAsync(() -> {
+        // For seekToLast, we'd need a special implementation
+        // For now, just mark as reached end since this is complex with gRPC
+        reachedEnd = true;
+        hasNextCached = false;
+        nextEntry = null;
+        logger.debug("Iterator seekToLast: db={} (not fully implemented)", dbName);
+      });
     }
 
     @Override
     public void close() {
       closed = true;
+      hasNextCached = false;
+      nextEntry = null;
+      logger.debug("Closed iterator for db={}", dbName);
+    }
+
+    /**
+     * Increment a byte array key to get the next possible key.
+     * This is crucial for proper iterator advancement.
+     * 
+     * @param key the current key
+     * @return the next key in lexicographic order
+     */
+    private byte[] incrementKey(byte[] key) {
+      if (key == null || key.length == 0) {
+        return new byte[]{0x01};
+      }
+
+      // Create a copy to avoid modifying the original
+      byte[] nextKey = new byte[key.length];
+      System.arraycopy(key, 0, nextKey, 0, key.length);
+
+      // Increment the key by finding the rightmost byte that can be incremented
+      for (int i = nextKey.length - 1; i >= 0; i--) {
+        if (nextKey[i] != (byte) 0xFF) {
+          nextKey[i]++;
+          return nextKey;
+        } else {
+          nextKey[i] = 0x00;
+        }
+      }
+
+      // If all bytes were 0xFF, we need to extend the key
+      byte[] extendedKey = new byte[nextKey.length + 1];
+      System.arraycopy(nextKey, 0, extendedKey, 0, nextKey.length);
+      extendedKey[nextKey.length] = 0x01;
+      
+      return extendedKey;
     }
   }
 }
