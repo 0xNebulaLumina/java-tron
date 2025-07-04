@@ -470,41 +470,21 @@ public class Manager {
 
   @PostConstruct
   public void init() {
-    logger.info("Manager.init() starting...");
-    
     ChainBaseManager.init(chainBaseManager);
-    logger.info("Manager.init() - ChainBaseManager.init() completed");
-    
     Message.setDynamicPropertiesStore(this.getDynamicPropertiesStore());
-    logger.info("Manager.init() - Message.setDynamicPropertiesStore completed");
-    
     mortgageService
         .initStore(chainBaseManager.getWitnessStore(), chainBaseManager.getDelegationStore(),
             chainBaseManager.getDynamicPropertiesStore(), chainBaseManager.getAccountStore());
-    logger.info("Manager.init() - mortgageService.initStore completed");
-    
     accountStateCallBack.setChainBaseManager(chainBaseManager);
     trieService.setChainBaseManager(chainBaseManager);
-    logger.info("Manager.init() - accountStateCallBack and trieService setup completed");
-    
     revokingStore.disable();
     revokingStore.check();
-    logger.info("Manager.init() - revokingStore setup completed");
-    
     transactionCache.initCache();
-    logger.info("Manager.init() - transactionCache.initCache completed");
-    
     rewardViCalService.init();
-    logger.info("Manager.init() - rewardViCalService.init completed");
-    
     this.setProposalController(ProposalController.createInstance(this));
-    logger.info("Manager.init() - ProposalController setup completed");
-    
     this.setMerkleContainer(
         merkleContainer.createInstance(chainBaseManager.getMerkleTreeStore(),
             chainBaseManager.getMerkleTreeIndexStore()));
-    logger.info("Manager.init() - MerkleContainer setup completed");
-    
     if (Args.getInstance().isOpenTransactionSort()) {
       this.pendingTransactions = new PriorityBlockingQueue(2000, downComparator);
       this.rePushTransactions = new PriorityBlockingQueue<>(2000, downComparator);
@@ -514,21 +494,12 @@ public class Manager {
     }
     this.triggerCapsuleQueue = new LinkedBlockingQueue<>();
     this.filterCapsuleQueue = new LinkedBlockingQueue<>();
-    logger.info("Manager.init() - Transaction queues setup completed");
-    
     chainBaseManager.setMerkleContainer(getMerkleContainer());
     chainBaseManager.setMortgageService(mortgageService);
-    logger.info("Manager.init() - ChainBaseManager configuration completed");
-    
-    logger.info("Manager.init() - About to call initGenesis()...");
     this.initGenesis();
-    logger.info("Manager.init() - initGenesis() completed successfully");
-    
     try {
-      logger.info("Manager.init() - About to start khaosDb...");
       this.khaosDb.start(chainBaseManager.getBlockById(
           getDynamicPropertiesStore().getLatestBlockHeaderHash()));
-      logger.info("Manager.init() - khaosDb.start() completed");
     } catch (ItemNotFoundException e) {
       logger.error(
           "Can not find Dynamic highest block from DB! \nnumber={} \nhash={}",
@@ -545,50 +516,33 @@ public class Manager {
           Args.getInstance().getOutputDirectory());
       throw new TronError(e, TronError.ErrCode.KHAOS_DB_INIT);
     }
-    
-    logger.info("Manager.init() - About to initialize ForkController...");
     getChainBaseManager().getForkController().init(this.chainBaseManager);
-    logger.info("Manager.init() - ForkController initialization completed");
 
     if (Args.getInstance().isNeedToUpdateAsset() && needToUpdateAsset()) {
-      logger.info("Manager.init() - Starting AssetUpdateHelper...");
       new AssetUpdateHelper(chainBaseManager).doWork();
-      logger.info("Manager.init() - AssetUpdateHelper completed");
     }
 
     if (needToMoveAbi()) {
-      logger.info("Manager.init() - Starting MoveAbiHelper...");
       new MoveAbiHelper(chainBaseManager).doWork();
-      logger.info("Manager.init() - MoveAbiHelper completed");
     }
 
     if (needToLoadEnergyPriceHistory()) {
-      logger.info("Manager.init() - Starting EnergyPriceHistoryLoader...");
       new EnergyPriceHistoryLoader(chainBaseManager).doWork();
-      logger.info("Manager.init() - EnergyPriceHistoryLoader completed");
     }
 
     if (needToLoadBandwidthPriceHistory()) {
-      logger.info("Manager.init() - Starting BandwidthPriceHistoryLoader...");
       new BandwidthPriceHistoryLoader(chainBaseManager).doWork();
-      logger.info("Manager.init() - BandwidthPriceHistoryLoader completed");
     }
 
     if (needToSetBlackholePermission()) {
-      logger.info("Manager.init() - Resetting blackhole account permission...");
       resetBlackholeAccountPermission();
-      logger.info("Manager.init() - Blackhole account permission reset completed");
     }
 
     //for test only
-    logger.info("Manager.init() - Updating dynamic store by config...");
     chainBaseManager.getDynamicPropertiesStore().updateDynamicStoreByConfig();
-    logger.info("Manager.init() - Dynamic store update completed");
 
     // init liteFullNode
-    logger.info("Manager.init() - Initializing lite node...");
     initLiteNode();
-    logger.info("Manager.init() - Lite node initialization completed");
 
     long headNum = chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber();
     logger.info("Current headNum is: {}.", headNum);
@@ -597,139 +551,75 @@ public class Manager {
     if (isLite) {
       logger.info("Lite node lowestNum: {}", chainBaseManager.getLowestBlockNum());
     }
-    
-    logger.info("Manager.init() - Enabling revoking store...");
     revokingStore.enable();
-    logger.info("Manager.init() - Revoking store enabled");
-    
-    logger.info("Manager.init() - Starting executor services...");
     validateSignService = ExecutorServiceManager
         .newFixedThreadPool(validateSignName, Args.getInstance().getValidateSignThreadNum());
     rePushEs = ExecutorServiceManager.newSingleThreadExecutor(rePushEsName, true);
     ExecutorServiceManager.submit(rePushEs, rePushLoop);
-    logger.info("Manager.init() - Executor services started");
-    
     // add contract event listener for subscribing
     if (Args.getInstance().isEventSubscribe()) {
-      logger.info("Manager.init() - Starting event subscribing...");
       startEventSubscribing();
       triggerEs = ExecutorServiceManager.newSingleThreadExecutor(triggerEsName, true);
       ExecutorServiceManager.submit(triggerEs, triggerCapsuleProcessLoop);
-      logger.info("Manager.init() - Event subscribing started");
     }
 
     // start json rpc filter process
     if (CommonParameter.getInstance().isJsonRpcFilterEnabled()) {
-      logger.info("Manager.init() - Starting JSON RPC filter...");
       filterEs = ExecutorServiceManager.newSingleThreadExecutor(filterEsName);
       ExecutorServiceManager.submit(filterEs, filterProcessLoop);
-      logger.info("Manager.init() - JSON RPC filter started");
     }
 
     //initStoreFactory
-    logger.info("Manager.init() - Preparing store factory...");
     prepareStoreFactory();
-    logger.info("Manager.init() - Store factory prepared");
-    
     //initActuatorCreator
-    logger.info("Manager.init() - Initializing ActuatorCreator...");
     ActuatorCreator.init();
-    logger.info("Manager.init() - ActuatorCreator initialized");
-    
-    logger.info("Manager.init() - Registering transaction actuators...");
     TransactionRegister.registerActuator();
-    logger.info("Manager.init() - Transaction actuators registered");
-    
     // init auto-stop
     try {
-      logger.info("Manager.init() - Initializing auto-stop...");
       initAutoStop();
-      logger.info("Manager.init() - Auto-stop initialized");
     } catch (IllegalArgumentException e) {
       logger.error("Auto-stop params error: {}", e.getMessage());
       throw new TronError(e, TronError.ErrCode.AUTO_STOP_PARAMS);
     }
 
     maxFlushCount = CommonParameter.getInstance().getStorage().getMaxFlushCount();
-    logger.info("Manager.init() - COMPLETED SUCCESSFULLY! maxFlushCount: {}", maxFlushCount);
   }
 
   /**
    * init genesis block.
    */
   public void initGenesis() {
-    logger.info("initGenesis() starting...");
-    
-    logger.info("initGenesis() - About to call chainBaseManager.initGenesis()...");
     chainBaseManager.initGenesis();
-    logger.info("initGenesis() - chainBaseManager.initGenesis() completed");
-    
-    logger.info("initGenesis() - Getting genesis block...");
     BlockCapsule genesisBlock = chainBaseManager.getGenesisBlock();
-    logger.info("initGenesis() - Genesis block obtained: {}", genesisBlock.getBlockId());
 
-    logger.info("initGenesis() - Checking if block exists in chain...");
     if (chainBaseManager.containBlock(genesisBlock.getBlockId())) {
-      logger.info("initGenesis() - Genesis block already exists, setting chain ID...");
       Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
-      logger.info("initGenesis() - Chain ID set to: {}", genesisBlock.getBlockId().toString());
     } else {
-      logger.info("initGenesis() - Genesis block does not exist, checking if chain has blocks...");
       if (chainBaseManager.hasBlocks()) {
-        logger.error("initGenesis() - Chain has blocks but genesis block is different!");
         String msg = String.format("Genesis block modify, please delete database directory(%s) and "
                 + "restart.", Args.getInstance().getOutputDirectory());
         throw new TronError(msg, TronError.ErrCode.GENESIS_BLOCK_INIT);
       } else {
         logger.info("Create genesis block.");
         Args.getInstance().setChainId(genesisBlock.getBlockId().toString());
-        logger.info("initGenesis() - Chain ID set for new genesis: {}", genesisBlock.getBlockId().toString());
 
-        logger.info("initGenesis() - Saving genesis block to block store...");
         chainBaseManager.getBlockStore().put(genesisBlock.getBlockId().getBytes(), genesisBlock);
-        logger.info("initGenesis() - Genesis block saved to block store");
-        
-        logger.info("initGenesis() - Saving genesis block to block index store...");
         chainBaseManager.getBlockIndexStore().put(genesisBlock.getBlockId());
-        logger.info("initGenesis() - Genesis block saved to block index store");
 
         logger.info(SAVE_BLOCK, genesisBlock);
-        
         // init Dynamic Properties Store
-        logger.info("initGenesis() - Initializing dynamic properties...");
         chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(0);
-        logger.info("initGenesis() - Latest block header number saved");
-        
         chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderHash(
             genesisBlock.getBlockId().getByteString());
-        logger.info("initGenesis() - Latest block header hash saved");
-        
         chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(
             genesisBlock.getTimeStamp());
-        logger.info("initGenesis() - Latest block header timestamp saved");
-        
-        logger.info("initGenesis() - About to initialize accounts...");
         this.initAccount();
-        logger.info("initGenesis() - Account initialization completed");
-        
-        logger.info("initGenesis() - About to initialize witnesses...");
         this.initWitness();
-        logger.info("initGenesis() - Witness initialization completed");
-        
-        logger.info("initGenesis() - About to start khaosDb with genesis block...");
         this.khaosDb.start(genesisBlock);
-        logger.info("initGenesis() - khaosDb started with genesis block");
-        
-        logger.info("initGenesis() - About to update recent block...");
         this.updateRecentBlock(genesisBlock);
-        logger.info("initGenesis() - Recent block updated");
-        
-        logger.info("initGenesis() - About to initialize account history balance...");
         initAccountHistoryBalance();
-        logger.info("initGenesis() - Account history balance initialized");
       }
     }
-    logger.info("initGenesis() - COMPLETED SUCCESSFULLY");
   }
 
   /**
