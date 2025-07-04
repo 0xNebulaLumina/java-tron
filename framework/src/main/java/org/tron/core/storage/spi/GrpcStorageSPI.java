@@ -193,13 +193,19 @@ public class GrpcStorageSPI implements StorageSPI {
                 BatchWriteRequest.newBuilder().setDbName(dbName);
 
             for (Map.Entry<byte[], byte[]> entry : operations.entrySet()) {
-              BatchOperation op =
+              BatchOperation.Builder opBuilder =
                   BatchOperation.newBuilder()
-                      .setType(BatchOperation.Type.PUT)
-                      .setKey(ByteString.copyFrom(entry.getKey()))
-                      .setValue(ByteString.copyFrom(entry.getValue()))
-                      .build();
-              requestBuilder.addOperations(op);
+                      .setKey(ByteString.copyFrom(entry.getKey()));
+              
+              // Handle null values as delete operations
+              if (entry.getValue() == null) {
+                opBuilder.setType(BatchOperation.Type.DELETE);
+              } else {
+                opBuilder.setType(BatchOperation.Type.PUT)
+                         .setValue(ByteString.copyFrom(entry.getValue()));
+              }
+              
+              requestBuilder.addOperations(opBuilder.build());
             }
 
             blockingStub.batchWrite(requestBuilder.build());

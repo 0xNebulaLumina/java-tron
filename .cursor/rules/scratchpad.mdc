@@ -3,11 +3,6 @@ description:
 globs: 
 alwaysApply: false
 ---
----
-description: 
-globs: 
-alwaysApply: false
----
 # Lessons
 
 - **Protobuf Class References**: Generated protobuf classes are nested within the main `Storage` class (e.g., `storage.Storage.GetRequest`), not standalone classes. Need to use fully qualified names to avoid conflicts with our own classes.
@@ -43,6 +38,16 @@ alwaysApply: false
 **FILES MODIFIED**:
 - `framework/src/main/java/org/tron/core/storage/spi/GrpcStorageSPI.java` - Fixed iterator implementation
 - `framework/src/test/java/org/tron/core/storage/spi/GrpcStorageIteratorTest.java` - Added unit tests
+
+**✅ ITERATOR FIX SUCCESS**: Application now starts successfully and begins blockchain sync! Logs show successful block processing (blocks 20, 21, 22).
+
+**🚨 NEW ISSUE IDENTIFIED**: NullPointerException in batchWrite method at line 200 in GrpcStorageSPI.java
+- **Root Cause**: `ByteString.copyFrom()` is called with null value during batch operations
+- **Location**: `GrpcStorageSPI.lambda$batchWrite$4(GrpcStorageSPI.java:200)`
+- **Context**: Occurs during checkpoint deletion in SnapshotManager.deleteCheckpoint()
+- **Impact**: Causes application to crash with DB_FLUSH error during block sync
+
+**NEXT FIX NEEDED**: Handle null values in batchWrite operation by treating them as delete operations
 
 # High-level Task: Replace Java RocksDB with Rust implementation
 
