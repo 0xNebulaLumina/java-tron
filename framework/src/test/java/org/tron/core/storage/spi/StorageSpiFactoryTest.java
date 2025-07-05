@@ -132,6 +132,83 @@ public class StorageSpiFactoryTest {
   }
 
   @Test
+  public void testConfigFileSupport() {
+    // Test config file methods with explicit Config object
+    com.typesafe.config.Config testConfig = com.typesafe.config.ConfigFactory.parseString(
+        "storage.mode = \"remote\"\n" +
+        "storage.grpc.host = \"config-host\"\n" +
+        "storage.grpc.port = 9999\n" +
+        "storage.embedded.basePath = \"config-path\""
+    );
+
+    // Test storage mode from config
+    StorageMode mode = StorageSpiFactory.determineStorageMode(testConfig);
+    Assert.assertEquals(StorageMode.REMOTE, mode);
+
+    // Test gRPC host from config
+    String host = StorageSpiFactory.getGrpcHost(testConfig);
+    Assert.assertEquals("config-host", host);
+
+    // Test gRPC port from config
+    int port = StorageSpiFactory.getGrpcPort(testConfig);
+    Assert.assertEquals(9999, port);
+
+    // Test embedded base path from config
+    String basePath = StorageSpiFactory.getEmbeddedBasePath(testConfig);
+    Assert.assertEquals("config-path", basePath);
+  }
+
+  @Test
+  public void testConfigFilePrecedence() {
+    // Test that system properties take precedence over config file
+    com.typesafe.config.Config testConfig = com.typesafe.config.ConfigFactory.parseString(
+        "storage.mode = \"embedded\"\n" +
+        "storage.grpc.host = \"config-host\"\n" +
+        "storage.grpc.port = 8888"
+    );
+
+    // Set system properties that should override config file
+    System.setProperty("storage.mode", "remote");
+    System.setProperty("storage.grpc.host", "system-host");
+    System.setProperty("storage.grpc.port", "7777");
+
+    // Test that system properties take precedence
+    StorageMode mode = StorageSpiFactory.determineStorageMode(testConfig);
+    Assert.assertEquals(StorageMode.REMOTE, mode);
+
+    String host = StorageSpiFactory.getGrpcHost(testConfig);
+    Assert.assertEquals("system-host", host);
+
+    int port = StorageSpiFactory.getGrpcPort(testConfig);
+    Assert.assertEquals(7777, port);
+  }
+
+  @Test
+  public void testConfigFileDefaults() {
+    // Test with empty config file to ensure defaults are used
+    com.typesafe.config.Config emptyConfig = com.typesafe.config.ConfigFactory.parseString("");
+
+    // Clear any system properties
+    System.clearProperty("storage.mode");
+    System.clearProperty("storage.grpc.host");
+    System.clearProperty("storage.grpc.port");
+    System.clearProperty("storage.embedded.basePath");
+
+    // Test defaults are used when config is empty
+    StorageMode mode = StorageSpiFactory.determineStorageMode(emptyConfig);
+    Assert.assertEquals(StorageMode.getDefault(), mode);
+
+    String host = StorageSpiFactory.getGrpcHost(emptyConfig);
+    Assert.assertEquals("localhost", host);
+
+    int port = StorageSpiFactory.getGrpcPort(emptyConfig);
+    Assert.assertEquals(50011, port);
+
+    String basePath = StorageSpiFactory.getEmbeddedBasePath(emptyConfig);
+    Assert.assertEquals("data/rocksdb-embedded", basePath);
+  }
+
+  @Test
   public void testInvalidPortConfiguration() {
     System.setProperty("storage.mode", "remote");
     System.setProperty("storage.grpc.port", "invalid-port");
@@ -155,7 +232,7 @@ public class StorageSpiFactoryTest {
 
   @Test
   public void testDefaultStorageMode() {
-    // Verify default is REMOTE (as per our design decision)
-    Assert.assertEquals(StorageMode.REMOTE, StorageMode.getDefault());
+    // Verify default is EMBEDDED (for backward compatibility and conservative defaults)
+    Assert.assertEquals(StorageMode.EMBEDDED, StorageMode.getDefault());
   }
 }

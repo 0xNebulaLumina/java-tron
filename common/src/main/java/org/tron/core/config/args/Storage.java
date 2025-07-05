@@ -64,6 +64,11 @@ public class Storage {
   private static final String PROPERTIES_CONFIG_DEFAULT_L_KEY = "defaultL";
   private static final String DEFAULT_TRANSACTIONHISTORY_SWITCH = "on";
 
+  // Storage SPI configuration keys
+  private static final String GRPC_HOST_CONFIG_KEY = "storage.grpc.host";
+  private static final String GRPC_PORT_CONFIG_KEY = "storage.grpc.port";
+  private static final String EMBEDDED_BASE_PATH_CONFIG_KEY = "storage.embedded.basePath";
+
   private static final String NAME_CONFIG_KEY = "name";
   private static final String PATH_CONFIG_KEY = "path";
   private static final String CREATE_IF_MISSING_CONFIG_KEY = "createIfMissing";
@@ -98,6 +103,12 @@ public class Storage {
   private static final boolean DEFAULT_CHECKPOINT_SYNC = true;
   private static final int DEFAULT_ESTIMATED_TRANSACTIONS = 1000;
   private static final int DEFAULT_SNAPSHOT_MAX_FLUSH_COUNT = 1;
+
+  // Storage SPI default values
+  private static final String DEFAULT_GRPC_HOST = "localhost";
+  private static final int DEFAULT_GRPC_PORT = 50011;
+  private static final String DEFAULT_EMBEDDED_BASE_PATH = "data/rocksdb-embedded";
+
   private Config storage;
 
   /**
@@ -263,6 +274,20 @@ public class Storage {
         && config.getBoolean(TX_CACHE_INIT_OPTIMIZATION);
   }
 
+  public static String getGrpcHostFromConfig(final Config config) {
+    return config.hasPath(GRPC_HOST_CONFIG_KEY)
+        ? config.getString(GRPC_HOST_CONFIG_KEY) : DEFAULT_GRPC_HOST;
+  }
+
+  public static int getGrpcPortFromConfig(final Config config) {
+    return config.hasPath(GRPC_PORT_CONFIG_KEY)
+        ? config.getInt(GRPC_PORT_CONFIG_KEY) : DEFAULT_GRPC_PORT;
+  }
+
+  public static String getEmbeddedBasePathFromConfig(final Config config) {
+    return config.hasPath(EMBEDDED_BASE_PATH_CONFIG_KEY)
+        ? config.getString(EMBEDDED_BASE_PATH_CONFIG_KEY) : DEFAULT_EMBEDDED_BASE_PATH;
+  }
 
   public  void setCacheStrategies(Config config) {
     if (config.hasPath(CACHE_STRATEGIES)) {

@@ -1,7 +1,9 @@
 package org.tron.core.storage.spi;
 
+import com.typesafe.config.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.tron.common.parameter.CommonParameter;
 
 /**
  * Factory class for creating StorageSPI implementations based on configuration.
@@ -23,6 +25,8 @@ public class StorageSpiFactory {
   private static final String GRPC_PORT_PROPERTY = "storage.grpc.port";
   private static final String GRPC_HOST_ENV = "STORAGE_GRPC_HOST";
   private static final String GRPC_PORT_ENV = "STORAGE_GRPC_PORT";
+  private static final String GRPC_HOST_CONFIG_KEY = "storage.grpc.host";
+  private static final String GRPC_PORT_CONFIG_KEY = "storage.grpc.port";
 
   // Default gRPC settings
   private static final String DEFAULT_GRPC_HOST = "localhost";
@@ -31,6 +35,7 @@ public class StorageSpiFactory {
   // Embedded storage settings
   private static final String EMBEDDED_BASE_PATH_PROPERTY = "storage.embedded.basePath";
   private static final String EMBEDDED_BASE_PATH_ENV = "STORAGE_EMBEDDED_BASE_PATH";
+  private static final String EMBEDDED_BASE_PATH_CONFIG_KEY = "storage.embedded.basePath";
   private static final String DEFAULT_EMBEDDED_BASE_PATH = "data/rocksdb-embedded";
 
   /**
@@ -109,9 +114,8 @@ public class StorageSpiFactory {
       return StorageMode.fromString(modeStr);
     }
 
-    // 3. Check config file (simplified - in real implementation would read from config)
-    // For now, we'll use a system property as a placeholder
-    modeStr = System.getProperty(CONFIG_FILE_KEY);
+    // 3. Check config file
+    modeStr = getStorageModeFromConfig();
     if (modeStr != null && !modeStr.trim().isEmpty()) {
       logger.debug("Storage mode from config file: {}", modeStr);
       return StorageMode.fromString(modeStr);
@@ -121,6 +125,40 @@ public class StorageSpiFactory {
     StorageMode defaultMode = StorageMode.getDefault();
     logger.info("Using default storage mode: {}", defaultMode);
     return defaultMode;
+  }
+
+  /**
+   * Get storage mode from config file.
+   *
+   * @return Storage mode string from config, or null if not found
+   */
+  private static String getStorageModeFromConfig() {
+    try {
+      CommonParameter parameter = CommonParameter.getInstance();
+      if (parameter != null) {
+        // First try to get from the already loaded storage configuration
+        if (parameter.getStorage() != null && parameter.getStorage().getStorageMode() != null) {
+          return parameter.getStorage().getStorageMode();
+        }
+        
+        // If not available, reload the config to get the latest values
+        // This is similar to how DynamicArgs does it
+        String confFileName = parameter.getShellConfFileName();
+        if (confFileName == null || confFileName.trim().isEmpty()) {
+          confFileName = "config.conf"; // Default config file
+        }
+        
+        try {
+          Config config = org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
+          return org.tron.core.config.args.Storage.getStorageModeFromConfig(config);
+        } catch (Exception e) {
+          logger.debug("Could not load config file for storage mode: {}", e.getMessage());
+        }
+      }
+    } catch (Exception e) {
+      logger.debug("Could not read storage mode from config: {}", e.getMessage());
+    }
+    return null;
   }
 
   /**
@@ -162,7 +200,43 @@ public class StorageSpiFactory {
       return host.trim();
     }
 
+    // Check config file
+    host = getGrpcHostFromConfig();
+    if (host != null && !host.trim().isEmpty()) {
+      return host.trim();
+    }
+
     return DEFAULT_GRPC_HOST;
+  }
+
+  /**
+   * Get gRPC host from config file.
+   *
+   * @return gRPC host from config, or null if not found
+   */
+  private static String getGrpcHostFromConfig() {
+    try {
+      // Try to get from CommonParameter config if available
+      CommonParameter parameter = CommonParameter.getInstance();
+      if (parameter != null) {
+        // For now, we need to reload the config to get the latest values
+        // This is similar to how DynamicArgs does it
+        String confFileName = parameter.getShellConfFileName();
+        if (confFileName == null || confFileName.trim().isEmpty()) {
+          confFileName = "config.conf"; // Default config file
+        }
+        
+        try {
+          Config config = org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
+          return org.tron.core.config.args.Storage.getGrpcHostFromConfig(config);
+        } catch (Exception e) {
+          logger.debug("Could not load config file for gRPC host: {}", e.getMessage());
+        }
+      }
+    } catch (Exception e) {
+      logger.debug("Could not read gRPC host from config: {}", e.getMessage());
+    }
+    return null;
   }
 
   /**
@@ -189,7 +263,43 @@ public class StorageSpiFactory {
       }
     }
 
+    // Check config file
+    Integer portFromConfig = getGrpcPortFromConfig();
+    if (portFromConfig != null) {
+      return portFromConfig;
+    }
+
     return DEFAULT_GRPC_PORT;
+  }
+
+  /**
+   * Get gRPC port from config file.
+   *
+   * @return gRPC port from config, or null if not found
+   */
+  private static Integer getGrpcPortFromConfig() {
+    try {
+      // Try to get from CommonParameter config if available
+      CommonParameter parameter = CommonParameter.getInstance();
+      if (parameter != null) {
+        // For now, we need to reload the config to get the latest values
+        // This is similar to how DynamicArgs does it
+        String confFileName = parameter.getShellConfFileName();
+        if (confFileName == null || confFileName.trim().isEmpty()) {
+          confFileName = "config.conf"; // Default config file
+        }
+        
+        try {
+          Config config = org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
+          return org.tron.core.config.args.Storage.getGrpcPortFromConfig(config);
+        } catch (Exception e) {
+          logger.debug("Could not load config file for gRPC port: {}", e.getMessage());
+        }
+      }
+    } catch (Exception e) {
+      logger.debug("Could not read gRPC port from config: {}", e.getMessage());
+    }
+    return null;
   }
 
   /**
@@ -208,7 +318,43 @@ public class StorageSpiFactory {
       return basePath.trim();
     }
 
+    // Check config file
+    basePath = getEmbeddedBasePathFromConfig();
+    if (basePath != null && !basePath.trim().isEmpty()) {
+      return basePath.trim();
+    }
+
     return DEFAULT_EMBEDDED_BASE_PATH;
+  }
+
+  /**
+   * Get embedded storage base path from config file.
+   *
+   * @return Base path from config, or null if not found
+   */
+  private static String getEmbeddedBasePathFromConfig() {
+    try {
+      // Try to get from CommonParameter config if available
+      CommonParameter parameter = CommonParameter.getInstance();
+      if (parameter != null) {
+        // For now, we need to reload the config to get the latest values
+        // This is similar to how DynamicArgs does it
+        String confFileName = parameter.getShellConfFileName();
+        if (confFileName == null || confFileName.trim().isEmpty()) {
+          confFileName = "config.conf"; // Default config file
+        }
+        
+        try {
+          Config config = org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
+          return org.tron.core.config.args.Storage.getEmbeddedBasePathFromConfig(config);
+        } catch (Exception e) {
+          logger.debug("Could not load config file for embedded base path: {}", e.getMessage());
+        }
+      }
+    } catch (Exception e) {
+      logger.debug("Could not read embedded base path from config: {}", e.getMessage());
+    }
+    return null;
   }
 
   /**
@@ -236,5 +382,138 @@ public class StorageSpiFactory {
     }
 
     return info.toString();
+  }
+
+  // Overloaded methods that accept Config parameter for more direct config file access
+
+  /**
+   * Determine storage mode from configuration sources with explicit config.
+   *
+   * @param config Config object to read from
+   * @return Configured StorageMode
+   */
+  public static StorageMode determineStorageMode(Config config) {
+    String modeStr = null;
+
+    // 1. Check system property (highest precedence)
+    modeStr = System.getProperty(SYSTEM_PROPERTY_KEY);
+    if (modeStr != null && !modeStr.trim().isEmpty()) {
+      logger.debug("Storage mode from system property: {}", modeStr);
+      return StorageMode.fromString(modeStr);
+    }
+
+    // 2. Check environment variable
+    modeStr = System.getenv(ENV_VAR_KEY);
+    if (modeStr != null && !modeStr.trim().isEmpty()) {
+      logger.debug("Storage mode from environment variable: {}", modeStr);
+      return StorageMode.fromString(modeStr);
+    }
+
+    // 3. Check config file
+    if (config != null && config.hasPath(CONFIG_FILE_KEY)) {
+      modeStr = config.getString(CONFIG_FILE_KEY);
+      if (modeStr != null && !modeStr.trim().isEmpty()) {
+        logger.debug("Storage mode from config file: {}", modeStr);
+        return StorageMode.fromString(modeStr);
+      }
+    }
+
+    // 4. Return default
+    StorageMode defaultMode = StorageMode.getDefault();
+    logger.info("Using default storage mode: {}", defaultMode);
+    return defaultMode;
+  }
+
+  /**
+   * Get gRPC host from configuration with explicit config.
+   *
+   * @param config Config object to read from
+   * @return gRPC host address
+   */
+  public static String getGrpcHost(Config config) {
+    String host = System.getProperty(GRPC_HOST_PROPERTY);
+    if (host != null && !host.trim().isEmpty()) {
+      return host.trim();
+    }
+
+    host = System.getenv(GRPC_HOST_ENV);
+    if (host != null && !host.trim().isEmpty()) {
+      return host.trim();
+    }
+
+    // Check config file
+    if (config != null && config.hasPath(GRPC_HOST_CONFIG_KEY)) {
+      host = config.getString(GRPC_HOST_CONFIG_KEY);
+      if (host != null && !host.trim().isEmpty()) {
+        return host.trim();
+      }
+    }
+
+    return DEFAULT_GRPC_HOST;
+  }
+
+  /**
+   * Get gRPC port from configuration with explicit config.
+   *
+   * @param config Config object to read from
+   * @return gRPC port number
+   */
+  public static int getGrpcPort(Config config) {
+    String portStr = System.getProperty(GRPC_PORT_PROPERTY);
+    if (portStr != null && !portStr.trim().isEmpty()) {
+      try {
+        return Integer.parseInt(portStr.trim());
+      } catch (NumberFormatException e) {
+        logger.warn("Invalid gRPC port in system property: {}, using default", portStr);
+      }
+    }
+
+    portStr = System.getenv(GRPC_PORT_ENV);
+    if (portStr != null && !portStr.trim().isEmpty()) {
+      try {
+        return Integer.parseInt(portStr.trim());
+      } catch (NumberFormatException e) {
+        logger.warn("Invalid gRPC port in environment variable: {}, using default", portStr);
+      }
+    }
+
+    // Check config file
+    if (config != null && config.hasPath(GRPC_PORT_CONFIG_KEY)) {
+      try {
+        return config.getInt(GRPC_PORT_CONFIG_KEY);
+      } catch (Exception e) {
+        logger.warn("Invalid gRPC port in config file: {}, using default", e.getMessage());
+      }
+    }
+
+    return DEFAULT_GRPC_PORT;
+  }
+
+  /**
+   * Get embedded storage base path from configuration with explicit config.
+   *
+   * @param config Config object to read from
+   * @return Base path for embedded storage
+   */
+  public static String getEmbeddedBasePath(Config config) {
+    String basePath = System.getProperty(EMBEDDED_BASE_PATH_PROPERTY);
+    if (basePath != null && !basePath.trim().isEmpty()) {
+      return basePath.trim();
+    }
+
+    basePath = System.getenv(EMBEDDED_BASE_PATH_ENV);
+    if (basePath != null && !basePath.trim().isEmpty()) {
+      return basePath.trim();
+    }
+
+    // Check config file
+    if (config != null && config.hasPath(EMBEDDED_BASE_PATH_CONFIG_KEY)) {
+      basePath = config.getString(EMBEDDED_BASE_PATH_CONFIG_KEY);
+      if (basePath != null && !basePath.trim().isEmpty()) {
+        return basePath.trim();
+      }
+    }
+
+    return DEFAULT_EMBEDDED_BASE_PATH;
   }
 }

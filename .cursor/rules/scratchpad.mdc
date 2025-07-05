@@ -1,8 +1,3 @@
----
-description: 
-globs: 
-alwaysApply: false
----
 # Lessons
 
 - **Protobuf Class References**: Generated protobuf classes are nested within the main `Storage` class (e.g., `storage.Storage.GetRequest`), not standalone classes. Need to use fully qualified names to avoid conflicts with our own classes.
@@ -245,6 +240,50 @@ CachingStorageSPI
 ### PHASE COMPLETED: DUAL STORAGE MODE IMPLEMENTATION ✅
 
 **Status**: Ready for production use. Both embedded and remote storage modes are fully functional with comprehensive testing and documentation.
+
+### PHASE 10 COMPLETED: MAIN APPLICATION INTEGRATION ✅
+
+**Status**: Dual storage mode is now fully integrated into the main java-tron application. The FullNode.jar will automatically use the configured storage mode (embedded/remote) while maintaining backward compatibility with legacy storage.
+
+# Current Task: Add Config File Support to StorageSpiFactory
+
+## Problem Analysis
+The `StorageSpiFactory` methods:
+- `determineStorageMode()`
+- `getEmbeddedBasePath()`
+- `getGrpcHost()`
+- `getGrpcPort()`
+
+Currently only check:
+1. System properties
+2. Environment variables
+3. **Missing**: Config file values (placeholder implementation)
+
+## Solution Strategy
+Following the pattern used in `Storage.java`, I need to:
+1. Add config file support to the existing methods
+2. Access config through `CommonParameter.getInstance().storage` or direct Config parameter
+3. Maintain the existing precedence order: System Property > Environment Variable > Config File > Default
+
+## Implementation Plan
+✅ 1. Add new config file keys (similar to existing `STORAGE_MODE_CONFIG_KEY`)
+✅ 2. Add methods to read from config file (similar to `Storage.getStorageModeFromConfig()`)
+✅ 3. Update existing methods to include config file checks
+✅ 4. Maintain backward compatibility
+✅ 5. Fix test inconsistency (default is EMBEDDED for backward compatibility)
+
+## Config File Keys Added
+- `storage.mode` (already exists)
+- `storage.grpc.host` (new)
+- `storage.grpc.port` (new)
+- `storage.embedded.basePath` (new)
+
+## Implementation Status
+✅ **COMPLETED**: Config file support has been successfully added to StorageSpiFactory
+- All methods now properly respect config file values
+- Precedence order maintained: System Property > Environment Variable > Config File > Default
+- Tests added to verify config file functionality
+- Default storage mode is EMBEDDED for backward compatibility
 
 ### PHASE 10 COMPLETED: MAIN APPLICATION INTEGRATION ✅
 
