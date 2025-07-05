@@ -56,14 +56,14 @@ integration-test:
 	@echo "Running integration tests..."
 	./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPIIntegrationTest" \
 		--dependency-verification=off \
-		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT)
+		-Dstorage.remote.host=$(GRPC_HOST) -Dstorage.remote.port=$(GRPC_PORT)
 
 # Run performance benchmarks (requires gRPC server)
 performance-test:
 	@echo "Running performance benchmarks..."
 	./gradlew :framework:test --tests "org.tron.core.storage.spi.StoragePerformanceBenchmark" \
 		--dependency-verification=off \
-		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT)
+		-Dstorage.remote.host=$(GRPC_HOST) -Dstorage.remote.port=$(GRPC_PORT)
 
 # Run all tests
 test-all: java-test integration-test performance-test
@@ -142,7 +142,7 @@ perf-analysis:
 	@mkdir -p reports
 	./gradlew :framework:test --tests "org.tron.core.storage.spi.StoragePerformanceBenchmark" \
 		--dependency-verification=off \
-		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT) 2>&1 | tee reports/performance-report-$(shell date +%Y%m%d-%H%M%S).txt
+		-Dstorage.remote.host=$(GRPC_HOST) -Dstorage.remote.port=$(GRPC_PORT) 2>&1 | tee reports/performance-report-$(shell date +%Y%m%d-%H%M%S).txt
 	@echo "Extracting performance metrics..."
 	@./scripts/extract-metrics.sh reports/performance-report-*.txt || echo "Metrics extraction script not found, check reports directory for raw output"
 
@@ -151,7 +151,7 @@ perf-analysis-strict:
 	@echo "Running detailed performance analysis with strict dependency verification..."
 	@mkdir -p reports
 	./gradlew :framework:test --tests "org.tron.core.storage.spi.StoragePerformanceBenchmark.generatePerformanceReport" \
-		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT) | tee reports/performance-report-$(shell date +%Y%m%d-%H%M%S).txt
+		-Dstorage.remote.host=$(GRPC_HOST) -Dstorage.remote.port=$(GRPC_PORT) | tee reports/performance-report-$(shell date +%Y%m%d-%H%M%S).txt
 
 # Update dependency verification metadata (run this to fix verification issues permanently)
 update-verification:
@@ -171,7 +171,7 @@ dual-mode-test:
 		--dependency-verification=off
 	./gradlew :framework:test --tests "org.tron.core.storage.spi.DualStorageModeIntegrationTest" \
 		--dependency-verification=off \
-		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT)
+		-Dstorage.remote.host=$(GRPC_HOST) -Dstorage.remote.port=$(GRPC_PORT)
 
 # Test embedded storage mode only
 embedded-test:
@@ -184,7 +184,7 @@ remote-test:
 	@echo "Running remote storage tests..."
 	./gradlew :framework:test --tests "org.tron.core.storage.spi.DualStorageModeIntegrationTest.testRemoteStorageMode" \
 		--dependency-verification=off \
-		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT)
+		-Dstorage.remote.host=$(GRPC_HOST) -Dstorage.remote.port=$(GRPC_PORT)
 
 # Compare performance of embedded vs remote modes
 dual-mode-perf:
@@ -192,7 +192,7 @@ dual-mode-perf:
 	@mkdir -p reports
 	./gradlew :framework:test --tests "org.tron.core.storage.spi.DualModePerformanceBenchmark.generateComparativePerformanceReport" \
 		--dependency-verification=off \
-		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT) 2>&1 | tee reports/dual-mode-performance-$(shell date +%Y%m%d-%H%M%S).txt
+		-Dstorage.remote.host=$(GRPC_HOST) -Dstorage.remote.port=$(GRPC_PORT) 2>&1 | tee reports/dual-mode-performance-$(shell date +%Y%m%d-%H%M%S).txt
 
 # Test embedded mode performance only
 embedded-perf:
@@ -207,7 +207,7 @@ remote-perf:
 	@mkdir -p reports
 	./gradlew :framework:test --tests "org.tron.core.storage.spi.DualModePerformanceBenchmark.generateRemotePerformanceReport" \
 		--dependency-verification=off \
-		-Dstorage.grpc.host=$(GRPC_HOST) -Dstorage.grpc.port=$(GRPC_PORT) 2>&1 | tee reports/remote-performance-$(shell date +%Y%m%d-%H%M%S).txt
+		-Dstorage.remote.host=$(GRPC_HOST) -Dstorage.remote.port=$(GRPC_PORT) 2>&1 | tee reports/remote-performance-$(shell date +%Y%m%d-%H%M%S).txt
 
 # Show storage configuration info
 storage-config:

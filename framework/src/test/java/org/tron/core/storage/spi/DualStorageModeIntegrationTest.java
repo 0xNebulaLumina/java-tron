@@ -42,8 +42,8 @@ public class DualStorageModeIntegrationTest {
 
     // Clear test properties
     System.clearProperty("storage.embedded.basePath");
-    System.clearProperty("storage.grpc.host");
-    System.clearProperty("storage.grpc.port");
+    System.clearProperty("storage.remote.host");
+    System.clearProperty("storage.remote.port");
   }
 
   @Test
@@ -75,8 +75,8 @@ public class DualStorageModeIntegrationTest {
   public void testRemoteStorageMode() throws Exception {
     // Configure for remote mode
     System.setProperty("storage.mode", "remote");
-    System.setProperty("storage.grpc.host", "localhost");
-    System.setProperty("storage.grpc.port", "50011");
+    System.setProperty("storage.remote.host", "localhost");
+    System.setProperty("storage.remote.port", "50011");
 
     StorageSPI storage = StorageSpiFactory.createStorage();
     Assert.assertTrue("Should create GrpcStorageSPI", storage instanceof GrpcStorageSPI);
@@ -113,8 +113,8 @@ public class DualStorageModeIntegrationTest {
 
     // Test remote mode info
     System.setProperty("storage.mode", "remote");
-    System.setProperty("storage.grpc.host", "test-host");
-    System.setProperty("storage.grpc.port", "9999");
+    System.setProperty("storage.remote.host", "test-host");
+    System.setProperty("storage.remote.port", "9999");
 
     info = StorageSpiFactory.getConfigurationInfo();
     Assert.assertTrue("Should contain mode info", info.contains("Mode: remote"));

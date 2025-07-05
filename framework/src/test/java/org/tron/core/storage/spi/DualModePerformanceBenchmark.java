@@ -41,8 +41,8 @@ public class DualModePerformanceBenchmark extends BasePerformanceBenchmark {
 
     // Clear test properties
     System.clearProperty("storage.embedded.basePath");
-    System.clearProperty("storage.grpc.host");
-    System.clearProperty("storage.grpc.port");
+    System.clearProperty("storage.remote.host");
+    System.clearProperty("storage.remote.port");
   }
 
   @Override
@@ -54,8 +54,8 @@ public class DualModePerformanceBenchmark extends BasePerformanceBenchmark {
       System.setProperty("storage.embedded.basePath", dataDir);
       new File(dataDir).mkdirs();
     } else if ("remote".equals(currentMode)) {
-      System.setProperty("storage.grpc.host", "localhost");
-      System.setProperty("storage.grpc.port", "50011");
+      System.setProperty("storage.remote.host", "localhost");
+      System.setProperty("storage.remote.port", "50011");
     }
 
     StorageSPI storage = StorageSpiFactory.createStorage();

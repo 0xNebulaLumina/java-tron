@@ -65,8 +65,8 @@ public class Storage {
   private static final String DEFAULT_TRANSACTIONHISTORY_SWITCH = "on";
 
   // Storage SPI configuration keys
-  private static final String GRPC_HOST_CONFIG_KEY = "storage.grpc.host";
-  private static final String GRPC_PORT_CONFIG_KEY = "storage.grpc.port";
+  private static final String GRPC_HOST_CONFIG_KEY = "storage.remote.host";
+  private static final String GRPC_PORT_CONFIG_KEY = "storage.remote.port";
   private static final String EMBEDDED_BASE_PATH_CONFIG_KEY = "storage.embedded.basePath";
 
   private static final String NAME_CONFIG_KEY = "name";

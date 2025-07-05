@@ -21,12 +21,12 @@ public class StorageSpiFactory {
   private static final String CONFIG_FILE_KEY = "storage.mode";
 
   // gRPC configuration keys
-  private static final String GRPC_HOST_PROPERTY = "storage.grpc.host";
-  private static final String GRPC_PORT_PROPERTY = "storage.grpc.port";
-  private static final String GRPC_HOST_ENV = "STORAGE_GRPC_HOST";
-  private static final String GRPC_PORT_ENV = "STORAGE_GRPC_PORT";
-  private static final String GRPC_HOST_CONFIG_KEY = "storage.grpc.host";
-  private static final String GRPC_PORT_CONFIG_KEY = "storage.grpc.port";
+  private static final String GRPC_HOST_PROPERTY = "storage.remote.host";
+  private static final String GRPC_PORT_PROPERTY = "storage.remote.port";
+  private static final String GRPC_HOST_ENV = "STORAGE_REMOTE_HOST";
+  private static final String GRPC_PORT_ENV = "STORAGE_REMOTE_PORT";
+  private static final String GRPC_HOST_CONFIG_KEY = "storage.remote.host";
+  private static final String GRPC_PORT_CONFIG_KEY = "storage.remote.port";
 
   // Default gRPC settings
   private static final String DEFAULT_GRPC_HOST = "localhost";

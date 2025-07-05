@@ -81,18 +81,18 @@ java MyApp
 
 ```bash
 # Via system property
-java -Dstorage.mode=remote -Dstorage.grpc.host=storage-service -Dstorage.grpc.port=50051 MyApp
+java -Dstorage.mode=remote -Dstorage.remote.host=storage-service -Dstorage.remote.port=50051 MyApp
 
 # Via environment variable
 export STORAGE_MODE=remote
-export STORAGE_GRPC_HOST=storage-service
-export STORAGE_GRPC_PORT=50051
+export STORAGE_REMOTE_HOST=storage-service
+export STORAGE_REMOTE_PORT=50051
 java MyApp
 ```
 
 **Configuration Options**:
-- `storage.grpc.host` / `STORAGE_GRPC_HOST`: gRPC server hostname (default: `localhost`)
-- `storage.grpc.port` / `STORAGE_GRPC_PORT`: gRPC server port (default: `50051`)
+- `storage.remote.host` / `STORAGE_REMOTE_HOST`: gRPC server hostname (default: `localhost`)
+- `storage.remote.port` / `STORAGE_REMOTE_PORT`: gRPC server port (default: `50051`)
 
 ## Usage Examples
 
@@ -152,8 +152,8 @@ services:
       - rust-storage
     environment:
       - STORAGE_MODE=remote
-      - STORAGE_GRPC_HOST=rust-storage
-      - STORAGE_GRPC_PORT=50051
+      - STORAGE_REMOTE_HOST=rust-storage
+      - STORAGE_REMOTE_PORT=50051
 ```
 
 ## Testing
@@ -232,8 +232,8 @@ docker compose run java-tron-performance
    ```bash
    # Change from embedded to remote
    export STORAGE_MODE=remote
-   export STORAGE_GRPC_HOST=localhost
-   export STORAGE_GRPC_PORT=50051
+   export STORAGE_REMOTE_HOST=localhost
+   export STORAGE_REMOTE_PORT=50051
    ```
 
 3. **Migrate Data** (if needed):
@@ -348,7 +348,7 @@ Solution: Increase JVM heap size or tune RocksDB settings
 **Issue**: `gRPC connection failed`
 ```
 Solution: Check network connectivity and service status
-- Verify STORAGE_GRPC_HOST and STORAGE_GRPC_PORT
+- Verify STORAGE_REMOTE_HOST and STORAGE_REMOTE_PORT
 - Ensure Rust storage service is running
 - Check firewall and network policies
 ```

@@ -6,8 +6,8 @@
 set -e
 
 # Configuration
-GRPC_HOST="${STORAGE_GRPC_HOST:-localhost}"
-GRPC_PORT="${STORAGE_GRPC_PORT:-50011}"
+GRPC_HOST="${STORAGE_REMOTE_HOST:-localhost}"
+GRPC_PORT="${STORAGE_REMOTE_PORT:-50011}"
 RUST_SERVICE_PID=""
 REPORTS_DIR="reports/$(date +%Y%m%d-%H%M%S)"
 
@@ -150,7 +150,7 @@ run_integration_tests() {
     log_info "Running integration tests..."
     
     ./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPIIntegrationTest" \
-        -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
+        -Dstorage.remote.host=$GRPC_HOST -Dstorage.remote.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
         --console=plain
     
     log_success "Integration tests completed"
@@ -195,7 +195,7 @@ run_performance_benchmarks() {
     for test in "${tests[@]}"; do
         log_info "Running gRPC benchmark: $test"
         ./gradlew :framework:test --tests "org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark.$test" \
-            -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
+            -Dstorage.remote.host=$GRPC_HOST -Dstorage.remote.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
             --console=plain --info \
             2>&1 | tee "$REPORTS_DIR/benchmark-$test.log"
     done
@@ -389,8 +389,8 @@ Options:
     -k, --keep-running  Keep services running after tests for manual testing
     
 Environment Variables:
-    STORAGE_GRPC_HOST   gRPC server host (default: localhost)
-    STORAGE_GRPC_PORT   gRPC server port (default: 50011)
+    STORAGE_REMOTE_HOST   gRPC server host (default: localhost)
+    STORAGE_REMOTE_PORT   gRPC server port (default: 50011)
     KEEP_RUNNING        Keep services running after tests (default: false)
 
 Examples:
@@ -401,7 +401,7 @@ Examples:
     ./scripts/run-performance-tests.sh --keep-running
     
     # Run tests against remote server
-    STORAGE_GRPC_HOST=remote-host ./scripts/run-performance-tests.sh
+    STORAGE_REMOTE_HOST=remote-host ./scripts/run-performance-tests.sh
 EOF
 }
 

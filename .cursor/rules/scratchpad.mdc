@@ -274,8 +274,8 @@ Following the pattern used in `Storage.java`, I need to:
 
 ## Config File Keys Added
 - `storage.mode` (already exists)
-- `storage.grpc.host` (new)
-- `storage.grpc.port` (new)
+- `storage.remote.host` (new)
+- `storage.remote.port` (new)
 - `storage.embedded.basePath` (new)
 
 ## Implementation Status

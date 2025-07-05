@@ -82,8 +82,8 @@ public class StorageSPITest {
   @Test
   public void testHealthCheck() throws ExecutionException, InterruptedException {
     // Simple health check test for script validation
-    String host = System.getProperty("storage.grpc.host", "localhost");
-    int port = Integer.parseInt(System.getProperty("storage.grpc.port", "50011"));
+    String host = System.getProperty("storage.remote.host", "localhost");
+    int port = Integer.parseInt(System.getProperty("storage.remote.port", "50011"));
 
     GrpcStorageSPI storage = new GrpcStorageSPI(host, port);
 

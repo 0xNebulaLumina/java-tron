@@ -20,9 +20,9 @@ import org.junit.Test;
  */
 public class StorageSPIIntegrationTest {
 
-  private static final String GRPC_HOST = System.getProperty("storage.grpc.host", "localhost");
+  private static final String GRPC_HOST = System.getProperty("storage.remote.host", "localhost");
   private static final int GRPC_PORT =
-      Integer.parseInt(System.getProperty("storage.grpc.port", "50011"));
+      Integer.parseInt(System.getProperty("storage.remote.port", "50011"));
   private static final int TIMEOUT_SECONDS = 10;
 
   private GrpcStorageSPI storage;

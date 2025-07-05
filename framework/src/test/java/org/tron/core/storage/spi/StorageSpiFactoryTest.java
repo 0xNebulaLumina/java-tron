@@ -29,8 +29,8 @@ public class StorageSpiFactoryTest {
     }
 
     // Clear other test properties
-    System.clearProperty("storage.grpc.host");
-    System.clearProperty("storage.grpc.port");
+    System.clearProperty("storage.remote.host");
+    System.clearProperty("storage.remote.port");
     System.clearProperty("storage.embedded.basePath");
   }
 
@@ -98,8 +98,8 @@ public class StorageSpiFactoryTest {
   @Test
   public void testCreateStorageRemote() {
     System.setProperty("storage.mode", "remote");
-    System.setProperty("storage.grpc.host", "test-host");
-    System.setProperty("storage.grpc.port", "9999");
+    System.setProperty("storage.remote.host", "test-host");
+    System.setProperty("storage.remote.port", "9999");
 
     StorageSPI storage = StorageSpiFactory.createStorage();
     Assert.assertNotNull(storage);
@@ -122,8 +122,8 @@ public class StorageSpiFactoryTest {
     Assert.assertTrue(info.contains("Base Path: test-data"));
 
     System.setProperty("storage.mode", "remote");
-    System.setProperty("storage.grpc.host", "test-host");
-    System.setProperty("storage.grpc.port", "8888");
+    System.setProperty("storage.remote.host", "test-host");
+    System.setProperty("storage.remote.port", "8888");
 
     info = StorageSpiFactory.getConfigurationInfo();
     Assert.assertTrue(info.contains("Mode: remote"));
@@ -136,8 +136,8 @@ public class StorageSpiFactoryTest {
     // Test config file methods with explicit Config object
     com.typesafe.config.Config testConfig = com.typesafe.config.ConfigFactory.parseString(
         "storage.mode = \"remote\"\n" +
-        "storage.grpc.host = \"config-host\"\n" +
-        "storage.grpc.port = 9999\n" +
+        "storage.remote.host = \"config-host\"\n" +
+        "storage.remote.port = 9999\n" +
         "storage.embedded.basePath = \"config-path\""
     );
 
@@ -163,14 +163,14 @@ public class StorageSpiFactoryTest {
     // Test that system properties take precedence over config file
     com.typesafe.config.Config testConfig = com.typesafe.config.ConfigFactory.parseString(
         "storage.mode = \"embedded\"\n" +
-        "storage.grpc.host = \"config-host\"\n" +
-        "storage.grpc.port = 8888"
+        "storage.remote.host = \"config-host\"\n" +
+        "storage.remote.port = 8888"
     );
 
     // Set system properties that should override config file
     System.setProperty("storage.mode", "remote");
-    System.setProperty("storage.grpc.host", "system-host");
-    System.setProperty("storage.grpc.port", "7777");
+    System.setProperty("storage.remote.host", "system-host");
+    System.setProperty("storage.remote.port", "7777");
 
     // Test that system properties take precedence
     StorageMode mode = StorageSpiFactory.determineStorageMode(testConfig);
@@ -190,8 +190,8 @@ public class StorageSpiFactoryTest {
 
     // Clear any system properties
     System.clearProperty("storage.mode");
-    System.clearProperty("storage.grpc.host");
-    System.clearProperty("storage.grpc.port");
+    System.clearProperty("storage.remote.host");
+    System.clearProperty("storage.remote.port");
     System.clearProperty("storage.embedded.basePath");
 
     // Test defaults are used when config is empty
@@ -211,7 +211,7 @@ public class StorageSpiFactoryTest {
   @Test
   public void testInvalidPortConfiguration() {
     System.setProperty("storage.mode", "remote");
-    System.setProperty("storage.grpc.port", "invalid-port");
+    System.setProperty("storage.remote.port", "invalid-port");
 
     // Should still create storage with default port
     StorageSPI storage = StorageSpiFactory.createStorage();
