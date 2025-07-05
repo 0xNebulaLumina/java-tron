@@ -4,29 +4,46 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.tron.common.parameter.CommonParameter;
+import org.tron.core.config.args.Storage;
 
 /** Unit tests for StorageSpiFactory configuration and implementation selection. */
 public class StorageSpiFactoryTest {
 
   private String originalSystemProperty;
   private String originalEnvMode;
+  private Storage originalStorage;
 
   @Before
   public void setUp() {
     // Save original values
     originalSystemProperty = System.getProperty("storage.mode");
+    
+    // Save original storage configuration from CommonParameter
+    CommonParameter parameter = CommonParameter.getInstance();
+    originalStorage = parameter.storage;
+    
+    // Set a clean storage configuration to avoid interference from previous tests
+    Storage cleanStorage = new Storage();
+    cleanStorage.setStorageMode(null); // Ensure no storage mode is set
+    parameter.storage = cleanStorage;
+    
     // Note: We can't actually modify environment variables in tests,
     // so we'll focus on system property testing
   }
 
   @After
   public void tearDown() {
-    // Restore original values
+    // Always clear the system property first to ensure clean state
+    System.clearProperty("storage.mode");
+    
+    // Then restore original value if there was one
     if (originalSystemProperty != null) {
       System.setProperty("storage.mode", originalSystemProperty);
-    } else {
-      System.clearProperty("storage.mode");
     }
+
+    // Restore original storage configuration
+    CommonParameter.getInstance().storage = originalStorage;
 
     // Clear other test properties
     System.clearProperty("storage.remote.host");
