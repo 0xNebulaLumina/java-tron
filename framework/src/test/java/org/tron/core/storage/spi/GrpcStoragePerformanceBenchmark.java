@@ -25,7 +25,7 @@ public class GrpcStoragePerformanceBenchmark extends BasePerformanceBenchmark {
 
   @Override
   protected StorageSPI createStorageImplementation() throws Exception {
-    return new GrpcStorageSPI(REMOTE_HOST, REMOTE_PORT);
+    return new RemoteStorageSPI(REMOTE_HOST, REMOTE_PORT);
   }
 
   @Override

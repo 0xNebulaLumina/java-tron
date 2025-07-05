@@ -103,11 +103,11 @@ public class StorageSpiFactoryTest {
 
     StorageSPI storage = StorageSpiFactory.createStorage();
     Assert.assertNotNull(storage);
-    Assert.assertTrue(storage instanceof GrpcStorageSPI);
+    Assert.assertTrue(storage instanceof RemoteStorageSPI);
 
     // Clean up
-    if (storage instanceof GrpcStorageSPI) {
-      ((GrpcStorageSPI) storage).close();
+    if (storage instanceof RemoteStorageSPI) {
+      ((RemoteStorageSPI) storage).close();
     }
   }
 
@@ -216,11 +216,11 @@ public class StorageSpiFactoryTest {
     // Should still create storage with default port
     StorageSPI storage = StorageSpiFactory.createStorage();
     Assert.assertNotNull(storage);
-    Assert.assertTrue(storage instanceof GrpcStorageSPI);
+    Assert.assertTrue(storage instanceof RemoteStorageSPI);
 
     // Clean up
-    if (storage instanceof GrpcStorageSPI) {
-      ((GrpcStorageSPI) storage).close();
+    if (storage instanceof RemoteStorageSPI) {
+      ((RemoteStorageSPI) storage).close();
     }
   }
 

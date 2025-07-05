@@ -407,8 +407,8 @@ Starting process 'Gradle Test Executor 7'. Working directory: /root/gitfiles/0xN
 Successfully started process 'Gradle Test Executor 7'
 
 org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark > benchmarkBatchOperationThroughput STANDARD_OUT
-    12:09:36.411 INFO [o.t.c.s.s.GrpcStorageSPI] Initialized gRPC storage client for localhost:50051
-    12:09:37.163 INFO [o.t.c.s.s.GrpcStorageSPI] Init DB operation: db=benchmark-db-1751112576415, config=StorageConfig{engine='ROCKSDB', engineOptions={bloom_filter_bits_per_key=10, compression_type=snappy, write_buffer_size=128MB, max_write_buffer_number=4}, enableStatistics=false, maxOpenFiles=2000, blockCacheSize=67108864}
+    12:09:36.411 INFO [o.t.c.s.s.RemoteStorageSPI] Initialized gRPC storage client for localhost:50051
+    12:09:37.163 INFO [o.t.c.s.s.RemoteStorageSPI] Init DB operation: db=benchmark-db-1751112576415, config=StorageConfig{engine='ROCKSDB', engineOptions={bloom_filter_bits_per_key=10, compression_type=snappy, write_buffer_size=128MB, max_write_buffer_number=4}, enableStatistics=false, maxOpenFiles=2000, blockCacheSize=67108864}
 
     ============================================================
     BENCHMARK: GrpcBatchOperationThroughput
@@ -460,7 +460,7 @@ org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark > benchmarkBatchOperat
       Batch GET size 1000: 12.56 ms, 79641 ops/sec, 19.44 MB/sec
 
     Batch operation throughput test completed
-    12:09:37.322 INFO [o.t.c.s.s.GrpcStorageSPI] Reset DB operation: db=benchmark-db-1751112576415
+    12:09:37.322 INFO [o.t.c.s.s.RemoteStorageSPI] Reset DB operation: db=benchmark-db-1751112576415
 
 Gradle Test Executor 7 finished executing tests.
 

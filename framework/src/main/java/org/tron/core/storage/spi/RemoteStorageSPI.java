@@ -65,8 +65,8 @@ import storage.StorageServiceGrpc;
  * gRPC-based implementation of StorageSPI that communicates with Rust storage service. This
  * implementation replaces placeholder calls with actual gRPC communication.
  */
-public class GrpcStorageSPI implements StorageSPI {
-  private static final Logger logger = LoggerFactory.getLogger(GrpcStorageSPI.class);
+public class RemoteStorageSPI implements StorageSPI {
+  private static final Logger logger = LoggerFactory.getLogger(RemoteStorageSPI.class);
 
   // Register the PickFirstLoadBalancerProvider to avoid "Could not find policy 'pick_first'" errors
   static {
@@ -82,7 +82,7 @@ public class GrpcStorageSPI implements StorageSPI {
   private final int port;
   private volatile boolean closed = false;
 
-  public GrpcStorageSPI(String host, int port) {
+  public RemoteStorageSPI(String host, int port) {
     this.host = host;
     this.port = port;
     this.channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();

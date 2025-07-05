@@ -195,7 +195,7 @@
 
 ### 📈 Implementation Strategy
 1. **Week 1 - Connection Pooling**: 
-   - `PooledGrpcStorageSPI` with round-robin connection selection
+   - `PooledRemoteStorageSPI` with round-robin connection selection
    - `ConcurrentBatchExecutor` for parallel operations
    - Target: 3-5x throughput improvement
 
@@ -214,7 +214,7 @@
 ```
 CachingStorageSPI 
   -> BatchingStorageSPI 
-    -> PooledGrpcStorageSPI 
+    -> PooledRemoteStorageSPI 
       -> Rust gRPC Service
 ```
 

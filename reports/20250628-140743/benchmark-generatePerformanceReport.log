@@ -407,8 +407,8 @@ Starting process 'Gradle Test Executor 8'. Working directory: /root/gitfiles/0xN
 Successfully started process 'Gradle Test Executor 8'
 
 org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark > generatePerformanceReport STANDARD_OUT
-    12:09:42.187 INFO [o.t.c.s.s.GrpcStorageSPI] Initialized gRPC storage client for localhost:50051
-    12:09:42.991 INFO [o.t.c.s.s.GrpcStorageSPI] Init DB operation: db=benchmark-db-1751112582191, config=StorageConfig{engine='ROCKSDB', engineOptions={bloom_filter_bits_per_key=10, compression_type=snappy, write_buffer_size=128MB, max_write_buffer_number=4}, enableStatistics=false, maxOpenFiles=2000, blockCacheSize=67108864}
+    12:09:42.187 INFO [o.t.c.s.s.RemoteStorageSPI] Initialized gRPC storage client for localhost:50051
+    12:09:42.991 INFO [o.t.c.s.s.RemoteStorageSPI] Init DB operation: db=benchmark-db-1751112582191, config=StorageConfig{engine='ROCKSDB', engineOptions={bloom_filter_bits_per_key=10, compression_type=snappy, write_buffer_size=128MB, max_write_buffer_number=4}, enableStatistics=false, maxOpenFiles=2000, blockCacheSize=67108864}
 
     ============================================================
     BENCHMARK: GrpcPerformanceReport
@@ -439,7 +439,7 @@ org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark > generatePerformanceR
       - Monitor resource usage during peak loads
       - Test with production-like data patterns
       - Check reports/20250628-120941/ for detailed metrics files
-    12:09:43.058 INFO [o.t.c.s.s.GrpcStorageSPI] Reset DB operation: db=benchmark-db-1751112582191
+    12:09:43.058 INFO [o.t.c.s.s.RemoteStorageSPI] Reset DB operation: db=benchmark-db-1751112582191
 
 Gradle Test Executor 8 finished executing tests.
 

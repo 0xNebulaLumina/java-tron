@@ -79,7 +79,7 @@ public class DualStorageModeIntegrationTest {
     System.setProperty("storage.remote.port", "50011");
 
     StorageSPI storage = StorageSpiFactory.createStorage();
-    Assert.assertTrue("Should create GrpcStorageSPI", storage instanceof GrpcStorageSPI);
+    Assert.assertTrue("Should create RemoteStorageSPI", storage instanceof RemoteStorageSPI);
 
     try {
       // Check if gRPC server is available
@@ -95,8 +95,8 @@ public class DualStorageModeIntegrationTest {
     } catch (TimeoutException | ExecutionException e) {
       Assume.assumeNoException("gRPC server not responding", e);
     } finally {
-      if (storage instanceof GrpcStorageSPI) {
-        ((GrpcStorageSPI) storage).close();
+      if (storage instanceof RemoteStorageSPI) {
+        ((RemoteStorageSPI) storage).close();
       }
     }
   }
@@ -140,11 +140,11 @@ public class DualStorageModeIntegrationTest {
     // Switch to remote mode
     System.setProperty("storage.mode", "remote");
     StorageSPI remoteStorage = StorageSpiFactory.createStorage();
-    Assert.assertTrue("Should create GrpcStorageSPI", remoteStorage instanceof GrpcStorageSPI);
+    Assert.assertTrue("Should create RemoteStorageSPI", remoteStorage instanceof RemoteStorageSPI);
 
     // Clean up remote storage
-    if (remoteStorage instanceof GrpcStorageSPI) {
-      ((GrpcStorageSPI) remoteStorage).close();
+    if (remoteStorage instanceof RemoteStorageSPI) {
+      ((RemoteStorageSPI) remoteStorage).close();
     }
 
     // Clean up test data

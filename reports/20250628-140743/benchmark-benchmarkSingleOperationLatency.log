@@ -407,8 +407,8 @@ Starting process 'Gradle Test Executor 6'. Working directory: /root/gitfiles/0xN
 Successfully started process 'Gradle Test Executor 6'
 
 org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark > benchmarkSingleOperationLatency STANDARD_OUT
-    12:09:28.555 INFO [o.t.c.s.s.GrpcStorageSPI] Initialized gRPC storage client for localhost:50051
-    12:09:29.331 INFO [o.t.c.s.s.GrpcStorageSPI] Init DB operation: db=benchmark-db-1751112568559, config=StorageConfig{engine='ROCKSDB', engineOptions={bloom_filter_bits_per_key=10, compression_type=snappy, write_buffer_size=128MB, max_write_buffer_number=4}, enableStatistics=false, maxOpenFiles=2000, blockCacheSize=67108864}
+    12:09:28.555 INFO [o.t.c.s.s.RemoteStorageSPI] Initialized gRPC storage client for localhost:50051
+    12:09:29.331 INFO [o.t.c.s.s.RemoteStorageSPI] Init DB operation: db=benchmark-db-1751112568559, config=StorageConfig{engine='ROCKSDB', engineOptions={bloom_filter_bits_per_key=10, compression_type=snappy, write_buffer_size=128MB, max_write_buffer_number=4}, enableStatistics=false, maxOpenFiles=2000, blockCacheSize=67108864}
 
     ============================================================
     BENCHMARK: GrpcSingleOperationLatency
@@ -431,7 +431,7 @@ org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark > benchmarkSingleOpera
       GET throughput (ops/sec): 1318.1526629816383
       PUT throughput (ops/sec): 858.1683734981978
 
-    12:09:31.546 INFO [o.t.c.s.s.GrpcStorageSPI] Reset DB operation: db=benchmark-db-1751112568559
+    12:09:31.546 INFO [o.t.c.s.s.RemoteStorageSPI] Reset DB operation: db=benchmark-db-1751112568559
 
 Gradle Test Executor 6 finished executing tests.
 

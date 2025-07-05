@@ -20,7 +20,7 @@ public class StorageSpiFactory {
   private static final String ENV_VAR_KEY = "STORAGE_MODE";
   private static final String CONFIG_FILE_KEY = "storage.mode";
 
-  // gRPC configuration keys
+  // remote configuration keys
   private static final String REMOTE_HOST_PROPERTY = "storage.remote.host";
   private static final String REMOTE_PORT_PROPERTY = "storage.remote.port";
   private static final String REMOTE_HOST_ENV = "STORAGE_REMOTE_HOST";
@@ -28,7 +28,7 @@ public class StorageSpiFactory {
   private static final String REMOTE_HOST_CONFIG_KEY = "storage.remote.host";
   private static final String REMOTE_PORT_CONFIG_KEY = "storage.remote.port";
 
-  // Default gRPC settings
+  // Default remote settings
   private static final String DEFAULT_REMOTE_HOST = "localhost";
   private static final int DEFAULT_REMOTE_PORT = 50011;
 
@@ -173,21 +173,21 @@ public class StorageSpiFactory {
   }
 
   /**
-   * Create remote gRPC storage implementation.
+   * Create remote remote storage implementation.
    *
-   * @return GrpcStorageSPI instance
+   * @return RemoteStorageSPI instance
    */
   private static StorageSPI createRemoteStorage() {
     String host = getRemoteHost();
     int port = getRemotePort();
     logger.info("Creating remote storage client for {}:{}", host, port);
-    return new GrpcStorageSPI(host, port);
+    return new RemoteStorageSPI(host, port);
   }
 
   /**
-   * Get gRPC host from configuration.
+   * Get remote host from configuration.
    *
-   * @return gRPC host address
+   * @return remote host address
    */
   private static String getRemoteHost() {
     String host = System.getProperty(REMOTE_HOST_PROPERTY);
@@ -210,9 +210,9 @@ public class StorageSpiFactory {
   }
 
   /**
-   * Get gRPC host from config file.
+   * Get remote host from config file.
    *
-   * @return gRPC host from config, or null if not found
+   * @return remote host from config, or null if not found
    */
   private static String getRemoteHostFromConfig() {
     try {
@@ -230,19 +230,19 @@ public class StorageSpiFactory {
           Config config = org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
           return org.tron.core.config.args.Storage.getRemoteHostFromConfig(config);
         } catch (Exception e) {
-          logger.debug("Could not load config file for gRPC host: {}", e.getMessage());
+          logger.debug("Could not load config file for remote host: {}", e.getMessage());
         }
       }
     } catch (Exception e) {
-      logger.debug("Could not read gRPC host from config: {}", e.getMessage());
+      logger.debug("Could not read remote host from config: {}", e.getMessage());
     }
     return null;
   }
 
   /**
-   * Get gRPC port from configuration.
+   * Get remote port from configuration.
    *
-   * @return gRPC port number
+   * @return remote port number
    */
   private static int getRemotePort() {
     String portStr = System.getProperty(REMOTE_PORT_PROPERTY);
@@ -250,7 +250,7 @@ public class StorageSpiFactory {
       try {
         return Integer.parseInt(portStr.trim());
       } catch (NumberFormatException e) {
-        logger.warn("Invalid gRPC port in system property: {}, using default", portStr);
+        logger.warn("Invalid remote port in system property: {}, using default", portStr);
       }
     }
 
@@ -259,7 +259,7 @@ public class StorageSpiFactory {
       try {
         return Integer.parseInt(portStr.trim());
       } catch (NumberFormatException e) {
-        logger.warn("Invalid gRPC port in environment variable: {}, using default", portStr);
+        logger.warn("Invalid remote port in environment variable: {}, using default", portStr);
       }
     }
 
@@ -273,9 +273,9 @@ public class StorageSpiFactory {
   }
 
   /**
-   * Get gRPC port from config file.
+   * Get remote port from config file.
    *
-   * @return gRPC port from config, or null if not found
+   * @return remote port from config, or null if not found
    */
   private static Integer getRemotePortFromConfig() {
     try {
@@ -293,11 +293,11 @@ public class StorageSpiFactory {
           Config config = org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
           return org.tron.core.config.args.Storage.getRemotePortFromConfig(config);
         } catch (Exception e) {
-          logger.debug("Could not load config file for gRPC port: {}", e.getMessage());
+          logger.debug("Could not load config file for remote port: {}", e.getMessage());
         }
       }
     } catch (Exception e) {
-      logger.debug("Could not read gRPC port from config: {}", e.getMessage());
+      logger.debug("Could not read remote port from config: {}", e.getMessage());
     }
     return null;
   }
@@ -373,8 +373,8 @@ public class StorageSpiFactory {
         info.append("  Base Path: ").append(getEmbeddedBasePath()).append("\n");
         break;
       case REMOTE:
-        info.append("  gRPC Host: ").append(getRemoteHost()).append("\n");
-        info.append("  gRPC Port: ").append(getRemotePort()).append("\n");
+        info.append("  remote Host: ").append(getRemoteHost()).append("\n");
+        info.append("  remote Port: ").append(getRemotePort()).append("\n");
         break;
       default:
         info.append("  Unknown mode configuration\n");
@@ -425,10 +425,10 @@ public class StorageSpiFactory {
   }
 
   /**
-   * Get gRPC host from configuration with explicit config.
+   * Get remote host from configuration with explicit config.
    *
    * @param config Config object to read from
-   * @return gRPC host address
+   * @return remote host address
    */
   public static String getRemoteHost(Config config) {
     String host = System.getProperty(REMOTE_HOST_PROPERTY);
@@ -453,10 +453,10 @@ public class StorageSpiFactory {
   }
 
   /**
-   * Get gRPC port from configuration with explicit config.
+   * Get remote port from configuration with explicit config.
    *
    * @param config Config object to read from
-   * @return gRPC port number
+   * @return remote port number
    */
   public static int getRemotePort(Config config) {
     String portStr = System.getProperty(REMOTE_PORT_PROPERTY);
@@ -464,7 +464,7 @@ public class StorageSpiFactory {
       try {
         return Integer.parseInt(portStr.trim());
       } catch (NumberFormatException e) {
-        logger.warn("Invalid gRPC port in system property: {}, using default", portStr);
+        logger.warn("Invalid remote port in system property: {}, using default", portStr);
       }
     }
 
@@ -473,7 +473,7 @@ public class StorageSpiFactory {
       try {
         return Integer.parseInt(portStr.trim());
       } catch (NumberFormatException e) {
-        logger.warn("Invalid gRPC port in environment variable: {}, using default", portStr);
+        logger.warn("Invalid remote port in environment variable: {}, using default", portStr);
       }
     }
 
@@ -482,7 +482,7 @@ public class StorageSpiFactory {
       try {
         return config.getInt(REMOTE_PORT_CONFIG_KEY);
       } catch (Exception e) {
-        logger.warn("Invalid gRPC port in config file: {}, using default", e.getMessage());
+        logger.warn("Invalid remote port in config file: {}, using default", e.getMessage());
       }
     }
 

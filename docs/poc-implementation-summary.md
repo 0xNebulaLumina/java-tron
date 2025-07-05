@@ -22,7 +22,7 @@ Successfully implemented a **Proof of Concept (PoC)** for replacing java-tron's 
 - **Error handling and logging** throughout
 
 ### 3. Java Client Implementation - **REAL gRPC CALLS**
-- **Complete GrpcStorageSPI implementation** with actual gRPC communication
+- **Complete RemoteStorageSPI implementation** with actual gRPC communication
 - **All 20+ StorageSPI methods** implemented with real protobuf message handling
 - **Proper error handling** with StatusRuntimeException mapping to RuntimeException
 - **Type-safe protobuf integration** with correct nested class references
@@ -69,7 +69,7 @@ java-tron/
 │   └── Dockerfile                  # Container build
 ├── framework/src/main/java/org/tron/core/storage/spi/
 │   ├── StorageSPI.java             # Main SPI interface
-│   ├── GrpcStorageSPI.java         # **REAL gRPC client implementation**
+│   ├── RemoteStorageSPI.java         # **REAL gRPC client implementation**
 │   ├── StorageConfig.java          # Configuration class
 │   ├── StorageStats.java           # Statistics class
 │   ├── StorageIterator.java        # Iterator interface
