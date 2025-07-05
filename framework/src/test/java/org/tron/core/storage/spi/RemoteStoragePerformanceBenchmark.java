@@ -51,7 +51,7 @@ public class RemoteStoragePerformanceBenchmark extends BasePerformanceBenchmark 
 
   @Override
   protected String getImplementationName() {
-    return "Grpc";
+    return "Remote";
   }
 
   @Override
