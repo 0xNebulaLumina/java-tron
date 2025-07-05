@@ -22,32 +22,7 @@ alwaysApply: false
 - **Dual Storage Mode**: The project now supports both EMBEDDED (local RocksDB) and REMOTE (gRPC Rust service) storage modes. Configuration is via STORAGE_MODE env var, system property, or config file.
 - **Remote Storage Service**: The rust-storage-service must be started separately when using REMOTE mode. It runs on port 50011 by default.
 - **gRPC LoadBalancerProvider**: gRPC clients must register the PickFirstLoadBalancerProvider in a static block to avoid "Could not find policy 'pick_first'" errors. The existing DatabaseGrpcClient shows the correct pattern.
-- **Application Blocking Issue**: The java-tron application gets stuck during initialization at Manager.init() phase (around line 488 in logs). The application successfully initializes all 40+ storage databases via gRPC but then blocks during the Manager initialization phase, specifically after "mortgageService.initStore completed" and "accountStateCallBack and trieService setup completed". This suggests the blocking occurs during blockchain state initialization or consensus mechanism setup, not during storage operations themselves.
 
-**ROOT CAUSE IDENTIFIED & FIXED**: The application was blocking due to an infinite loop in the `GrpcStorageIterator.next()` method. The iterator was not properly advancing the key position, causing it to return the same result infinitely during checkpoint recovery.
-
-**SPECIFIC BUG**: In `GrpcStorageIterator.next()`, the line `currentKey = result.getKey()` was setting the current key to the same key that was just returned, instead of advancing to the next key position. This caused `hasNext()` to call `getNext(dbName, currentKey, 1)` with the same key repeatedly.
-
-**FIX IMPLEMENTED**: 
-- Added proper key advancement logic with `incrementKey()` method
-- Implemented lexicographic byte array increment algorithm
-- Added proper iterator state management with `reachedEnd` flag
-- Added error handling and logging for debugging
-- Created comprehensive unit tests to verify the fix
-
-**FILES MODIFIED**:
-- `framework/src/main/java/org/tron/core/storage/spi/GrpcStorageSPI.java` - Fixed iterator implementation
-- `framework/src/test/java/org/tron/core/storage/spi/GrpcStorageIteratorTest.java` - Added unit tests
-
-**✅ ITERATOR FIX SUCCESS**: Application now starts successfully and begins blockchain sync! Logs show successful block processing (blocks 20, 21, 22).
-
-**🚨 NEW ISSUE IDENTIFIED**: NullPointerException in batchWrite method at line 200 in GrpcStorageSPI.java
-- **Root Cause**: `ByteString.copyFrom()` is called with null value during batch operations
-- **Location**: `GrpcStorageSPI.lambda$batchWrite$4(GrpcStorageSPI.java:200)`
-- **Context**: Occurs during checkpoint deletion in SnapshotManager.deleteCheckpoint()
-- **Impact**: Causes application to crash with DB_FLUSH error during block sync
-
-**NEXT FIX NEEDED**: Handle null values in batchWrite operation by treating them as delete operations
 
 # High-level Task: Replace Java RocksDB with Rust implementation
 
