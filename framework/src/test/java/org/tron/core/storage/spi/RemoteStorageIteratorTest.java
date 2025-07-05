@@ -5,10 +5,10 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 
 /**
- * Test class to verify the GrpcStorageIterator fix for the infinite loop issue. This test focuses
+ * Test class to verify the RemoteStorageIterator fix for the infinite loop issue. This test focuses
  * on the key advancement logic to ensure proper iteration.
  */
-public class GrpcStorageIteratorTest {
+public class RemoteStorageIteratorTest {
 
   @Test
   public void testKeyIncrementLogic() {
@@ -73,7 +73,7 @@ public class GrpcStorageIteratorTest {
     }
   }
 
-  /** Copy of the incrementKey method from GrpcStorageIterator for testing */
+  /** Copy of the incrementKey method from RemoteStorageIterator for testing */
   private byte[] incrementKey(byte[] key) {
     if (key == null || key.length == 0) {
       return new byte[] {0x01};

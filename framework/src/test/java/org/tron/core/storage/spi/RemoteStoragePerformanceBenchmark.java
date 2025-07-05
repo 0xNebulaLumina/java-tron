@@ -17,15 +17,15 @@ import org.junit.Test;
  * Performance benchmark tests for gRPC StorageSPI implementation. Tests gRPC storage performance
  * against baseline metrics.
  */
-public class GrpcStoragePerformanceBenchmark extends BasePerformanceBenchmark {
+public class RemoteStoragePerformanceBenchmark extends BasePerformanceBenchmark {
 
-  private static final String GRPC_HOST = System.getProperty("storage.grpc.host", "localhost");
-  private static final int GRPC_PORT =
-      Integer.parseInt(System.getProperty("storage.grpc.port", "50011"));
+  private static final String REMOTE_HOST = System.getProperty("storage.remote.host", "localhost");
+  private static final int REMOTE_PORT =
+      Integer.parseInt(System.getProperty("storage.remote.port", "50011"));
 
   @Override
   protected StorageSPI createStorageImplementation() throws Exception {
-    return new GrpcStorageSPI(GRPC_HOST, GRPC_PORT);
+    return new RemoteStorageSPI(REMOTE_HOST, REMOTE_PORT);
   }
 
   @Override
@@ -51,7 +51,7 @@ public class GrpcStoragePerformanceBenchmark extends BasePerformanceBenchmark {
 
   @Override
   protected String getImplementationName() {
-    return "Grpc";
+    return "Remote";
   }
 
   @Override

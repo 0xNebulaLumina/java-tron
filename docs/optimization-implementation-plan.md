@@ -97,7 +97,7 @@ Planned integration testing:
 ```
 CachingStorageSPI 
   -> BatchingStorageSPI 
-    -> PooledGrpcStorageSPI 
+    -> PooledRemoteStorageSPI 
       -> Rust gRPC Service
 ```
 
@@ -139,7 +139,7 @@ Integration validation:
 
 ### Connection Pooling Architecture
 ```java
-public class PooledGrpcStorageSPI implements StorageSPI {
+public class PooledRemoteStorageSPI implements StorageSPI {
     private final LoadBalancer connectionPool;
     private final List<StorageServiceBlockingStub> stubPool;
     private final ExecutorService requestExecutor;
@@ -218,7 +218,7 @@ public class CachingStorageSPI implements StorageSPI {
 - **Days 3-4**: Concurrent processing optimization
 - **Days 5-7**: Testing and validation
 
-**Deliverable**: PooledGrpcStorageSPI with 3-5x performance improvement
+**Deliverable**: PooledRemoteStorageSPI with 3-5x performance improvement
 
 ### Week 2: Automatic Batching Implementation
 - **Days 1-2**: Batching queue and processor implementation

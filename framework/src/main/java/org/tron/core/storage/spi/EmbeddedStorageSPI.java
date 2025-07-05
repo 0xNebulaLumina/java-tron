@@ -37,8 +37,8 @@ public class EmbeddedStorageSPI implements StorageSPI {
   }
 
   /**
-   * Get or create a database instance. This method provides lazy initialization
-   * to ensure databases are available when needed, even if initDB() wasn't called explicitly.
+   * Get or create a database instance. This method provides lazy initialization to ensure databases
+   * are available when needed, even if initDB() wasn't called explicitly.
    */
   private RocksDbDataSourceImpl getOrCreateDatabase(String dbName) {
     RocksDbDataSourceImpl db = databases.get(dbName);
@@ -54,7 +54,8 @@ public class EmbeddedStorageSPI implements StorageSPI {
             db = new RocksDbDataSourceImpl(basePath, dbName, settings);
             db.initDB();
             databases.put(dbName, db);
-            logger.info("Auto-initialized embedded database: {} at {}/{}", dbName, basePath, dbName);
+            logger.info(
+                "Auto-initialized embedded database: {} at {}/{}", dbName, basePath, dbName);
           } catch (Exception e) {
             logger.error("Failed to auto-initialize embedded database: {}", dbName, e);
             throw new RuntimeException("Database auto-initialization failed: " + dbName, e);
@@ -200,7 +201,7 @@ public class EmbeddedStorageSPI implements StorageSPI {
             logger.debug("Database {} already initialized, skipping", dbName);
             return;
           }
-          
+
           try {
             // Configure RocksDB settings based on StorageConfig
             RocksDbSettings settings = RocksDbSettings.getDefaultSettings();

@@ -109,7 +109,7 @@ public class ArgsTest {
     //Assert.assertEquals(30, args.getSyncNodeCount());
 
     // gRPC network configs checking
-    Assert.assertEquals(50011, parameter.getRpcPort());
+    Assert.assertEquals(50051, parameter.getRpcPort());
     Assert.assertEquals(Integer.MAX_VALUE, parameter.getMaxConcurrentCallsPerConnection());
     Assert
         .assertEquals(NettyServerBuilder

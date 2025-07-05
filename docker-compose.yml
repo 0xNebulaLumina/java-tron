@@ -30,8 +30,8 @@ services:
         condition: service_healthy
     environment:
       - STORAGE_MODE=remote
-      - STORAGE_GRPC_HOST=rust-storage-service
-      - STORAGE_GRPC_PORT=50011
+      - STORAGE_REMOTE_HOST=rust-storage-service
+      - STORAGE_REMOTE_PORT=50011
     volumes:
       - ./data/java-tron:/data
     command: ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.DualStorageModeIntegrationTest.testRemoteStorageMode", "--dependency-verification=off"]
@@ -55,8 +55,8 @@ services:
       rust-storage-service:
         condition: service_healthy
     environment:
-      - STORAGE_GRPC_HOST=rust-storage-service
-      - STORAGE_GRPC_PORT=50011
+      - STORAGE_REMOTE_HOST=rust-storage-service
+      - STORAGE_REMOTE_PORT=50011
       - STORAGE_EMBEDDED_BASE_PATH=/data/embedded
     volumes:
       - ./data/java-tron:/data
@@ -70,8 +70,8 @@ services:
       rust-storage-service:
         condition: service_healthy
     environment:
-      - STORAGE_GRPC_HOST=rust-storage-service
-      - STORAGE_GRPC_PORT=50011
+      - STORAGE_REMOTE_HOST=rust-storage-service
+      - STORAGE_REMOTE_PORT=50011
       - STORAGE_EMBEDDED_BASE_PATH=/data/embedded
     volumes:
       - ./data/java-tron:/data

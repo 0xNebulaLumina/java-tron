@@ -9,9 +9,10 @@ import org.junit.Test;
 public class StorageSPITest {
 
   @Test
-  public void testGrpcStorageSPIBasicOperations() throws ExecutionException, InterruptedException {
+  public void testRemoteStorageSPIBasicOperations()
+      throws ExecutionException, InterruptedException {
     // Create a gRPC storage client (will fail to connect but should not crash)
-    GrpcStorageSPI storage = new GrpcStorageSPI("localhost", 50011);
+    RemoteStorageSPI storage = new RemoteStorageSPI("localhost", 50011);
 
     try {
       // Test basic operations (these are placeholder implementations)
@@ -82,10 +83,10 @@ public class StorageSPITest {
   @Test
   public void testHealthCheck() throws ExecutionException, InterruptedException {
     // Simple health check test for script validation
-    String host = System.getProperty("storage.grpc.host", "localhost");
-    int port = Integer.parseInt(System.getProperty("storage.grpc.port", "50011"));
+    String host = System.getProperty("storage.remote.host", "localhost");
+    int port = Integer.parseInt(System.getProperty("storage.remote.port", "50011"));
 
-    GrpcStorageSPI storage = new GrpcStorageSPI(host, port);
+    RemoteStorageSPI storage = new RemoteStorageSPI(host, port);
 
     try {
       // Try to connect and perform health check
