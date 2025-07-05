@@ -94,6 +94,21 @@ impl StorageEngine {
     }
 
     pub fn init_db(&self, db_name: &str, config: &StorageConfig) -> Result<()> {
+        // Check if database is already initialized and open
+        {
+            let databases = self.databases.read().unwrap();
+            if let Some(existing_db) = databases.get(db_name) {
+                // Database already exists and is open - check if it's still valid
+                if let Ok(_) = existing_db.get(b"__health_check__") {
+                    info!("Database {} already initialized and healthy, reusing existing instance", db_name);
+                    return Ok(());
+                } else {
+                    // Database exists but may be corrupted or closed, remove it
+                    warn!("Database {} exists but appears unhealthy, will reinitialize", db_name);
+                }
+            }
+        }
+
         let db_path = format!("{}/{}", self.base_path, db_name);
         
         let mut opts = Options::default();
@@ -134,14 +149,39 @@ impl StorageEngine {
             }
         }
 
-        let db = DB::open(&opts, &db_path)?;
-        let db_arc = Arc::new(db);
-        
-        // Close existing database if it exists
-        self.databases.write().unwrap().insert(db_name.to_string(), db_arc);
-        info!("Initialized database: {} with custom configuration", db_name);
-        
-        Ok(())
+        // Try to open the database
+        match DB::open(&opts, &db_path) {
+            Ok(db) => {
+                let db_arc = Arc::new(db);
+                
+                // Update the database in our map
+                self.databases.write().unwrap().insert(db_name.to_string(), db_arc);
+                info!("Successfully initialized database: {} with custom configuration", db_name);
+                Ok(())
+            }
+            Err(e) => {
+                // Check if this is a lock error
+                let error_msg = e.to_string();
+                if error_msg.contains("lock") || error_msg.contains("LOCK") {
+                    // This database is already open, which is actually fine in our case
+                    // since we're the same process. Let's try to reuse the existing instance.
+                    warn!("Database {} appears to be already open (lock error), checking for existing instance", db_name);
+                    
+                    // Double-check our internal map
+                    let databases = self.databases.read().unwrap();
+                    if databases.contains_key(db_name) {
+                        info!("Database {} already exists in our map, initialization considered successful", db_name);
+                        return Ok(());
+                    } else {
+                        // This shouldn't happen, but let's handle it gracefully
+                        return Err(anyhow!("Database {} has lock conflict but not in our map: {}", db_name, e));
+                    }
+                } else {
+                    // Some other error occurred
+                    return Err(anyhow!("Failed to initialize database {}: {}", db_name, e));
+                }
+            }
+        }
     }
 
     pub fn get(&self, db_name: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
