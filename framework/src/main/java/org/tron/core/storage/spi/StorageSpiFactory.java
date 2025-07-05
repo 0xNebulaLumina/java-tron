@@ -21,16 +21,16 @@ public class StorageSpiFactory {
   private static final String CONFIG_FILE_KEY = "storage.mode";
 
   // gRPC configuration keys
-  private static final String GRPC_HOST_PROPERTY = "storage.remote.host";
-  private static final String GRPC_PORT_PROPERTY = "storage.remote.port";
-  private static final String GRPC_HOST_ENV = "STORAGE_REMOTE_HOST";
-  private static final String GRPC_PORT_ENV = "STORAGE_REMOTE_PORT";
-  private static final String GRPC_HOST_CONFIG_KEY = "storage.remote.host";
-  private static final String GRPC_PORT_CONFIG_KEY = "storage.remote.port";
+  private static final String REMOTE_HOST_PROPERTY = "storage.remote.host";
+  private static final String REMOTE_PORT_PROPERTY = "storage.remote.port";
+  private static final String REMOTE_HOST_ENV = "STORAGE_REMOTE_HOST";
+  private static final String REMOTE_PORT_ENV = "STORAGE_REMOTE_PORT";
+  private static final String REMOTE_HOST_CONFIG_KEY = "storage.remote.host";
+  private static final String REMOTE_PORT_CONFIG_KEY = "storage.remote.port";
 
   // Default gRPC settings
-  private static final String DEFAULT_GRPC_HOST = "localhost";
-  private static final int DEFAULT_GRPC_PORT = 50011;
+  private static final String DEFAULT_REMOTE_HOST = "localhost";
+  private static final int DEFAULT_REMOTE_PORT = 50011;
 
   // Embedded storage settings
   private static final String EMBEDDED_BASE_PATH_PROPERTY = "storage.embedded.basePath";
@@ -190,12 +190,12 @@ public class StorageSpiFactory {
    * @return gRPC host address
    */
   private static String getGrpcHost() {
-    String host = System.getProperty(GRPC_HOST_PROPERTY);
+    String host = System.getProperty(REMOTE_HOST_PROPERTY);
     if (host != null && !host.trim().isEmpty()) {
       return host.trim();
     }
 
-    host = System.getenv(GRPC_HOST_ENV);
+    host = System.getenv(REMOTE_HOST_ENV);
     if (host != null && !host.trim().isEmpty()) {
       return host.trim();
     }
@@ -206,7 +206,7 @@ public class StorageSpiFactory {
       return host.trim();
     }
 
-    return DEFAULT_GRPC_HOST;
+    return DEFAULT_REMOTE_HOST;
   }
 
   /**
@@ -245,7 +245,7 @@ public class StorageSpiFactory {
    * @return gRPC port number
    */
   private static int getGrpcPort() {
-    String portStr = System.getProperty(GRPC_PORT_PROPERTY);
+    String portStr = System.getProperty(REMOTE_PORT_PROPERTY);
     if (portStr != null && !portStr.trim().isEmpty()) {
       try {
         return Integer.parseInt(portStr.trim());
@@ -254,7 +254,7 @@ public class StorageSpiFactory {
       }
     }
 
-    portStr = System.getenv(GRPC_PORT_ENV);
+    portStr = System.getenv(REMOTE_PORT_ENV);
     if (portStr != null && !portStr.trim().isEmpty()) {
       try {
         return Integer.parseInt(portStr.trim());
@@ -269,7 +269,7 @@ public class StorageSpiFactory {
       return portFromConfig;
     }
 
-    return DEFAULT_GRPC_PORT;
+    return DEFAULT_REMOTE_PORT;
   }
 
   /**
@@ -431,25 +431,25 @@ public class StorageSpiFactory {
    * @return gRPC host address
    */
   public static String getGrpcHost(Config config) {
-    String host = System.getProperty(GRPC_HOST_PROPERTY);
+    String host = System.getProperty(REMOTE_HOST_PROPERTY);
     if (host != null && !host.trim().isEmpty()) {
       return host.trim();
     }
 
-    host = System.getenv(GRPC_HOST_ENV);
+    host = System.getenv(REMOTE_HOST_ENV);
     if (host != null && !host.trim().isEmpty()) {
       return host.trim();
     }
 
     // Check config file
-    if (config != null && config.hasPath(GRPC_HOST_CONFIG_KEY)) {
-      host = config.getString(GRPC_HOST_CONFIG_KEY);
+    if (config != null && config.hasPath(REMOTE_HOST_CONFIG_KEY)) {
+      host = config.getString(REMOTE_HOST_CONFIG_KEY);
       if (host != null && !host.trim().isEmpty()) {
         return host.trim();
       }
     }
 
-    return DEFAULT_GRPC_HOST;
+    return DEFAULT_REMOTE_HOST;
   }
 
   /**
@@ -459,7 +459,7 @@ public class StorageSpiFactory {
    * @return gRPC port number
    */
   public static int getGrpcPort(Config config) {
-    String portStr = System.getProperty(GRPC_PORT_PROPERTY);
+    String portStr = System.getProperty(REMOTE_PORT_PROPERTY);
     if (portStr != null && !portStr.trim().isEmpty()) {
       try {
         return Integer.parseInt(portStr.trim());
@@ -468,7 +468,7 @@ public class StorageSpiFactory {
       }
     }
 
-    portStr = System.getenv(GRPC_PORT_ENV);
+    portStr = System.getenv(REMOTE_PORT_ENV);
     if (portStr != null && !portStr.trim().isEmpty()) {
       try {
         return Integer.parseInt(portStr.trim());
@@ -478,15 +478,15 @@ public class StorageSpiFactory {
     }
 
     // Check config file
-    if (config != null && config.hasPath(GRPC_PORT_CONFIG_KEY)) {
+    if (config != null && config.hasPath(REMOTE_PORT_CONFIG_KEY)) {
       try {
-        return config.getInt(GRPC_PORT_CONFIG_KEY);
+        return config.getInt(REMOTE_PORT_CONFIG_KEY);
       } catch (Exception e) {
         logger.warn("Invalid gRPC port in config file: {}, using default", e.getMessage());
       }
     }
 
-    return DEFAULT_GRPC_PORT;
+    return DEFAULT_REMOTE_PORT;
   }
 
   /**

@@ -19,13 +19,13 @@ import org.junit.Test;
  */
 public class GrpcStoragePerformanceBenchmark extends BasePerformanceBenchmark {
 
-  private static final String GRPC_HOST = System.getProperty("storage.remote.host", "localhost");
-  private static final int GRPC_PORT =
+  private static final String REMOTE_HOST = System.getProperty("storage.remote.host", "localhost");
+  private static final int REMOTE_PORT =
       Integer.parseInt(System.getProperty("storage.remote.port", "50011"));
 
   @Override
   protected StorageSPI createStorageImplementation() throws Exception {
-    return new GrpcStorageSPI(GRPC_HOST, GRPC_PORT);
+    return new GrpcStorageSPI(REMOTE_HOST, REMOTE_PORT);
   }
 
   @Override

@@ -65,8 +65,8 @@ public class Storage {
   private static final String DEFAULT_TRANSACTIONHISTORY_SWITCH = "on";
 
   // Storage SPI configuration keys
-  private static final String GRPC_HOST_CONFIG_KEY = "storage.remote.host";
-  private static final String GRPC_PORT_CONFIG_KEY = "storage.remote.port";
+  private static final String REMOTE_HOST_CONFIG_KEY = "storage.remote.host";
+  private static final String REMOTE_PORT_CONFIG_KEY = "storage.remote.port";
   private static final String EMBEDDED_BASE_PATH_CONFIG_KEY = "storage.embedded.basePath";
 
   private static final String NAME_CONFIG_KEY = "name";
@@ -105,8 +105,8 @@ public class Storage {
   private static final int DEFAULT_SNAPSHOT_MAX_FLUSH_COUNT = 1;
 
   // Storage SPI default values
-  private static final String DEFAULT_GRPC_HOST = "localhost";
-  private static final int DEFAULT_GRPC_PORT = 50011;
+  private static final String DEFAULT_REMOTE_HOST = "localhost";
+  private static final int DEFAULT_REMOTE_PORT = 50011;
   private static final String DEFAULT_EMBEDDED_BASE_PATH = "data/rocksdb-embedded";
 
   private Config storage;
@@ -275,13 +275,13 @@ public class Storage {
   }
 
   public static String getGrpcHostFromConfig(final Config config) {
-    return config.hasPath(GRPC_HOST_CONFIG_KEY)
-        ? config.getString(GRPC_HOST_CONFIG_KEY) : DEFAULT_GRPC_HOST;
+    return config.hasPath(REMOTE_HOST_CONFIG_KEY)
+        ? config.getString(REMOTE_HOST_CONFIG_KEY) : DEFAULT_REMOTE_HOST;
   }
 
   public static int getGrpcPortFromConfig(final Config config) {
-    return config.hasPath(GRPC_PORT_CONFIG_KEY)
-        ? config.getInt(GRPC_PORT_CONFIG_KEY) : DEFAULT_GRPC_PORT;
+    return config.hasPath(REMOTE_PORT_CONFIG_KEY)
+        ? config.getInt(REMOTE_PORT_CONFIG_KEY) : DEFAULT_REMOTE_PORT;
   }
 
   public static String getEmbeddedBasePathFromConfig(final Config config) {

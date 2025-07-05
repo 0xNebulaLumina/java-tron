@@ -20,8 +20,8 @@ import org.junit.Test;
  */
 public class StorageSPIIntegrationTest {
 
-  private static final String GRPC_HOST = System.getProperty("storage.remote.host", "localhost");
-  private static final int GRPC_PORT =
+  private static final String REMOTE_HOST = System.getProperty("storage.remote.host", "localhost");
+  private static final int REMOTE_PORT =
       Integer.parseInt(System.getProperty("storage.remote.port", "50011"));
   private static final int TIMEOUT_SECONDS = 10;
 
@@ -31,7 +31,7 @@ public class StorageSPIIntegrationTest {
   @Before
   public void setUp() throws Exception {
     // Check if gRPC server is available
-    storage = new GrpcStorageSPI(GRPC_HOST, GRPC_PORT);
+    storage = new GrpcStorageSPI(REMOTE_HOST, REMOTE_PORT);
     testDbName = "test-db-" + System.currentTimeMillis();
 
     try {
