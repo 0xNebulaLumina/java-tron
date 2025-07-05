@@ -53,11 +53,12 @@ public abstract class TronDatabase<T> implements ITronChainBase<T> {
           logger.info("Initialized database {} using StorageBackend with mode: {}", dbName, mode);
           return;
         } else {
-          logger.warn("StorageBackendFactory not initialized, falling back to legacy storage for database: {}", dbName);
+          logger.error("StorageBackendFactory not initialized for database: {}. Dual storage mode is configured but factory is not available. Exiting application.", dbName);
+          System.exit(1);
         }
       } catch (Exception e) {
-        logger.error("Failed to initialize StorageBackend for database: {}, falling back to legacy storage", dbName, e);
-        // Fall through to legacy initialization
+        logger.error("Failed to initialize StorageBackend for database: {}. Dual storage mode is configured but initialization failed. Exiting application.", dbName, e);
+        System.exit(1);
       }
     }
 
