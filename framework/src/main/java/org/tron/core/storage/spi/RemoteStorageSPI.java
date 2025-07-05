@@ -263,7 +263,7 @@ public class RemoteStorageSPI implements StorageSPI {
     return CompletableFuture.supplyAsync(
         () -> {
           logger.debug("Iterator operation: db={}, startKey.length={}", dbName, startKey.length);
-          return new GrpcStorageIterator(dbName, startKey);
+          return new RemoteStorageIterator(dbName, startKey);
         });
   }
 
@@ -747,7 +747,7 @@ public class RemoteStorageSPI implements StorageSPI {
    * gRPC-based implementation of StorageIterator. Note: This is a simplified implementation. In a
    * full implementation, you would use the streaming iterator RPC method.
    */
-  private class GrpcStorageIterator implements StorageIterator {
+  private class RemoteStorageIterator implements StorageIterator {
     private final String dbName;
     private final byte[] startKey;
     private boolean closed = false;
@@ -756,7 +756,7 @@ public class RemoteStorageSPI implements StorageSPI {
     private Map.Entry<byte[], byte[]> nextEntry = null;
     private boolean reachedEnd = false;
 
-    public GrpcStorageIterator(String dbName, byte[] startKey) {
+    public RemoteStorageIterator(String dbName, byte[] startKey) {
       this.dbName = dbName;
       this.startKey = startKey;
       this.currentKey = startKey;

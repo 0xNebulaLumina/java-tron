@@ -17,7 +17,7 @@ import org.junit.Test;
  * Performance benchmark tests for gRPC StorageSPI implementation. Tests gRPC storage performance
  * against baseline metrics.
  */
-public class GrpcStoragePerformanceBenchmark extends BasePerformanceBenchmark {
+public class RemoteStoragePerformanceBenchmark extends BasePerformanceBenchmark {
 
   private static final String REMOTE_HOST = System.getProperty("storage.remote.host", "localhost");
   private static final int REMOTE_PORT =

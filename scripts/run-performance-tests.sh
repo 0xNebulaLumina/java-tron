@@ -194,7 +194,7 @@ run_performance_benchmarks() {
     
     for test in "${tests[@]}"; do
         log_info "Running gRPC benchmark: $test"
-        ./gradlew :framework:test --tests "org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark.$test" \
+        ./gradlew :framework:test --tests "org.tron.core.storage.spi.RemoteStoragePerformanceBenchmark.$test" \
             -Dstorage.remote.host=$GRPC_HOST -Dstorage.remote.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
             --console=plain --info \
             2>&1 | tee "$REPORTS_DIR/benchmark-$test.log"
