@@ -140,16 +140,17 @@ public class StorageSpiFactory {
         if (parameter.getStorage() != null && parameter.getStorage().getStorageMode() != null) {
           return parameter.getStorage().getStorageMode();
         }
-        
+
         // If not available, reload the config to get the latest values
         // This is similar to how DynamicArgs does it
         String confFileName = parameter.getShellConfFileName();
         if (confFileName == null || confFileName.trim().isEmpty()) {
           confFileName = "config.conf"; // Default config file
         }
-        
+
         try {
-          Config config = org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
+          Config config =
+              org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
           return org.tron.core.config.args.Storage.getStorageModeFromConfig(config);
         } catch (Exception e) {
           logger.debug("Could not load config file for storage mode: {}", e.getMessage());
@@ -225,9 +226,10 @@ public class StorageSpiFactory {
         if (confFileName == null || confFileName.trim().isEmpty()) {
           confFileName = "config.conf"; // Default config file
         }
-        
+
         try {
-          Config config = org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
+          Config config =
+              org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
           return org.tron.core.config.args.Storage.getRemoteHostFromConfig(config);
         } catch (Exception e) {
           logger.debug("Could not load config file for remote host: {}", e.getMessage());
@@ -288,9 +290,10 @@ public class StorageSpiFactory {
         if (confFileName == null || confFileName.trim().isEmpty()) {
           confFileName = "config.conf"; // Default config file
         }
-        
+
         try {
-          Config config = org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
+          Config config =
+              org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
           return org.tron.core.config.args.Storage.getRemotePortFromConfig(config);
         } catch (Exception e) {
           logger.debug("Could not load config file for remote port: {}", e.getMessage());
@@ -343,9 +346,10 @@ public class StorageSpiFactory {
         if (confFileName == null || confFileName.trim().isEmpty()) {
           confFileName = "config.conf"; // Default config file
         }
-        
+
         try {
-          Config config = org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
+          Config config =
+              org.tron.core.config.Configuration.getByFileName(confFileName, confFileName);
           return org.tron.core.config.args.Storage.getEmbeddedBasePathFromConfig(config);
         } catch (Exception e) {
           logger.debug("Could not load config file for embedded base path: {}", e.getMessage());

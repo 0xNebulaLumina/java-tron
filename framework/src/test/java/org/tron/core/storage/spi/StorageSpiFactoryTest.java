@@ -18,16 +18,16 @@ public class StorageSpiFactoryTest {
   public void setUp() {
     // Save original values
     originalSystemProperty = System.getProperty("storage.mode");
-    
+
     // Save original storage configuration from CommonParameter
     CommonParameter parameter = CommonParameter.getInstance();
     originalStorage = parameter.storage;
-    
+
     // Set a clean storage configuration to avoid interference from previous tests
     Storage cleanStorage = new Storage();
     cleanStorage.setStorageMode(null); // Ensure no storage mode is set
     parameter.storage = cleanStorage;
-    
+
     // Note: We can't actually modify environment variables in tests,
     // so we'll focus on system property testing
   }
@@ -36,7 +36,7 @@ public class StorageSpiFactoryTest {
   public void tearDown() {
     // Always clear the system property first to ensure clean state
     System.clearProperty("storage.mode");
-    
+
     // Then restore original value if there was one
     if (originalSystemProperty != null) {
       System.setProperty("storage.mode", originalSystemProperty);
@@ -151,12 +151,12 @@ public class StorageSpiFactoryTest {
   @Test
   public void testConfigFileSupport() {
     // Test config file methods with explicit Config object
-    com.typesafe.config.Config testConfig = com.typesafe.config.ConfigFactory.parseString(
-        "storage.mode = \"remote\"\n" +
-        "storage.remote.host = \"config-host\"\n" +
-        "storage.remote.port = 9999\n" +
-        "storage.embedded.basePath = \"config-path\""
-    );
+    com.typesafe.config.Config testConfig =
+        com.typesafe.config.ConfigFactory.parseString(
+            "storage.mode = \"remote\"\n"
+                + "storage.remote.host = \"config-host\"\n"
+                + "storage.remote.port = 9999\n"
+                + "storage.embedded.basePath = \"config-path\"");
 
     // Test storage mode from config
     StorageMode mode = StorageSpiFactory.determineStorageMode(testConfig);
@@ -178,11 +178,11 @@ public class StorageSpiFactoryTest {
   @Test
   public void testConfigFilePrecedence() {
     // Test that system properties take precedence over config file
-    com.typesafe.config.Config testConfig = com.typesafe.config.ConfigFactory.parseString(
-        "storage.mode = \"embedded\"\n" +
-        "storage.remote.host = \"config-host\"\n" +
-        "storage.remote.port = 8888"
-    );
+    com.typesafe.config.Config testConfig =
+        com.typesafe.config.ConfigFactory.parseString(
+            "storage.mode = \"embedded\"\n"
+                + "storage.remote.host = \"config-host\"\n"
+                + "storage.remote.port = 8888");
 
     // Set system properties that should override config file
     System.setProperty("storage.mode", "remote");

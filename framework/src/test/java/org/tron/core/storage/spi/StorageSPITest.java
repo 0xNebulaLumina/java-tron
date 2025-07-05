@@ -9,7 +9,8 @@ import org.junit.Test;
 public class StorageSPITest {
 
   @Test
-  public void testRemoteStorageSPIBasicOperations() throws ExecutionException, InterruptedException {
+  public void testRemoteStorageSPIBasicOperations()
+      throws ExecutionException, InterruptedException {
     // Create a gRPC storage client (will fail to connect but should not crash)
     RemoteStorageSPI storage = new RemoteStorageSPI("localhost", 50011);
 

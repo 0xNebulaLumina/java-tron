@@ -70,9 +70,7 @@ public class RemoteStorageSPI implements StorageSPI {
 
   // Register the PickFirstLoadBalancerProvider to avoid "Could not find policy 'pick_first'" errors
   static {
-    LoadBalancerRegistry
-        .getDefaultRegistry()
-        .register(new PickFirstLoadBalancerProvider());
+    LoadBalancerRegistry.getDefaultRegistry().register(new PickFirstLoadBalancerProvider());
   }
 
   private final ManagedChannel channel;
@@ -194,17 +192,17 @@ public class RemoteStorageSPI implements StorageSPI {
 
             for (Map.Entry<byte[], byte[]> entry : operations.entrySet()) {
               BatchOperation.Builder opBuilder =
-                  BatchOperation.newBuilder()
-                      .setKey(ByteString.copyFrom(entry.getKey()));
-              
+                  BatchOperation.newBuilder().setKey(ByteString.copyFrom(entry.getKey()));
+
               // Handle null values as delete operations
               if (entry.getValue() == null) {
                 opBuilder.setType(BatchOperation.Type.DELETE);
               } else {
-                opBuilder.setType(BatchOperation.Type.PUT)
-                         .setValue(ByteString.copyFrom(entry.getValue()));
+                opBuilder
+                    .setType(BatchOperation.Type.PUT)
+                    .setValue(ByteString.copyFrom(entry.getValue()));
               }
-              
+
               requestBuilder.addOperations(opBuilder.build());
             }
 
@@ -786,11 +784,12 @@ public class RemoteStorageSPI implements StorageSPI {
                   return true;
                 }
               })
-          .exceptionally(throwable -> {
-            logger.error("Error in hasNext() for iterator on db={}", dbName, throwable);
-            reachedEnd = true;
-            return false;
-          });
+          .exceptionally(
+              throwable -> {
+                logger.error("Error in hasNext() for iterator on db={}", dbName, throwable);
+                reachedEnd = true;
+                return false;
+              });
     }
 
     @Override
@@ -803,56 +802,63 @@ public class RemoteStorageSPI implements StorageSPI {
                 }
 
                 Map.Entry<byte[], byte[]> result = nextEntry;
-                
+
                 // CRITICAL FIX: Properly advance the iterator position
                 currentKey = incrementKey(result.getKey());
-                
+
                 hasNextCached = false;
                 nextEntry = null;
 
-                logger.debug("Iterator next: db={}, key.length={}, value.length={}", 
-                    dbName, result.getKey().length, result.getValue().length);
+                logger.debug(
+                    "Iterator next: db={}, key.length={}, value.length={}",
+                    dbName,
+                    result.getKey().length,
+                    result.getValue().length);
 
                 return CompletableFuture.completedFuture(result);
               })
-          .exceptionally(throwable -> {
-            logger.error("Error in next() for iterator on db={}", dbName, throwable);
-            throw new RuntimeException("Iterator next() failed for db: " + dbName, throwable);
-          });
+          .exceptionally(
+              throwable -> {
+                logger.error("Error in next() for iterator on db={}", dbName, throwable);
+                throw new RuntimeException("Iterator next() failed for db: " + dbName, throwable);
+              });
     }
 
     @Override
     public CompletableFuture<Void> seek(byte[] key) {
-      return CompletableFuture.runAsync(() -> {
-        currentKey = key;
-        hasNextCached = false;
-        nextEntry = null;
-        reachedEnd = false;
-        logger.debug("Iterator seek: db={}, key.length={}", dbName, key.length);
-      });
+      return CompletableFuture.runAsync(
+          () -> {
+            currentKey = key;
+            hasNextCached = false;
+            nextEntry = null;
+            reachedEnd = false;
+            logger.debug("Iterator seek: db={}, key.length={}", dbName, key.length);
+          });
     }
 
     @Override
     public CompletableFuture<Void> seekToFirst() {
-      return CompletableFuture.runAsync(() -> {
-        currentKey = new byte[0]; // Empty key means start from beginning
-        hasNextCached = false;
-        nextEntry = null;
-        reachedEnd = false;
-        logger.debug("Iterator seekToFirst: db={}", dbName);
-      });
+      return CompletableFuture.runAsync(
+          () -> {
+            currentKey = new byte[0]; // Empty key means start from beginning
+            hasNextCached = false;
+            nextEntry = null;
+            reachedEnd = false;
+            logger.debug("Iterator seekToFirst: db={}", dbName);
+          });
     }
 
     @Override
     public CompletableFuture<Void> seekToLast() {
-      return CompletableFuture.runAsync(() -> {
-        // For seekToLast, we'd need a special implementation
-        // For now, just mark as reached end since this is complex with gRPC
-        reachedEnd = true;
-        hasNextCached = false;
-        nextEntry = null;
-        logger.debug("Iterator seekToLast: db={} (not fully implemented)", dbName);
-      });
+      return CompletableFuture.runAsync(
+          () -> {
+            // For seekToLast, we'd need a special implementation
+            // For now, just mark as reached end since this is complex with gRPC
+            reachedEnd = true;
+            hasNextCached = false;
+            nextEntry = null;
+            logger.debug("Iterator seekToLast: db={} (not fully implemented)", dbName);
+          });
     }
 
     @Override
@@ -864,15 +870,15 @@ public class RemoteStorageSPI implements StorageSPI {
     }
 
     /**
-     * Increment a byte array key to get the next possible key.
-     * This is crucial for proper iterator advancement.
-     * 
+     * Increment a byte array key to get the next possible key. This is crucial for proper iterator
+     * advancement.
+     *
      * @param key the current key
      * @return the next key in lexicographic order
      */
     private byte[] incrementKey(byte[] key) {
       if (key == null || key.length == 0) {
-        return new byte[]{0x01};
+        return new byte[] {0x01};
       }
 
       // Create a copy to avoid modifying the original
@@ -893,7 +899,7 @@ public class RemoteStorageSPI implements StorageSPI {
       byte[] extendedKey = new byte[nextKey.length + 1];
       System.arraycopy(nextKey, 0, extendedKey, 0, nextKey.length);
       extendedKey[nextKey.length] = 0x01;
-      
+
       return extendedKey;
     }
   }
