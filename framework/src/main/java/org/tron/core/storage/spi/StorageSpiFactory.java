@@ -9,17 +9,19 @@ import org.tron.common.parameter.CommonParameter;
  * Factory class for creating StorageSPI implementations based on configuration.
  *
  * <p>This factory supports two storage modes:
+ *
  * <ul>
- *   <li>EMBEDDED: Uses local RocksDB storage (default)</li>
- *   <li>REMOTE: Uses remote gRPC storage service</li>
+ *   <li>EMBEDDED: Uses local RocksDB storage (default)
+ *   <li>REMOTE: Uses remote gRPC storage service
  * </ul>
  *
  * <p>Configuration sources (in order of precedence):
+ *
  * <ol>
- *   <li>System property: -Dstorage.mode=EMBEDDED|REMOTE</li>
- *   <li>Environment variable: STORAGE_MODE=EMBEDDED|REMOTE</li>
- *   <li>Config file: storage.mode = EMBEDDED|REMOTE</li>
- *   <li>Default: EMBEDDED</li>
+ *   <li>System property: -Dstorage.mode=EMBEDDED|REMOTE
+ *   <li>Environment variable: STORAGE_MODE=EMBEDDED|REMOTE
+ *   <li>Config file: storage.mode = EMBEDDED|REMOTE
+ *   <li>Default: EMBEDDED
  * </ol>
  */
 public class StorageSpiFactory {
