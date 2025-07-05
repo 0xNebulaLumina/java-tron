@@ -146,11 +146,11 @@ public class StorageSpiFactoryTest {
     Assert.assertEquals(StorageMode.REMOTE, mode);
 
     // Test gRPC host from config
-    String host = StorageSpiFactory.getGrpcHost(testConfig);
+    String host = StorageSpiFactory.getRemoteHost(testConfig);
     Assert.assertEquals("config-host", host);
 
     // Test gRPC port from config
-    int port = StorageSpiFactory.getGrpcPort(testConfig);
+    int port = StorageSpiFactory.getRemotePort(testConfig);
     Assert.assertEquals(9999, port);
 
     // Test embedded base path from config
@@ -176,10 +176,10 @@ public class StorageSpiFactoryTest {
     StorageMode mode = StorageSpiFactory.determineStorageMode(testConfig);
     Assert.assertEquals(StorageMode.REMOTE, mode);
 
-    String host = StorageSpiFactory.getGrpcHost(testConfig);
+    String host = StorageSpiFactory.getRemoteHost(testConfig);
     Assert.assertEquals("system-host", host);
 
-    int port = StorageSpiFactory.getGrpcPort(testConfig);
+    int port = StorageSpiFactory.getRemotePort(testConfig);
     Assert.assertEquals(7777, port);
   }
 
@@ -198,10 +198,10 @@ public class StorageSpiFactoryTest {
     StorageMode mode = StorageSpiFactory.determineStorageMode(emptyConfig);
     Assert.assertEquals(StorageMode.getDefault(), mode);
 
-    String host = StorageSpiFactory.getGrpcHost(emptyConfig);
+    String host = StorageSpiFactory.getRemoteHost(emptyConfig);
     Assert.assertEquals("localhost", host);
 
-    int port = StorageSpiFactory.getGrpcPort(emptyConfig);
+    int port = StorageSpiFactory.getRemotePort(emptyConfig);
     Assert.assertEquals(50011, port);
 
     String basePath = StorageSpiFactory.getEmbeddedBasePath(emptyConfig);

@@ -251,8 +251,8 @@ CachingStorageSPI
 The `StorageSpiFactory` methods:
 - `determineStorageMode()`
 - `getEmbeddedBasePath()`
-- `getGrpcHost()`
-- `getGrpcPort()`
+- `getRemoteHost()`
+- `getRemotePort()`
 
 Currently only check:
 1. System properties
