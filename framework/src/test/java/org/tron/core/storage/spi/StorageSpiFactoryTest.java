@@ -127,8 +127,8 @@ public class StorageSpiFactoryTest {
 
     info = StorageSpiFactory.getConfigurationInfo();
     Assert.assertTrue(info.contains("Mode: remote"));
-    Assert.assertTrue(info.contains("gRPC Host: test-host"));
-    Assert.assertTrue(info.contains("gRPC Port: 8888"));
+    Assert.assertTrue(info.contains("remote Host: test-host"));
+    Assert.assertTrue(info.contains("remote Port: 8888"));
   }
 
   @Test

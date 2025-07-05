@@ -118,8 +118,8 @@ public class DualStorageModeIntegrationTest {
 
     info = StorageSpiFactory.getConfigurationInfo();
     Assert.assertTrue("Should contain mode info", info.contains("Mode: remote"));
-    Assert.assertTrue("Should contain host info", info.contains("gRPC Host: test-host"));
-    Assert.assertTrue("Should contain port info", info.contains("gRPC Port: 9999"));
+    Assert.assertTrue("Should contain host info", info.contains("remote Host: test-host"));
+    Assert.assertTrue("Should contain port info", info.contains("remote Port: 9999"));
   }
 
   @Test
