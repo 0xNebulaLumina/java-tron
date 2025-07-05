@@ -232,7 +232,7 @@ message BatchOperation {
 4. Ensure backward compatibility with existing functionality
 
 ### Phase 2: gRPC Client Implementation
-1. Implement `GrpcStorageSPI` that communicates with Rust service
+1. Implement `RemoteStorageSPI` that communicates with Rust service
 2. Add connection pooling and retry logic
 3. Implement async/sync operation mapping
 4. Add comprehensive error handling and circuit breaker
@@ -258,7 +258,7 @@ storage {
     provider = "EMBEDDED" // or "GRPC"
     grpc {
         host = "localhost"
-        port = 50051
+        port = 50011
         connection_pool_size = 10
         timeout_ms = 5000
     }
@@ -355,7 +355,7 @@ storage {
    - Transaction and snapshot management
    - Error handling and logging throughout
 
-5. **✅ Java gRPC Client (GrpcStorageSPI)**
+5. **✅ Java gRPC Client (RemoteStorageSPI)**
    - **Real gRPC communication** for all 20+ methods
    - Proper protobuf message handling and type conversion
    - Error mapping from `StatusRuntimeException` to `RuntimeException`

@@ -99,7 +99,7 @@ make perf-analysis      # Detailed performance analysis with reports
 ./scripts/run-performance-tests.sh --keep-running
 
 # Test against remote server
-STORAGE_GRPC_HOST=remote-host ./scripts/run-performance-tests.sh
+STORAGE_REMOTE_HOST=remote-host ./scripts/run-performance-tests.sh
 ```
 
 ## 🧪 Validation Results

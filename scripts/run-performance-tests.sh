@@ -6,8 +6,8 @@
 set -e
 
 # Configuration
-GRPC_HOST="${STORAGE_GRPC_HOST:-localhost}"
-GRPC_PORT="${STORAGE_GRPC_PORT:-50051}"
+REMOTE_HOST="${STORAGE_REMOTE_HOST:-localhost}"
+REMOTE_PORT="${STORAGE_REMOTE_PORT:-50011}"
 RUST_SERVICE_PID=""
 REPORTS_DIR="reports/$(date +%Y%m%d-%H%M%S)"
 
@@ -104,14 +104,14 @@ build_components() {
 
 # Start Rust storage service
 start_rust_service() {
-    log_info "Starting Rust storage service on ${GRPC_HOST}:${GRPC_PORT}..."
+    log_info "Starting Rust storage service on ${REMOTE_HOST}:${REMOTE_PORT}..."
     
     # Create data directory
     mkdir -p data/rust-storage
     
     # Start service in background
     cd rust-storage-service
-    RUST_LOG=info DATA_PATH=../data/rust-storage HOST=$GRPC_HOST PORT=$GRPC_PORT cargo run --release &
+    RUST_LOG=info DATA_PATH=../data/rust-storage HOST=$REMOTE_HOST PORT=$REMOTE_PORT cargo run --release &
     RUST_SERVICE_PID=$!
     cd ..
     
@@ -121,8 +121,8 @@ start_rust_service() {
     log_info "Waiting for service to be ready..."
     for i in {1..30}; do
         # Try to connect to the gRPC service by testing TCP connection
-        if timeout 5 bash -c "echo > /dev/tcp/${GRPC_HOST}/${GRPC_PORT}" 2>/dev/null; then
-            log_info "Port ${GRPC_PORT} is open, service appears to be ready"
+        if timeout 5 bash -c "echo > /dev/tcp/${REMOTE_HOST}/${REMOTE_PORT}" 2>/dev/null; then
+            log_info "Port ${REMOTE_PORT} is open, service appears to be ready"
             log_success "Rust storage service is ready"
             return 0
         fi
@@ -150,7 +150,7 @@ run_integration_tests() {
     log_info "Running integration tests..."
     
     ./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSPIIntegrationTest" \
-        -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
+        -Dstorage.remote.host=$REMOTE_HOST -Dstorage.remote.port=$REMOTE_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
         --console=plain
     
     log_success "Integration tests completed"
@@ -194,8 +194,8 @@ run_performance_benchmarks() {
     
     for test in "${tests[@]}"; do
         log_info "Running gRPC benchmark: $test"
-        ./gradlew :framework:test --tests "org.tron.core.storage.spi.GrpcStoragePerformanceBenchmark.$test" \
-            -Dstorage.grpc.host=$GRPC_HOST -Dstorage.grpc.port=$GRPC_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
+        ./gradlew :framework:test --tests "org.tron.core.storage.spi.RemoteStoragePerformanceBenchmark.$test" \
+            -Dstorage.remote.host=$REMOTE_HOST -Dstorage.remote.port=$REMOTE_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
             --console=plain --info \
             2>&1 | tee "$REPORTS_DIR/benchmark-$test.log"
     done
@@ -266,7 +266,7 @@ generate_summary() {
 # Performance Testing Summary
 
 **Test Date:** $(date)
-**gRPC Server:** ${GRPC_HOST}:${GRPC_PORT}
+**gRPC Server:** ${REMOTE_HOST}:${REMOTE_PORT}
 **Java Version:** $(java -version 2>&1 | head -n 1)
 **System Info:** $(uname -a)
 
@@ -389,8 +389,8 @@ Options:
     -k, --keep-running  Keep services running after tests for manual testing
     
 Environment Variables:
-    STORAGE_GRPC_HOST   gRPC server host (default: localhost)
-    STORAGE_GRPC_PORT   gRPC server port (default: 50051)
+    STORAGE_REMOTE_HOST   gRPC server host (default: localhost)
+    STORAGE_REMOTE_PORT   gRPC server port (default: 50011)
     KEEP_RUNNING        Keep services running after tests (default: false)
 
 Examples:
@@ -401,7 +401,7 @@ Examples:
     ./scripts/run-performance-tests.sh --keep-running
     
     # Run tests against remote server
-    STORAGE_GRPC_HOST=remote-host ./scripts/run-performance-tests.sh
+    STORAGE_REMOTE_HOST=remote-host ./scripts/run-performance-tests.sh
 EOF
 }
 

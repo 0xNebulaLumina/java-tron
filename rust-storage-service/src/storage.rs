@@ -52,6 +52,47 @@ impl StorageEngine {
         })
     }
 
+    // Optimized function that combines initialization checking with database retrieval
+    fn get_or_init_db(&self, db_name: &str) -> Result<Arc<DB>> {
+        // First try to get the database with a read lock
+        {
+            let databases = self.databases.read().unwrap();
+            if let Some(db) = databases.get(db_name) {
+                return Ok(db.clone());
+            }
+        } // Read lock is released here
+
+        // Database doesn't exist, need to initialize it
+        // Use write lock with double-check pattern to avoid race conditions
+        let mut databases = self.databases.write().unwrap();
+
+        // Double-check: another thread might have initialized it while we were waiting for write lock
+        if let Some(db) = databases.get(db_name) {
+            return Ok(db.clone());
+        }
+
+        // Auto-initialize with default configuration
+        let db_path = format!("{}/{}", self.base_path, db_name);
+
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.set_max_open_files(1000); // Default value
+
+        // Set default block cache
+        let cache = rocksdb::Cache::new_lru_cache(8 * 1024 * 1024); // 8MB default
+        let mut block_opts = rocksdb::BlockBasedOptions::default();
+        block_opts.set_block_cache(&cache);
+        opts.set_block_based_table_factory(&block_opts);
+
+        let db = DB::open(&opts, &db_path)?;
+        let db_arc = Arc::new(db);
+
+        databases.insert(db_name.to_string(), db_arc.clone());
+        info!("Auto-initialized database: {} with default configuration", db_name);
+
+        Ok(db_arc)
+    }
+
     pub fn init_db(&self, db_name: &str, config: &StorageConfig) -> Result<()> {
         let db_path = format!("{}/{}", self.base_path, db_name);
         
@@ -96,17 +137,16 @@ impl StorageEngine {
         let db = DB::open(&opts, &db_path)?;
         let db_arc = Arc::new(db);
         
+        // Close existing database if it exists
         self.databases.write().unwrap().insert(db_name.to_string(), db_arc);
-        info!("Initialized database: {}", db_name);
+        info!("Initialized database: {} with custom configuration", db_name);
         
         Ok(())
     }
 
     pub fn get(&self, db_name: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         match db.get(key)? {
             Some(value) => Ok(Some(value)),
             None => Ok(None),
@@ -114,38 +154,30 @@ impl StorageEngine {
     }
 
     pub fn put(&self, db_name: &str, key: &[u8], value: &[u8]) -> Result<()> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         db.put(key, value)?;
         Ok(())
     }
 
     pub fn delete(&self, db_name: &str, key: &[u8]) -> Result<()> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         db.delete(key)?;
         Ok(())
     }
 
     pub fn has(&self, db_name: &str, key: &[u8]) -> Result<bool> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         Ok(db.get(key)?.is_some())
     }
 
     pub fn batch_write(&self, db_name: &str, operations: &[BatchOperation]) -> Result<()> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         let mut batch = WriteBatch::default();
-        
+
         for op in operations {
             match batch_operation::Type::try_from(op.r#type).unwrap_or(batch_operation::Type::Put) {
                 batch_operation::Type::Put => {
@@ -156,18 +188,16 @@ impl StorageEngine {
                 }
             }
         }
-        
+
         db.write(batch)?;
         Ok(())
     }
 
     pub fn batch_get(&self, db_name: &str, keys: &[Vec<u8>]) -> Result<Vec<KeyValue>> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         let mut results = Vec::new();
-        
+
         for key in keys {
             match db.get(key)? {
                 Some(value) => {
@@ -186,18 +216,16 @@ impl StorageEngine {
                 }
             }
         }
-        
+
         Ok(results)
     }
 
     pub fn get_keys_next(&self, db_name: &str, start_key: &[u8], limit: i32) -> Result<Vec<Vec<u8>>> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         let mut keys = Vec::new();
         let iter = db.iterator(IteratorMode::From(start_key, Direction::Forward));
-        
+
         for (i, item) in iter.enumerate() {
             if i >= limit as usize {
                 break;
@@ -205,18 +233,16 @@ impl StorageEngine {
             let (key, _) = item?;
             keys.push(key.to_vec());
         }
-        
+
         Ok(keys)
     }
 
     pub fn get_values_next(&self, db_name: &str, start_key: &[u8], limit: i32) -> Result<Vec<Vec<u8>>> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         let mut values = Vec::new();
         let iter = db.iterator(IteratorMode::From(start_key, Direction::Forward));
-        
+
         for (i, item) in iter.enumerate() {
             if i >= limit as usize {
                 break;
@@ -224,18 +250,16 @@ impl StorageEngine {
             let (_, value) = item?;
             values.push(value.to_vec());
         }
-        
+
         Ok(values)
     }
 
     pub fn get_next(&self, db_name: &str, start_key: &[u8], limit: i32) -> Result<Vec<KeyValue>> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         let mut pairs = Vec::new();
         let iter = db.iterator(IteratorMode::From(start_key, Direction::Forward));
-        
+
         for (i, item) in iter.enumerate() {
             if i >= limit as usize {
                 break;
@@ -247,18 +271,16 @@ impl StorageEngine {
                 found: true,
             });
         }
-        
+
         Ok(pairs)
     }
 
     pub fn prefix_query(&self, db_name: &str, prefix: &[u8]) -> Result<Vec<KeyValue>> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         let mut pairs = Vec::new();
         let iter = db.iterator(IteratorMode::From(prefix, Direction::Forward));
-        
+
         for item in iter {
             let (key, value) = item?;
             if !key.starts_with(prefix) {
@@ -270,7 +292,7 @@ impl StorageEngine {
                 found: true,
             });
         }
-        
+
         Ok(pairs)
     }
 
@@ -298,14 +320,12 @@ impl StorageEngine {
     }
 
     pub fn size(&self, db_name: &str) -> Result<i64> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         // Approximate count using RocksDB property
         let count_str = db.property_value("rocksdb.estimate-num-keys")?
             .unwrap_or_else(|| "0".to_string());
-        
+
         Ok(count_str.parse::<i64>().unwrap_or(0))
     }
 
@@ -314,13 +334,16 @@ impl StorageEngine {
     }
 
     pub fn begin_transaction(&self, db_name: &str) -> Result<String> {
+        // Ensure database is initialized before creating transaction
+        let _db = self.get_or_init_db(db_name)?;
+
         let transaction_id = Uuid::new_v4().to_string();
-        
+
         let transaction = TransactionInfo {
             db_name: db_name.to_string(),
             operations: Vec::new(),
         };
-        
+
         self.transactions.write().unwrap().insert(transaction_id.clone(), transaction);
         Ok(transaction_id)
     }
@@ -357,16 +380,15 @@ impl StorageEngine {
     }
 
     pub fn create_snapshot(&self, db_name: &str) -> Result<String> {
-        let databases = self.databases.read().unwrap();
-        let _db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        // Ensure database is initialized before creating snapshot
+        let _db = self.get_or_init_db(db_name)?;
+
         let snapshot_id = Uuid::new_v4().to_string();
-        
+
         let snapshot_info = SnapshotInfo {
             db_name: db_name.to_string(),
         };
-        
+
         self.snapshots.write().unwrap().insert(snapshot_id.clone(), snapshot_info);
         Ok(snapshot_id)
     }
@@ -389,25 +411,23 @@ impl StorageEngine {
     }
 
     pub fn get_stats(&self, db_name: &str) -> Result<StorageStats> {
-        let databases = self.databases.read().unwrap();
-        let db = databases.get(db_name)
-            .ok_or_else(|| anyhow!("Database not found: {}", db_name))?;
-        
+        let db = self.get_or_init_db(db_name)?;
+
         let total_keys = db.property_value("rocksdb.estimate-num-keys")?
             .unwrap_or_else(|| "0".to_string())
             .parse::<i64>().unwrap_or(0);
-        
+
         let total_size = db.property_value("rocksdb.total-sst-files-size")?
             .unwrap_or_else(|| "0".to_string())
             .parse::<i64>().unwrap_or(0);
-        
+
         let mut engine_stats = HashMap::new();
-        
+
         // Collect various RocksDB statistics
         if let Some(stats) = db.property_value("rocksdb.stats")? {
             engine_stats.insert("rocksdb.stats".to_string(), stats);
         }
-        
+
         Ok(StorageStats {
             total_keys,
             total_size,
@@ -428,4 +448,104 @@ impl StorageEngine {
             HealthStatus::Healthy
         }
     }
-} 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_engine() -> (StorageEngine, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let engine = StorageEngine::new(temp_dir.path()).unwrap();
+        (engine, temp_dir)
+    }
+
+    #[test]
+    fn test_get_or_init_db_creates_new_database() {
+        let (engine, _temp_dir) = create_test_engine();
+
+        // Database should not exist initially
+        assert!(!engine.is_alive("test_db"));
+
+        // get_or_init_db should create the database
+        let db = engine.get_or_init_db("test_db").unwrap();
+        assert!(db.get(b"nonexistent_key").unwrap().is_none());
+
+        // Database should now exist
+        assert!(engine.is_alive("test_db"));
+    }
+
+    #[test]
+    fn test_get_or_init_db_returns_existing_database() {
+        let (engine, _temp_dir) = create_test_engine();
+
+        // Create database first
+        let db1 = engine.get_or_init_db("test_db").unwrap();
+        db1.put(b"test_key", b"test_value").unwrap();
+
+        // get_or_init_db should return the same database
+        let db2 = engine.get_or_init_db("test_db").unwrap();
+        let value = db2.get(b"test_key").unwrap().unwrap();
+        assert_eq!(value, b"test_value");
+
+        // Both should be the same Arc instance
+        assert!(Arc::ptr_eq(&db1, &db2));
+    }
+
+    #[test]
+    fn test_optimized_operations_work_correctly() {
+        let (engine, _temp_dir) = create_test_engine();
+
+        // Test put and get operations
+        engine.put("test_db", b"key1", b"value1").unwrap();
+        let result = engine.get("test_db", b"key1").unwrap();
+        assert_eq!(result, Some(b"value1".to_vec()));
+
+        // Test has operation
+        assert!(engine.has("test_db", b"key1").unwrap());
+        assert!(!engine.has("test_db", b"nonexistent").unwrap());
+
+        // Test delete operation
+        engine.delete("test_db", b"key1").unwrap();
+        assert!(!engine.has("test_db", b"key1").unwrap());
+
+        // Test size operation
+        engine.put("test_db", b"key2", b"value2").unwrap();
+        engine.put("test_db", b"key3", b"value3").unwrap();
+        let size = engine.size("test_db").unwrap();
+        assert!(size >= 0); // Size should be non-negative
+    }
+
+    #[test]
+    fn test_batch_operations() {
+        let (engine, _temp_dir) = create_test_engine();
+
+        // Test batch write
+        let operations = vec![
+            BatchOperation {
+                r#type: batch_operation::Type::Put as i32,
+                key: b"batch_key1".to_vec(),
+                value: b"batch_value1".to_vec(),
+            },
+            BatchOperation {
+                r#type: batch_operation::Type::Put as i32,
+                key: b"batch_key2".to_vec(),
+                value: b"batch_value2".to_vec(),
+            },
+        ];
+
+        engine.batch_write("test_db", &operations).unwrap();
+
+        // Test batch get
+        let keys = vec![b"batch_key1".to_vec(), b"batch_key2".to_vec(), b"nonexistent".to_vec()];
+        let results = engine.batch_get("test_db", &keys).unwrap();
+
+        assert_eq!(results.len(), 3);
+        assert!(results[0].found);
+        assert_eq!(results[0].value, b"batch_value1");
+        assert!(results[1].found);
+        assert_eq!(results[1].value, b"batch_value2");
+        assert!(!results[2].found);
+    }
+}

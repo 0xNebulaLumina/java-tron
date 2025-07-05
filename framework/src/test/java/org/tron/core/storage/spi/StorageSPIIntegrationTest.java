@@ -16,22 +16,22 @@ import org.junit.Test;
 
 /**
  * Integration tests for StorageSPI with real gRPC server. Requires rust-storage-service to be
- * running on localhost:50051
+ * running on localhost:50011
  */
 public class StorageSPIIntegrationTest {
 
-  private static final String GRPC_HOST = System.getProperty("storage.grpc.host", "localhost");
-  private static final int GRPC_PORT =
-      Integer.parseInt(System.getProperty("storage.grpc.port", "50051"));
+  private static final String REMOTE_HOST = System.getProperty("storage.remote.host", "localhost");
+  private static final int REMOTE_PORT =
+      Integer.parseInt(System.getProperty("storage.remote.port", "50011"));
   private static final int TIMEOUT_SECONDS = 10;
 
-  private GrpcStorageSPI storage;
+  private RemoteStorageSPI storage;
   private String testDbName;
 
   @Before
   public void setUp() throws Exception {
     // Check if gRPC server is available
-    storage = new GrpcStorageSPI(GRPC_HOST, GRPC_PORT);
+    storage = new RemoteStorageSPI(REMOTE_HOST, REMOTE_PORT);
     testDbName = "test-db-" + System.currentTimeMillis();
 
     try {
@@ -117,7 +117,10 @@ public class StorageSPIIntegrationTest {
     Assert.assertEquals("Should return 4 results", 4, batchResult.size());
 
     // Verify retrieved values using iteration (to avoid byte[] key matching issues)
-    boolean foundKey0 = false, foundKey5 = false, foundKey9 = false, foundNonExistent = false;
+    boolean foundKey0 = false;
+    boolean foundKey5 = false;
+    boolean foundKey9 = false;
+    boolean foundNonExistent = false;
 
     for (Map.Entry<byte[], byte[]> entry : batchResult.entrySet()) {
       String keyStr = new String(entry.getKey());
@@ -139,6 +142,9 @@ public class StorageSPIIntegrationTest {
         case "non-existent-key":
           Assert.assertNull("Non-existent key should return null", value);
           foundNonExistent = true;
+          break;
+        default:
+          // No action needed for unexpected keys
           break;
       }
     }

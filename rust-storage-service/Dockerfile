@@ -39,12 +39,12 @@ COPY --from=builder /app/target/release/storage-service /app/storage-service
 RUN mkdir -p /app/data
 
 # Expose ports
-EXPOSE 50051 9090
+EXPOSE 50011 9090
 
 # Set environment variables
 ENV RUST_LOG=info
 ENV TRON_STORAGE_HOST=0.0.0.0
-ENV TRON_STORAGE_PORT=50051
+ENV TRON_STORAGE_PORT=50011
 ENV TRON_STORAGE_DATA_DIR=/app/data
 
 # Run the service

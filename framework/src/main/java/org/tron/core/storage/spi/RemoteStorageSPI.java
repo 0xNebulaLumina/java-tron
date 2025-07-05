@@ -1,9 +1,11 @@
 package org.tron.core.storage.spi;
 
 import com.google.protobuf.ByteString;
+import io.grpc.LoadBalancerRegistry;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.StatusRuntimeException;
+import io.grpc.internal.PickFirstLoadBalancerProvider;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -14,15 +16,62 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import storage.Storage.*;
+import storage.Storage.BatchGetRequest;
+import storage.Storage.BatchGetResponse;
+import storage.Storage.BatchOperation;
+import storage.Storage.BatchWriteRequest;
+import storage.Storage.BeginTransactionRequest;
+import storage.Storage.BeginTransactionResponse;
+import storage.Storage.CloseDBRequest;
+import storage.Storage.CommitTransactionRequest;
+import storage.Storage.CreateSnapshotRequest;
+import storage.Storage.CreateSnapshotResponse;
+import storage.Storage.DeleteRequest;
+import storage.Storage.DeleteSnapshotRequest;
+import storage.Storage.GetFromSnapshotRequest;
+import storage.Storage.GetFromSnapshotResponse;
+import storage.Storage.GetKeysNextRequest;
+import storage.Storage.GetKeysNextResponse;
+import storage.Storage.GetNextRequest;
+import storage.Storage.GetNextResponse;
+import storage.Storage.GetRequest;
+import storage.Storage.GetResponse;
+import storage.Storage.GetStatsRequest;
+import storage.Storage.GetStatsResponse;
+import storage.Storage.GetValuesNextRequest;
+import storage.Storage.GetValuesNextResponse;
+import storage.Storage.HasRequest;
+import storage.Storage.HasResponse;
+import storage.Storage.HealthCheckRequest;
+import storage.Storage.HealthCheckResponse;
+import storage.Storage.InitDBRequest;
+import storage.Storage.IsAliveRequest;
+import storage.Storage.IsAliveResponse;
+import storage.Storage.IsEmptyRequest;
+import storage.Storage.IsEmptyResponse;
+import storage.Storage.KeyValue;
+import storage.Storage.ListDatabasesRequest;
+import storage.Storage.ListDatabasesResponse;
+import storage.Storage.PrefixQueryRequest;
+import storage.Storage.PrefixQueryResponse;
+import storage.Storage.PutRequest;
+import storage.Storage.ResetDBRequest;
+import storage.Storage.RollbackTransactionRequest;
+import storage.Storage.SizeRequest;
+import storage.Storage.SizeResponse;
 import storage.StorageServiceGrpc;
 
 /**
  * gRPC-based implementation of StorageSPI that communicates with Rust storage service. This
  * implementation replaces placeholder calls with actual gRPC communication.
  */
-public class GrpcStorageSPI implements StorageSPI {
-  private static final Logger logger = LoggerFactory.getLogger(GrpcStorageSPI.class);
+public class RemoteStorageSPI implements StorageSPI {
+  private static final Logger logger = LoggerFactory.getLogger(RemoteStorageSPI.class);
+
+  // Register the PickFirstLoadBalancerProvider to avoid "Could not find policy 'pick_first'" errors
+  static {
+    LoadBalancerRegistry.getDefaultRegistry().register(new PickFirstLoadBalancerProvider());
+  }
 
   private final ManagedChannel channel;
   private final StorageServiceGrpc.StorageServiceBlockingStub blockingStub;
@@ -31,7 +80,7 @@ public class GrpcStorageSPI implements StorageSPI {
   private final int port;
   private volatile boolean closed = false;
 
-  public GrpcStorageSPI(String host, int port) {
+  public RemoteStorageSPI(String host, int port) {
     this.host = host;
     this.port = port;
     this.channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
@@ -142,13 +191,19 @@ public class GrpcStorageSPI implements StorageSPI {
                 BatchWriteRequest.newBuilder().setDbName(dbName);
 
             for (Map.Entry<byte[], byte[]> entry : operations.entrySet()) {
-              BatchOperation op =
-                  BatchOperation.newBuilder()
-                      .setType(BatchOperation.Type.PUT)
-                      .setKey(ByteString.copyFrom(entry.getKey()))
-                      .setValue(ByteString.copyFrom(entry.getValue()))
-                      .build();
-              requestBuilder.addOperations(op);
+              BatchOperation.Builder opBuilder =
+                  BatchOperation.newBuilder().setKey(ByteString.copyFrom(entry.getKey()));
+
+              // Handle null values as delete operations
+              if (entry.getValue() == null) {
+                opBuilder.setType(BatchOperation.Type.DELETE);
+              } else {
+                opBuilder
+                    .setType(BatchOperation.Type.PUT)
+                    .setValue(ByteString.copyFrom(entry.getValue()));
+              }
+
+              requestBuilder.addOperations(opBuilder.build());
             }
 
             blockingStub.batchWrite(requestBuilder.build());
@@ -206,7 +261,7 @@ public class GrpcStorageSPI implements StorageSPI {
     return CompletableFuture.supplyAsync(
         () -> {
           logger.debug("Iterator operation: db={}, startKey.length={}", dbName, startKey.length);
-          return new GrpcStorageIterator(dbName, startKey);
+          return new RemoteStorageIterator(dbName, startKey);
         });
   }
 
@@ -690,15 +745,16 @@ public class GrpcStorageSPI implements StorageSPI {
    * gRPC-based implementation of StorageIterator. Note: This is a simplified implementation. In a
    * full implementation, you would use the streaming iterator RPC method.
    */
-  private class GrpcStorageIterator implements StorageIterator {
+  private class RemoteStorageIterator implements StorageIterator {
     private final String dbName;
     private final byte[] startKey;
     private boolean closed = false;
     private byte[] currentKey;
     private boolean hasNextCached = false;
     private Map.Entry<byte[], byte[]> nextEntry = null;
+    private boolean reachedEnd = false;
 
-    public GrpcStorageIterator(String dbName, byte[] startKey) {
+    public RemoteStorageIterator(String dbName, byte[] startKey) {
       this.dbName = dbName;
       this.startKey = startKey;
       this.currentKey = startKey;
@@ -706,7 +762,7 @@ public class GrpcStorageSPI implements StorageSPI {
 
     @Override
     public CompletableFuture<Boolean> hasNext() {
-      if (closed) {
+      if (closed || reachedEnd) {
         return CompletableFuture.completedFuture(false);
       }
 
@@ -718,6 +774,7 @@ public class GrpcStorageSPI implements StorageSPI {
           .thenApply(
               entries -> {
                 if (entries.isEmpty()) {
+                  reachedEnd = true;
                   return false;
                 } else {
                   Map.Entry<byte[], byte[]> firstEntry = entries.entrySet().iterator().next();
@@ -726,6 +783,12 @@ public class GrpcStorageSPI implements StorageSPI {
                   hasNextCached = true;
                   return true;
                 }
+              })
+          .exceptionally(
+              throwable -> {
+                logger.error("Error in hasNext() for iterator on db={}", dbName, throwable);
+                reachedEnd = true;
+                return false;
               });
     }
 
@@ -735,41 +798,109 @@ public class GrpcStorageSPI implements StorageSPI {
           .thenCompose(
               hasNext -> {
                 if (!hasNext) {
-                  throw new RuntimeException("No more elements");
+                  throw new RuntimeException("No more elements in iterator for db: " + dbName);
                 }
 
                 Map.Entry<byte[], byte[]> result = nextEntry;
-                currentKey = result.getKey();
+
+                // CRITICAL FIX: Properly advance the iterator position
+                currentKey = incrementKey(result.getKey());
+
                 hasNextCached = false;
                 nextEntry = null;
 
+                logger.debug(
+                    "Iterator next: db={}, key.length={}, value.length={}",
+                    dbName,
+                    result.getKey().length,
+                    result.getValue().length);
+
                 return CompletableFuture.completedFuture(result);
+              })
+          .exceptionally(
+              throwable -> {
+                logger.error("Error in next() for iterator on db={}", dbName, throwable);
+                throw new RuntimeException("Iterator next() failed for db: " + dbName, throwable);
               });
     }
 
     @Override
     public CompletableFuture<Void> seek(byte[] key) {
-      this.currentKey = key;
-      this.hasNextCached = false;
-      this.nextEntry = null;
-      return CompletableFuture.completedFuture(null);
+      return CompletableFuture.runAsync(
+          () -> {
+            currentKey = key;
+            hasNextCached = false;
+            nextEntry = null;
+            reachedEnd = false;
+            logger.debug("Iterator seek: db={}, key.length={}", dbName, key.length);
+          });
     }
 
     @Override
     public CompletableFuture<Void> seekToFirst() {
-      return seek(new byte[0]);
+      return CompletableFuture.runAsync(
+          () -> {
+            currentKey = new byte[0]; // Empty key means start from beginning
+            hasNextCached = false;
+            nextEntry = null;
+            reachedEnd = false;
+            logger.debug("Iterator seekToFirst: db={}", dbName);
+          });
     }
 
     @Override
     public CompletableFuture<Void> seekToLast() {
-      // This is a simplified implementation
-      // In a real implementation, you would need to find the last key
-      return CompletableFuture.completedFuture(null);
+      return CompletableFuture.runAsync(
+          () -> {
+            // For seekToLast, we'd need a special implementation
+            // For now, just mark as reached end since this is complex with gRPC
+            reachedEnd = true;
+            hasNextCached = false;
+            nextEntry = null;
+            logger.debug("Iterator seekToLast: db={} (not fully implemented)", dbName);
+          });
     }
 
     @Override
     public void close() {
       closed = true;
+      hasNextCached = false;
+      nextEntry = null;
+      logger.debug("Closed iterator for db={}", dbName);
+    }
+
+    /**
+     * Increment a byte array key to get the next possible key. This is crucial for proper iterator
+     * advancement.
+     *
+     * @param key the current key
+     * @return the next key in lexicographic order
+     */
+    private byte[] incrementKey(byte[] key) {
+      if (key == null || key.length == 0) {
+        return new byte[] {0x01};
+      }
+
+      // Create a copy to avoid modifying the original
+      byte[] nextKey = new byte[key.length];
+      System.arraycopy(key, 0, nextKey, 0, key.length);
+
+      // Increment the key by finding the rightmost byte that can be incremented
+      for (int i = nextKey.length - 1; i >= 0; i--) {
+        if (nextKey[i] != (byte) 0xFF) {
+          nextKey[i]++;
+          return nextKey;
+        } else {
+          nextKey[i] = 0x00;
+        }
+      }
+
+      // If all bytes were 0xFF, we need to extend the key
+      byte[] extendedKey = new byte[nextKey.length + 1];
+      System.arraycopy(nextKey, 0, extendedKey, 0, nextKey.length);
+      extendedKey[nextKey.length] = 0x01;
+
+      return extendedKey;
     }
   }
 }

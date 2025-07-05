@@ -63,6 +63,12 @@ public class Storage {
   private static final String PROPERTIES_CONFIG_DEFAULT_L_KEY = "defaultL";
   private static final String DEFAULT_TRANSACTIONHISTORY_SWITCH = "on";
 
+  // Storage SPI configuration keys
+  private static final String STORAGE_MODE_CONFIG_KEY = "storage.mode";
+  private static final String REMOTE_HOST_CONFIG_KEY = "storage.remote.host";
+  private static final String REMOTE_PORT_CONFIG_KEY = "storage.remote.port";
+  private static final String EMBEDDED_BASE_PATH_CONFIG_KEY = "storage.embedded.basePath";
+
   private static final String NAME_CONFIG_KEY = "name";
   private static final String PATH_CONFIG_KEY = "path";
   private static final String CREATE_IF_MISSING_CONFIG_KEY = "createIfMissing";
@@ -86,7 +92,7 @@ public class Storage {
   /**
    * Default values of directory
    */
-  private static final String DEFAULT_DB_ENGINE = "LEVELDB";
+  private static final String DEFAULT_DB_ENGINE = "ROCKSDB";
   private static final boolean DEFAULT_DB_SYNC = false;
   private static final boolean DEFAULT_EVENT_SUBSCRIBE_CONTRACT_PARSE = true;
   private static final String DEFAULT_DB_DIRECTORY = "database";
@@ -96,6 +102,13 @@ public class Storage {
   private static final boolean DEFAULT_CHECKPOINT_SYNC = true;
   private static final int DEFAULT_ESTIMATED_TRANSACTIONS = 1000;
   private static final int DEFAULT_SNAPSHOT_MAX_FLUSH_COUNT = 1;
+
+  // Storage SPI default values
+  private static final String DEFAULT_STORAGE_MODE = "embedded";
+  private static final String DEFAULT_REMOTE_HOST = "localhost";
+  private static final int DEFAULT_REMOTE_PORT = 50011;
+  private static final String DEFAULT_EMBEDDED_BASE_PATH = "data/rocksdb-embedded";
+
   private Config storage;
 
   /**
@@ -104,6 +117,10 @@ public class Storage {
   @Getter
   @Setter
   private String dbDirectory;
+
+  @Getter
+  @Setter
+  private String storageMode;
 
   @Getter
   @Setter
@@ -169,6 +186,11 @@ public class Storage {
 
   // db root
   private final Map<String, Sha256Hash> dbRoots = Maps.newConcurrentMap();
+
+  public static String getStorageModeFromConfig(final Config config) {
+    return config.hasPath(STORAGE_MODE_CONFIG_KEY)
+        ? config.getString(STORAGE_MODE_CONFIG_KEY) : DEFAULT_STORAGE_MODE;
+  }
 
   public static String getDbEngineFromConfig(final Config config) {
     return config.hasPath(DB_ENGINE_CONFIG_KEY)
@@ -252,6 +274,20 @@ public class Storage {
         && config.getBoolean(TX_CACHE_INIT_OPTIMIZATION);
   }
 
+  public static String getRemoteHostFromConfig(final Config config) {
+    return config.hasPath(REMOTE_HOST_CONFIG_KEY)
+        ? config.getString(REMOTE_HOST_CONFIG_KEY) : DEFAULT_REMOTE_HOST;
+  }
+
+  public static int getRemotePortFromConfig(final Config config) {
+    return config.hasPath(REMOTE_PORT_CONFIG_KEY)
+        ? config.getInt(REMOTE_PORT_CONFIG_KEY) : DEFAULT_REMOTE_PORT;
+  }
+
+  public static String getEmbeddedBasePathFromConfig(final Config config) {
+    return config.hasPath(EMBEDDED_BASE_PATH_CONFIG_KEY)
+        ? config.getString(EMBEDDED_BASE_PATH_CONFIG_KEY) : DEFAULT_EMBEDDED_BASE_PATH;
+  }
 
   public  void setCacheStrategies(Config config) {
     if (config.hasPath(CACHE_STRATEGIES)) {
