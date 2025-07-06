@@ -180,7 +180,7 @@ run_embedded_benchmarks() {
 }
 
 # Run performance benchmarks
-run_performance_benchmarks() {
+run_remote_benchmarks() {
     log_info "Running gRPC performance benchmarks..."
     
     mkdir -p "$REPORTS_DIR"
@@ -362,7 +362,7 @@ main() {
     run_embedded_benchmarks
     
     # Then run gRPC benchmarks
-    run_performance_benchmarks
+    run_remote_benchmarks
     
     # Step 5: Generate reports
     generate_summary
