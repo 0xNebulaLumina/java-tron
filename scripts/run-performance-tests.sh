@@ -179,6 +179,32 @@ run_embedded_benchmarks() {
     log_success "Embedded benchmarks completed"
 }
 
+# Run embedded Tron workload benchmarks
+run_embedded_tron_workload() {
+    log_info "Running embedded Tron workload benchmarks..."
+    
+    mkdir -p "$REPORTS_DIR"
+    
+    local tron_tests=(
+        "benchmarkBlockProcessingWorkload"
+        "benchmarkAccountQueryWorkload"
+        "benchmarkTransactionHistoryWorkload"
+        "benchmarkSmartContractStateWorkload"
+        "benchmarkFastSyncWorkload"
+        "benchmarkMixedWorkloadStressTest"
+    )
+    
+    for test in "${tron_tests[@]}"; do
+        log_info "Running embedded Tron workload: $test"
+        ./gradlew :framework:test --tests "org.tron.core.storage.spi.EmbeddedTronWorkloadBenchmark.$test" \
+            -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
+            --console=plain --info \
+            2>&1 | tee "$REPORTS_DIR/embedded-tron-$test.log"
+    done
+    
+    log_success "Embedded Tron workload benchmarks completed"
+}
+
 # Run performance benchmarks
 run_remote_benchmarks() {
     log_info "Running gRPC performance benchmarks..."
@@ -205,6 +231,32 @@ run_remote_benchmarks() {
     
     # Extract and analyze metrics from logs
     extract_metrics_from_logs
+}
+
+# Run remote Tron workload benchmarks
+run_remote_tron_workload() {
+    log_info "Running gRPC Tron workload benchmarks..."
+    
+    mkdir -p "$REPORTS_DIR"
+    
+    local tron_tests=(
+        "benchmarkBlockProcessingWorkload"
+        "benchmarkAccountQueryWorkload"
+        "benchmarkTransactionHistoryWorkload"
+        "benchmarkSmartContractStateWorkload"
+        "benchmarkFastSyncWorkload"
+        "benchmarkMixedWorkloadStressTest"
+    )
+    
+    for test in "${tron_tests[@]}"; do
+        log_info "Running gRPC Tron workload: $test"
+        ./gradlew :framework:test --tests "org.tron.core.storage.spi.RemoteTronWorkloadBenchmark.$test" \
+            -Dstorage.remote.host=$REMOTE_HOST -Dstorage.remote.port=$REMOTE_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
+            --console=plain --info \
+            2>&1 | tee "$REPORTS_DIR/remote-tron-$test.log"
+    done
+    
+    log_success "gRPC Tron workload benchmarks completed"
 }
 
 # Extract metrics from log files
@@ -361,8 +413,14 @@ main() {
     # Run embedded benchmarks first (no external service needed)
     run_embedded_benchmarks
     
+    # Run embedded Tron workload benchmarks
+    run_embedded_tron_workload
+    
     # Then run gRPC benchmarks
     run_remote_benchmarks
+    
+    # Run gRPC Tron workload benchmarks
+    run_remote_tron_workload
     
     # Step 5: Generate reports
     generate_summary
