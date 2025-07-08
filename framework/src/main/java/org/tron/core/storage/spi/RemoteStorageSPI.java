@@ -81,14 +81,27 @@ public class RemoteStorageSPI implements StorageSPI {
   private volatile boolean closed = false;
 
   public RemoteStorageSPI(String host, int port) {
-    this.host = host;
+    // Validate parameters to prevent NullPointerException
+    if (host == null || host.trim().isEmpty()) {
+      throw new IllegalArgumentException("Host cannot be null or empty");
+    }
+    if (port <= 0 || port > 65535) {
+      throw new IllegalArgumentException("Port must be between 1 and 65535, got: " + port);
+    }
+    
+    this.host = host.trim();
     this.port = port;
-    this.channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
+    
+    try {
+      this.channel = ManagedChannelBuilder.forAddress(this.host, this.port).usePlaintext().build();
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to create gRPC channel for " + this.host + ":" + this.port, e);
+    }
 
     this.blockingStub = StorageServiceGrpc.newBlockingStub(channel);
     this.futureStub = StorageServiceGrpc.newFutureStub(channel);
 
-    logger.info("Initialized gRPC storage client for {}:{}", host, port);
+    logger.info("Initialized gRPC storage client for {}:{}", this.host, this.port);
   }
 
   @Override

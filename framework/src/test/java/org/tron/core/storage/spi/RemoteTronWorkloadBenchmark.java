@@ -1,7 +1,6 @@
 package org.tron.core.storage.spi;
 
 import java.util.concurrent.TimeUnit;
-import org.junit.Before;
 
 /**
  * Tron workload benchmark for remote gRPC storage implementation.
@@ -9,20 +8,24 @@ import org.junit.Before;
  */
 public class RemoteTronWorkloadBenchmark extends TronWorkloadBenchmark {
 
-  private String remoteHost;
-  private int remotePort;
-
-  @Before
-  public void setUpRemote() throws Exception {
-    remoteHost = System.getProperty("storage.remote.host", "localhost");
-    remotePort = Integer.parseInt(System.getProperty("storage.remote.port", "50011"));
+  @Override
+  protected StorageSPI createStorageImplementation() throws Exception {
+    // Read configuration properties at runtime to ensure they're available
+    String remoteHost = System.getProperty("storage.remote.host", "localhost");
+    String remotePortStr = System.getProperty("storage.remote.port", "50011");
+    
+    int remotePort;
+    try {
+      remotePort = Integer.parseInt(remotePortStr);
+    } catch (NumberFormatException e) {
+      System.err.println("Invalid port value: " + remotePortStr + ", using default: 50011");
+      remotePort = 50011;
+    }
+    
     System.out.println("Remote storage configuration:");
     System.out.println("  Host: " + remoteHost);
     System.out.println("  Port: " + remotePort);
-  }
-
-  @Override
-  protected StorageSPI createStorageImplementation() throws Exception {
+    
     return new RemoteStorageSPI(remoteHost, remotePort);
   }
 

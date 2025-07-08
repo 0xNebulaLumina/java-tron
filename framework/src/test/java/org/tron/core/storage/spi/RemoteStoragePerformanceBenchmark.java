@@ -19,13 +19,25 @@ import org.junit.Test;
  */
 public class RemoteStoragePerformanceBenchmark extends BasePerformanceBenchmark {
 
-  private static final String REMOTE_HOST = System.getProperty("storage.remote.host", "localhost");
-  private static final int REMOTE_PORT =
-      Integer.parseInt(System.getProperty("storage.remote.port", "50011"));
-
   @Override
   protected StorageSPI createStorageImplementation() throws Exception {
-    return new RemoteStorageSPI(REMOTE_HOST, REMOTE_PORT);
+    // Read configuration properties at runtime to ensure they're available
+    String remoteHost = System.getProperty("storage.remote.host", "localhost");
+    String remotePortStr = System.getProperty("storage.remote.port", "50011");
+    
+    int remotePort;
+    try {
+      remotePort = Integer.parseInt(remotePortStr);
+    } catch (NumberFormatException e) {
+      System.err.println("Invalid port value: " + remotePortStr + ", using default: 50011");
+      remotePort = 50011;
+    }
+    
+    System.out.println("Remote storage configuration:");
+    System.out.println("  Host: " + remoteHost);
+    System.out.println("  Port: " + remotePort);
+    
+    return new RemoteStorageSPI(remoteHost, remotePort);
   }
 
   @Override

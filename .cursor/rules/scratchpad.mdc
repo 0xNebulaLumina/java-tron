@@ -1,5 +1,6 @@
 # Lessons
 
+- **gRPC Parameter Validation**: The RemoteStorageSPI constructor fails with NullPointerException when host parameter is null. System.getProperty() can return null, so we need defensive validation in constructors. Always validate critical parameters before using them in external library calls.
 - **Protobuf Class References**: Generated protobuf classes are nested within the main `Storage` class (e.g., `storage.Storage.GetRequest`), not standalone classes. Need to use fully qualified names to avoid conflicts with our own classes.
 - **Import Strategy**: Use wildcard import `storage.Storage.*` to access all nested protobuf classes without conflicts.
 - **Type Conversion**: Java `StorageConfig` uses `Map<String, Object>` but protobuf expects `Map<String, String>`. Convert values using `String.valueOf()`.
