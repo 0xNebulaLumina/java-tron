@@ -20,6 +20,19 @@ help:
 	@echo "  embedded-test      - Test embedded storage mode only"
 	@echo "  remote-test        - Test remote storage mode only (requires gRPC server)"
 	@echo "  dual-mode-perf     - Compare performance of embedded vs remote modes"
+	@echo ""
+	@echo "Tron Workload Testing:"
+	@echo "  tron-workload-test    - Run comprehensive Tron workload tests (all scenarios)"
+	@echo "  embedded-tron-workload - Run embedded Tron workload tests only"
+	@echo "  remote-tron-workload  - Run remote Tron workload tests only (requires gRPC server)"
+	@echo "  tron-block-processing - Test block processing workload"
+	@echo "  tron-account-query    - Test account query workload"
+	@echo "  tron-tx-history       - Test transaction history workload"
+	@echo "  tron-contract-state   - Test smart contract state workload"
+	@echo "  tron-fast-sync        - Test fast sync workload"
+	@echo "  tron-stress-test      - Test mixed workload stress scenario"
+	@echo ""
+	@echo "Development:"
 	@echo "  clean              - Clean build artifacts"
 	@echo "  rust-build         - Build Rust storage service"
 	@echo "  java-build         - Build Java components"
@@ -213,4 +226,61 @@ remote-perf:
 storage-config:
 	@echo "Displaying current storage configuration..."
 	./gradlew :framework:test --tests "org.tron.core.storage.spi.StorageSpiFactoryTest.testConfigurationInfo" \
-		--dependency-verification=off 
+		--dependency-verification=off
+
+# Tron workload testing targets
+tron-workload-test:
+	@echo "Running comprehensive Tron workload tests..."
+	@./scripts/run-performance-tests.sh
+
+# Test embedded Tron workload only
+embedded-tron-workload:
+	@echo "Running embedded Tron workload tests..."
+	@mkdir -p reports
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.EmbeddedTronWorkloadBenchmark.*" \
+		--dependency-verification=off 2>&1 | tee reports/embedded-tron-workload-$(shell date +%Y%m%d-%H%M%S).txt
+
+# Test remote Tron workload only (requires gRPC server)
+remote-tron-workload:
+	@echo "Running remote Tron workload tests..."
+	@mkdir -p reports
+	./gradlew :framework:test --tests "org.tron.core.storage.spi.RemoteTronWorkloadBenchmark.*" \
+		--dependency-verification=off \
+		-Dstorage.remote.host=$(REMOTE_HOST) -Dstorage.remote.port=$(REMOTE_PORT) 2>&1 | tee reports/remote-tron-workload-$(shell date +%Y%m%d-%H%M%S).txt
+
+# Test specific Tron workload scenarios
+tron-block-processing:
+	@echo "Running block processing workload test..."
+	./gradlew :framework:test --tests "*.TronWorkloadBenchmark.benchmarkBlockProcessingWorkload" \
+		--dependency-verification=off \
+		-Dstorage.remote.host=$(REMOTE_HOST) -Dstorage.remote.port=$(REMOTE_PORT)
+
+tron-account-query:
+	@echo "Running account query workload test..."
+	./gradlew :framework:test --tests "*.TronWorkloadBenchmark.benchmarkAccountQueryWorkload" \
+		--dependency-verification=off \
+		-Dstorage.remote.host=$(REMOTE_HOST) -Dstorage.remote.port=$(REMOTE_PORT)
+
+tron-tx-history:
+	@echo "Running transaction history workload test..."
+	./gradlew :framework:test --tests "*.TronWorkloadBenchmark.benchmarkTransactionHistoryWorkload" \
+		--dependency-verification=off \
+		-Dstorage.remote.host=$(REMOTE_HOST) -Dstorage.remote.port=$(REMOTE_PORT)
+
+tron-contract-state:
+	@echo "Running smart contract state workload test..."
+	./gradlew :framework:test --tests "*.TronWorkloadBenchmark.benchmarkSmartContractStateWorkload" \
+		--dependency-verification=off \
+		-Dstorage.remote.host=$(REMOTE_HOST) -Dstorage.remote.port=$(REMOTE_PORT)
+
+tron-fast-sync:
+	@echo "Running fast sync workload test..."
+	./gradlew :framework:test --tests "*.TronWorkloadBenchmark.benchmarkFastSyncWorkload" \
+		--dependency-verification=off \
+		-Dstorage.remote.host=$(REMOTE_HOST) -Dstorage.remote.port=$(REMOTE_PORT)
+
+tron-stress-test:
+	@echo "Running mixed workload stress test..."
+	./gradlew :framework:test --tests "*.TronWorkloadBenchmark.benchmarkMixedWorkloadStressTest" \
+		--dependency-verification=off \
+		-Dstorage.remote.host=$(REMOTE_HOST) -Dstorage.remote.port=$(REMOTE_PORT) 

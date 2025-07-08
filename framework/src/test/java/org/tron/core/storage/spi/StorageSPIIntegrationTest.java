@@ -20,9 +20,6 @@ import org.junit.Test;
  */
 public class StorageSPIIntegrationTest {
 
-  private static final String REMOTE_HOST = System.getProperty("storage.remote.host", "localhost");
-  private static final int REMOTE_PORT =
-      Integer.parseInt(System.getProperty("storage.remote.port", "50011"));
   private static final int TIMEOUT_SECONDS = 10;
 
   private RemoteStorageSPI storage;
@@ -30,8 +27,24 @@ public class StorageSPIIntegrationTest {
 
   @Before
   public void setUp() throws Exception {
+    // Read configuration properties at runtime
+    String remoteHost = System.getProperty("storage.remote.host", "localhost");
+    String remotePortStr = System.getProperty("storage.remote.port", "50011");
+    
+    int remotePort;
+    try {
+      remotePort = Integer.parseInt(remotePortStr);
+    } catch (NumberFormatException e) {
+      System.err.println("Invalid port value: " + remotePortStr + ", using default: 50011");
+      remotePort = 50011;
+    }
+    
+    System.out.println("Remote storage configuration:");
+    System.out.println("  Host: " + remoteHost);
+    System.out.println("  Port: " + remotePort);
+    
     // Check if gRPC server is available
-    storage = new RemoteStorageSPI(REMOTE_HOST, REMOTE_PORT);
+    storage = new RemoteStorageSPI(remoteHost, remotePort);
     testDbName = "test-db-" + System.currentTimeMillis();
 
     try {
