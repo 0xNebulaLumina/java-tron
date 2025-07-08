@@ -1,0 +1,5 @@
+# Scratchpad
+
+## Lessons
+- Java-tron FullNode should be run with specific JVM parameters: -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m -XX:MaxDirectMemorySize=1G -XX:+UseConcMarkSweepGC -XX:NewRatio=2 -XX:CMSInitiatingOccupancyFraction=70 for optimal performance.
+- The rust-storage-service process is named 'storage-service' when running.

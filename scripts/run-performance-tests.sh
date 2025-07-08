@@ -223,14 +223,11 @@ run_remote_benchmarks() {
         ./gradlew :framework:test --tests "org.tron.core.storage.spi.RemoteStoragePerformanceBenchmark.$test" \
             -Dstorage.remote.host=$REMOTE_HOST -Dstorage.remote.port=$REMOTE_PORT -x checkstyleMain -x checkstyleTest -x lint --dependency-verification=off \
             --console=plain --info \
-            2>&1 | tee "$REPORTS_DIR/benchmark-$test.log"
+            2>&1 | tee "$REPORTS_DIR/remote-$test.log"
     done
     
     log_success "gRPC performance benchmarks completed"
     log_info "Reports saved to: $REPORTS_DIR"
-    
-    # Extract and analyze metrics from logs
-    extract_metrics_from_logs
 }
 
 # Run remote Tron workload benchmarks
@@ -262,49 +259,89 @@ run_remote_tron_workload() {
 # Extract metrics from log files
 extract_metrics_from_logs() {
     log_info "Extracting metrics from benchmark logs..."
-    
+
     local metrics_summary="$REPORTS_DIR/extracted-metrics.txt"
     local metrics_csv="$REPORTS_DIR/extracted-metrics.csv"
-    
+
     # Initialize metrics files
     echo "# Extracted Performance Metrics" > "$metrics_summary"
     echo "Timestamp: $(date)" >> "$metrics_summary"
     echo "" >> "$metrics_summary"
-    
+
     echo "TestName,MetricName,Value,Unit,ExtractedAt" > "$metrics_csv"
-    
-    # Extract metrics from each log file (both embedded and gRPC)
-    for log_file in "$REPORTS_DIR"/*-*.log; do
+
+    # Process embedded tests first
+    echo "# EMBEDDED STORAGE TESTS" >> "$metrics_summary"
+    echo "" >> "$metrics_summary"
+
+    # Extract metrics from embedded log files
+    for log_file in "$REPORTS_DIR"/embedded-*.log; do
         if [ -f "$log_file" ]; then
-            local test_name=$(basename "$log_file" .log | sed 's/benchmark-//' | sed 's/embedded-//')
-            log_info "Extracting metrics from $test_name"
-            
-            echo "## $test_name" >> "$metrics_summary"
+            local test_name=$(basename "$log_file" .log | sed 's/embedded-//')
+            log_info "Extracting metrics from embedded test: $test_name"
+
+            echo "## $test_name (Embedded)" >> "$metrics_summary"
             echo "" >> "$metrics_summary"
-            
-            # Extract METRIC: lines
+
+            # Extract METRIC: lines with improved regex to handle longer class names
             grep "METRIC:" "$log_file" | while IFS= read -r line; do
-                # Parse METRIC: TestName.MetricName = Value Unit
-                if [[ $line =~ METRIC:\ ([^.]+)\.([^\ ]+)\ =\ ([0-9.]+)\ ([^\ ]+) ]]; then
+                # Parse METRIC: TestName.MetricName = Value Unit (handles longer class names)
+                if [[ $line =~ METRIC:\ ([^.]+)\.([^\ ]+)\ =\ ([0-9.]+)\ (.+) ]]; then
                     local test="${BASH_REMATCH[1]}"
                     local metric="${BASH_REMATCH[2]}"
                     local value="${BASH_REMATCH[3]}"
                     local unit="${BASH_REMATCH[4]}"
-                    
+
                     echo "  $metric: $value $unit" >> "$metrics_summary"
                     echo "$test,$metric,$value,$unit,$(date '+%Y-%m-%d %H:%M:%S')" >> "$metrics_csv"
                 fi
             done
-            
+
             # Extract BENCHMARK: headers and summaries
             grep -A 20 "BENCHMARK:" "$log_file" | grep -E "(Average|Throughput|Latency)" | while IFS= read -r line; do
                 echo "  $line" >> "$metrics_summary"
             done
-            
+
             echo "" >> "$metrics_summary"
         fi
     done
-    
+
+    # Process remote tests second
+    echo "# REMOTE STORAGE TESTS" >> "$metrics_summary"
+    echo "" >> "$metrics_summary"
+
+    # Extract metrics from remote log files
+    for log_file in "$REPORTS_DIR"/remote-*.log; do
+        if [ -f "$log_file" ]; then
+            local test_name=$(basename "$log_file" .log | sed 's/remote-//')
+            log_info "Extracting metrics from remote test: $test_name"
+
+            echo "## $test_name (Remote)" >> "$metrics_summary"
+            echo "" >> "$metrics_summary"
+
+            # Extract METRIC: lines with improved regex to handle longer class names
+            grep "METRIC:" "$log_file" | while IFS= read -r line; do
+                # Parse METRIC: TestName.MetricName = Value Unit (handles longer class names)
+                if [[ $line =~ METRIC:\ ([^.]+)\.([^\ ]+)\ =\ ([0-9.]+)\ (.+) ]]; then
+                    local test="${BASH_REMATCH[1]}"
+                    local metric="${BASH_REMATCH[2]}"
+                    local value="${BASH_REMATCH[3]}"
+                    local unit="${BASH_REMATCH[4]}"
+
+                    echo "  $metric: $value $unit" >> "$metrics_summary"
+                    echo "$test,$metric,$value,$unit,$(date '+%Y-%m-%d %H:%M:%S')" >> "$metrics_csv"
+                fi
+            done
+
+            # Extract BENCHMARK: headers and summaries
+            grep -A 20 "BENCHMARK:" "$log_file" | grep -E "(Average|Throughput|Latency)" | while IFS= read -r line; do
+                echo "  $line" >> "$metrics_summary"
+            done
+
+            echo "" >> "$metrics_summary"
+        fi
+    done
+
     log_success "Metrics extracted to $metrics_summary and $metrics_csv"
 }
 
@@ -421,8 +458,11 @@ main() {
     
     # Run gRPC Tron workload benchmarks
     run_remote_tron_workload
-    
-    # Step 5: Generate reports
+
+    # Step 5: Extract metrics from all benchmark logs
+    extract_metrics_from_logs
+
+    # Step 6: Generate reports
     generate_summary
     
     log_success "Performance testing phase completed successfully!"
