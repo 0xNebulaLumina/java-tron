@@ -1,0 +1,7 @@
+TestName,Metric,Value,Unit,Timestamp
+RemoteStorageTransactionHistoryWorkload,total_transactions,100000.000000,count,1751955471515
+RemoteStorageTransactionHistoryWorkload,history_queries,1000.000000,count,1751955471516
+RemoteStorageTransactionHistoryWorkload,successful_queries,1000.000000,count,1751955471516
+RemoteStorageTransactionHistoryWorkload,success_rate,100.000000,percent,1751955471516
+RemoteStorageTransactionHistoryWorkload,avg_query_latency,0.984024,ms,1751955471517
+RemoteStorageTransactionHistoryWorkload,query_throughput,1011.340101,queries/sec,1751955471517

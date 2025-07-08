@@ -1,0 +1,6 @@
+TestName,Metric,Value,Unit,Timestamp
+RemoteStorageMixedWorkloadStressTest,duration,60.000000,seconds,1751955622186
+RemoteStorageMixedWorkloadStressTest,concurrent_threads,10.000000,count,1751955622188
+RemoteStorageMixedWorkloadStressTest,total_operations,500289.000000,count,1751955622188
+RemoteStorageMixedWorkloadStressTest,avg_latency,1.197906,ms,1751955622188
+RemoteStorageMixedWorkloadStressTest,stress_throughput,8337.362129,ops/sec,1751955622188

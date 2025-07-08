@@ -1,0 +1,9 @@
+TestName,Metric,Value,Unit,Timestamp
+RemoteSingleOperationLatency,put_avg_latency,1.502270,ms,1751955420394
+RemoteSingleOperationLatency,put_min_latency,0.645616,ms,1751955420395
+RemoteSingleOperationLatency,put_max_latency,24.517649,ms,1751955420395
+RemoteSingleOperationLatency,put_throughput,665.658934,ops/sec,1751955420395
+RemoteSingleOperationLatency,get_avg_latency,0.838482,ms,1751955420395
+RemoteSingleOperationLatency,get_min_latency,0.518702,ms,1751955420396
+RemoteSingleOperationLatency,get_max_latency,24.095530,ms,1751955420396
+RemoteSingleOperationLatency,get_throughput,1192.630917,ops/sec,1751955420396

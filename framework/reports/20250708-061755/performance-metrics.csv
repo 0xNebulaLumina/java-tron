@@ -1,0 +1,6 @@
+TestName,Metric,Value,Unit,Timestamp
+RemoteStorageSmartContractStateWorkload,total_contracts,1000.000000,count,1751955546321
+RemoteStorageSmartContractStateWorkload,total_operations,100000.000000,count,1751955546322
+RemoteStorageSmartContractStateWorkload,avg_write_latency,0.347583,ms,1751955546322
+RemoteStorageSmartContractStateWorkload,avg_read_latency,0.341949,ms,1751955546322
+RemoteStorageSmartContractStateWorkload,operation_throughput,1442.608233,ops/sec,1751955546322
