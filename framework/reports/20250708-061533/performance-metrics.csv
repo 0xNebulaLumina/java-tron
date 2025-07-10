@@ -1,0 +1,6 @@
+TestName,Metric,Value,Unit,Timestamp
+EmbeddedStorageSmartContractStateWorkload,total_contracts,1000.000000,count,1751955340383
+EmbeddedStorageSmartContractStateWorkload,total_operations,100000.000000,count,1751955340384
+EmbeddedStorageSmartContractStateWorkload,avg_write_latency,0.034153,ms,1751955340385
+EmbeddedStorageSmartContractStateWorkload,avg_read_latency,0.029576,ms,1751955340385
+EmbeddedStorageSmartContractStateWorkload,operation_throughput,15216.797400,ops/sec,1751955340385

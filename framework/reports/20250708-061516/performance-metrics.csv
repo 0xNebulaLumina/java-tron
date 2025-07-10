@@ -1,0 +1,7 @@
+TestName,Metric,Value,Unit,Timestamp
+EmbeddedStorageBlockProcessingWorkload,total_blocks,100.000000,count,1751955318995
+EmbeddedStorageBlockProcessingWorkload,total_transactions,200000.000000,count,1751955318995
+EmbeddedStorageBlockProcessingWorkload,total_duration,2.218000,seconds,1751955318996
+EmbeddedStorageBlockProcessingWorkload,block_throughput,45.085663,blocks/sec,1751955318996
+EmbeddedStorageBlockProcessingWorkload,transaction_throughput,90171.325518,tx/sec,1751955318996
+EmbeddedStorageBlockProcessingWorkload,avg_block_latency,22.180000,ms,1751955318996

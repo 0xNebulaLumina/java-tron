@@ -1,0 +1,27 @@
+{
+  "testRun": {
+    "timestamp": "20250628-120914",
+    "implementation": "Embedded",
+    "javaVersion": "1.8.0_452",
+    "availableProcessors": 8,
+    "maxMemoryMB": 1024
+  },
+  "benchmarks": {
+    "EmbeddedSingleOperationLatency": {
+      "put": {
+        "avgLatencyMs": 0.053942,
+        "minLatencyMs": 0.024928,
+        "maxLatencyMs": 0.678784,
+        "throughputOpsPerSec": 18538.32,
+        "iterations": 1000
+      },
+      "get": {
+        "avgLatencyMs": 0.045145,
+        "minLatencyMs": 0.015089,
+        "maxLatencyMs": 1.751635,
+        "throughputOpsPerSec": 22150.78,
+        "iterations": 1000
+      }
+    },
+  }
+}

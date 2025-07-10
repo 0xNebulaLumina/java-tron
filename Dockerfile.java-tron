@@ -1,0 +1,22 @@
+FROM openjdk:8-jdk-alpine
+
+# Install required packages
+RUN apk add --no-cache bash curl
+
+# Set working directory
+WORKDIR /app
+
+# Copy source code
+COPY . .
+
+# Make gradlew executable
+RUN chmod +x gradlew
+
+# Build the project (this will compile the new StorageSPI classes)
+RUN ./gradlew build -x test
+
+# Expose ports (if needed for full node testing)
+EXPOSE 8090 18888 50052
+
+# Default command
+CMD ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.StorageSPITest"] 

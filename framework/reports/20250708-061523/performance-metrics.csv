@@ -1,0 +1,7 @@
+TestName,Metric,Value,Unit,Timestamp
+EmbeddedStorageAccountQueryWorkload,setup_time,16.966122,ms,1751955325266
+EmbeddedStorageAccountQueryWorkload,total_queries,50000.000000,count,1751955325267
+EmbeddedStorageAccountQueryWorkload,avg_query_latency,0.030144,ms,1751955325267
+EmbeddedStorageAccountQueryWorkload,min_query_latency,0.003196,ms,1751955325267
+EmbeddedStorageAccountQueryWorkload,max_query_latency,6.830991,ms,1751955325267
+EmbeddedStorageAccountQueryWorkload,query_throughput,31687.772218,queries/sec,1751955325268

@@ -1,0 +1,267 @@
+# Extracted Performance Metrics
+Timestamp: Tue Jul  8 08:20:23 AM CEST 2025
+
+# EMBEDDED STORAGE TESTS
+
+## benchmarkBatchOperationThroughput (Embedded)
+
+  batch_write_10_latency: 4.333696 ms
+  batch_write_10_throughput: 2307.499188 ops/sec
+  batch_write_10_bandwidth: 0.563354 MB/sec
+  batch_get_10_latency: 0.675758 ms
+  batch_get_10_throughput: 14798.196988 ops/sec
+  batch_get_10_bandwidth: 3.612841 MB/sec
+  batch_write_50_latency: 0.279348 ms
+  batch_write_50_throughput: 178988.215416 ops/sec
+  batch_write_50_bandwidth: 43.698295 MB/sec
+  batch_get_50_latency: 0.292415 ms
+  batch_get_50_throughput: 170989.860301 ops/sec
+  batch_get_50_bandwidth: 41.745571 MB/sec
+  batch_write_100_latency: 0.461146 ms
+  batch_write_100_throughput: 216851.062353 ops/sec
+  batch_write_100_bandwidth: 52.942154 MB/sec
+  batch_get_100_latency: 0.473311 ms
+  batch_get_100_throughput: 211277.574364 ops/sec
+  batch_get_100_bandwidth: 51.581439 MB/sec
+  batch_write_500_latency: 1.419209 ms
+  batch_write_500_throughput: 352308.927015 ops/sec
+  batch_write_500_bandwidth: 86.012922 MB/sec
+  batch_get_500_latency: 1.592950 ms
+  batch_get_500_throughput: 313883.047177 ops/sec
+  batch_get_500_bandwidth: 76.631603 MB/sec
+  batch_write_1000_latency: 1.961164 ms
+  batch_write_1000_throughput: 509901.262719 ops/sec
+  batch_write_1000_bandwidth: 124.487613 MB/sec
+  batch_get_1000_latency: 1.482623 ms
+  batch_get_1000_throughput: 674480.296070 ops/sec
+  batch_get_1000_bandwidth: 164.668041 MB/sec
+      BENCHMARK: EmbeddedBatchOperationThroughput
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_10_latency = 4.333696 ms
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_10_throughput = 2307.499188 ops/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_10_bandwidth = 0.563354 MB/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_10_latency = 0.675758 ms
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_10_throughput = 14798.196988 ops/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_10_bandwidth = 3.612841 MB/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_50_latency = 0.279348 ms
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_50_throughput = 178988.215416 ops/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_write_50_bandwidth = 43.698295 MB/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_50_latency = 0.292415 ms
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_50_throughput = 170989.860301 ops/sec
+      METRIC: EmbeddedBatchOperationThroughput.batch_get_50_bandwidth = 41.745571 MB/sec
+
+## benchmarkSingleOperationLatency (Embedded)
+
+  put_avg_latency: 0.044469 ms
+  put_min_latency: 0.025651 ms
+  put_max_latency: 0.614610 ms
+  put_throughput: 22487.172586 ops/sec
+  get_avg_latency: 0.041776 ms
+  get_min_latency: 0.022224 ms
+  get_max_latency: 1.265882 ms
+  get_throughput: 23937.170481 ops/sec
+      BENCHMARK: EmbeddedSingleOperationLatency
+      METRIC: EmbeddedSingleOperationLatency.put_avg_latency = 0.044469 ms
+      METRIC: EmbeddedSingleOperationLatency.put_min_latency = 0.025651 ms
+      METRIC: EmbeddedSingleOperationLatency.put_max_latency = 0.614610 ms
+      METRIC: EmbeddedSingleOperationLatency.put_throughput = 22487.172586 ops/sec
+      METRIC: EmbeddedSingleOperationLatency.get_avg_latency = 0.041776 ms
+      METRIC: EmbeddedSingleOperationLatency.get_min_latency = 0.022224 ms
+      METRIC: EmbeddedSingleOperationLatency.get_max_latency = 1.265882 ms
+      METRIC: EmbeddedSingleOperationLatency.get_throughput = 23937.170481 ops/sec
+      SUMMARY: EmbeddedSingleOperationLatency
+
+## generatePerformanceReport (Embedded)
+
+  max_memory: 1024.000000 MB
+  used_memory: 71.000000 MB
+  available_processors: 8.000000 count
+  active_databases: 1.000000 count
+  basic_put_latency: 1.286394 ms
+  basic_get_latency: 0.455605 ms
+
+## tron-benchmarkAccountQueryWorkload (Embedded)
+
+  setup_time: 16.966122 ms
+  total_queries: 50000.000000 count
+  avg_query_latency: 0.030144 ms
+  min_query_latency: 0.003196 ms
+  max_query_latency: 6.830991 ms
+  query_throughput: 31687.772218 queries/sec
+
+## tron-benchmarkBlockProcessingWorkload (Embedded)
+
+  total_blocks: 100.000000 count
+  total_transactions: 200000.000000 count
+  total_duration: 2.218000 seconds
+  block_throughput: 45.085663 blocks/sec
+  transaction_throughput: 90171.325518 tx/sec
+  avg_block_latency: 22.180000 ms
+
+## tron-benchmarkFastSyncWorkload (Embedded)
+
+  total_batches: 100.000000 count
+  batch_size: 10000.000000 count
+  total_operations: 1000000.000000 count
+  total_sync_time: 2975.651306 ms
+  avg_batch_latency: 20.747813 ms
+  sync_throughput: 336060.881187 ops/sec
+  data_throughput: 96.147789 MB/sec
+
+## tron-benchmarkMixedWorkloadStressTest (Embedded)
+
+  duration: 60.000000 seconds
+  concurrent_threads: 10.000000 count
+  total_operations: 6342543.000000 count
+  avg_latency: 0.091787 ms
+  stress_throughput: 105696.897395 ops/sec
+
+## tron-benchmarkSmartContractStateWorkload (Embedded)
+
+  total_contracts: 1000.000000 count
+  total_operations: 100000.000000 count
+  avg_write_latency: 0.034153 ms
+  avg_read_latency: 0.029576 ms
+  operation_throughput: 15216.797400 ops/sec
+
+## tron-benchmarkTransactionHistoryWorkload (Embedded)
+
+  total_transactions: 100000.000000 count
+  history_queries: 1000.000000 count
+  successful_queries: 1000.000000 count
+  success_rate: 100.000000 percent
+  avg_query_latency: 0.036804 ms
+  query_throughput: 25827.259386 queries/sec
+
+# REMOTE STORAGE TESTS
+
+## benchmarkBatchOperationThroughput (Remote)
+
+  batch_write_10_latency: 17.454932 ms
+  batch_write_10_throughput: 572.903979 ops/sec
+  batch_write_10_bandwidth: 0.139869 MB/sec
+  batch_get_10_latency: 17.401278 ms
+  batch_get_10_throughput: 574.670435 ops/sec
+  batch_get_10_bandwidth: 0.140300 MB/sec
+  batch_write_50_latency: 23.402538 ms
+  batch_write_50_throughput: 2136.520406 ops/sec
+  batch_write_50_bandwidth: 0.521611 MB/sec
+  batch_get_50_latency: 5.065595 ms
+  batch_get_50_throughput: 9870.508795 ops/sec
+  batch_get_50_bandwidth: 2.409792 MB/sec
+  batch_write_100_latency: 6.105682 ms
+  batch_write_100_throughput: 16378.186745 ops/sec
+  batch_write_100_bandwidth: 3.998581 MB/sec
+  batch_get_100_latency: 7.273495 ms
+  batch_get_100_throughput: 13748.548669 ops/sec
+  batch_get_100_bandwidth: 3.356579 MB/sec
+  batch_write_500_latency: 11.454352 ms
+  batch_write_500_throughput: 43651.530877 ops/sec
+  batch_write_500_bandwidth: 10.657112 MB/sec
+  batch_get_500_latency: 9.078387 ms
+  batch_get_500_throughput: 55075.863146 ops/sec
+  batch_get_500_bandwidth: 13.446256 MB/sec
+  batch_write_1000_latency: 13.536879 ms
+  batch_write_1000_throughput: 73872.271445 ops/sec
+  batch_write_1000_bandwidth: 18.035223 MB/sec
+  batch_get_1000_latency: 11.291668 ms
+  batch_get_1000_throughput: 88560.875151 ops/sec
+  batch_get_1000_bandwidth: 21.621307 MB/sec
+      BENCHMARK: RemoteBatchOperationThroughput
+      METRIC: RemoteBatchOperationThroughput.batch_write_10_latency = 17.454932 ms
+      METRIC: RemoteBatchOperationThroughput.batch_write_10_throughput = 572.903979 ops/sec
+      METRIC: RemoteBatchOperationThroughput.batch_write_10_bandwidth = 0.139869 MB/sec
+      METRIC: RemoteBatchOperationThroughput.batch_get_10_latency = 17.401278 ms
+      METRIC: RemoteBatchOperationThroughput.batch_get_10_throughput = 574.670435 ops/sec
+      METRIC: RemoteBatchOperationThroughput.batch_get_10_bandwidth = 0.140300 MB/sec
+      METRIC: RemoteBatchOperationThroughput.batch_write_50_latency = 23.402538 ms
+      METRIC: RemoteBatchOperationThroughput.batch_write_50_throughput = 2136.520406 ops/sec
+      METRIC: RemoteBatchOperationThroughput.batch_write_50_bandwidth = 0.521611 MB/sec
+      METRIC: RemoteBatchOperationThroughput.batch_get_50_latency = 5.065595 ms
+      METRIC: RemoteBatchOperationThroughput.batch_get_50_throughput = 9870.508795 ops/sec
+      METRIC: RemoteBatchOperationThroughput.batch_get_50_bandwidth = 2.409792 MB/sec
+
+## benchmarkSingleOperationLatency (Remote)
+
+  put_avg_latency: 1.502270 ms
+  put_min_latency: 0.645616 ms
+  put_max_latency: 24.517649 ms
+  put_throughput: 665.658934 ops/sec
+  get_avg_latency: 0.838482 ms
+  get_min_latency: 0.518702 ms
+  get_max_latency: 24.095530 ms
+  get_throughput: 1192.630917 ops/sec
+      BENCHMARK: RemoteSingleOperationLatency
+      METRIC: RemoteSingleOperationLatency.put_avg_latency = 1.502270 ms
+      METRIC: RemoteSingleOperationLatency.put_min_latency = 0.645616 ms
+      METRIC: RemoteSingleOperationLatency.put_max_latency = 24.517649 ms
+      METRIC: RemoteSingleOperationLatency.put_throughput = 665.658934 ops/sec
+      METRIC: RemoteSingleOperationLatency.get_avg_latency = 0.838482 ms
+      METRIC: RemoteSingleOperationLatency.get_min_latency = 0.518702 ms
+      METRIC: RemoteSingleOperationLatency.get_max_latency = 24.095530 ms
+      METRIC: RemoteSingleOperationLatency.get_throughput = 1192.630917 ops/sec
+      SUMMARY: RemoteSingleOperationLatency
+
+## generatePerformanceReport (Remote)
+
+  max_memory: 1024.000000 MB
+  used_memory: 218.000000 MB
+  available_processors: 8.000000 count
+  active_databases: 2.000000 count
+  basic_put_latency: 10.216627 ms
+  basic_get_latency: 14.326225 ms
+
+## tron-benchmarkAccountQueryWorkload (Remote)
+
+  setup_time: 76.223595 ms
+  total_queries: 50000.000000 count
+  avg_query_latency: 0.368419 ms
+  min_query_latency: 0.205236 ms
+  max_query_latency: 24.410140 ms
+  query_throughput: 2691.251102 queries/sec
+
+## tron-benchmarkBlockProcessingWorkload (Remote)
+
+  total_blocks: 100.000000 count
+  total_transactions: 200000.000000 count
+  total_duration: 3.226000 seconds
+  block_throughput: 30.998140 blocks/sec
+  transaction_throughput: 61996.280223 tx/sec
+  avg_block_latency: 32.260000 ms
+
+## tron-benchmarkFastSyncWorkload (Remote)
+
+  total_batches: 100.000000 count
+  batch_size: 10000.000000 count
+  total_operations: 1000000.000000 count
+  total_sync_time: 4203.172467 ms
+  avg_batch_latency: 35.114277 ms
+  sync_throughput: 237915.528771 ops/sec
+  data_throughput: 68.068179 MB/sec
+
+## tron-benchmarkMixedWorkloadStressTest (Remote)
+
+  duration: 60.000000 seconds
+  concurrent_threads: 10.000000 count
+  total_operations: 500289.000000 count
+  avg_latency: 1.197906 ms
+  stress_throughput: 8337.362129 ops/sec
+        Average Latency: 1.198 ms
+        Stress Throughput: 8337 ops/sec
+
+## tron-benchmarkSmartContractStateWorkload (Remote)
+
+  total_contracts: 1000.000000 count
+  total_operations: 100000.000000 count
+  avg_write_latency: 0.347583 ms
+  avg_read_latency: 0.341949 ms
+  operation_throughput: 1442.608233 ops/sec
+
+## tron-benchmarkTransactionHistoryWorkload (Remote)
+
+  total_transactions: 100000.000000 count
+  history_queries: 1000.000000 count
+  successful_queries: 1000.000000 count
+  success_rate: 100.000000 percent
+  avg_query_latency: 0.984024 ms
+  query_throughput: 1011.340101 queries/sec
+

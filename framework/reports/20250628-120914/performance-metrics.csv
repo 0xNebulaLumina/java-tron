@@ -1,0 +1,9 @@
+TestName,Metric,Value,Unit,Timestamp
+EmbeddedSingleOperationLatency,put_avg_latency,0.053942,ms,1751112554700
+EmbeddedSingleOperationLatency,put_min_latency,0.024928,ms,1751112554701
+EmbeddedSingleOperationLatency,put_max_latency,0.678784,ms,1751112554701
+EmbeddedSingleOperationLatency,put_throughput,18538.320191,ops/sec,1751112554701
+EmbeddedSingleOperationLatency,get_avg_latency,0.045145,ms,1751112554701
+EmbeddedSingleOperationLatency,get_min_latency,0.015089,ms,1751112554701
+EmbeddedSingleOperationLatency,get_max_latency,1.751635,ms,1751112554701
+EmbeddedSingleOperationLatency,get_throughput,22150.778087,ops/sec,1751112554701

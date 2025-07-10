@@ -1,0 +1,7 @@
+TestName,Metric,Value,Unit,Timestamp
+RemoteStorageBlockProcessingWorkload,total_blocks,100.000000,count,1751955439832
+RemoteStorageBlockProcessingWorkload,total_transactions,200000.000000,count,1751955439832
+RemoteStorageBlockProcessingWorkload,total_duration,3.226000,seconds,1751955439833
+RemoteStorageBlockProcessingWorkload,block_throughput,30.998140,blocks/sec,1751955439833
+RemoteStorageBlockProcessingWorkload,transaction_throughput,61996.280223,tx/sec,1751955439833
+RemoteStorageBlockProcessingWorkload,avg_block_latency,32.260000,ms,1751955439833

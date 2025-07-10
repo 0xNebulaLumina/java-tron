@@ -1,0 +1,6 @@
+TestName,Metric,Value,Unit,Timestamp
+EmbeddedStorageMixedWorkloadStressTest,duration,60.000000,seconds,1751955411820
+EmbeddedStorageMixedWorkloadStressTest,concurrent_threads,10.000000,count,1751955411821
+EmbeddedStorageMixedWorkloadStressTest,total_operations,6342543.000000,count,1751955411821
+EmbeddedStorageMixedWorkloadStressTest,avg_latency,0.091787,ms,1751955411821
+EmbeddedStorageMixedWorkloadStressTest,stress_throughput,105696.897395,ops/sec,1751955411821

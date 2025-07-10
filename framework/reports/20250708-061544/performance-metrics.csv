@@ -1,0 +1,8 @@
+TestName,Metric,Value,Unit,Timestamp
+EmbeddedStorageFastSyncWorkload,total_batches,100.000000,count,1751955347655
+EmbeddedStorageFastSyncWorkload,batch_size,10000.000000,count,1751955347655
+EmbeddedStorageFastSyncWorkload,total_operations,1000000.000000,count,1751955347655
+EmbeddedStorageFastSyncWorkload,total_sync_time,2975.651306,ms,1751955347656
+EmbeddedStorageFastSyncWorkload,avg_batch_latency,20.747813,ms,1751955347656
+EmbeddedStorageFastSyncWorkload,sync_throughput,336060.881187,ops/sec,1751955347656
+EmbeddedStorageFastSyncWorkload,data_throughput,96.147789,MB/sec,1751955347656

@@ -1,0 +1,7 @@
+TestName,Metric,Value,Unit,Timestamp
+RemoteStorageAccountQueryWorkload,setup_time,76.223595,ms,1751955464234
+RemoteStorageAccountQueryWorkload,total_queries,50000.000000,count,1751955464235
+RemoteStorageAccountQueryWorkload,avg_query_latency,0.368419,ms,1751955464235
+RemoteStorageAccountQueryWorkload,min_query_latency,0.205236,ms,1751955464235
+RemoteStorageAccountQueryWorkload,max_query_latency,24.410140,ms,1751955464235
+RemoteStorageAccountQueryWorkload,query_throughput,2691.251102,queries/sec,1751955464235

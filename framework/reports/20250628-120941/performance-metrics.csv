@@ -1,0 +1,7 @@
+TestName,Metric,Value,Unit,Timestamp
+GrpcPerformanceReport,max_memory,1024.000000,MB,1751112583013
+GrpcPerformanceReport,used_memory,222.000000,MB,1751112583014
+GrpcPerformanceReport,available_processors,8.000000,count,1751112583014
+GrpcPerformanceReport,active_databases,2.000000,count,1751112583014
+GrpcPerformanceReport,basic_put_latency,10.607440,ms,1751112583048
+GrpcPerformanceReport,basic_get_latency,22.647441,ms,1751112583048
