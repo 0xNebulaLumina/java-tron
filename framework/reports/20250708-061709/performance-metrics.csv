@@ -1,0 +1,7 @@
+TestName,Metric,Value,Unit,Timestamp
+RemotePerformanceReport,max_memory,1024.000000,MB,1751955431348
+RemotePerformanceReport,used_memory,218.000000,MB,1751955431348
+RemotePerformanceReport,available_processors,8.000000,count,1751955431348
+RemotePerformanceReport,active_databases,2.000000,count,1751955431348
+RemotePerformanceReport,basic_put_latency,10.216627,ms,1751955431373
+RemotePerformanceReport,basic_get_latency,14.326225,ms,1751955431374

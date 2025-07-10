@@ -533,6 +533,8 @@ public class Args extends CommonParameter {
 
     PARAMETER.storage = new Storage();
 
+    PARAMETER.storage.setStorageMode(Storage.getStorageModeFromConfig(config));
+
     PARAMETER.storage.setDbEngine(Optional.ofNullable(PARAMETER.storageDbEngine)
         .filter(StringUtils::isNotEmpty)
         .orElse(Storage.getDbEngineFromConfig(config)));

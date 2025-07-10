@@ -1,0 +1,8 @@
+TestName,Metric,Value,Unit,Timestamp
+RemoteStorageFastSyncWorkload,total_batches,100.000000,count,1751955556081
+RemoteStorageFastSyncWorkload,batch_size,10000.000000,count,1751955556081
+RemoteStorageFastSyncWorkload,total_operations,1000000.000000,count,1751955556082
+RemoteStorageFastSyncWorkload,total_sync_time,4203.172467,ms,1751955556082
+RemoteStorageFastSyncWorkload,avg_batch_latency,35.114277,ms,1751955556082
+RemoteStorageFastSyncWorkload,sync_throughput,237915.528771,ops/sec,1751955556082
+RemoteStorageFastSyncWorkload,data_throughput,68.068179,MB/sec,1751955556082

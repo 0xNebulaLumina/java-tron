@@ -1,0 +1,11 @@
+{
+  "testRun": {
+    "timestamp": "20250708-061528",
+    "implementation": "EmbeddedStorage",
+    "javaVersion": "1.8.0_452",
+    "availableProcessors": 8,
+    "maxMemoryMB": 1024
+  },
+  "benchmarks": {
+  }
+}

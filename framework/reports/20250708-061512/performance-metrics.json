@@ -1,0 +1,29 @@
+{
+  "testRun": {
+    "timestamp": "20250708-061512",
+    "implementation": "Embedded",
+    "javaVersion": "1.8.0_452",
+    "availableProcessors": 8,
+    "maxMemoryMB": 1024
+  },
+  "benchmarks": {
+    "EmbeddedPerformanceReport": {
+      "environment": {
+        "implementation": "Embedded",
+        "javaVersion": "1.8.0_452",
+        "osName": "Linux",
+        "osVersion": "6.8.0-63-generic",
+        "osArch": "amd64",
+        "availableProcessors": 8,
+        "maxMemoryMB": 1024,
+        "usedMemoryMB": 71
+      },
+      "connectivity": {
+        "healthStatus": "HEALTHY",
+        "activeDatabases": 1,
+        "basicPutLatencyMs": 1.286394,
+        "basicGetLatencyMs": 0.455605
+      }
+    }
+  }
+}

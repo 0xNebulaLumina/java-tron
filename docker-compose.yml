@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  rust-storage-service:
+    build:
+      context: ./rust-storage-service
+      dockerfile: Dockerfile
+    ports:
+      - "50011:50011"
+    volumes:
+      - ./data/rust-storage:/data
+    environment:
+      - RUST_LOG=info
+      - DATA_PATH=/data
+      - HOST=0.0.0.0
+      - PORT=50011
+    healthcheck:
+      test: ["CMD", "grpcurl", "-plaintext", "localhost:50011", "storage.StorageService/HealthCheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  java-tron-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-tron
+    depends_on:
+      rust-storage-service:
+        condition: service_healthy
+    environment:
+      - STORAGE_MODE=remote
+      - STORAGE_REMOTE_HOST=rust-storage-service
+      - STORAGE_REMOTE_PORT=50011
+    volumes:
+      - ./data/java-tron:/data
+    command: ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.DualStorageModeIntegrationTest.testRemoteStorageMode", "--dependency-verification=off"]
+
+  java-tron-embedded-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-tron
+    environment:
+      - STORAGE_MODE=embedded
+      - STORAGE_EMBEDDED_BASE_PATH=/data/embedded
+    volumes:
+      - ./data/java-tron:/data
+    command: ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.DualStorageModeIntegrationTest.testEmbeddedStorageMode", "--dependency-verification=off"]
+
+  java-tron-dual-mode-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-tron
+    depends_on:
+      rust-storage-service:
+        condition: service_healthy
+    environment:
+      - STORAGE_REMOTE_HOST=rust-storage-service
+      - STORAGE_REMOTE_PORT=50011
+      - STORAGE_EMBEDDED_BASE_PATH=/data/embedded
+    volumes:
+      - ./data/java-tron:/data
+    command: ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.DualStorageModeIntegrationTest", "--dependency-verification=off"]
+
+  java-tron-performance:
+    build:
+      context: .
+      dockerfile: Dockerfile.java-tron
+    depends_on:
+      rust-storage-service:
+        condition: service_healthy
+    environment:
+      - STORAGE_REMOTE_HOST=rust-storage-service
+      - STORAGE_REMOTE_PORT=50011
+      - STORAGE_EMBEDDED_BASE_PATH=/data/embedded
+    volumes:
+      - ./data/java-tron:/data
+      - ./reports:/reports
+    command: ["./gradlew", "test", "--tests", "org.tron.core.storage.spi.DualModePerformanceBenchmark.generateComparativePerformanceReport", "--dependency-verification=off"]
+
+volumes:
+  rust-storage-data:
+  java-tron-data: 

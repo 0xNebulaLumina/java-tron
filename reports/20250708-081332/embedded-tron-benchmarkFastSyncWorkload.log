@@ -1,0 +1,768 @@
+Initialized native services in: /root/.gradle/native
+Initialized jansi services in: /root/.gradle/native
+Received JVM installation metadata from '/usr/lib/jvm/java-8-openjdk-amd64': {JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64/jre, JAVA_VERSION=1.8.0_452, JAVA_VENDOR=Private Build, RUNTIME_NAME=OpenJDK Runtime Environment, RUNTIME_VERSION=1.8.0_452-8u452-ga~us1-0ubuntu1~24.04-b09, VM_NAME=OpenJDK 64-Bit Server VM, VM_VERSION=25.452-b09, VM_VENDOR=Private Build, OS_ARCH=amd64}
+The client will now receive all logging from the daemon (pid: 1259). The daemon log file: /root/.gradle/daemon/7.6.4/daemon-1259.out.log
+Starting 12th build in daemon [uptime: 3 mins 43.974 secs, performance: 99%, GC rate: 0.04/s, heap usage: 1% of 3.9 GiB]
+Using 8 worker leases.
+Now considering [/root/gitfiles/0xNebulaLumina/java-tron] as hierarchies to watch
+Watching the file system is configured to be enabled if available
+File system watching is active
+Starting Build
+Settings evaluated using settings file '/root/gitfiles/0xNebulaLumina/java-tron/settings.gradle'.
+Projects loaded. Root project using build file '/root/gitfiles/0xNebulaLumina/java-tron/build.gradle'.
+Included projects: [root project 'java-tron', project ':actuator', project ':chainbase', project ':common', project ':consensus', project ':crypto', project ':example', project ':framework', project ':plugins', project ':protocol', project ':example:actuator-example']
+
+> Configure project :
+Evaluating root project 'java-tron' using build file '/root/gitfiles/0xNebulaLumina/java-tron/build.gradle'.
+
+> Configure project :actuator
+Evaluating project ':actuator' using build file '/root/gitfiles/0xNebulaLumina/java-tron/actuator/build.gradle'.
+
+> Configure project :chainbase
+Evaluating project ':chainbase' using build file '/root/gitfiles/0xNebulaLumina/java-tron/chainbase/build.gradle'.
+
+> Configure project :common
+Evaluating project ':common' using build file '/root/gitfiles/0xNebulaLumina/java-tron/common/build.gradle'.
+
+> Configure project :consensus
+Evaluating project ':consensus' using build file '/root/gitfiles/0xNebulaLumina/java-tron/consensus/build.gradle'.
+
+> Configure project :crypto
+Evaluating project ':crypto' using build file '/root/gitfiles/0xNebulaLumina/java-tron/crypto/build.gradle'.
+
+> Configure project :example
+Evaluating project ':example' using build file '/root/gitfiles/0xNebulaLumina/java-tron/example/build.gradle'.
+
+> Configure project :framework
+Evaluating project ':framework' using build file '/root/gitfiles/0xNebulaLumina/java-tron/framework/build.gradle'.
+The com.google.protobuf plugin was already applied to the project: :framework and will not be applied again after plugin: java-library
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/app/build/reports', not found
+------------------------------------------------------------------------
+Detecting the operating system and CPU architecture
+------------------------------------------------------------------------
+os.detected.name=linux
+os.detected.arch=x86_64
+os.detected.bitness=64
+os.detected.version=6.8
+os.detected.version.major=6
+os.detected.version.minor=8
+os.detected.release=ubuntu
+os.detected.release.version=24.04
+os.detected.release.like.ubuntu=true
+os.detected.release.like.debian=true
+os.detected.classifier=linux-x86_64
+
+> Configure project :plugins
+Evaluating project ':plugins' using build file '/root/gitfiles/0xNebulaLumina/java-tron/plugins/build.gradle'.
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/app/build/reports', not found
+
+> Configure project :protocol
+Evaluating project ':protocol' using build file '/root/gitfiles/0xNebulaLumina/java-tron/protocol/build.gradle'.
+The com.google.protobuf plugin was already applied to the project: :protocol and will not be applied again after plugin: java-library
+------------------------------------------------------------------------
+Detecting the operating system and CPU architecture
+------------------------------------------------------------------------
+os.detected.name=linux
+os.detected.arch=x86_64
+os.detected.bitness=64
+os.detected.version=6.8
+os.detected.version.major=6
+os.detected.version.minor=8
+os.detected.release=ubuntu
+os.detected.release.version=24.04
+os.detected.release.like.ubuntu=true
+os.detected.release.like.debian=true
+os.detected.classifier=linux-x86_64
+
+> Configure project :example:actuator-example
+Evaluating project ':example:actuator-example' using build file '/root/gitfiles/0xNebulaLumina/java-tron/example/actuator-example/build.gradle'.
+All projects evaluated.
+Task path ':framework:test' matched project ':framework'
+Task name matched 'test'
+Selected primary task 'test' from project :framework
+Failed to get resource: GET. [HTTP HTTP/1.1 401 : https://repo.spring.io/plugins-release/com/aliyun/tea-rpc-util/maven-metadata.xml)]
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Failed to get resource: GET. [HTTP HTTP/1.1 401 : https://repo.spring.io/plugins-release/com/aliyun/tea-rpc-util/maven-metadata.xml)]
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Tasks to be executed: [task ':protocol:extractIncludeProto', task ':protocol:extractProto', task ':protocol:generateProto', task ':protocol:compileJava', task ':common:compileJava', task ':crypto:compileJava', task ':chainbase:compileJava', task ':actuator:compileJava', task ':actuator:processResources', task ':actuator:classes', task ':actuator:jar', task ':chainbase:processResources', task ':chainbase:classes', task ':chainbase:jar', task ':common:processResources', task ':common:classes', task ':common:jar', task ':consensus:compileJava', task ':consensus:processResources', task ':consensus:classes', task ':consensus:jar', task ':crypto:processResources', task ':crypto:classes', task ':crypto:jar', task ':protocol:processResources', task ':framework:extractIncludeProto', task ':framework:extractProto', task ':framework:generateProto', task ':framework:compileJava', task ':framework:generateGitProperties', task ':framework:processResources', task ':framework:classes', task ':framework:extractIncludeTestProto', task ':framework:extractTestProto', task ':framework:generateTestProto', task ':framework:compileTestJava', task ':framework:processTestResources', task ':framework:testClasses', task ':protocol:classes', task ':protocol:jar', task ':framework:test']
+Tasks that were excluded: []
+Resolve mutations for :protocol:extractIncludeProto (Thread[Execution worker,5,main]) started.
+Resolve mutations for :chainbase:processResources (Thread[Execution worker Thread 3,5,main]) started.
+Resolve mutations for :actuator:processResources (Thread[Execution worker Thread 2,5,main]) started.
+:protocol:extractIncludeProto (Thread[Execution worker,5,main]) started.
+Resolve mutations for :common:processResources (Thread[Execution worker Thread 4,5,main]) started.
+Resolve mutations for :consensus:processResources (Thread[Execution worker Thread 5,5,main]) started.
+:actuator:processResources (Thread[Execution worker Thread 2,5,main]) started.
+:chainbase:processResources (Thread[Execution worker Thread 4,5,main]) started.
+:common:processResources (Thread[Execution worker Thread 5,5,main]) started.
+:consensus:processResources (Thread[Execution worker Thread 3,5,main]) started.
+Resolve mutations for :crypto:processResources (Thread[Execution worker Thread 6,5,main]) started.
+Resolve mutations for :framework:extractProto (Thread[included builds,5,main]) started.
+:crypto:processResources (Thread[Execution worker Thread 6,5,main]) started.
+:framework:extractProto (Thread[included builds,5,main]) started.
+
+> Task :chainbase:processResources NO-SOURCE
+Skipping task ':chainbase:processResources' as it has no source files and no previous output files.
+
+> Task :crypto:processResources NO-SOURCE
+Skipping task ':crypto:processResources' as it has no source files and no previous output files.
+
+> Task :common:processResources NO-SOURCE
+Skipping task ':common:processResources' as it has no source files and no previous output files.
+
+> Task :actuator:processResources NO-SOURCE
+Skipping task ':actuator:processResources' as it has no source files and no previous output files.
+work action resolve main (project :chainbase) (Thread[Execution worker Thread 4,5,main]) started.
+
+> Task :consensus:processResources NO-SOURCE
+Skipping task ':consensus:processResources' as it has no source files and no previous output files.
+work action resolve main (project :consensus) (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :framework:extractProto UP-TO-DATE
+Caching disabled for task ':framework:extractProto' because:
+  Build cache is disabled
+Skipping task ':framework:extractProto' as it is up-to-date.
+work action resolve main (project :common) (Thread[Execution worker Thread 5,5,main]) started.
+Resolve mutations for :framework:generateGitProperties (Thread[included builds,5,main]) started.
+work action resolve main (project :actuator) (Thread[Execution worker Thread 2,5,main]) started.
+work action resolve main (project :crypto) (Thread[Execution worker Thread 6,5,main]) started.
+:framework:generateGitProperties (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :protocol:extractIncludeProto UP-TO-DATE
+Caching disabled for task ':protocol:extractIncludeProto' because:
+  Build cache is disabled
+Skipping task ':protocol:extractIncludeProto' as it is up-to-date.
+Resolve mutations for :protocol:extractProto (Thread[Execution worker,5,main]) started.
+:protocol:extractProto (Thread[Execution worker,5,main]) started.
+
+> Task :protocol:extractProto UP-TO-DATE
+Caching disabled for task ':protocol:extractProto' because:
+  Build cache is disabled
+Skipping task ':protocol:extractProto' as it is up-to-date.
+Resolve mutations for :protocol:generateProto (Thread[Execution worker,5,main]) started.
+:protocol:generateProto (Thread[Execution worker,5,main]) started.
+
+> Task :protocol:generateProto UP-TO-DATE
+Caching disabled for task ':protocol:generateProto' because:
+  Build cache is disabled
+Skipping task ':protocol:generateProto' as it is up-to-date.
+Resolve mutations for :protocol:compileJava (Thread[Execution worker,5,main]) started.
+:protocol:compileJava (Thread[Execution worker,5,main]) started.
+
+> Task :protocol:compileJava UP-TO-DATE
+Caching disabled for task ':protocol:compileJava' because:
+  Build cache is disabled
+Skipping task ':protocol:compileJava' as it is up-to-date.
+work action resolve main (project :protocol) (Thread[Execution worker,5,main]) started.
+Resolve mutations for :common:compileJava (Thread[Execution worker,5,main]) started.
+Resolve mutations for :protocol:processResources (Thread[Execution worker Thread 7,5,main]) started.
+:protocol:processResources (Thread[Execution worker Thread 7,5,main]) started.
+:common:compileJava (Thread[Execution worker,5,main]) started.
+
+> Task :protocol:processResources UP-TO-DATE
+Caching disabled for task ':protocol:processResources' because:
+  Build cache is disabled
+Skipping task ':protocol:processResources' as it is up-to-date.
+work action resolve main (project :protocol) (Thread[Execution worker Thread 7,5,main]) started.
+Resolve mutations for :protocol:classes (Thread[included builds,5,main]) started.
+:protocol:classes (Thread[included builds,5,main]) started.
+
+> Task :protocol:classes UP-TO-DATE
+Skipping task ':protocol:classes' as it has no actions.
+Resolve mutations for :protocol:jar (Thread[included builds,5,main]) started.
+:protocol:jar (Thread[included builds,5,main]) started.
+
+> Task :protocol:jar UP-TO-DATE
+Caching disabled for task ':protocol:jar' because:
+  Build cache is disabled
+Skipping task ':protocol:jar' as it is up-to-date.
+work action resolve protocol.jar (project :protocol) (Thread[included builds,5,main]) started.
+
+> Task :common:compileJava UP-TO-DATE
+Caching disabled for task ':common:compileJava' because:
+  Build cache is disabled
+Skipping task ':common:compileJava' as it is up-to-date.
+work action resolve main (project :common) (Thread[Execution worker,5,main]) started.
+Resolve mutations for :crypto:compileJava (Thread[Execution worker,5,main]) started.
+Resolve mutations for :common:classes (Thread[Execution worker Thread 2,5,main]) started.
+:common:classes (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :common:classes UP-TO-DATE
+Skipping task ':common:classes' as it has no actions.
+:crypto:compileJava (Thread[Execution worker,5,main]) started.
+Resolve mutations for :common:jar (Thread[Execution worker Thread 2,5,main]) started.
+:common:jar (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :common:jar UP-TO-DATE
+Caching disabled for task ':common:jar' because:
+  Build cache is disabled
+Skipping task ':common:jar' as it is up-to-date.
+work action resolve common.jar (project :common) (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :crypto:compileJava UP-TO-DATE
+Caching disabled for task ':crypto:compileJava' because:
+  Build cache is disabled
+Skipping task ':crypto:compileJava' as it is up-to-date.
+work action resolve main (project :crypto) (Thread[Execution worker,5,main]) started.
+Resolve mutations for :chainbase:compileJava (Thread[Execution worker,5,main]) started.
+Resolve mutations for :crypto:classes (Thread[Execution worker Thread 7,5,main]) started.
+:chainbase:compileJava (Thread[Execution worker,5,main]) started.
+:crypto:classes (Thread[Execution worker Thread 7,5,main]) started.
+
+> Task :crypto:classes UP-TO-DATE
+Skipping task ':crypto:classes' as it has no actions.
+Resolve mutations for :crypto:jar (Thread[Execution worker Thread 7,5,main]) started.
+:crypto:jar (Thread[Execution worker Thread 7,5,main]) started.
+
+> Task :crypto:jar UP-TO-DATE
+Caching disabled for task ':crypto:jar' because:
+  Build cache is disabled
+Skipping task ':crypto:jar' as it is up-to-date.
+work action resolve crypto.jar (project :crypto) (Thread[Execution worker Thread 7,5,main]) started.
+
+> Task :chainbase:compileJava UP-TO-DATE
+Caching disabled for task ':chainbase:compileJava' because:
+  Build cache is disabled
+Skipping task ':chainbase:compileJava' as it is up-to-date.
+work action resolve main (project :chainbase) (Thread[Execution worker,5,main]) started.
+Resolve mutations for :actuator:compileJava (Thread[Execution worker,5,main]) started.
+Resolve mutations for :chainbase:classes (Thread[Execution worker Thread 2,5,main]) started.
+Resolve mutations for :consensus:compileJava (Thread[Execution worker Thread 6,5,main]) started.
+:chainbase:classes (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :chainbase:classes UP-TO-DATE
+Skipping task ':chainbase:classes' as it has no actions.
+:actuator:compileJava (Thread[Execution worker,5,main]) started.
+Resolve mutations for :chainbase:jar (Thread[Execution worker Thread 2,5,main]) started.
+:consensus:compileJava (Thread[Execution worker Thread 6,5,main]) started.
+:chainbase:jar (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :chainbase:jar UP-TO-DATE
+Caching disabled for task ':chainbase:jar' because:
+  Build cache is disabled
+Skipping task ':chainbase:jar' as it is up-to-date.
+work action resolve chainbase.jar (project :chainbase) (Thread[Execution worker Thread 2,5,main]) started.
+
+> Task :actuator:compileJava UP-TO-DATE
+Caching disabled for task ':actuator:compileJava' because:
+  Build cache is disabled
+Skipping task ':actuator:compileJava' as it is up-to-date.
+
+> Task :consensus:compileJava UP-TO-DATE
+Caching disabled for task ':consensus:compileJava' because:
+  Build cache is disabled
+Skipping task ':consensus:compileJava' as it is up-to-date.
+work action resolve main (project :consensus) (Thread[Execution worker Thread 6,5,main]) started.
+work action resolve main (project :actuator) (Thread[Execution worker,5,main]) started.
+Resolve mutations for :consensus:classes (Thread[Execution worker Thread 6,5,main]) started.
+Resolve mutations for :actuator:classes (Thread[Execution worker,5,main]) started.
+:actuator:classes (Thread[Execution worker,5,main]) started.
+:consensus:classes (Thread[Execution worker Thread 6,5,main]) started.
+
+> Task :actuator:classes UP-TO-DATE
+Skipping task ':actuator:classes' as it has no actions.
+
+> Task :consensus:classes UP-TO-DATE
+Skipping task ':consensus:classes' as it has no actions.
+Resolve mutations for :actuator:jar (Thread[Execution worker,5,main]) started.
+Resolve mutations for :consensus:jar (Thread[Execution worker Thread 6,5,main]) started.
+:actuator:jar (Thread[Execution worker,5,main]) started.
+:consensus:jar (Thread[Execution worker Thread 6,5,main]) started.
+
+> Task :actuator:jar UP-TO-DATE
+Caching disabled for task ':actuator:jar' because:
+  Build cache is disabled
+Skipping task ':actuator:jar' as it is up-to-date.
+work action resolve actuator.jar (project :actuator) (Thread[Execution worker,5,main]) started.
+
+> Task :consensus:jar UP-TO-DATE
+Caching disabled for task ':consensus:jar' because:
+  Build cache is disabled
+Skipping task ':consensus:jar' as it is up-to-date.
+work action resolve consensus.jar (project :consensus) (Thread[Execution worker Thread 6,5,main]) started.
+
+> Task :framework:generateGitProperties
+dotGitDirectory = [/root/gitfiles/0xNebulaLumina/java-tron/.git]
+Caching disabled for task ':framework:generateGitProperties' because:
+  Build cache is disabled
+Task ':framework:generateGitProperties' is not up-to-date because:
+  Task.upToDateWhen is false.
+Watching 1050 directories to track changes
+git.properties location = [/root/gitfiles/0xNebulaLumina/java-tron/framework/build/resources/main/git.properties]
+Skip writing properties to [property(org.gradle.api.file.RegularFile, fixed(class org.gradle.api.internal.file.DefaultFilePropertyFactory$FixedFile, /root/gitfiles/0xNebulaLumina/java-tron/framework/build/resources/main/git.properties))] as it is up-to-date.
+Watching 1050 directories to track changes
+Resolve mutations for :framework:extractIncludeProto (Thread[Execution worker Thread 3,5,main]) started.
+:framework:extractIncludeProto (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :framework:extractIncludeProto UP-TO-DATE
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Caching disabled for task ':framework:extractIncludeProto' because:
+  Build cache is disabled
+Skipping task ':framework:extractIncludeProto' as it is up-to-date.
+Resolve mutations for :framework:generateProto (Thread[Execution worker Thread 3,5,main]) started.
+:framework:generateProto (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :framework:generateProto UP-TO-DATE
+Caching disabled for task ':framework:generateProto' because:
+  Build cache is disabled
+Skipping task ':framework:generateProto' as it is up-to-date.
+Resolve mutations for :framework:compileJava (Thread[Execution worker Thread 3,5,main]) started.
+:framework:compileJava (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :framework:compileJava UP-TO-DATE
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Caching disabled for task ':framework:compileJava' because:
+  Build cache is disabled
+Skipping task ':framework:compileJava' as it is up-to-date.
+Resolve mutations for :framework:processResources (Thread[Execution worker Thread 3,5,main]) started.
+:framework:processResources (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :framework:processResources UP-TO-DATE
+Watching 1050 directories to track changes
+Caching disabled for task ':framework:processResources' because:
+  Build cache is disabled
+Skipping task ':framework:processResources' as it is up-to-date.
+Resolve mutations for :framework:classes (Thread[Execution worker Thread 3,5,main]) started.
+:framework:classes (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :framework:classes
+Skipping task ':framework:classes' as it has no actions.
+Resolve mutations for :framework:extractIncludeTestProto (Thread[Execution worker Thread 3,5,main]) started.
+:framework:extractIncludeTestProto (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :framework:extractIncludeTestProto UP-TO-DATE
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Caching disabled for task ':framework:extractIncludeTestProto' because:
+  Build cache is disabled
+Skipping task ':framework:extractIncludeTestProto' as it is up-to-date.
+Resolve mutations for :framework:extractTestProto (Thread[Execution worker Thread 3,5,main]) started.
+:framework:extractTestProto (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :framework:extractTestProto UP-TO-DATE
+Caching disabled for task ':framework:extractTestProto' because:
+  Build cache is disabled
+Skipping task ':framework:extractTestProto' as it is up-to-date.
+Resolve mutations for :framework:generateTestProto (Thread[Execution worker Thread 3,5,main]) started.
+:framework:generateTestProto (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :framework:generateTestProto NO-SOURCE
+Skipping task ':framework:generateTestProto' as it has no source files and no previous output files.
+Resolve mutations for :framework:compileTestJava (Thread[Execution worker Thread 3,5,main]) started.
+:framework:compileTestJava (Thread[Execution worker Thread 3,5,main]) started.
+
+> Task :framework:compileTestJava UP-TO-DATE
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Caching disabled for task ':framework:compileTestJava' because:
+  Build cache is disabled
+Skipping task ':framework:compileTestJava' as it is up-to-date.
+Resolve mutations for :framework:processTestResources (Thread[Execution worker Thread 3,5,main]) started.
+:framework:processTestResources (Thread[Execution worker Thread 6,5,main]) started.
+
+> Task :framework:processTestResources UP-TO-DATE
+Caching disabled for task ':framework:processTestResources' because:
+  Build cache is disabled
+Skipping task ':framework:processTestResources' as it is up-to-date.
+Resolve mutations for :framework:testClasses (Thread[Execution worker Thread 6,5,main]) started.
+:framework:testClasses (Thread[Execution worker Thread 6,5,main]) started.
+
+> Task :framework:testClasses UP-TO-DATE
+Skipping task ':framework:testClasses' as it has no actions.
+Resolve mutations for :framework:test (Thread[Execution worker Thread 6,5,main]) started.
+:framework:test (Thread[Execution worker Thread 6,5,main]) started.
+Gradle Test Executor 10 started executing tests.
+
+> Task :framework:test
+Failed to get resource: GET. [HTTP HTTP/1.1 401 : https://repo.spring.io/plugins-release/com/aliyun/tea-rpc-util/maven-metadata.xml)]
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Caching disabled for task ':framework:test' because:
+  Build cache is disabled
+Task ':framework:test' is not up-to-date because:
+  Value of input property 'filter.commandLineIncludePatterns' has changed for task ':framework:test'
+Watching 1049 directories to track changes
+Watching 1048 directories to track changes
+Watching 1043 directories to track changes
+Watching 1042 directories to track changes
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+file or directory '/root/gitfiles/0xNebulaLumina/java-tron/framework/libs', not found
+Starting process 'Gradle Test Executor 10'. Working directory: /root/gitfiles/0xNebulaLumina/java-tron/framework Command: /usr/lib/jvm/java-8-openjdk-amd64/bin/java -Djava.security.manager=worker.org.gradle.process.internal.worker.child.BootstrapSecurityManager -Dorg.gradle.internal.worker.tmpdir=/root/gitfiles/0xNebulaLumina/java-tron/framework/build/tmp/test/work -Dorg.gradle.native=false -XX:MetaspaceSize=128m -XX:MaxMetaspaceSize=256m -XX:+UseG1GC -javaagent:build/tmp/expandedArchives/org.jacoco.agent-0.8.12.jar_ff7bf8f04f99dc306508d1c81e47a68b/jacocoagent.jar=destfile=build/jacoco/jacocoTest.exec,append=true,inclnolocationclasses=false,dumponexit=true,output=file,classdumpdir=build/jacoco/classpathdumps,jmx=false -Xmx1024m -Dfile.encoding=UTF-8 -Duser.country=US -Duser.language=en -Duser.variant -ea -cp /root/.gradle/caches/7.6.4/workerMain/gradle-worker.jar worker.org.gradle.process.internal.worker.GradleWorkerMain 'Gradle Test Executor 10'
+Successfully started process 'Gradle Test Executor 10'
+
+org.tron.core.storage.spi.EmbeddedTronWorkloadBenchmark > benchmarkFastSyncWorkload STANDARD_OUT
+    06:15:44.604 INFO [ROCKSDB] benchmark-db-1751955344247 [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:44.617 INFO [ROCKSDB] benchmark-db-1751955344247 [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:44.618 INFO [ROCKSDB] benchmark-db-1751955344247 [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:44.618 INFO [ROCKSDB] benchmark-db-1751955344247 [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:44.619 INFO [ROCKSDB] benchmark-db-1751955344247 [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/benchmark-db-1751955344247/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:44.619 INFO [ROCKSDB] benchmark-db-1751955344247 [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:44.622 INFO [ROCKSDB] benchmark-db-1751955344247 [db/db_impl_open.cc:1221] DB pointer 0x7e52f4469500
+    06:15:44.627 INFO [ROCKSDB] block-store [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:44.631 INFO [ROCKSDB] block-store [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:44.632 INFO [ROCKSDB] block-store [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:44.632 INFO [ROCKSDB] block-store [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:44.632 INFO [ROCKSDB] block-store [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/block-store/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:44.632 INFO [ROCKSDB] block-store [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:44.635 INFO [ROCKSDB] block-store [db/db_impl_open.cc:1221] DB pointer 0x7e52f44ac1d0
+    06:15:44.638 INFO [ROCKSDB] transaction-store [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:44.642 INFO [ROCKSDB] transaction-store [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:44.642 INFO [ROCKSDB] transaction-store [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:44.642 INFO [ROCKSDB] transaction-store [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:44.642 INFO [ROCKSDB] transaction-store [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/transaction-store/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:44.643 INFO [ROCKSDB] transaction-store [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:44.645 INFO [ROCKSDB] transaction-store [db/db_impl_open.cc:1221] DB pointer 0x7e52f44d7f80
+    06:15:44.647 INFO [ROCKSDB] account-store [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:44.650 INFO [ROCKSDB] account-store [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:44.651 INFO [ROCKSDB] account-store [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:44.651 INFO [ROCKSDB] account-store [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:44.651 INFO [ROCKSDB] account-store [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/account-store/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:44.651 INFO [ROCKSDB] account-store [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:44.654 INFO [ROCKSDB] account-store [db/db_impl_open.cc:1221] DB pointer 0x7e52f44fbc90
+    06:15:44.656 INFO [ROCKSDB] contract-store [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:44.660 INFO [ROCKSDB] contract-store [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:44.660 INFO [ROCKSDB] contract-store [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:44.661 INFO [ROCKSDB] contract-store [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:44.661 INFO [ROCKSDB] contract-store [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/contract-store/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:44.661 INFO [ROCKSDB] contract-store [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:44.664 INFO [ROCKSDB] contract-store [db/db_impl_open.cc:1221] DB pointer 0x7e52f44f5490
+    06:15:44.669 INFO [ROCKSDB] dynamic-properties-store [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:44.674 INFO [ROCKSDB] dynamic-properties-store [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:44.675 INFO [ROCKSDB] dynamic-properties-store [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:44.675 INFO [ROCKSDB] dynamic-properties-store [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:44.675 INFO [ROCKSDB] dynamic-properties-store [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/dynamic-properties-store/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:44.675 INFO [ROCKSDB] dynamic-properties-store [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:44.678 INFO [ROCKSDB] dynamic-properties-store [db/db_impl_open.cc:1221] DB pointer 0x7e52f45435d0
+
+    ============================================================
+    BENCHMARK: EmbeddedStorageFastSyncWorkload
+    ============================================================
+    Setting up fast sync workload:
+      - 100 batches
+      - 10000 operations per batch
+      - 1000000 total operations
+    Running fast sync operations...
+      Batch 0 completed in 27.43 ms
+      Batch 10 completed in 26.43 ms
+    06:15:45.367 INFO [ROCKSDB] transaction-store [db/db_impl_write.cc:1363] [default] New memtable created with log file: #6. Immutable memtables: 0.
+
+    06:15:45.368 INFO [ROCKSDB] transaction-store [db/db_impl_compaction_flush.cc:81] [JOB 2] Syncing log #3
+      Batch 20 completed in 21.92 ms
+    06:15:45.437 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:45.367760) [db/db_impl_compaction_flush.cc:1399] Calling FlushMemTableToOutputFile with column family [default], flush slots available 1, compaction slots available 1, flush slots scheduled 1, compaction slots scheduled 0
+    06:15:45.438 INFO [ROCKSDB] transaction-store [db/flush_job.cc:302] [default] [JOB 2] Flushing memtable with next log file: 6
+
+    06:15:45.438 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955345438392, "job": 2, "event": "flush_started", "num_memtables": 1, "num_entries": 200000, "num_deletes": 0, "memory_usage": 68090416, "flush_reason": "Write Buffer Full"}
+    06:15:45.438 INFO [ROCKSDB] transaction-store [db/flush_job.cc:332] [default] [JOB 2] Level-0 flush table #7: started
+      Batch 30 completed in 27.32 ms
+    06:15:45.797 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955345796942, "cf_name": "default", "job": 2, "event": "table_file_creation", "file_number": 7, "file_size": 63283401, "table_properties": {"data_size": 62989851, "index_size": 539091, "filter_size": 0, "raw_key_size": 3877800, "raw_average_key_size": 19, "raw_value_size": 60000000, "raw_average_value_size": 300, "num_data_blocks": 16667, "num_entries": 200000, "filter_policy_name": "", "kDeletedKeys": "0", "kMergeOperands": "0"}}
+    06:15:45.797 INFO [ROCKSDB] transaction-store [db/flush_job.cc:372] [default] [JOB 2] Level-0 flush table #7: 63283401 bytes OK
+    06:15:45.798 INFO [ROCKSDB] transaction-store [db/version_set.cc:2906] Creating manifest 8
+
+    06:15:45.803 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:45.798589) [db/memtable_list.cc:376] [default] Level-0 commit table #7 started
+    06:15:45.803 INFO [ROCKSDB] transaction-store [db/db_impl.cc:533] ------- DUMPING STATS -------
+    06:15:45.803 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:45.803007) [db/memtable_list.cc:423] [default] Level-0 commit table #7: memtable #1 done
+    06:15:45.803 INFO [ROCKSDB] transaction-store [db/db_impl.cc:534] 
+    ** DB Stats **
+    Uptime(secs): 1.2 total, 1.2 interval
+    Cumulative writes: 36 writes, 360K keys, 36 commit groups, 1.0 writes per commit group, ingest: 0.11 GB, 93.37 MB/s
+    Cumulative WAL: 35 writes, 0 syncs, 35.00 writes per sync, written: 0.10 GB, 90.78 MB/s
+    Cumulative stall: 00:00:0.000 H:M:S, 0.0 percent
+    Interval writes: 36 writes, 360K keys, 36 commit groups, 1.0 writes per commit group, ingest: 108.36 MB, 93.37 MB/s
+    Interval WAL: 35 writes, 0 syncs, 35.00 writes per sync, written: 0.10 MB, 90.78 MB/s
+    Interval stall: 00:00:0.000 H:M:S, 0.0 percent
+
+    ** Compaction Stats [default] **
+    Level    Files   Size     Score Read(GB)  Rn(GB) Rnp1(GB) Write(GB) Wnew(GB) Moved(GB) W-Amp Rd(MB/s) Wr(MB/s) Comp(sec) Comp(cnt) Avg(sec) KeyIn KeyDrop
+    ----------------------------------------------------------------------------------------------------------------------------------------------------------
+      L0      1/0   60.35 MB   1.0      0.0     0.0      0.0       0.1      0.1       0.0   1.0      0.0    167.2         0         1    0.361       0      0
+     Sum      1/0   60.35 MB   0.0      0.0     0.0      0.0       0.1      0.1       0.0   1.0      0.0    167.2         0         1    0.361       0      0
+     Int      0/0    0.00 KB   0.0      0.0     0.0      0.0       0.1      0.1       0.0   1.0      0.0    167.2         0         1    0.361       0      0
+    Uptime(secs): 1.2 total, 1.2 interval
+    Flush(GB): cumulative 0.059, interval 0.059
+    AddFile(GB): cumulative 0.000, interval 0.000
+    AddFile(Total Files): cumulative 0, interval 0
+    AddFile(L0 Files): cumulative 0, interval 0
+    AddFile(Keys): cumulative 0, interval 0
+    Cumulative compaction: 0.06 GB write, 52.00 MB/s write, 0.00 GB read, 0.00 MB/s read, 0.4 seconds
+    Interval compaction: 0.06 GB write, 52.00 MB/s write, 0.00 GB read, 0.00 MB/s read, 0.4 seconds
+    Stalls(count): 0 level0_slowdown, 0 level0_slowdown_with_compaction, 0 level0_numfiles, 0 level0_numfiles_with_compaction, 0 stop for pending_compaction_bytes, 0 slowdown for pending_compaction_bytes, 0 memtable_compaction, 0 memtable_slowdown, interval 0 total count
+
+    ** File Read Latency Histogram By Level [default] **
+
+    ** Compaction Stats [default] **
+    Level    Files   Size     Score Read(GB)  Rn(GB) Rnp1(GB) Write(GB) Wnew(GB) Moved(GB) W-Amp Rd(MB/s) Wr(MB/s) Comp(sec) Comp(cnt) Avg(sec) KeyIn KeyDrop
+    ----------------------------------------------------------------------------------------------------------------------------------------------------------
+      L0      1/0   60.35 MB   1.0      0.0     0.0      0.0       0.1      0.1       0.0   1.0      0.0    167.2         0         1    0.361       0      0
+     Sum      1/0   60.35 MB   0.0      0.0     0.0      0.0       0.1      0.1       0.0   1.0      0.0    167.2         0         1    0.361       0      0
+     Int      0/0    0.00 KB   0.0      0.0     0.0      0.0       0.0      0.0       0.0   0.0      0.0      0.0         0         0    0.000       0      0
+    Uptime(secs): 1.2 total, 0.0 interval
+    Flush(GB): cumulative 0.059, interval 0.000
+    AddFile(GB): cumulative 0.000, interval 0.000
+    AddFile(Total Files): cumulative 0, interval 0
+    AddFile(L0 Files): cumulative 0, interval 0
+    AddFile(Keys): cumulative 0, interval 0
+    Cumulative compaction: 0.06 GB write, 52.00 MB/s write, 0.00 GB read, 0.00 MB/s read, 0.4 seconds
+    Interval compaction: 0.00 GB write, 0.00 MB/s write, 0.00 GB read, 0.00 MB/s read, 0.0 seconds
+    Stalls(count): 0 level0_slowdown, 0 level0_slowdown_with_compaction, 0 level0_numfiles, 0 level0_numfiles_with_compaction, 0 stop for pending_compaction_bytes, 0 slowdown for pending_compaction_bytes, 0 memtable_compaction, 0 memtable_slowdown, interval 0 total count
+
+    ** File Read Latency Histogram By Level [default] **
+
+    06:15:45.803 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:45.803029) EVENT_LOG_v1 {"time_micros": 1751955345803021, "job": 2, "event": "flush_finished", "output_compression": "Snappy", "lsm_state": [1, 0, 0, 0, 0, 0, 0], "immutable_memtables": 0}
+    06:15:45.805 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:45.803055) [db/db_impl_compaction_flush.cc:171] [default] Level summary: base level 6 max bytes base 18446744073709551615 files[1 0 0 0 0 0 0] max score 1.00
+
+    06:15:45.805 INFO [ROCKSDB] transaction-store [db/db_impl_files.cc:347] [JOB 2] Try to delete WAL files size 63078040, prev total WAL file size 110461570, number of live WAL files 2.
+
+    06:15:45.810 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:45.805100) [db/db_impl_compaction_flush.cc:1814] [default] Moving #7 to level-6 63283401 bytes
+
+    06:15:45.810 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:45.806204) EVENT_LOG_v1 {"time_micros": 1751955345806197, "job": 3, "event": "trivial_move", "destination_level": 6, "files": 1, "total_files_size": 63283401}
+    06:15:45.810 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:45.806209) [db/db_impl_compaction_flush.cc:1843] [default] Moved #1 files to level-6 63283401 bytes OK: base level 6 max bytes base 268435456 files[0 0 0 0 0 0 1] max score 0.00
+
+    06:15:45.924 INFO [ROCKSDB] transaction-store [db/db_impl_write.cc:1363] [default] New memtable created with log file: #9. Immutable memtables: 0.
+
+    06:15:45.925 INFO [ROCKSDB] transaction-store [db/db_impl_compaction_flush.cc:81] [JOB 4] Syncing log #6
+      Batch 40 completed in 19.78 ms
+    06:15:46.000 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:45.925244) [db/db_impl_compaction_flush.cc:1399] Calling FlushMemTableToOutputFile with column family [default], flush slots available 1, compaction slots available 1, flush slots scheduled 1, compaction slots scheduled 0
+    06:15:46.001 INFO [ROCKSDB] transaction-store [db/flush_job.cc:302] [default] [JOB 4] Flushing memtable with next log file: 9
+
+    06:15:46.001 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955346001435, "job": 4, "event": "flush_started", "num_memtables": 1, "num_entries": 200000, "num_deletes": 0, "memory_usage": 68087080, "flush_reason": "Write Buffer Full"}
+    06:15:46.001 INFO [ROCKSDB] transaction-store [db/flush_job.cc:332] [default] [JOB 4] Level-0 flush table #10: started
+      Batch 50 completed in 20.29 ms
+    06:15:46.299 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955346299040, "cf_name": "default", "job": 4, "event": "table_file_creation", "file_number": 10, "file_size": 63292102, "table_properties": {"data_size": 62998186, "index_size": 547424, "filter_size": 0, "raw_key_size": 3977800, "raw_average_key_size": 19, "raw_value_size": 60000000, "raw_average_value_size": 300, "num_data_blocks": 16667, "num_entries": 200000, "filter_policy_name": "", "kDeletedKeys": "0", "kMergeOperands": "0"}}
+    06:15:46.299 INFO [ROCKSDB] transaction-store [db/flush_job.cc:372] [default] [JOB 4] Level-0 flush table #10: 63292102 bytes OK
+    06:15:46.302 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:46.301249) [db/memtable_list.cc:376] [default] Level-0 commit table #10 started
+    06:15:46.302 INFO [ROCKSDB] transaction-store [db/compaction_job.cc:1635] [default] [JOB 5] Compacting 1@0 + 1@6 files to L6, score 1.00
+    06:15:46.302 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:46.302274) [db/memtable_list.cc:423] [default] Level-0 commit table #10: memtable #1 done
+    06:15:46.302 INFO [ROCKSDB] transaction-store [db/compaction_job.cc:1639] [default] Compaction start summary: Base version 4 Base level 0, inputs: [10(60MB)], [7(60MB)]
+
+    06:15:46.303 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:46.302289) EVENT_LOG_v1 {"time_micros": 1751955346302283, "job": 4, "event": "flush_finished", "output_compression": "Snappy", "lsm_state": [1, 0, 0, 0, 0, 0, 1], "immutable_memtables": 0}
+    06:15:46.309 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955346303203, "job": 5, "event": "compaction_started", "compaction_reason": "LevelL0FilesNum", "files_L0": [10], "files_L6": [7], "score": 1, "input_data_size": 126575503}
+    06:15:46.309 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:46.302317) [db/db_impl_compaction_flush.cc:171] [default] Level summary: base level 6 max bytes base 268435456 files[1 0 0 0 0 0 1] max score 1.00
+
+    06:15:46.310 INFO [ROCKSDB] transaction-store [db/db_impl_files.cc:347] [JOB 4] Try to delete WAL files size 63178040, prev total WAL file size 104243766, number of live WAL files 2.
+
+    06:15:46.487 INFO [ROCKSDB] transaction-store [db/db_impl_write.cc:1363] [default] New memtable created with log file: #12. Immutable memtables: 0.
+
+    06:15:46.488 INFO [ROCKSDB] transaction-store [db/db_impl_compaction_flush.cc:81] [JOB 6] Syncing log #9
+      Batch 60 completed in 22.89 ms
+    06:15:46.564 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:46.488357) [db/db_impl_compaction_flush.cc:1399] Calling FlushMemTableToOutputFile with column family [default], flush slots available 1, compaction slots available 1, flush slots scheduled 1, compaction slots scheduled 1
+    06:15:46.565 INFO [ROCKSDB] transaction-store [db/flush_job.cc:302] [default] [JOB 6] Flushing memtable with next log file: 12
+
+    06:15:46.565 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955346565584, "job": 6, "event": "flush_started", "num_memtables": 1, "num_entries": 200000, "num_deletes": 0, "memory_usage": 68058208, "flush_reason": "Write Buffer Full"}
+    06:15:46.565 INFO [ROCKSDB] transaction-store [db/flush_job.cc:332] [default] [JOB 6] Level-0 flush table #13: started
+      Batch 70 completed in 19.82 ms
+    06:15:46.886 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955346886236, "cf_name": "default", "job": 6, "event": "table_file_creation", "file_number": 13, "file_size": 63292078, "table_properties": {"data_size": 62998186, "index_size": 547424, "filter_size": 0, "raw_key_size": 3977800, "raw_average_key_size": 19, "raw_value_size": 60000000, "raw_average_value_size": 300, "num_data_blocks": 16667, "num_entries": 200000, "filter_policy_name": "", "kDeletedKeys": "0", "kMergeOperands": "0"}}
+    06:15:46.886 INFO [ROCKSDB] transaction-store [db/flush_job.cc:372] [default] [JOB 6] Level-0 flush table #13: 63292078 bytes OK
+    06:15:46.888 INFO [ROCKSDB] transaction-store [db/column_family.cc:837] [default] Increasing compaction threads because we have 2 level-0 files 
+    06:15:46.888 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:46.887798) [db/memtable_list.cc:376] [default] Level-0 commit table #13 started
+    06:15:46.889 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:46.888679) [db/memtable_list.cc:423] [default] Level-0 commit table #13: memtable #1 done
+    06:15:46.889 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:46.888972) [db/db_impl_compaction_flush.cc:1760] Compaction nothing to do
+    06:15:46.889 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:46.888688) EVENT_LOG_v1 {"time_micros": 1751955346888684, "job": 6, "event": "flush_finished", "output_compression": "Snappy", "lsm_state": [2, 0, 0, 0, 0, 0, 1], "immutable_memtables": 0}
+    06:15:46.889 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:46.888922) [db/db_impl_compaction_flush.cc:171] [default] Level summary: base level 6 max bytes base 268435456 files[2 0 0 0 0 0 1] max score 1.00
+
+    06:15:46.889 INFO [ROCKSDB] transaction-store [db/db_impl_files.cc:347] [JOB 6] Try to delete WAL files size 63178040, prev total WAL file size 113720472, number of live WAL files 2.
+
+    06:15:47.014 INFO [ROCKSDB] transaction-store [db/db_impl_write.cc:1363] [default] New memtable created with log file: #14. Immutable memtables: 0.
+
+    06:15:47.015 INFO [ROCKSDB] transaction-store [db/column_family.cc:837] [default] Increasing compaction threads because we have 2 level-0 files 
+    06:15:47.016 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.015874) [db/db_impl_compaction_flush.cc:1760] Compaction nothing to do
+    06:15:47.016 INFO [ROCKSDB] transaction-store [db/db_impl_compaction_flush.cc:81] [JOB 9] Syncing log #12
+      Batch 80 completed in 23.07 ms
+    06:15:47.117 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.015815) [db/db_impl_compaction_flush.cc:1399] Calling FlushMemTableToOutputFile with column family [default], flush slots available 1, compaction slots available 32, flush slots scheduled 1, compaction slots scheduled 2
+    06:15:47.117 INFO [ROCKSDB] transaction-store [db/flush_job.cc:302] [default] [JOB 9] Flushing memtable with next log file: 14
+
+    06:15:47.118 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955347118046, "job": 9, "event": "flush_started", "num_memtables": 1, "num_entries": 200000, "num_deletes": 0, "memory_usage": 68057376, "flush_reason": "Write Buffer Full"}
+    06:15:47.118 INFO [ROCKSDB] transaction-store [db/flush_job.cc:332] [default] [JOB 9] Level-0 flush table #15: started
+      Batch 90 completed in 31.93 ms
+    06:15:47.604 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955347604108, "cf_name": "default", "job": 9, "event": "table_file_creation", "file_number": 15, "file_size": 63292066, "table_properties": {"data_size": 62998186, "index_size": 547424, "filter_size": 0, "raw_key_size": 3977800, "raw_average_key_size": 19, "raw_value_size": 60000000, "raw_average_value_size": 300, "num_data_blocks": 16667, "num_entries": 200000, "filter_policy_name": "", "kDeletedKeys": "0", "kMergeOperands": "0"}}
+    06:15:47.604 INFO [ROCKSDB] transaction-store [db/flush_job.cc:372] [default] [JOB 9] Level-0 flush table #15: 63292066 bytes OK
+    06:15:47.604 INFO [ROCKSDB] transaction-store [db/compaction_job.cc:1324] [default] [JOB 5] Generated table #11: 400000 keys, 126439773 bytes
+    06:15:47.605 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955347605109, "cf_name": "default", "job": 5, "event": "table_file_creation", "file_number": 11, "file_size": 126439773, "table_properties": {"data_size": 125988038, "index_size": 1087074, "filter_size": 0, "raw_key_size": 7855600, "raw_average_key_size": 19, "raw_value_size": 120000000, "raw_average_value_size": 300, "num_data_blocks": 33334, "num_entries": 400000, "filter_policy_name": "", "kDeletedKeys": "0", "kMergeOperands": "0"}}
+    06:15:47.609 INFO [ROCKSDB] transaction-store [db/column_family.cc:837] [default] Increasing compaction threads because we have 3 level-0 files 
+    06:15:47.609 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.605812) [db/memtable_list.cc:376] [default] Level-0 commit table #15 started
+    06:15:47.610 INFO [ROCKSDB] transaction-store [db/compaction_job.cc:1390] [default] [JOB 5] Compacted 1@0 + 1@6 files to L6 => 126439773 bytes
+    06:15:47.610 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.609266) [db/memtable_list.cc:423] [default] Level-0 commit table #15: memtable #1 done
+    06:15:47.610 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.609908) [db/db_impl_compaction_flush.cc:1760] Compaction nothing to do
+    06:15:47.610 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.609280) EVENT_LOG_v1 {"time_micros": 1751955347609273, "job": 9, "event": "flush_finished", "output_compression": "Snappy", "lsm_state": [3, 0, 0, 0, 0, 0, 1], "immutable_memtables": 0}
+    06:15:47.610 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.609827) [db/db_impl_compaction_flush.cc:171] [default] Level summary: base level 6 max bytes base 268435456 files[3 0 0 0 0 0 1] max score 2.00
+
+    06:15:47.611 INFO [ROCKSDB] transaction-store [db/db_impl_files.cc:347] [JOB 9] Try to delete WAL files size 63178040, prev total WAL file size 120038276, number of live WAL files 2.
+
+    06:15:47.611 INFO [ROCKSDB] transaction-store [db/column_family.cc:837] [default] Increasing compaction threads because we have 2 level-0 files 
+    06:15:47.611 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.611351) [db/compaction_job.cc:750] [default] compacted to: base level 6 max bytes base 268435456 files[2 0 0 0 0 0 1] max score 2.00, MB/sec: 97.7 rd, 97.6 wr, level 6, files in(1, 1) out(1) MB in(60.4, 60.4) out(120.6), read-write-amplify(4.0) write-amplify(2.0) OK, records in: 400000, records dropped: 0 output_compression: Snappy
+
+    06:15:47.611 INFO [ROCKSDB] transaction-store [db/compaction_picker.cc:503] [default] Expanding@0 1+1(63292078+126439773 bytes) to 2+1 (126584144+126439773 bytes)
+
+    06:15:47.611 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.611371) EVENT_LOG_v1 {"time_micros": 1751955347611362, "job": 5, "event": "compaction_finished", "compaction_time_micros": 1295868, "output_level": 6, "num_output_files": 1, "total_output_size": 126439773, "num_input_records": 400000, "num_output_records": 400000, "num_subcompactions": 1, "output_compression": "Snappy", "num_single_delete_mismatches": 0, "num_single_delete_fallthrough": 0, "lsm_state": [2, 0, 0, 0, 0, 0, 1]}
+    06:15:47.612 INFO [ROCKSDB] transaction-store [db/compaction_job.cc:1635] [default] [JOB 11] Compacting 2@0 + 1@6 files to L6, score 2.00
+    06:15:47.612 INFO [ROCKSDB] transaction-store [db/compaction_job.cc:1639] [default] Compaction start summary: Base version 7 Base level 0, inputs: [15(60MB) 13(60MB)], [11(120MB)]
+
+    06:15:47.613 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955347612986, "job": 11, "event": "compaction_started", "compaction_reason": "LevelL0FilesNum", "files_L0": [15, 13], "files_L6": [11], "score": 2, "input_data_size": 253023917}
+    06:15:47.627 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955347627335, "job": 5, "event": "table_file_deletion", "file_number": 10}
+    06:15:47.641 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955347641502, "job": 5, "event": "table_file_deletion", "file_number": 7}
+    METRIC: EmbeddedStorageFastSyncWorkload.total_batches = 100.000000 count
+    METRIC: EmbeddedStorageFastSyncWorkload.batch_size = 10000.000000 count
+    METRIC: EmbeddedStorageFastSyncWorkload.total_operations = 1000000.000000 count
+    METRIC: EmbeddedStorageFastSyncWorkload.total_sync_time = 2975.651306 ms
+    METRIC: EmbeddedStorageFastSyncWorkload.avg_batch_latency = 20.747813 ms
+    METRIC: EmbeddedStorageFastSyncWorkload.sync_throughput = 336060.881187 ops/sec
+    METRIC: EmbeddedStorageFastSyncWorkload.data_throughput = 96.147789 MB/sec
+
+    Fast Sync Results:
+      Total Sync Time: 2975.65 ms
+      Average Batch Latency: 20.75 ms
+      Sync Throughput: 336061 ops/sec
+      Data Throughput: 96.15 MB/sec
+    06:15:47.658 INFO [ROCKSDB] block-store [db/db_impl.cc:294] Shutdown: canceling all background work
+    06:15:47.659 INFO [ROCKSDB] block-store [db/db_impl.cc:440] Shutdown complete
+    06:15:47.667 INFO [ROCKSDB] block-store [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:47.674 INFO [ROCKSDB] block-store [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:47.675 INFO [ROCKSDB] block-store [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:47.675 INFO [ROCKSDB] block-store [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:47.675 INFO [ROCKSDB] block-store [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/block-store/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:47.675 INFO [ROCKSDB] block-store [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:47.679 INFO [ROCKSDB] block-store [db/db_impl_open.cc:1221] DB pointer 0x7e52f44aed30
+    06:15:47.680 INFO [ROCKSDB] transaction-store [db/db_impl.cc:294] Shutdown: canceling all background work
+    06:15:47.682 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.682561) [db/compaction_job.cc:750] [default] compacted to: base level 6 max bytes base 268435456 files[2 0 0 0 0 0 1] max score 0.00, MB/sec: 3650.3 rd, 0.0 wr, level 6, files in(2, 1) out(1) MB in(120.7, 120.6) out(0.0), read-write-amplify(2.0) write-amplify(0.0) Shutdown in progress: Database shutdown or Column family drop during compaction, records in: 800000, records dropped: 0 output_compression: Snappy
+
+    06:15:47.683 INFO [ROCKSDB] transaction-store (Original Log Time 2025/07/08-08:15:47.682581) EVENT_LOG_v1 {"time_micros": 1751955347682573, "job": 11, "event": "compaction_finished", "compaction_time_micros": 69315, "output_level": 6, "num_output_files": 1, "total_output_size": 9104091, "num_input_records": 28920, "num_output_records": 28920, "num_subcompactions": 1, "output_compression": "Snappy", "num_single_delete_mismatches": 0, "num_single_delete_fallthrough": 0, "lsm_state": [2, 0, 0, 0, 0, 0, 1]}
+    06:15:47.685 INFO [ROCKSDB] transaction-store EVENT_LOG_v1 {"time_micros": 1751955347685651, "job": 12, "event": "table_file_deletion", "file_number": 16}
+    06:15:47.696 INFO [ROCKSDB] transaction-store [db/db_impl.cc:440] Shutdown complete
+    06:15:47.756 INFO [ROCKSDB] transaction-store [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:47.760 INFO [ROCKSDB] transaction-store [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:47.761 INFO [ROCKSDB] transaction-store [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:47.761 INFO [ROCKSDB] transaction-store [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:47.761 INFO [ROCKSDB] transaction-store [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/transaction-store/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:47.761 INFO [ROCKSDB] transaction-store [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:47.764 INFO [ROCKSDB] transaction-store [db/db_impl_open.cc:1221] DB pointer 0x7e52f44d7f60
+    06:15:47.764 INFO [ROCKSDB] account-store [db/db_impl.cc:294] Shutdown: canceling all background work
+    06:15:47.764 INFO [ROCKSDB] account-store [db/db_impl.cc:440] Shutdown complete
+    06:15:47.767 INFO [ROCKSDB] account-store [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:47.772 INFO [ROCKSDB] account-store [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:47.772 INFO [ROCKSDB] account-store [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:47.772 INFO [ROCKSDB] account-store [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:47.772 INFO [ROCKSDB] account-store [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/account-store/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:47.773 INFO [ROCKSDB] account-store [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:47.776 INFO [ROCKSDB] account-store [db/db_impl_open.cc:1221] DB pointer 0x7e52f44fbc90
+    06:15:47.777 INFO [ROCKSDB] contract-store [db/db_impl.cc:294] Shutdown: canceling all background work
+    06:15:47.777 INFO [ROCKSDB] contract-store [db/db_impl.cc:440] Shutdown complete
+    06:15:47.779 INFO [ROCKSDB] contract-store [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:47.784 INFO [ROCKSDB] contract-store [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:47.784 INFO [ROCKSDB] contract-store [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:47.784 INFO [ROCKSDB] contract-store [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:47.784 INFO [ROCKSDB] contract-store [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/contract-store/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:47.784 INFO [ROCKSDB] contract-store [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:47.787 INFO [ROCKSDB] contract-store [db/db_impl_open.cc:1221] DB pointer 0x7e52f45676b0
+    06:15:47.787 INFO [ROCKSDB] dynamic-properties-store [db/db_impl.cc:294] Shutdown: canceling all background work
+    06:15:47.787 INFO [ROCKSDB] dynamic-properties-store [db/db_impl.cc:440] Shutdown complete
+    06:15:47.789 INFO [ROCKSDB] dynamic-properties-store [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:47.794 INFO [ROCKSDB] dynamic-properties-store [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:47.795 INFO [ROCKSDB] dynamic-properties-store [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:47.795 INFO [ROCKSDB] dynamic-properties-store [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:47.795 INFO [ROCKSDB] dynamic-properties-store [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/dynamic-properties-store/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:47.795 INFO [ROCKSDB] dynamic-properties-store [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:47.797 INFO [ROCKSDB] dynamic-properties-store [db/db_impl_open.cc:1221] DB pointer 0x7e52f44ef4c0
+    06:15:47.798 INFO [ROCKSDB] benchmark-db-1751955344247 [db/db_impl.cc:294] Shutdown: canceling all background work
+    06:15:47.798 INFO [ROCKSDB] benchmark-db-1751955344247 [db/db_impl.cc:440] Shutdown complete
+    06:15:47.800 INFO [ROCKSDB] benchmark-db-1751955344247 [db/db_impl_open.cc:223] Creating manifest 1 
+
+    06:15:47.803 INFO [ROCKSDB] benchmark-db-1751955344247 [db/version_set.cc:3248] Recovering from manifest file: MANIFEST-000001
+
+    06:15:47.803 INFO [ROCKSDB] benchmark-db-1751955344247 [db/column_family.cc:259] level0_file_num_compaction_trigger cannot be 0
+    06:15:47.804 INFO [ROCKSDB] benchmark-db-1751955344247 [db/column_family.cc:475] --------------- Options for column family [default]:
+
+    06:15:47.804 INFO [ROCKSDB] benchmark-db-1751955344247 [db/version_set.cc:3529] Recovered from manifest file:data/embedded-tron-workload-1751955344243/benchmark-db-1751955344247/MANIFEST-000001 succeeded,manifest_file_number is 1, next_file_number is 3, last_sequence is 0, log_number is 0,prev_log_number is 0,max_column_family is 0,min_log_number_to_keep is 0
+
+    06:15:47.804 INFO [ROCKSDB] benchmark-db-1751955344247 [db/version_set.cc:3537] Column family [default] (ID 0), log number is 0
+
+    06:15:47.806 INFO [ROCKSDB] benchmark-db-1751955344247 [db/db_impl_open.cc:1221] DB pointer 0x7e52f4469500
+
+Gradle Test Executor 10 finished executing tests.
+
+> Task :framework:test
+Finished generating test XML results (0.001 secs) into: /root/gitfiles/0xNebulaLumina/java-tron/framework/build/test-results/test
+Generating HTML test report...
+Finished generating test html results (0.006 secs) into: /root/gitfiles/0xNebulaLumina/java-tron/framework/build/reports/tests/test
+Watching 1043 directories to track changes
+Watching 1044 directories to track changes
+Watching 1049 directories to track changes
+Watching 1050 directories to track changes
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 8.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+See https://docs.gradle.org/7.6.4/userguide/command_line_interface.html#sec:command_line_warnings
+
+BUILD SUCCESSFUL in 6s
+27 actionable tasks: 2 executed, 25 up-to-date

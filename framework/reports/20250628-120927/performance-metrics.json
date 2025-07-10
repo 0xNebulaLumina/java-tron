@@ -1,0 +1,27 @@
+{
+  "testRun": {
+    "timestamp": "20250628-120927",
+    "implementation": "Grpc",
+    "javaVersion": "1.8.0_452",
+    "availableProcessors": 8,
+    "maxMemoryMB": 1024
+  },
+  "benchmarks": {
+    "GrpcSingleOperationLatency": {
+      "put": {
+        "avgLatencyMs": 1.165272,
+        "minLatencyMs": 0.712436,
+        "maxLatencyMs": 7.082735,
+        "throughputOpsPerSec": 858.17,
+        "iterations": 1000
+      },
+      "get": {
+        "avgLatencyMs": 0.758637,
+        "minLatencyMs": 0.463669,
+        "maxLatencyMs": 10.713625,
+        "throughputOpsPerSec": 1318.15,
+        "iterations": 1000
+      }
+    },
+  }
+}
