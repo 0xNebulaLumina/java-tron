@@ -1,0 +1,34 @@
+[package]
+name = "tron-backend-common"
+version = "0.1.0"
+edition = "2021"
+description = "Common types and utilities for Tron backend modules"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Configuration
+config = "0.13"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Metrics
+prometheus = "0.13"
+
+# gRPC (for error conversion)
+tonic = "0.10" 

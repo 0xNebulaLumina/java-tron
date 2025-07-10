@@ -1,0 +1,31 @@
+[package]
+name = "tron-backend-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core gRPC service implementation for Tron backend"
+
+[dependencies]
+# Common crate
+tron-backend-common = { path = "../common" }
+
+# gRPC and Protocol Buffers
+tonic = "0.10"
+prost = "0.12"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+
+# Logging
+tracing = "0.1"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Async trait
+async-trait = "0.1"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+
+[build-dependencies]
+tonic-build = "0.10" 
