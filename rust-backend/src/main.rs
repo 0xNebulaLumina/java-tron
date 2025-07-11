@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(feature = "execution")]
     {
-        let execution_module = tron_backend_execution::ExecutionModule::new(&config.execution)?;
+        let execution_module = tron_backend_execution::ExecutionModule::new(config.execution.clone());
         module_manager.register("execution", Box::new(execution_module));
     }
 
