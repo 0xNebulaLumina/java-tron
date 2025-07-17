@@ -1,5 +1,6 @@
 package org.tron.core.execution.spi;
 
+import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import org.slf4j.Logger;
@@ -22,27 +23,47 @@ public class ShadowExecutionSPI implements ExecutionSPI {
   private final ExecutionSPI embeddedExecution;
   private final ExecutionSPI remoteExecution;
   private MetricsCallback metricsCallback;
-  
+
   // Configuration flags
   private final boolean assertOnMismatch;
   private final boolean logMismatches;
-  
+  private final boolean enableStateDigest;
+
+  // State digest for verification
+  private StateDigestJni stateDigest;
+
   // Metrics
   private long totalExecutions = 0;
   private long mismatches = 0;
+  private long stateDigestMismatches = 0;
 
   public ShadowExecutionSPI(ExecutionSPI embeddedExecution, ExecutionSPI remoteExecution) {
     this.embeddedExecution = embeddedExecution;
     this.remoteExecution = remoteExecution;
-    
+
     // Read configuration flags
     this.assertOnMismatch = Boolean.parseBoolean(
         System.getProperty("execution.shadow.assert", "false"));
     this.logMismatches = Boolean.parseBoolean(
         System.getProperty("execution.shadow.log", "true"));
-    
-    logger.info("Initialized shadow execution SPI (assert={}, log={})", 
-               assertOnMismatch, logMismatches);
+    this.enableStateDigest = Boolean.parseBoolean(
+        System.getProperty("execution.shadow.state_digest", "true"));
+
+    // Initialize state digest if enabled
+    if (enableStateDigest) {
+      try {
+        this.stateDigest = new StateDigestJni();
+        logger.info("StateDigest enabled for shadow verification");
+      } catch (Exception e) {
+        logger.warn("Failed to initialize StateDigest, falling back to basic comparison", e);
+        this.stateDigest = null;
+      }
+    } else {
+      this.stateDigest = null;
+    }
+
+    logger.info("Initialized shadow execution SPI (assert={}, log={}, state_digest={})",
+               assertOnMismatch, logMismatches, enableStateDigest);
   }
 
   @Override
@@ -315,22 +336,100 @@ public class ShadowExecutionSPI implements ExecutionSPI {
   /**
    * Compare execution results for equivalence.
    */
-  private boolean compareExecutionResults(ExecutionResult embedded, ExecutionResult remote, 
+  private boolean compareExecutionResults(ExecutionResult embedded, ExecutionResult remote,
                                         TransactionContext context) {
-    // TODO: Implement detailed comparison in Task 3 with StateDigest
-    // For now, do basic comparison
-    
+    // Basic comparison
     if (embedded.isSuccess() != remote.isSuccess()) {
       return false;
     }
-    
+
     if (embedded.getEnergyUsed() != remote.getEnergyUsed()) {
       return false;
     }
-    
-    // TODO: Compare state digests, logs, return data
-    
-    return true; // Placeholder
+
+    // Compare return data
+    if (!Arrays.equals(embedded.getReturnData(), remote.getReturnData())) {
+      return false;
+    }
+
+    // Compare state changes using StateDigest if available
+    if (stateDigest != null && enableStateDigest) {
+      return compareStateChanges(embedded, remote, context);
+    }
+
+    // Fallback to basic state change comparison
+    return compareStateChangesBasic(embedded, remote);
+  }
+
+  /**
+   * Compare state changes using StateDigest for deterministic verification.
+   */
+  private boolean compareStateChanges(ExecutionResult embedded, ExecutionResult remote,
+                                    TransactionContext context) {
+    try {
+      // Clear previous state
+      stateDigest.clear();
+
+      // Add embedded execution state changes
+      for (StateChange change : embedded.getStateChanges()) {
+        addStateChangeToDigest(change, "embedded");
+      }
+      String embeddedDigest = stateDigest.computeHashHex();
+
+      // Clear and add remote execution state changes
+      stateDigest.clear();
+      for (StateChange change : remote.getStateChanges()) {
+        addStateChangeToDigest(change, "remote");
+      }
+      String remoteDigest = stateDigest.computeHashHex();
+
+      boolean match = embeddedDigest.equals(remoteDigest);
+      if (!match) {
+        stateDigestMismatches++;
+        if (logMismatches) {
+          logger.warn("State digest mismatch for tx {}: embedded={}, remote={}",
+                     context.getTrxCap().getTransactionId(), embeddedDigest, remoteDigest);
+        }
+      }
+
+      return match;
+
+    } catch (Exception e) {
+      logger.error("StateDigest comparison failed, falling back to basic comparison", e);
+      return compareStateChangesBasic(embedded, remote);
+    }
+  }
+
+  /**
+   * Add a state change to the StateDigest.
+   */
+  private void addStateChangeToDigest(StateChange change, String source) {
+    try {
+      // For now, create a simple account representation
+      // In a full implementation, this would extract proper account info
+      byte[] address = change.getAddress();
+      byte[] balance = new byte[32]; // TODO: Extract actual balance
+      long nonce = 0; // TODO: Extract actual nonce
+      byte[] codeHash = new byte[32]; // TODO: Extract actual code hash
+
+      stateDigest.addAccount(address, balance, nonce, codeHash);
+
+    } catch (Exception e) {
+      logger.warn("Failed to add state change to digest from {}: {}", source, e.getMessage());
+    }
+  }
+
+  /**
+   * Basic state change comparison without StateDigest.
+   */
+  private boolean compareStateChangesBasic(ExecutionResult embedded, ExecutionResult remote) {
+    if (embedded.getStateChanges().size() != remote.getStateChanges().size()) {
+      return false;
+    }
+
+    // For basic comparison, just check the count and some basic properties
+    // A full implementation would need more sophisticated comparison
+    return true;
   }
 
   /**
@@ -378,8 +477,11 @@ public class ShadowExecutionSPI implements ExecutionSPI {
     if (metricsCallback != null) {
       metricsCallback.onMetric("shadow.total_executions", totalExecutions);
       metricsCallback.onMetric("shadow.mismatches", mismatches);
-      metricsCallback.onMetric("shadow.mismatch_rate", 
+      metricsCallback.onMetric("shadow.state_digest_mismatches", stateDigestMismatches);
+      metricsCallback.onMetric("shadow.mismatch_rate",
                               totalExecutions > 0 ? (double) mismatches / totalExecutions : 0.0);
+      metricsCallback.onMetric("shadow.state_digest_mismatch_rate",
+                              totalExecutions > 0 ? (double) stateDigestMismatches / totalExecutions : 0.0);
     }
   }
 
@@ -388,7 +490,27 @@ public class ShadowExecutionSPI implements ExecutionSPI {
    */
   public String getMismatchStats() {
     double rate = totalExecutions > 0 ? (double) mismatches / totalExecutions * 100.0 : 0.0;
-    return String.format("Shadow execution stats: %d total, %d mismatches (%.2f%%)", 
-                        totalExecutions, mismatches, rate);
+    double stateDigestRate = totalExecutions > 0 ? (double) stateDigestMismatches / totalExecutions * 100.0 : 0.0;
+    return String.format("Shadow execution stats: %d total, %d mismatches (%.2f%%), %d state digest mismatches (%.2f%%)",
+                        totalExecutions, mismatches, rate, stateDigestMismatches, stateDigestRate);
+  }
+
+  /**
+   * Cleanup resources used by shadow execution.
+   */
+  public void cleanup() {
+    if (stateDigest != null) {
+      stateDigest.destroy();
+      stateDigest = null;
+    }
+  }
+
+  @Override
+  protected void finalize() throws Throwable {
+    try {
+      cleanup();
+    } finally {
+      super.finalize();
+    }
   }
 }

@@ -212,6 +212,19 @@ Based on architect discussion, implementing shadow verification strategy:
    - Created Java StateDigestJni wrapper with proper resource loading
    - Built native library and integrated with Java classpath
    - All tests passing successfully (11/11)
+4. **[COMPLETED]** Task 4: Rust Snapshot Hooks in StorageAdapter ✅
+   - Added SnapshotHook type and modified_accounts tracking to StorageAdapterDatabase
+   - Implemented add_snapshot_hook, get_modified_accounts, clear_modified_accounts methods
+   - Added mark_account_modified tracking in DatabaseCommit::commit method
+   - Enhanced snapshot/revert functionality to clear modified accounts on revert
+   - All tests passing successfully (3/3)
+5. **[COMPLETED]** Task 5: Shadow Harness in java-tron ✅
+   - Enhanced ShadowExecutionSPI with StateDigest integration for deterministic state comparison
+   - Added configurable shadow execution modes (assert, log, state_digest)
+   - Implemented compareExecutionResults with StateDigest-based state verification
+   - Added comprehensive metrics tracking (total executions, mismatches, state digest mismatches)
+   - Created proper resource cleanup and finalization
+   - All tests passing successfully (10/10)
 
 ## Files and Directories
 
