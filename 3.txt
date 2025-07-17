@@ -1,0 +1,14 @@
+Coverage depth: Is replaying N blocks of mainnet sufficient, or do we need full historical sync?
+yes replaying N blocks of mainnet is sufficient, and we can specify N.
+
+Storage-adapter snapshots: We need a cheap way to capture “modified account list” from both engines—Java side already tracks touched accounts; confirm availability on Rust side.
+I don't know, you can design/decide by your own.
+
+Receipt equality: Should logs & gas used also be part of equivalence oracle?
+yes.
+
+Timeline: Is one iteration of “no mismatch over 1 week canary” sufficient to cut over:
+I think so.
+
+
+now restate the plan
