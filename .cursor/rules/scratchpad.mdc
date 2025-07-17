@@ -199,8 +199,19 @@ Based on architect discussion, implementing shadow verification strategy:
    - Implemented ExecutionSpiFactory with configuration parsing
    - Added EmbeddedExecutionSPI, RemoteExecutionSPI, ShadowExecutionSPI implementations
    - All tests passing successfully
-2. **[IN PROGRESS]** Task 2: Add ExecutionGrpcClient to java-tron
-3. **[NEXT]** Task 3: StateDigest Utility (Rust + JNI wrapper)
+2. **[COMPLETED]** Task 2: Add ExecutionGrpcClient to java-tron ✅
+   - Generated protobuf classes from backend.proto
+   - Created ExecutionGrpcClient following DatabaseGrpcClient pattern
+   - Implemented all gRPC methods (executeTransaction, callContract, etc.)
+   - Updated RemoteExecutionSPI to use ExecutionGrpcClient
+   - All tests passing successfully (11/11)
+3. **[COMPLETED]** Task 3: StateDigest Utility (Rust + JNI wrapper) ✅
+   - Created state-digest-jni Rust crate with JNI bindings
+   - Implemented StateDigest utility with Keccak256 hashing
+   - Added deterministic account state hashing (address‖balance‖nonce‖codeHash‖sorted(storageSlots))
+   - Created Java StateDigestJni wrapper with proper resource loading
+   - Built native library and integrated with Java classpath
+   - All tests passing successfully (11/11)
 
 ## Files and Directories
 
