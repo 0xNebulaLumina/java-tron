@@ -47,8 +47,8 @@ public class ExecutionSpiFactory {
   private static final int DEFAULT_REMOTE_PORT = 50012;
 
   /**
-   * Initialize the ExecutionSPI factory and create the global instance.
-   * This should be called during application startup.
+   * Initialize the ExecutionSPI factory and create the global instance. This should be called
+   * during application startup.
    */
   public static void initialize() {
     if (instance == null) {
