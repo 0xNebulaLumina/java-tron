@@ -17,23 +17,23 @@ public interface ExecutionSPI {
    * Execute a transaction and modify state.
    *
    * @param context Transaction context containing all necessary information
-   * @return CompletableFuture with execution result
+   * @return CompletableFuture with execution result (extends ProgramResult)
    * @throws ContractValidateException if transaction validation fails
    * @throws ContractExeException if transaction execution fails
    * @throws VMIllegalException if VM encounters illegal operation
    */
-  CompletableFuture<ExecutionResult> executeTransaction(TransactionContext context)
+  CompletableFuture<ExecutionProgramResult> executeTransaction(TransactionContext context)
       throws ContractValidateException, ContractExeException, VMIllegalException;
 
   /**
    * Call a contract without modifying state (view call).
    *
    * @param context Transaction context for the call
-   * @return CompletableFuture with call result
+   * @return CompletableFuture with call result (extends ProgramResult)
    * @throws ContractValidateException if call validation fails
    * @throws VMIllegalException if VM encounters illegal operation
    */
-  CompletableFuture<ExecutionResult> callContract(TransactionContext context)
+  CompletableFuture<ExecutionProgramResult> callContract(TransactionContext context)
       throws ContractValidateException, VMIllegalException;
 
   /**

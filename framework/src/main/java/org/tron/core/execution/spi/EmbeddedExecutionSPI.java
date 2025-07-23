@@ -8,10 +8,13 @@ import org.slf4j.LoggerFactory;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.Runtime;
 import org.tron.common.runtime.RuntimeImpl;
+import org.tron.common.runtime.vm.DataWord;
+import org.tron.common.runtime.vm.LogInfo;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
+import org.tron.protos.Protocol.Transaction.Result.contractResult;
 
 /**
  * Embedded execution implementation using the existing Java EVM. This implementation wraps the
@@ -28,7 +31,7 @@ public class EmbeddedExecutionSPI implements ExecutionSPI {
   }
 
   @Override
-  public CompletableFuture<ExecutionResult> executeTransaction(TransactionContext context)
+  public CompletableFuture<ExecutionProgramResult> executeTransaction(TransactionContext context)
       throws ContractValidateException, ContractExeException, VMIllegalException {
 
     return CompletableFuture.supplyAsync(
@@ -48,27 +51,23 @@ public class EmbeddedExecutionSPI implements ExecutionSPI {
             ProgramResult programResult = runtime.getResult();
             String runtimeError = runtime.getRuntimeError();
 
-            // Convert to ExecutionResult
-            return convertProgramResultToExecutionResult(programResult, runtimeError);
+            // Convert to ExecutionProgramResult
+            return ExecutionProgramResult.fromProgramResult(programResult);
 
           } catch (Exception e) {
             logger.error("Embedded execution failed", e);
-            return new ExecutionResult(
-                false, // success
-                new byte[0], // returnData
-                0, // energyUsed
-                0, // energyRefunded
-                new ArrayList<>(), // stateChanges
-                new ArrayList<>(), // logs
-                e.getMessage(), // errorMessage
-                0 // bandwidthUsed
-                );
+            // Create a failed ExecutionProgramResult
+            ExecutionProgramResult result = new ExecutionProgramResult();
+            result.setRuntimeError(e.getMessage());
+            result.setRevert();
+            result.setResultCode(contractResult.UNKNOWN);
+            return result;
           }
         });
   }
 
   @Override
-  public CompletableFuture<ExecutionResult> callContract(TransactionContext context)
+  public CompletableFuture<ExecutionProgramResult> callContract(TransactionContext context)
       throws ContractValidateException, VMIllegalException {
 
     return CompletableFuture.supplyAsync(
@@ -88,21 +87,17 @@ public class EmbeddedExecutionSPI implements ExecutionSPI {
             ProgramResult programResult = runtime.getResult();
             String runtimeError = runtime.getRuntimeError();
 
-            // Convert to ExecutionResult
-            return convertProgramResultToExecutionResult(programResult, runtimeError);
+            // Convert to ExecutionProgramResult
+            return ExecutionProgramResult.fromProgramResult(programResult);
 
           } catch (Exception e) {
             logger.error("Embedded contract call failed", e);
-            return new ExecutionResult(
-                false, // success
-                new byte[0], // returnData
-                0, // energyUsed
-                0, // energyRefunded
-                new ArrayList<>(), // stateChanges
-                new ArrayList<>(), // logs
-                e.getMessage(), // errorMessage
-                0 // bandwidthUsed
-                );
+            // Create a failed ExecutionProgramResult
+            ExecutionProgramResult result = new ExecutionProgramResult();
+            result.setRuntimeError(e.getMessage());
+            result.setRevert();
+            result.setResultCode(contractResult.UNKNOWN);
+            return result;
           }
         });
   }

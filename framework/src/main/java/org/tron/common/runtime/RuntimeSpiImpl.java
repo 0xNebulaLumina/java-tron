@@ -9,6 +9,7 @@ import org.tron.common.runtime.vm.LogInfo;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.execution.spi.ExecutionProgramResult;
 import org.tron.core.execution.spi.ExecutionSPI;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
@@ -25,7 +26,7 @@ public class RuntimeSpiImpl implements Runtime {
 
   private final ExecutionSPI executionSPI;
   private TransactionContext context;
-  private ExecutionSPI.ExecutionResult executionResult;
+  private ExecutionProgramResult executionResult;
   private String runtimeError;
 
   public RuntimeSpiImpl() {
@@ -49,7 +50,7 @@ public class RuntimeSpiImpl implements Runtime {
           "Executing transaction with ExecutionSPI: {}", context.getTrxCap().getTransactionId());
 
       // Use ExecutionSPI for execution
-      CompletableFuture<ExecutionSPI.ExecutionResult> future =
+      CompletableFuture<ExecutionProgramResult> future =
           executionSPI.executeTransaction(context);
       this.executionResult = future.get(); // Synchronous execution
 
@@ -110,7 +111,7 @@ public class RuntimeSpiImpl implements Runtime {
 
     // Set basic execution results
     programResult.spendEnergy(executionResult.getEnergyUsed());
-    programResult.setHReturn(executionResult.getReturnData());
+    programResult.setHReturn(executionResult.getHReturn());
 
     // Set result code based on success/failure
     if (executionResult.isSuccess()) {
@@ -136,12 +137,14 @@ public class RuntimeSpiImpl implements Runtime {
 
   /** Convert ExecutionSPI logs to ProgramResult LogInfo format. */
   private void convertLogsToLogInfo(ProgramResult programResult) {
-    if (executionResult.getLogs() == null || executionResult.getLogs().isEmpty()) {
+    // Convert ExecutionProgramResult to ExecutionResult to access logs
+    ExecutionSPI.ExecutionResult execResult = executionResult.toExecutionResult();
+    if (execResult.getLogs() == null || execResult.getLogs().isEmpty()) {
       return;
     }
 
     List<LogInfo> logInfoList = new ArrayList<>();
-    for (ExecutionSPI.LogEntry logEntry : executionResult.getLogs()) {
+    for (ExecutionSPI.LogEntry logEntry : execResult.getLogs()) {
       // Convert byte[] topics to DataWord topics
       List<DataWord> topics = new ArrayList<>();
       if (logEntry.getTopics() != null) {

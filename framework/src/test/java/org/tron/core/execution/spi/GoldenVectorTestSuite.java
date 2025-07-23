@@ -144,21 +144,21 @@ public class GoldenVectorTestSuite {
     TransactionContext context = createTransactionContext(vector.getTransaction());
 
     // Execute transaction
-    CompletableFuture<ExecutionSPI.ExecutionResult> future;
+    CompletableFuture<ExecutionProgramResult> future;
     if (vector.isContractCall()) {
       future = executionSPI.callContract(context);
     } else {
       future = executionSPI.executeTransaction(context);
     }
 
-    ExecutionSPI.ExecutionResult result = future.get();
+    ExecutionProgramResult result = future.get();
 
     // Verify expected results
     verifyGoldenVectorResult(vector, result);
   }
 
   /** Verify the execution result matches the expected golden vector result. */
-  private void verifyGoldenVectorResult(GoldenVector vector, ExecutionSPI.ExecutionResult result) {
+  private void verifyGoldenVectorResult(GoldenVector vector, ExecutionProgramResult result) {
     GoldenVector.ExpectedResult expected = vector.getExpectedResult();
 
     // Verify success/failure
@@ -185,7 +185,7 @@ public class GoldenVectorTestSuite {
       Assert.assertArrayEquals(
           "Return data mismatch for " + vector.getName(),
           expected.getReturnData(),
-          result.getReturnData());
+          result.getHReturn());
     }
 
     // Verify error message for failed transactions

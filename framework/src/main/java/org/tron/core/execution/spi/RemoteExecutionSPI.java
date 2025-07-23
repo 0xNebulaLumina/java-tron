@@ -11,6 +11,7 @@ import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
+import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import tron.backend.BackendOuterClass.*;
 
 /**
@@ -33,7 +34,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
   }
 
   @Override
-  public CompletableFuture<ExecutionResult> executeTransaction(TransactionContext context)
+  public CompletableFuture<ExecutionProgramResult> executeTransaction(TransactionContext context)
       throws ContractValidateException, ContractExeException, VMIllegalException {
 
     return CompletableFuture.supplyAsync(
@@ -49,27 +50,23 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             // Call grpcClient.executeTransaction()
             ExecuteTransactionResponse response = grpcClient.executeTransaction(request);
 
-            // Convert gRPC response to ExecutionResult
-            return convertExecuteTransactionResponse(response);
+            // Convert gRPC response to ExecutionProgramResult
+            return ExecutionProgramResult.fromExecutionResult(convertExecuteTransactionResponse(response));
 
           } catch (Exception e) {
             logger.error("Remote execution failed", e);
-            return new ExecutionResult(
-                false, // success
-                new byte[0], // returnData
-                0, // energyUsed
-                0, // energyRefunded
-                new ArrayList<>(), // stateChanges
-                new ArrayList<>(), // logs
-                "Remote execution failed: " + e.getMessage(), // errorMessage
-                0 // bandwidthUsed
-                );
+            // Create a failed ExecutionProgramResult
+            ExecutionProgramResult result = new ExecutionProgramResult();
+            result.setRuntimeError("Remote execution failed: " + e.getMessage());
+            result.setRevert();
+            result.setResultCode(contractResult.UNKNOWN);
+            return result;
           }
         });
   }
 
   @Override
-  public CompletableFuture<ExecutionResult> callContract(TransactionContext context)
+  public CompletableFuture<ExecutionProgramResult> callContract(TransactionContext context)
       throws ContractValidateException, VMIllegalException {
 
     return CompletableFuture.supplyAsync(
@@ -81,16 +78,11 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
           // Placeholder implementation
           logger.warn("Remote contract call not yet implemented - returning placeholder result");
-          return new ExecutionResult(
-              false, // success
-              new byte[0], // returnData
-              0, // energyUsed
-              0, // energyRefunded
-              new ArrayList<>(), // stateChanges
-              new ArrayList<>(), // logs
-              "Remote contract call not yet implemented", // errorMessage
-              0 // bandwidthUsed
-              );
+          ExecutionProgramResult result = new ExecutionProgramResult();
+          result.setRuntimeError("Remote contract call not yet implemented");
+          result.setRevert();
+          result.setResultCode(contractResult.UNKNOWN);
+          return result;
         });
   }
 

@@ -220,9 +220,9 @@ public class HistoricalReplayTool {
       TransactionContext context = createTransactionContext(transaction);
 
       // Execute through shadow execution
-      CompletableFuture<ExecutionSPI.ExecutionResult> future =
+      CompletableFuture<ExecutionProgramResult> future =
           shadowExecutionSPI.executeTransaction(context);
-      ExecutionSPI.ExecutionResult result = future.get();
+      ExecutionProgramResult result = future.get();
 
       // Record result
       if (result.isSuccess()) {
