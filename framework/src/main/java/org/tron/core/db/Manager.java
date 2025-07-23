@@ -73,7 +73,10 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.prometheus.MetricKeys;
 import org.tron.common.prometheus.MetricLabels;
 import org.tron.common.prometheus.Metrics;
+import org.tron.common.runtime.Runtime;
 import org.tron.common.runtime.RuntimeImpl;
+import org.tron.common.runtime.RuntimeSpiImpl;
+import org.tron.core.execution.spi.ExecutionSpiFactory;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.JsonUtil;
 import org.tron.common.utils.Pair;
@@ -1499,7 +1502,7 @@ public class Manager {
     }
 
     TransactionTrace trace = new TransactionTrace(trxCap, StoreFactory.getInstance(),
-        new RuntimeImpl());
+        createRuntime());
     trxCap.setTrxTrace(trace);
 
     consumeBandwidth(trxCap, trace);
@@ -2499,6 +2502,54 @@ public class Manager {
     chainBaseManager.shutdown();
     revokingStore.shutdown();
     session.reset();
+  }
+
+  /**
+   * Create a Runtime implementation based on configuration.
+   * This method determines whether to use the traditional RuntimeImpl
+   * or the new ExecutionSPI-aware RuntimeSpiImpl.
+   *
+   * @return Runtime implementation (RuntimeImpl or RuntimeSpiImpl)
+   */
+  private Runtime createRuntime() {
+    try {
+      // Check if ExecutionSPI should be used
+      if (shouldUseExecutionSpi()) {
+        logger.debug("Using ExecutionSPI-aware runtime (RuntimeSpiImpl)");
+        return new RuntimeSpiImpl();
+      } else {
+        logger.debug("Using traditional runtime (RuntimeImpl)");
+        return new RuntimeImpl();
+      }
+    } catch (Exception e) {
+      logger.warn("Failed to create ExecutionSPI runtime, falling back to RuntimeImpl: {}",
+                  e.getMessage());
+      return new RuntimeImpl();
+    }
+  }
+
+  /**
+   * Determine if ExecutionSPI should be used based on configuration.
+   *
+   * @return true if ExecutionSPI should be used, false otherwise
+   */
+  private boolean shouldUseExecutionSpi() {
+    // Check if ExecutionSPI is explicitly enabled
+    if (CommonParameter.getInstance().isExecutionSpiEnabled()) {
+      return true;
+    }
+
+    // Check if ExecutionSPI factory is initialized and mode is not EMBEDDED
+    try {
+      if (ExecutionSpiFactory.getInstance() != null) {
+        String mode = ExecutionSpiFactory.determineExecutionMode().toString();
+        return !"EMBEDDED".equals(mode);
+      }
+    } catch (Exception e) {
+      logger.debug("ExecutionSPI not available: {}", e.getMessage());
+    }
+
+    return false;
   }
 
   private static class ValidateSignTask implements Callable<Boolean> {

@@ -28,6 +28,8 @@ import org.tron.common.parameter.CommonParameter;
 public class ExecutionSpiFactory {
   private static final Logger logger = LoggerFactory.getLogger(ExecutionSpiFactory.class);
 
+  private static volatile ExecutionSPI instance;
+
   // Configuration keys
   private static final String SYSTEM_PROPERTY_KEY = "execution.mode";
   private static final String ENV_VAR_KEY = "EXECUTION_MODE";
@@ -43,6 +45,30 @@ public class ExecutionSpiFactory {
   private static final String REMOTE_PORT_ENV_VAR = "EXECUTION_REMOTE_PORT";
   private static final String REMOTE_PORT_CONFIG = "execution.remote.port";
   private static final int DEFAULT_REMOTE_PORT = 50012;
+
+  /**
+   * Initialize the ExecutionSPI factory and create the global instance.
+   * This should be called during application startup.
+   */
+  public static void initialize() {
+    if (instance == null) {
+      synchronized (ExecutionSpiFactory.class) {
+        if (instance == null) {
+          instance = createExecution();
+          logger.info("ExecutionSPI factory initialized with mode: {}", determineExecutionMode());
+        }
+      }
+    }
+  }
+
+  /**
+   * Get the global ExecutionSPI instance.
+   *
+   * @return Global ExecutionSPI instance, or null if not initialized
+   */
+  public static ExecutionSPI getInstance() {
+    return instance;
+  }
 
   /**
    * Create an ExecutionSPI implementation based on configuration.
