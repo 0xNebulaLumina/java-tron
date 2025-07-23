@@ -1,22 +1,19 @@
 package org.tron.core.execution.spi;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
-import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * JNI wrapper for the Rust StateDigest utility.
- * 
- * This class provides Java bindings for the StateDigest functionality
- * implemented in Rust. It's used for shadow execution verification
- * to create deterministic hashes of modified accounts.
+ *
+ * <p>This class provides Java bindings for the StateDigest functionality implemented in Rust. It's
+ * used for shadow execution verification to create deterministic hashes of modified accounts.
  */
 public class StateDigestJni {
   private static final Logger logger = LoggerFactory.getLogger(StateDigestJni.class);
@@ -34,9 +31,7 @@ public class StateDigestJni {
     loadNativeLibrary();
   }
 
-  /**
-   * Load the native library.
-   */
+  /** Load the native library. */
   private static void loadNativeLibrary() {
     synchronized (loadLock) {
       if (libraryLoaded) {
@@ -65,9 +60,7 @@ public class StateDigestJni {
     }
   }
 
-  /**
-   * Load the native library from JAR resources.
-   */
+  /** Load the native library from JAR resources. */
   private static void loadLibraryFromResources() throws IOException {
     String osName = System.getProperty("os.name").toLowerCase();
     String osArch = System.getProperty("os.arch").toLowerCase();
@@ -101,7 +94,8 @@ public class StateDigestJni {
       libraryFileName = "lib" + LIBRARY_NAME + ".so";
     }
 
-    String resourcePath = "/native/" + normalizedOsName + "/" + normalizedArch + "/" + libraryFileName;
+    String resourcePath =
+        "/native/" + normalizedOsName + "/" + normalizedArch + "/" + libraryFileName;
 
     try (InputStream inputStream = StateDigestJni.class.getResourceAsStream(resourcePath)) {
       if (inputStream == null) {
@@ -109,8 +103,8 @@ public class StateDigestJni {
       }
 
       // Create temporary file
-      Path tempFile = Files.createTempFile("state_digest_jni", 
-          osName.contains("windows") ? ".dll" : ".so");
+      Path tempFile =
+          Files.createTempFile("state_digest_jni", osName.contains("windows") ? ".dll" : ".so");
       tempFile.toFile().deleteOnExit();
 
       // Copy library to temporary file
@@ -121,9 +115,7 @@ public class StateDigestJni {
     }
   }
 
-  /**
-   * Create a new StateDigest instance.
-   */
+  /** Create a new StateDigest instance. */
   public StateDigestJni() {
     this.nativeHandle = createStateDigest();
     if (this.nativeHandle == 0) {
@@ -133,7 +125,7 @@ public class StateDigestJni {
 
   /**
    * Add an account to the state digest.
-   * 
+   *
    * @param address Account address (20 bytes)
    * @param balance Account balance (32 bytes, big-endian)
    * @param nonce Account nonce
@@ -141,8 +133,13 @@ public class StateDigestJni {
    * @param storageKeys List of storage keys
    * @param storageValues List of storage values (must match keys length)
    */
-  public void addAccount(byte[] address, byte[] balance, long nonce, byte[] codeHash,
-                        List<byte[]> storageKeys, List<byte[]> storageValues) {
+  public void addAccount(
+      byte[] address,
+      byte[] balance,
+      long nonce,
+      byte[] codeHash,
+      List<byte[]> storageKeys,
+      List<byte[]> storageValues) {
     if (nativeHandle == 0) {
       throw new IllegalStateException("StateDigest instance has been destroyed");
     }
@@ -151,21 +148,23 @@ public class StateDigestJni {
       throw new IllegalArgumentException("Address, balance, and codeHash cannot be null");
     }
 
-    if (storageKeys != null && storageValues != null && 
-        storageKeys.size() != storageValues.size()) {
+    if (storageKeys != null
+        && storageValues != null
+        && storageKeys.size() != storageValues.size()) {
       throw new IllegalArgumentException("Storage keys and values must have the same length");
     }
 
     // Convert lists to arrays for JNI
     byte[][] keyArray = storageKeys != null ? storageKeys.toArray(new byte[0][]) : new byte[0][];
-    byte[][] valueArray = storageValues != null ? storageValues.toArray(new byte[0][]) : new byte[0][];
+    byte[][] valueArray =
+        storageValues != null ? storageValues.toArray(new byte[0][]) : new byte[0][];
 
     addAccount(nativeHandle, address, balance, nonce, codeHash, keyArray, valueArray);
   }
 
   /**
    * Add an account with empty storage.
-   * 
+   *
    * @param address Account address (20 bytes)
    * @param balance Account balance (32 bytes, big-endian)
    * @param nonce Account nonce
@@ -177,7 +176,7 @@ public class StateDigestJni {
 
   /**
    * Compute the deterministic hash of all modified accounts.
-   * 
+   *
    * @return 32-byte Keccak256 hash
    */
   public byte[] computeHash() {
@@ -189,7 +188,7 @@ public class StateDigestJni {
 
   /**
    * Compute the deterministic hash as hex string.
-   * 
+   *
    * @return 64-character hex string
    */
   public String computeHashHex() {
@@ -201,7 +200,7 @@ public class StateDigestJni {
 
   /**
    * Get the number of accounts in the digest.
-   * 
+   *
    * @return Number of accounts
    */
   public long getAccountCount() {
@@ -211,9 +210,7 @@ public class StateDigestJni {
     return getAccountCount(nativeHandle);
   }
 
-  /**
-   * Clear all accounts from the digest.
-   */
+  /** Clear all accounts from the digest. */
   public void clear() {
     if (nativeHandle == 0) {
       throw new IllegalStateException("StateDigest instance has been destroyed");
@@ -223,7 +220,7 @@ public class StateDigestJni {
 
   /**
    * Check if the StateDigest instance is valid.
-   * 
+   *
    * @return true if valid, false if destroyed
    */
   public boolean isValid() {
@@ -231,9 +228,8 @@ public class StateDigestJni {
   }
 
   /**
-   * Destroy the native StateDigest instance and free memory.
-   * This method is automatically called by the finalizer, but can be
-   * called explicitly for immediate cleanup.
+   * Destroy the native StateDigest instance and free memory. This method is automatically called by
+   * the finalizer, but can be called explicitly for immediate cleanup.
    */
   public void destroy() {
     if (nativeHandle != 0) {
@@ -255,21 +251,21 @@ public class StateDigestJni {
 
   /**
    * Create a new native StateDigest instance.
-   * 
+   *
    * @return Handle to the native instance
    */
   private static native long createStateDigest();
 
   /**
    * Destroy a native StateDigest instance.
-   * 
+   *
    * @param handle Handle to the native instance
    */
   private static native void destroyStateDigest(long handle);
 
   /**
    * Add an account to the native StateDigest.
-   * 
+   *
    * @param handle Handle to the native instance
    * @param address Account address
    * @param balance Account balance
@@ -278,13 +274,18 @@ public class StateDigestJni {
    * @param storageKeys Storage keys array
    * @param storageValues Storage values array
    */
-  private static native void addAccount(long handle, byte[] address, byte[] balance, 
-                                       long nonce, byte[] codeHash, 
-                                       byte[][] storageKeys, byte[][] storageValues);
+  private static native void addAccount(
+      long handle,
+      byte[] address,
+      byte[] balance,
+      long nonce,
+      byte[] codeHash,
+      byte[][] storageKeys,
+      byte[][] storageValues);
 
   /**
    * Compute hash from native StateDigest.
-   * 
+   *
    * @param handle Handle to the native instance
    * @return Hash bytes
    */
@@ -292,7 +293,7 @@ public class StateDigestJni {
 
   /**
    * Compute hash hex from native StateDigest.
-   * 
+   *
    * @param handle Handle to the native instance
    * @return Hash hex string
    */
@@ -300,7 +301,7 @@ public class StateDigestJni {
 
   /**
    * Get account count from native StateDigest.
-   * 
+   *
    * @param handle Handle to the native instance
    * @return Number of accounts
    */
@@ -308,7 +309,7 @@ public class StateDigestJni {
 
   /**
    * Clear accounts from native StateDigest.
-   * 
+   *
    * @param handle Handle to the native instance
    */
   private static native void clear(long handle);

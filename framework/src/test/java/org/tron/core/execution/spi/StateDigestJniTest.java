@@ -8,9 +8,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * Test class for StateDigestJni.
- * Note: These tests require the native library to be built and available.
- * If the native library is not available, tests will be skipped.
+ * Test class for StateDigestJni. Note: These tests require the native library to be built and
+ * available. If the native library is not available, tests will be skipped.
  */
 public class StateDigestJniTest {
 
@@ -82,14 +81,8 @@ public class StateDigestJniTest {
     codeHash[31] = 42;
 
     // Storage slots
-    List<byte[]> keys = Arrays.asList(
-        new byte[]{1, 2, 3},
-        new byte[]{4, 5, 6}
-    );
-    List<byte[]> values = Arrays.asList(
-        new byte[]{7, 8, 9},
-        new byte[]{10, 11, 12}
-    );
+    List<byte[]> keys = Arrays.asList(new byte[] {1, 2, 3}, new byte[] {4, 5, 6});
+    List<byte[]> values = Arrays.asList(new byte[] {7, 8, 9}, new byte[] {10, 11, 12});
 
     stateDigest.addAccount(address, balance, 5, codeHash, keys, values);
 
@@ -259,8 +252,8 @@ public class StateDigestJniTest {
     byte[] balance = new byte[32];
     byte[] codeHash = new byte[32];
 
-    List<byte[]> keys = Arrays.asList(new byte[]{1}, new byte[]{2});
-    List<byte[]> values = Arrays.asList(new byte[]{3}); // Mismatched length
+    List<byte[]> keys = Arrays.asList(new byte[] {1}, new byte[] {2});
+    List<byte[]> values = Arrays.asList(new byte[] {3}); // Mismatched length
 
     try {
       stateDigest.addAccount(address, balance, 0, codeHash, keys, values);

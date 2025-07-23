@@ -8,14 +8,14 @@ import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
 
 /**
- * Execution Service Provider Interface (SPI) for abstracting EVM execution operations.
- * This interface supports embedded Java EVM, remote Rust execution, and shadow verification.
+ * Execution Service Provider Interface (SPI) for abstracting EVM execution operations. This
+ * interface supports embedded Java EVM, remote Rust execution, and shadow verification.
  */
 public interface ExecutionSPI {
 
   /**
    * Execute a transaction and modify state.
-   * 
+   *
    * @param context Transaction context containing all necessary information
    * @return CompletableFuture with execution result
    * @throws ContractValidateException if transaction validation fails
@@ -27,7 +27,7 @@ public interface ExecutionSPI {
 
   /**
    * Call a contract without modifying state (view call).
-   * 
+   *
    * @param context Transaction context for the call
    * @return CompletableFuture with call result
    * @throws ContractValidateException if call validation fails
@@ -38,7 +38,7 @@ public interface ExecutionSPI {
 
   /**
    * Estimate energy required for transaction execution.
-   * 
+   *
    * @param context Transaction context for estimation
    * @return CompletableFuture with energy estimate
    * @throws ContractValidateException if transaction validation fails
@@ -48,7 +48,7 @@ public interface ExecutionSPI {
 
   /**
    * Get contract code at address.
-   * 
+   *
    * @param address Contract address
    * @param snapshotId Optional snapshot ID for historical queries
    * @return CompletableFuture with contract code
@@ -57,7 +57,7 @@ public interface ExecutionSPI {
 
   /**
    * Get storage value at address and key.
-   * 
+   *
    * @param address Contract address
    * @param key Storage key
    * @param snapshotId Optional snapshot ID for historical queries
@@ -67,7 +67,7 @@ public interface ExecutionSPI {
 
   /**
    * Get account nonce.
-   * 
+   *
    * @param address Account address
    * @param snapshotId Optional snapshot ID for historical queries
    * @return CompletableFuture with account nonce
@@ -76,7 +76,7 @@ public interface ExecutionSPI {
 
   /**
    * Get account balance.
-   * 
+   *
    * @param address Account address
    * @param snapshotId Optional snapshot ID for historical queries
    * @return CompletableFuture with account balance
@@ -85,14 +85,14 @@ public interface ExecutionSPI {
 
   /**
    * Create EVM snapshot for state rollback.
-   * 
+   *
    * @return CompletableFuture with snapshot ID
    */
   CompletableFuture<String> createSnapshot();
 
   /**
    * Revert to EVM snapshot.
-   * 
+   *
    * @param snapshotId Snapshot ID to revert to
    * @return CompletableFuture indicating success
    */
@@ -100,21 +100,19 @@ public interface ExecutionSPI {
 
   /**
    * Get execution health status.
-   * 
+   *
    * @return CompletableFuture with health status
    */
   CompletableFuture<HealthStatus> healthCheck();
 
   /**
    * Register metrics callback for monitoring.
-   * 
+   *
    * @param callback Metrics callback
    */
   void registerMetricsCallback(MetricsCallback callback);
 
-  /**
-   * Execution result containing all execution information.
-   */
+  /** Execution result containing all execution information. */
   class ExecutionResult {
     private final boolean success;
     private final byte[] returnData;
@@ -125,9 +123,15 @@ public interface ExecutionSPI {
     private final String errorMessage;
     private final long bandwidthUsed;
 
-    public ExecutionResult(boolean success, byte[] returnData, long energyUsed, 
-                          long energyRefunded, List<StateChange> stateChanges, 
-                          List<LogEntry> logs, String errorMessage, long bandwidthUsed) {
+    public ExecutionResult(
+        boolean success,
+        byte[] returnData,
+        long energyUsed,
+        long energyRefunded,
+        List<StateChange> stateChanges,
+        List<LogEntry> logs,
+        String errorMessage,
+        long bandwidthUsed) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -139,19 +143,40 @@ public interface ExecutionSPI {
     }
 
     // Getters
-    public boolean isSuccess() { return success; }
-    public byte[] getReturnData() { return returnData; }
-    public long getEnergyUsed() { return energyUsed; }
-    public long getEnergyRefunded() { return energyRefunded; }
-    public List<StateChange> getStateChanges() { return stateChanges; }
-    public List<LogEntry> getLogs() { return logs; }
-    public String getErrorMessage() { return errorMessage; }
-    public long getBandwidthUsed() { return bandwidthUsed; }
+    public boolean isSuccess() {
+      return success;
+    }
+
+    public byte[] getReturnData() {
+      return returnData;
+    }
+
+    public long getEnergyUsed() {
+      return energyUsed;
+    }
+
+    public long getEnergyRefunded() {
+      return energyRefunded;
+    }
+
+    public List<StateChange> getStateChanges() {
+      return stateChanges;
+    }
+
+    public List<LogEntry> getLogs() {
+      return logs;
+    }
+
+    public String getErrorMessage() {
+      return errorMessage;
+    }
+
+    public long getBandwidthUsed() {
+      return bandwidthUsed;
+    }
   }
 
-  /**
-   * State change information.
-   */
+  /** State change information. */
   class StateChange {
     private final byte[] address;
     private final byte[] key;
@@ -166,15 +191,24 @@ public interface ExecutionSPI {
     }
 
     // Getters
-    public byte[] getAddress() { return address; }
-    public byte[] getKey() { return key; }
-    public byte[] getOldValue() { return oldValue; }
-    public byte[] getNewValue() { return newValue; }
+    public byte[] getAddress() {
+      return address;
+    }
+
+    public byte[] getKey() {
+      return key;
+    }
+
+    public byte[] getOldValue() {
+      return oldValue;
+    }
+
+    public byte[] getNewValue() {
+      return newValue;
+    }
   }
 
-  /**
-   * Log entry information.
-   */
+  /** Log entry information. */
   class LogEntry {
     private final byte[] address;
     private final List<byte[]> topics;
@@ -187,14 +221,20 @@ public interface ExecutionSPI {
     }
 
     // Getters
-    public byte[] getAddress() { return address; }
-    public List<byte[]> getTopics() { return topics; }
-    public byte[] getData() { return data; }
+    public byte[] getAddress() {
+      return address;
+    }
+
+    public List<byte[]> getTopics() {
+      return topics;
+    }
+
+    public byte[] getData() {
+      return data;
+    }
   }
 
-  /**
-   * Health status information.
-   */
+  /** Health status information. */
   class HealthStatus {
     private final boolean healthy;
     private final String message;
@@ -205,13 +245,16 @@ public interface ExecutionSPI {
     }
 
     // Getters
-    public boolean isHealthy() { return healthy; }
-    public String getMessage() { return message; }
+    public boolean isHealthy() {
+      return healthy;
+    }
+
+    public String getMessage() {
+      return message;
+    }
   }
 
-  /**
-   * Metrics callback interface.
-   */
+  /** Metrics callback interface. */
   interface MetricsCallback {
     void onMetric(String name, double value);
   }

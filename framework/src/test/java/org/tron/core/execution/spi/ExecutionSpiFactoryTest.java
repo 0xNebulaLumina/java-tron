@@ -4,9 +4,7 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
-/**
- * Test class for ExecutionSpiFactory.
- */
+/** Test class for ExecutionSpiFactory. */
 public class ExecutionSpiFactoryTest {
 
   @After
