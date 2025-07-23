@@ -21,6 +21,7 @@ import org.tron.core.services.interfaceOnPBFT.http.PBFT.HttpApiOnPBFTService;
 import org.tron.core.services.interfaceOnSolidity.RpcApiServiceOnSolidity;
 import org.tron.core.services.interfaceOnSolidity.http.solidity.HttpApiOnSolidityService;
 import org.tron.core.storage.spi.StorageBackendFactoryImpl;
+import org.tron.core.execution.spi.ExecutionSpiFactory;
 
 @Slf4j(topic = "app")
 @Configuration
@@ -39,6 +40,17 @@ public class DefaultConfig {
     } catch (Exception e) {
       logger.warn(
           "Failed to initialize StorageBackendFactory during static loading, "
+              + "will retry in @PostConstruct",
+          e);
+    }
+
+    // Initialize ExecutionSPI factory
+    try {
+      ExecutionSpiFactory.initialize();
+      logger.info("ExecutionSPI factory initialized during static class loading");
+    } catch (Exception e) {
+      logger.warn(
+          "Failed to initialize ExecutionSPI during static loading, "
               + "will retry in @PostConstruct",
           e);
     }
@@ -66,6 +78,25 @@ public class DefaultConfig {
       }
     } catch (Exception e) {
       logger.error("Failed to initialize StorageBackendFactory in @PostConstruct", e);
+    }
+  }
+
+  /**
+   * Initialize ExecutionSPI factory early in Spring lifecycle. This is a backup initialization in
+   * case the static block failed.
+   */
+  @PostConstruct
+  public void initializeExecutionSpi() {
+    try {
+      // Check if already initialized
+      if (ExecutionSpiFactory.getInstance() == null) {
+        ExecutionSpiFactory.initialize();
+        logger.info("ExecutionSPI factory initialized in @PostConstruct");
+      } else {
+        logger.debug("ExecutionSPI factory already initialized");
+      }
+    } catch (Exception e) {
+      logger.error("Failed to initialize ExecutionSPI in @PostConstruct", e);
     }
   }
 
