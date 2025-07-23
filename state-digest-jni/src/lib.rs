@@ -89,15 +89,33 @@ impl StateDigest {
     }
 
     /// Serialize the state digest to JSON
+    /// Converts byte array keys to hex strings for JSON compatibility
     pub fn to_json(&self) -> Result<String, StateDigestError> {
-        serde_json::to_string(&self.accounts)
+        // Convert BTreeMap<Vec<u8>, AccountState> to BTreeMap<String, AccountState>
+        let string_keyed_accounts: BTreeMap<String, &AccountState> = self.accounts
+            .iter()
+            .map(|(key, value)| (hex::encode(key), value))
+            .collect();
+
+        serde_json::to_string(&string_keyed_accounts)
             .map_err(|e| StateDigestError::SerializationError(e.to_string()))
     }
 
     /// Deserialize the state digest from JSON
+    /// Converts hex string keys back to byte arrays
     pub fn from_json(json: &str) -> Result<Self, StateDigestError> {
-        let accounts: BTreeMap<Vec<u8>, AccountState> = serde_json::from_str(json)
+        // First deserialize to BTreeMap<String, AccountState>
+        let string_keyed_accounts: BTreeMap<String, AccountState> = serde_json::from_str(json)
             .map_err(|e| StateDigestError::SerializationError(e.to_string()))?;
+
+        // Convert back to BTreeMap<Vec<u8>, AccountState>
+        let mut accounts = BTreeMap::new();
+        for (hex_key, account) in string_keyed_accounts {
+            let key = hex::decode(&hex_key)
+                .map_err(|e| StateDigestError::SerializationError(format!("Invalid hex key '{}': {}", hex_key, e)))?;
+            accounts.insert(key, account);
+        }
+
         Ok(Self { accounts })
     }
 
@@ -356,6 +374,10 @@ mod tests {
         digest.add_account(account);
 
         let json = digest.to_json().unwrap();
+
+        // Verify JSON contains hex-encoded address key
+        assert!(json.contains("\"010203\""), "JSON should contain hex-encoded address key");
+
         let digest2 = StateDigest::from_json(&json).unwrap();
 
         assert_eq!(digest.account_count(), digest2.account_count());
