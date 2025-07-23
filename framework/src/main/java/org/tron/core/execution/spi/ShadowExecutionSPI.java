@@ -69,7 +69,7 @@ public class ShadowExecutionSPI implements ExecutionSPI {
   }
 
   @Override
-  public CompletableFuture<ExecutionResult> executeTransaction(TransactionContext context)
+  public CompletableFuture<ExecutionProgramResult> executeTransaction(TransactionContext context)
       throws ContractValidateException, ContractExeException, VMIllegalException {
 
     return CompletableFuture.supplyAsync(
@@ -81,7 +81,7 @@ public class ShadowExecutionSPI implements ExecutionSPI {
             totalExecutions++;
 
             // Execute on both engines concurrently
-            CompletableFuture<ExecutionResult> embeddedFuture =
+            CompletableFuture<ExecutionProgramResult> embeddedFuture =
                 CompletableFuture.supplyAsync(
                     () -> {
                       try {
@@ -90,7 +90,7 @@ public class ShadowExecutionSPI implements ExecutionSPI {
                         throw new RuntimeException(e);
                       }
                     });
-            CompletableFuture<ExecutionResult> remoteFuture =
+            CompletableFuture<ExecutionProgramResult> remoteFuture =
                 CompletableFuture.supplyAsync(
                     () -> {
                       try {
@@ -101,8 +101,8 @@ public class ShadowExecutionSPI implements ExecutionSPI {
                     });
 
             // Wait for both results
-            ExecutionResult embeddedResult = embeddedFuture.join();
-            ExecutionResult remoteResult = remoteFuture.join();
+            ExecutionProgramResult embeddedResult = embeddedFuture.join();
+            ExecutionProgramResult remoteResult = remoteFuture.join();
 
             // Compare results
             boolean resultsMatch = compareExecutionResults(embeddedResult, remoteResult, context);
@@ -132,7 +132,7 @@ public class ShadowExecutionSPI implements ExecutionSPI {
   }
 
   @Override
-  public CompletableFuture<ExecutionResult> callContract(TransactionContext context)
+  public CompletableFuture<ExecutionProgramResult> callContract(TransactionContext context)
       throws ContractValidateException, VMIllegalException {
 
     return CompletableFuture.supplyAsync(
@@ -141,7 +141,7 @@ public class ShadowExecutionSPI implements ExecutionSPI {
             logger.debug("Shadow calling contract: {}", context.getTrxCap().getTransactionId());
 
             // Execute on both engines concurrently
-            CompletableFuture<ExecutionResult> embeddedFuture =
+            CompletableFuture<ExecutionProgramResult> embeddedFuture =
                 CompletableFuture.supplyAsync(
                     () -> {
                       try {
@@ -150,7 +150,7 @@ public class ShadowExecutionSPI implements ExecutionSPI {
                         throw new RuntimeException(e);
                       }
                     });
-            CompletableFuture<ExecutionResult> remoteFuture =
+            CompletableFuture<ExecutionProgramResult> remoteFuture =
                 CompletableFuture.supplyAsync(
                     () -> {
                       try {
@@ -161,8 +161,8 @@ public class ShadowExecutionSPI implements ExecutionSPI {
                     });
 
             // Wait for both results
-            ExecutionResult embeddedResult = embeddedFuture.join();
-            ExecutionResult remoteResult = remoteFuture.join();
+            ExecutionProgramResult embeddedResult = embeddedFuture.join();
+            ExecutionProgramResult remoteResult = remoteFuture.join();
 
             // Compare results
             boolean resultsMatch = compareExecutionResults(embeddedResult, remoteResult, context);
@@ -353,7 +353,7 @@ public class ShadowExecutionSPI implements ExecutionSPI {
 
   /** Compare execution results for equivalence. */
   private boolean compareExecutionResults(
-      ExecutionResult embedded, ExecutionResult remote, TransactionContext context) {
+      ExecutionProgramResult embedded, ExecutionProgramResult remote, TransactionContext context) {
     // Basic comparison
     if (embedded.isSuccess() != remote.isSuccess()) {
       return false;
@@ -363,8 +363,8 @@ public class ShadowExecutionSPI implements ExecutionSPI {
       return false;
     }
 
-    // Compare return data
-    if (!Arrays.equals(embedded.getReturnData(), remote.getReturnData())) {
+    // Compare return data (using ProgramResult's getHReturn method)
+    if (!Arrays.equals(embedded.getHReturn(), remote.getHReturn())) {
       return false;
     }
 
@@ -379,7 +379,7 @@ public class ShadowExecutionSPI implements ExecutionSPI {
 
   /** Compare state changes using StateDigest for deterministic verification. */
   private boolean compareStateChanges(
-      ExecutionResult embedded, ExecutionResult remote, TransactionContext context) {
+      ExecutionProgramResult embedded, ExecutionProgramResult remote, TransactionContext context) {
     try {
       // Clear previous state
       stateDigest.clear();
@@ -435,7 +435,7 @@ public class ShadowExecutionSPI implements ExecutionSPI {
   }
 
   /** Basic state change comparison without StateDigest. */
-  private boolean compareStateChangesBasic(ExecutionResult embedded, ExecutionResult remote) {
+  private boolean compareStateChangesBasic(ExecutionProgramResult embedded, ExecutionProgramResult remote) {
     if (embedded.getStateChanges().size() != remote.getStateChanges().size()) {
       return false;
     }
@@ -448,8 +448,8 @@ public class ShadowExecutionSPI implements ExecutionSPI {
   /** Handle execution result mismatch. */
   private void handleMismatch(
       String operation,
-      ExecutionResult embedded,
-      ExecutionResult remote,
+      ExecutionProgramResult embedded,
+      ExecutionProgramResult remote,
       TransactionContext context) {
     String txId = context.getTrxCap().getTransactionId().toString();
 

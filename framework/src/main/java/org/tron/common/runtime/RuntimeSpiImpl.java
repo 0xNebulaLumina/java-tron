@@ -1,14 +1,11 @@
 package org.tron.common.runtime;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import lombok.extern.slf4j.Slf4j;
-import org.tron.common.runtime.vm.DataWord;
-import org.tron.common.runtime.vm.LogInfo;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.execution.spi.ExecutionProgramResult;
 import org.tron.core.execution.spi.ExecutionSPI;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
@@ -17,15 +14,15 @@ import org.tron.protos.Protocol.Transaction.Result.contractResult;
  * ExecutionSPI-aware Runtime implementation that maintains the existing Runtime interface while
  * delegating execution to the configured ExecutionSPI implementation (EMBEDDED, REMOTE, or SHADOW).
  *
- * <p>This class provides backward compatibility by converting between ExecutionSPI.ExecutionResult
- * and the existing ProgramResult format.
+ * <p>This class provides backward compatibility by using ExecutionProgramResult, which extends
+ * ProgramResult, eliminating the need for type conversion.
  */
 @Slf4j(topic = "VM")
 public class RuntimeSpiImpl implements Runtime {
 
   private final ExecutionSPI executionSPI;
   private TransactionContext context;
-  private ExecutionSPI.ExecutionResult executionResult;
+  private ExecutionProgramResult executionResult;
   private String runtimeError;
 
   public RuntimeSpiImpl() {
@@ -49,7 +46,7 @@ public class RuntimeSpiImpl implements Runtime {
           "Executing transaction with ExecutionSPI: {}", context.getTrxCap().getTransactionId());
 
       // Use ExecutionSPI for execution
-      CompletableFuture<ExecutionSPI.ExecutionResult> future =
+      CompletableFuture<ExecutionProgramResult> future =
           executionSPI.executeTransaction(context);
       this.executionResult = future.get(); // Synchronous execution
 
@@ -58,8 +55,8 @@ public class RuntimeSpiImpl implements Runtime {
         this.runtimeError = executionResult.getErrorMessage();
       }
 
-      // Convert ExecutionResult back to ProgramResult for compatibility
-      convertExecutionResultToProgramResult();
+      // Since ExecutionProgramResult extends ProgramResult, we can use it directly
+      context.setProgramResult(executionResult);
 
       logger.debug(
           "ExecutionSPI execution completed. Success: {}, Energy used: {}",
@@ -72,8 +69,9 @@ public class RuntimeSpiImpl implements Runtime {
           context.getTrxCap().getTransactionId(),
           e);
 
-      // Create a failed ProgramResult for compatibility
-      createFailedProgramResult(e.getMessage());
+      // Create a failed ExecutionProgramResult for compatibility
+      this.executionResult = createFailedExecutionProgramResult(e.getMessage());
+      context.setProgramResult(executionResult);
       this.runtimeError = e.getMessage();
 
       throw new ContractExeException("Execution failed: " + e.getMessage());
@@ -93,90 +91,19 @@ public class RuntimeSpiImpl implements Runtime {
     return runtimeError;
   }
 
-  /**
-   * Convert ExecutionSPI.ExecutionResult to ProgramResult for backward compatibility. This method
-   * populates the TransactionContext's ProgramResult with data from ExecutionResult.
-   */
-  private void convertExecutionResultToProgramResult() {
-    if (executionResult == null || context == null) {
-      return;
-    }
 
-    ProgramResult programResult = context.getProgramResult();
-    if (programResult == null) {
-      programResult = new ProgramResult();
-      context.setProgramResult(programResult);
-    }
 
-    // Set basic execution results
-    programResult.spendEnergy(executionResult.getEnergyUsed());
-    programResult.setHReturn(executionResult.getReturnData());
-
-    // Set result code based on success/failure
-    if (executionResult.isSuccess()) {
-      programResult.setResultCode(contractResult.SUCCESS);
-    } else {
-      programResult.setResultCode(contractResult.REVERT);
-      programResult.setRevert();
-      programResult.setRuntimeError(executionResult.getErrorMessage());
-    }
-
-    // Convert logs from ExecutionResult to LogInfo
-    convertLogsToLogInfo(programResult);
-
-    // Handle state changes (if needed for compatibility)
-    // Note: State changes are typically handled by the storage layer
-    // but we may need to track them for certain compatibility scenarios
-
-    logger.debug(
-        "Converted ExecutionResult to ProgramResult. Energy: {}, Success: {}",
-        executionResult.getEnergyUsed(),
-        executionResult.isSuccess());
-  }
-
-  /** Convert ExecutionSPI logs to ProgramResult LogInfo format. */
-  private void convertLogsToLogInfo(ProgramResult programResult) {
-    if (executionResult.getLogs() == null || executionResult.getLogs().isEmpty()) {
-      return;
-    }
-
-    List<LogInfo> logInfoList = new ArrayList<>();
-    for (ExecutionSPI.LogEntry logEntry : executionResult.getLogs()) {
-      // Convert byte[] topics to DataWord topics
-      List<DataWord> topics = new ArrayList<>();
-      if (logEntry.getTopics() != null) {
-        for (byte[] topic : logEntry.getTopics()) {
-          topics.add(new DataWord(topic));
-        }
-      }
-
-      // Convert ExecutionSPI.LogEntry to LogInfo
-      LogInfo logInfo = new LogInfo(logEntry.getAddress(), topics, logEntry.getData());
-      logInfoList.add(logInfo);
-    }
-
-    programResult.addLogInfos(logInfoList);
-    logger.debug("Converted {} logs from ExecutionResult to LogInfo", logInfoList.size());
-  }
-
-  /** Create a failed ProgramResult when ExecutionSPI execution fails. */
-  private void createFailedProgramResult(String errorMessage) {
-    if (context == null) {
-      return;
-    }
-
-    ProgramResult programResult = context.getProgramResult();
-    if (programResult == null) {
-      programResult = new ProgramResult();
-      context.setProgramResult(programResult);
-    }
+  /** Create a failed ExecutionProgramResult when ExecutionSPI execution fails. */
+  private ExecutionProgramResult createFailedExecutionProgramResult(String errorMessage) {
+    ExecutionProgramResult result = new ExecutionProgramResult();
 
     // Set failure state
-    programResult.setResultCode(contractResult.REVERT);
-    programResult.setRevert();
-    programResult.setRuntimeError(errorMessage);
-    programResult.setException(new RuntimeException(errorMessage));
+    result.setResultCode(contractResult.REVERT);
+    result.setRevert();
+    result.setRuntimeError(errorMessage);
+    result.setException(new RuntimeException(errorMessage));
 
-    logger.debug("Created failed ProgramResult with error: {}", errorMessage);
+    logger.debug("Created failed ExecutionProgramResult with error: {}", errorMessage);
+    return result;
   }
 }

@@ -65,14 +65,14 @@ public class ShadowExecutionSPITest {
 
     // Mock both executions to return successful results
     Mockito.when(embeddedExecution.executeTransaction(context))
-        .thenReturn(CompletableFuture.completedFuture(embeddedResult));
+        .thenReturn(CompletableFuture.completedFuture(ExecutionProgramResult.fromExecutionResult(embeddedResult)));
     Mockito.when(remoteExecution.executeTransaction(context))
-        .thenReturn(CompletableFuture.completedFuture(remoteResult));
+        .thenReturn(CompletableFuture.completedFuture(ExecutionProgramResult.fromExecutionResult(remoteResult)));
 
     // Execute transaction
-    CompletableFuture<ExecutionSPI.ExecutionResult> future =
+    CompletableFuture<ExecutionProgramResult> future =
         shadowExecution.executeTransaction(context);
-    ExecutionSPI.ExecutionResult result = future.get();
+    ExecutionProgramResult result = future.get();
 
     // Should return embedded result
     Assert.assertNotNull(result);
@@ -92,14 +92,14 @@ public class ShadowExecutionSPITest {
 
     // Mock executions to return different results
     Mockito.when(embeddedExecution.executeTransaction(context))
-        .thenReturn(CompletableFuture.completedFuture(embeddedResult));
+        .thenReturn(CompletableFuture.completedFuture(ExecutionProgramResult.fromExecutionResult(embeddedResult)));
     Mockito.when(remoteExecution.executeTransaction(context))
-        .thenReturn(CompletableFuture.completedFuture(remoteResult));
+        .thenReturn(CompletableFuture.completedFuture(ExecutionProgramResult.fromExecutionResult(remoteResult)));
 
     // Execute transaction
-    CompletableFuture<ExecutionSPI.ExecutionResult> future =
+    CompletableFuture<ExecutionProgramResult> future =
         shadowExecution.executeTransaction(context);
-    ExecutionSPI.ExecutionResult result = future.get();
+    ExecutionProgramResult result = future.get();
 
     // Should still return embedded result
     Assert.assertNotNull(result);
@@ -119,13 +119,13 @@ public class ShadowExecutionSPITest {
 
     // Mock both calls to return successful results
     Mockito.when(embeddedExecution.callContract(context))
-        .thenReturn(CompletableFuture.completedFuture(embeddedResult));
+        .thenReturn(CompletableFuture.completedFuture(ExecutionProgramResult.fromExecutionResult(embeddedResult)));
     Mockito.when(remoteExecution.callContract(context))
-        .thenReturn(CompletableFuture.completedFuture(remoteResult));
+        .thenReturn(CompletableFuture.completedFuture(ExecutionProgramResult.fromExecutionResult(remoteResult)));
 
     // Call contract
-    CompletableFuture<ExecutionSPI.ExecutionResult> future = shadowExecution.callContract(context);
-    ExecutionSPI.ExecutionResult result = future.get();
+    CompletableFuture<ExecutionProgramResult> future = shadowExecution.callContract(context);
+    ExecutionProgramResult result = future.get();
 
     // Should return embedded result
     Assert.assertNotNull(result);
