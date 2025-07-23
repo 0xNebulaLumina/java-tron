@@ -1,7 +1,0 @@
-no need to code, give me a plan first.
-
-I want to move forward to the next phase: Phase 3 - Java Client Integration according to @scratchpad.mdc 
-
-However, how do we verify our implementation is correct?
-java-tron doesn't have state root like in Ethereum, and neither have hash(block state diff) like in bsc.
-Maybe we should 暂时每个区块用 “原生 java-tron 逻辑” 和 “新的 rust execution module” 都执行，比较 state diff 以确定 implement 正确？
