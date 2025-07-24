@@ -2658,16 +2658,15 @@ public class Manager {
    * @return true if ExecutionSPI should be used, false otherwise
    */
   private boolean shouldUseExecutionSpi() {
-    // Check if ExecutionSPI is explicitly enabled
-    if (CommonParameter.getInstance().isExecutionSpiEnabled()) {
-      return true;
+    // Check if ExecutionSPI is explicitly disabled
+    if (!CommonParameter.getInstance().isExecutionSpiEnabled()) {
+      return false;
     }
 
     // Check if ExecutionSPI factory is initialized and mode is not EMBEDDED
     try {
       if (ExecutionSpiFactory.getInstance() != null) {
-        String mode = ExecutionSpiFactory.determineExecutionMode().toString();
-        return !"EMBEDDED".equals(mode);
+        return true;
       }
     } catch (Exception e) {
       logger.debug("ExecutionSPI not available: {}", e.getMessage());
