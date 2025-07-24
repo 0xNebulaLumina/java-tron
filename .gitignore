@@ -63,3 +63,5 @@ Wallet
 *.so
 *.dylib
 *.dll
+
+bin/
