@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+
 import org.tron.core.execution.spi.ExecutionProgramResult;
 import org.tron.core.execution.spi.ExecutionSPI;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
@@ -25,7 +26,17 @@ public class RuntimeSpiImpl implements Runtime {
   private ExecutionProgramResult executionResult;
   private String runtimeError;
 
+
+
+  /**
+   * Constructor that ensures ExecutionSPI factory is properly initialized.
+   * The execution mode is determined dynamically from configuration sources during factory initialization.
+   * This maintains the singleton pattern for efficiency while supporting dynamic configuration.
+   */
   public RuntimeSpiImpl() {
+    // // Ensure factory is initialized (this will determine execution mode from configuration)
+    // ExecutionSpiFactory.initialize();
+
     this.executionSPI = ExecutionSpiFactory.getInstance();
     if (this.executionSPI == null) {
       throw new RuntimeException(

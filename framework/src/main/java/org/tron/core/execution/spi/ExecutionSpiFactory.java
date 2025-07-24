@@ -150,7 +150,21 @@ public class ExecutionSpiFactory {
       return ExecutionMode.fromString(modeStr);
     }
 
-    // 3. Check config file
+    // 3. Check CommonParameter (command line arguments)
+    try {
+      CommonParameter parameter = CommonParameter.getInstance();
+      if (parameter != null) {
+        modeStr = parameter.getExecutionMode();
+        if (modeStr != null && !modeStr.trim().isEmpty()) {
+          logger.debug("Execution mode from CommonParameter (command line): {}", modeStr);
+          return ExecutionMode.fromString(modeStr);
+        }
+      }
+    } catch (Exception e) {
+      logger.debug("Could not read execution mode from CommonParameter: {}", e.getMessage());
+    }
+
+    // 4. Check config file
     Config config = getConfig();
     if (config != null) {
       modeStr = getExecutionModeFromConfig(config);
@@ -160,7 +174,7 @@ public class ExecutionSpiFactory {
       }
     }
 
-    // 4. Return default
+    // 5. Return default
     ExecutionMode defaultMode = ExecutionMode.getDefault();
     logger.info("Using default execution mode: {}", defaultMode);
     return defaultMode;
@@ -189,7 +203,21 @@ public class ExecutionSpiFactory {
       return ExecutionMode.fromString(modeStr);
     }
 
-    // 3. Check config file
+    // 3. Check CommonParameter (command line arguments)
+    try {
+      CommonParameter parameter = CommonParameter.getInstance();
+      if (parameter != null) {
+        modeStr = parameter.getExecutionMode();
+        if (modeStr != null && !modeStr.trim().isEmpty()) {
+          logger.debug("Execution mode from CommonParameter (command line): {}", modeStr);
+          return ExecutionMode.fromString(modeStr);
+        }
+      }
+    } catch (Exception e) {
+      logger.debug("Could not read execution mode from CommonParameter: {}", e.getMessage());
+    }
+
+    // 4. Check config file
     if (config != null && config.hasPath(CONFIG_FILE_KEY)) {
       modeStr = config.getString(CONFIG_FILE_KEY);
       if (modeStr != null && !modeStr.trim().isEmpty()) {
@@ -198,7 +226,7 @@ public class ExecutionSpiFactory {
       }
     }
 
-    // 4. Return default
+    // 5. Return default
     ExecutionMode defaultMode = ExecutionMode.getDefault();
     logger.info("Using default execution mode: {}", defaultMode);
     return defaultMode;

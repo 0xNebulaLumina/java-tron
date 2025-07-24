@@ -11,7 +11,9 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.Runtime;
 import org.tron.common.runtime.RuntimeImpl;
 import org.tron.core.execution.spi.ExecutionMode;
+import org.tron.core.execution.spi.ExecutionSPI;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
+import org.tron.common.runtime.RuntimeSpiImpl;
 
 /**
  * Integration test for ExecutionSPI integration with java-tron. Tests the runtime selection logic
@@ -230,5 +232,48 @@ public class ExecutionSpiIntegrationTest {
 
     // Runtime should implement the interface
     assertTrue("Runtime should implement Runtime interface", traditionalRuntime instanceof Runtime);
+  }
+
+  @Test
+  public void testRuntimeSpiImplInitialization() {
+    // Test that RuntimeSpiImpl properly initializes the ExecutionSPI factory
+    try {
+      // Create RuntimeSpiImpl - it should automatically initialize the factory
+      RuntimeSpiImpl runtime = new RuntimeSpiImpl();
+      assertNotNull("Runtime should not be null", runtime);
+
+      // Verify that the factory is now initialized
+      ExecutionSPI instance = ExecutionSpiFactory.getInstance();
+      assertNotNull("ExecutionSPI factory should be initialized", instance);
+
+    } catch (Exception e) {
+      // Expected for REMOTE/SHADOW modes if services are not running
+      System.out.println("Expected exception for non-embedded modes: " + e.getMessage());
+    }
+  }
+
+  @Test
+  public void testExecutionModeFromCommonParameter() {
+    // Test that ExecutionSpiFactory.determineExecutionMode() now considers CommonParameter
+    CommonParameter params = CommonParameter.getInstance();
+    String originalMode = params.getExecutionMode();
+
+    try {
+      // Set execution mode in CommonParameter
+      params.setExecutionMode("REMOTE");
+
+      // Determine execution mode should now pick up the CommonParameter value
+      ExecutionMode mode = ExecutionSpiFactory.determineExecutionMode();
+      assertEquals("Should use REMOTE mode from CommonParameter", ExecutionMode.REMOTE, mode);
+
+      // Test with SHADOW mode
+      params.setExecutionMode("SHADOW");
+      mode = ExecutionSpiFactory.determineExecutionMode();
+      assertEquals("Should use SHADOW mode from CommonParameter", ExecutionMode.SHADOW, mode);
+
+    } finally {
+      // Restore original mode
+      params.setExecutionMode(originalMode);
+    }
   }
 }

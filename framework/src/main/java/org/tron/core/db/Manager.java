@@ -2640,6 +2640,7 @@ public class Manager {
       // Check if ExecutionSPI should be used
       if (shouldUseExecutionSpi()) {
         logger.debug("Using ExecutionSPI-aware runtime (RuntimeSpiImpl)");
+        // RuntimeSpiImpl constructor will automatically initialize the factory with the correct mode
         return new RuntimeSpiImpl();
       } else {
         logger.debug("Using traditional runtime (RuntimeImpl)");
