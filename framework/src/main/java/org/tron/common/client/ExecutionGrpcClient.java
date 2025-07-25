@@ -53,11 +53,9 @@ public class ExecutionGrpcClient {
         .usePlaintext()
         .build();
     
-    this.blockingStub = BackendGrpc.newBlockingStub(channel)
-        .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS);
-    
-    this.futureStub = BackendGrpc.newFutureStub(channel)
-        .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS);
+    this.blockingStub = BackendGrpc.newBlockingStub(channel);
+
+    this.futureStub = BackendGrpc.newFutureStub(channel);
   }
 
   /**
@@ -93,7 +91,9 @@ public class ExecutionGrpcClient {
   public ExecuteTransactionResponse executeTransaction(ExecuteTransactionRequest request) {
     try {
       logger.debug("Executing transaction via gRPC");
-      return blockingStub.executeTransaction(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .executeTransaction(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to execute transaction via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote transaction execution failed: " + e.getMessage(), e);
@@ -110,7 +110,9 @@ public class ExecutionGrpcClient {
   public CallContractResponse callContract(CallContractRequest request) {
     try {
       logger.debug("Calling contract via gRPC");
-      return blockingStub.callContract(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .callContract(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to call contract via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote contract call failed: " + e.getMessage(), e);
@@ -127,7 +129,9 @@ public class ExecutionGrpcClient {
   public EstimateEnergyResponse estimateEnergy(EstimateEnergyRequest request) {
     try {
       logger.debug("Estimating energy via gRPC");
-      return blockingStub.estimateEnergy(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .estimateEnergy(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to estimate energy via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote energy estimation failed: " + e.getMessage(), e);
@@ -144,7 +148,9 @@ public class ExecutionGrpcClient {
   public GetCodeResponse getCode(GetCodeRequest request) {
     try {
       logger.debug("Getting code via gRPC");
-      return blockingStub.getCode(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .getCode(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to get code via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote get code failed: " + e.getMessage(), e);
@@ -161,7 +167,9 @@ public class ExecutionGrpcClient {
   public GetStorageAtResponse getStorageAt(GetStorageAtRequest request) {
     try {
       logger.debug("Getting storage at via gRPC");
-      return blockingStub.getStorageAt(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .getStorageAt(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to get storage at via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote get storage at failed: " + e.getMessage(), e);
@@ -178,7 +186,9 @@ public class ExecutionGrpcClient {
   public GetNonceResponse getNonce(GetNonceRequest request) {
     try {
       logger.debug("Getting nonce via gRPC");
-      return blockingStub.getNonce(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .getNonce(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to get nonce via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote get nonce failed: " + e.getMessage(), e);
@@ -195,7 +205,9 @@ public class ExecutionGrpcClient {
   public GetBalanceResponse getBalance(GetBalanceRequest request) {
     try {
       logger.debug("Getting balance via gRPC");
-      return blockingStub.getBalance(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .getBalance(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to get balance via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote get balance failed: " + e.getMessage(), e);
@@ -212,7 +224,9 @@ public class ExecutionGrpcClient {
   public CreateEvmSnapshotResponse createEvmSnapshot(CreateEvmSnapshotRequest request) {
     try {
       logger.debug("Creating EVM snapshot via gRPC");
-      return blockingStub.createEvmSnapshot(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .createEvmSnapshot(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to create EVM snapshot via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote create EVM snapshot failed: " + e.getMessage(), e);
@@ -229,7 +243,9 @@ public class ExecutionGrpcClient {
   public RevertToEvmSnapshotResponse revertToEvmSnapshot(RevertToEvmSnapshotRequest request) {
     try {
       logger.debug("Reverting to EVM snapshot via gRPC");
-      return blockingStub.revertToEvmSnapshot(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .revertToEvmSnapshot(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to revert to EVM snapshot via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote revert to EVM snapshot failed: " + e.getMessage(), e);
@@ -246,7 +262,9 @@ public class ExecutionGrpcClient {
     try {
       logger.debug("Checking health via gRPC");
       HealthRequest request = HealthRequest.newBuilder().build();
-      return blockingStub.health(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .health(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to check health via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote health check failed: " + e.getMessage(), e);
@@ -263,7 +281,9 @@ public class ExecutionGrpcClient {
     try {
       logger.debug("Getting metadata via gRPC");
       MetadataRequest request = MetadataRequest.newBuilder().build();
-      return blockingStub.getMetadata(request);
+      return blockingStub
+          .withDeadlineAfter(DEFAULT_DEADLINE_MS, TimeUnit.MILLISECONDS)
+          .getMetadata(request);
     } catch (StatusRuntimeException e) {
       logger.error("Failed to get metadata via gRPC: {}", e.getMessage());
       throw new RuntimeException("Remote get metadata failed: " + e.getMessage(), e);
