@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use revm::primitives::{Account, AccountInfo, Bytecode, B256, U256, Address};
 use revm::{Database, DatabaseCommit};
@@ -88,6 +88,9 @@ impl StorageAdapter for InMemoryStorageAdapter {
     }
 }
 
+/// Snapshot hook callback for capturing modified accounts
+pub type SnapshotHook = Box<dyn Fn(&HashSet<Address>) + Send + Sync>;
+
 /// Database adapter that implements REVM's Database trait
 pub struct StorageAdapterDatabase<S: StorageAdapter> {
     storage: S,
@@ -100,6 +103,10 @@ pub struct StorageAdapterDatabase<S: StorageAdapter> {
     storage_changes: HashMap<Address, HashMap<U256, U256>>,
     // Snapshots for revert support
     snapshots: Vec<(HashMap<Address, Option<Account>>, HashMap<Address, HashMap<U256, U256>>)>,
+    // Track modified accounts for shadow verification
+    modified_accounts: HashSet<Address>,
+    // Snapshot hooks for state comparison
+    snapshot_hooks: Vec<SnapshotHook>,
 }
 
 impl<S: StorageAdapter> StorageAdapterDatabase<S> {
@@ -112,6 +119,8 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
             accounts: HashMap::new(),
             storage_changes: HashMap::new(),
             snapshots: Vec::new(),
+            modified_accounts: HashSet::new(),
+            snapshot_hooks: Vec::new(),
         }
     }
     
@@ -128,9 +137,45 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
             self.accounts = accounts;
             self.storage_changes = storage;
             self.snapshots.truncate(id);
+            // Clear modified accounts on revert
+            self.modified_accounts.clear();
             true
         } else {
             false
+        }
+    }
+
+    /// Add a snapshot hook for capturing modified accounts
+    pub fn add_snapshot_hook<F>(&mut self, hook: F)
+    where
+        F: Fn(&HashSet<Address>) + Send + Sync + 'static
+    {
+        self.snapshot_hooks.push(Box::new(hook));
+    }
+
+    /// Get the current set of modified accounts
+    pub fn get_modified_accounts(&self) -> &HashSet<Address> {
+        &self.modified_accounts
+    }
+
+    /// Clear the modified accounts set
+    pub fn clear_modified_accounts(&mut self) {
+        self.modified_accounts.clear();
+    }
+
+    /// Trigger snapshot hooks with current modified accounts
+    pub fn trigger_snapshot_hooks(&self) {
+        for hook in &self.snapshot_hooks {
+            hook(&self.modified_accounts);
+        }
+    }
+
+    /// Mark an account as modified and trigger hooks if needed
+    fn mark_account_modified(&mut self, address: Address) {
+        let was_new = self.modified_accounts.insert(address);
+        if was_new {
+            // Trigger hooks when a new account is modified
+            self.trigger_snapshot_hooks();
         }
     }
 }
@@ -206,14 +251,17 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
 impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
     fn commit(&mut self, changes: HashMap<Address, Account>) {
         for (address, account) in changes {
+            // Mark account as modified for shadow verification
+            self.mark_account_modified(address);
+
             // Clone storage before iterating to avoid borrow checker issues
             let storage_changes: HashMap<U256, U256> = account.storage.iter()
                 .map(|(k, slot)| (*k, slot.present_value))
                 .collect();
-            
+
             // Store account changes
             self.accounts.insert(address, Some(account.clone()));
-            
+
             // Store storage changes
             for (key, value) in storage_changes {
                 self.storage_changes
@@ -221,7 +269,7 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
                     .or_insert_with(HashMap::new)
                     .insert(key, value);
             }
-            
+
             // Handle self-destruct
             if account.is_selfdestructed() {
                 self.accounts.insert(address, None);
@@ -236,4 +284,97 @@ pub fn keccak256(data: &[u8]) -> B256 {
     let mut hasher = Keccak256::new();
     hasher.update(data);
     B256::from_slice(&hasher.finalize())
-} 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use revm::primitives::{AccountInfo, Bytecode};
+
+    #[test]
+    fn test_snapshot_hooks() {
+        let storage = InMemoryStorageAdapter::new();
+        let mut db = StorageAdapterDatabase::new(storage);
+
+        // Track modified accounts via hook
+        let modified_accounts = Arc::new(Mutex::new(Vec::new()));
+        let hook_accounts = modified_accounts.clone();
+
+        db.add_snapshot_hook(move |accounts: &HashSet<Address>| {
+            let mut hook_accounts = hook_accounts.lock().unwrap();
+            hook_accounts.extend(accounts.iter().cloned());
+        });
+
+        // Create test account
+        let test_address = Address::from([1u8; 20]);
+        let account = Account {
+            info: AccountInfo {
+                balance: U256::from(1000),
+                nonce: 1,
+                code_hash: B256::ZERO,
+                code: Some(Bytecode::new()),
+            },
+            storage: HashMap::new(),
+            status: revm::primitives::AccountStatus::Loaded,
+        };
+
+        // Commit changes (this should trigger the hook)
+        let mut changes = HashMap::new();
+        changes.insert(test_address, account);
+        db.commit(changes);
+
+        // Verify hook was called
+        let captured_accounts = modified_accounts.lock().unwrap();
+        assert!(captured_accounts.contains(&test_address));
+
+        // Verify modified accounts tracking
+        assert!(db.get_modified_accounts().contains(&test_address));
+    }
+
+    #[test]
+    fn test_modified_accounts_tracking() {
+        let storage = InMemoryStorageAdapter::new();
+        let mut db = StorageAdapterDatabase::new(storage);
+
+        let addr1 = Address::from([1u8; 20]);
+        let addr2 = Address::from([2u8; 20]);
+
+        // Initially no modified accounts
+        assert_eq!(db.get_modified_accounts().len(), 0);
+
+        // Mark accounts as modified
+        db.mark_account_modified(addr1);
+        db.mark_account_modified(addr2);
+
+        // Verify tracking
+        assert_eq!(db.get_modified_accounts().len(), 2);
+        assert!(db.get_modified_accounts().contains(&addr1));
+        assert!(db.get_modified_accounts().contains(&addr2));
+
+        // Clear and verify
+        db.clear_modified_accounts();
+        assert_eq!(db.get_modified_accounts().len(), 0);
+    }
+
+    #[test]
+    fn test_snapshot_revert_clears_modified_accounts() {
+        let storage = InMemoryStorageAdapter::new();
+        let mut db = StorageAdapterDatabase::new(storage);
+
+        let test_address = Address::from([1u8; 20]);
+
+        // Create snapshot
+        let snapshot_id = db.snapshot();
+
+        // Mark account as modified
+        db.mark_account_modified(test_address);
+        assert!(db.get_modified_accounts().contains(&test_address));
+
+        // Revert snapshot
+        assert!(db.revert(snapshot_id));
+
+        // Verify modified accounts were cleared
+        assert_eq!(db.get_modified_accounts().len(), 0);
+    }
+}

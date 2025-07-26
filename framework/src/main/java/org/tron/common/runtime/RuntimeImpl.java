@@ -33,16 +33,15 @@ public class RuntimeImpl implements Runtime {
   TransactionContext context;
   private List<Actuator> actuatorList = null;
 
-  @Getter
-  private Actuator2 actuator2 = null;
+  @Getter private Actuator2 actuator2 = null;
 
   @Override
   public void execute(TransactionContext context)
       throws ContractValidateException, ContractExeException {
     this.context = context;
 
-    ContractType contractType = context.getTrxCap().getInstance().getRawData().getContract(0)
-        .getType();
+    ContractType contractType =
+        context.getTrxCap().getInstance().getRawData().getContract(0).getType();
     switch (contractType.getNumber()) {
       case ContractType.TriggerSmartContract_VALUE:
       case ContractType.CreateSmartContract_VALUE:
@@ -66,7 +65,6 @@ public class RuntimeImpl implements Runtime {
     }
 
     setResultCode(context.getProgramResult());
-
   }
 
   @Override
@@ -79,11 +77,11 @@ public class RuntimeImpl implements Runtime {
     return context.getProgramResult().getRuntimeError();
   }
 
-
   private void setResultCode(ProgramResult result) {
     RuntimeException exception = result.getException();
-    if (Objects.isNull(exception) && StringUtils
-        .isEmpty(result.getRuntimeError()) && !result.isRevert()) {
+    if (Objects.isNull(exception)
+        && StringUtils.isEmpty(result.getRuntimeError())
+        && !result.isRevert()) {
       result.setResultCode(contractResult.SUCCESS);
       return;
     }
@@ -137,6 +135,4 @@ public class RuntimeImpl implements Runtime {
     }
     result.setResultCode(contractResult.UNKNOWN);
   }
-
 }
-

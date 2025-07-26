@@ -3,8 +3,8 @@ package org.tron.core.storage.spi;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Tron workload benchmark for remote gRPC storage implementation.
- * Tests realistic blockchain operations against the Rust gRPC storage service.
+ * Tron workload benchmark for remote gRPC storage implementation. Tests realistic blockchain
+ * operations against the Rust gRPC storage service.
  */
 public class RemoteTronWorkloadBenchmark extends TronWorkloadBenchmark {
 
@@ -13,7 +13,7 @@ public class RemoteTronWorkloadBenchmark extends TronWorkloadBenchmark {
     // Read configuration properties at runtime to ensure they're available
     String remoteHost = System.getProperty("storage.remote.host", "localhost");
     String remotePortStr = System.getProperty("storage.remote.port", "50011");
-    
+
     int remotePort;
     try {
       remotePort = Integer.parseInt(remotePortStr);
@@ -21,11 +21,11 @@ public class RemoteTronWorkloadBenchmark extends TronWorkloadBenchmark {
       System.err.println("Invalid port value: " + remotePortStr + ", using default: 50011");
       remotePort = 50011;
     }
-    
+
     System.out.println("Remote storage configuration:");
     System.out.println("  Host: " + remoteHost);
     System.out.println("  Port: " + remotePort);
-    
+
     return new RemoteStorageSPI(remoteHost, remotePort);
   }
 
@@ -57,7 +57,7 @@ public class RemoteTronWorkloadBenchmark extends TronWorkloadBenchmark {
 
     // Initialize the benchmark database
     storage.initDB(benchmarkDbName, remoteConfig).get(30, TimeUnit.SECONDS);
-    
+
     // Initialize Tron-specific databases
     initializeTronDatabases(config);
   }
@@ -66,7 +66,7 @@ public class RemoteTronWorkloadBenchmark extends TronWorkloadBenchmark {
   protected void cleanupStorage() throws Exception {
     // Clean up Tron databases
     cleanupTronDatabases();
-    
+
     // Clean up benchmark database
     if (storage != null) {
       try {
@@ -76,4 +76,4 @@ public class RemoteTronWorkloadBenchmark extends TronWorkloadBenchmark {
       }
     }
   }
-} 
+}

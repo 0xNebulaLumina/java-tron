@@ -724,6 +724,17 @@ public class CommonParameter {
   @Setter
   public long allowTvmBlob;
 
+  // ExecutionSPI configuration
+  @Getter
+  @Setter
+  @Parameter(names = {"--execution-spi-enabled"}, description = "Enable ExecutionSPI for gradual rollout (default: false)")
+  public boolean executionSpiEnabled = false;
+
+  @Getter
+  @Setter
+  @Parameter(names = {"--execution-mode"}, description = "Execution mode: EMBEDDED, REMOTE, or SHADOW (default: EMBEDDED)")
+  public String executionMode = "EMBEDDED";
+
   private static double calcMaxTimeRatio() {
     //return max(2.0, min(5.0, 5 * 4.0 / max(Runtime.getRuntime().availableProcessors(), 1)));
     return 5.0;

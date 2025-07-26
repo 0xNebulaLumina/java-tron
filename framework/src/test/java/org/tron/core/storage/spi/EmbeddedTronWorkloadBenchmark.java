@@ -1,8 +1,8 @@
 package org.tron.core.storage.spi;
 
 /**
- * Tron workload benchmark for embedded RocksDB storage implementation.
- * Tests realistic blockchain operations against the embedded RocksDB storage.
+ * Tron workload benchmark for embedded RocksDB storage implementation. Tests realistic blockchain
+ * operations against the embedded RocksDB storage.
  */
 public class EmbeddedTronWorkloadBenchmark extends TronWorkloadBenchmark {
 
@@ -40,7 +40,7 @@ public class EmbeddedTronWorkloadBenchmark extends TronWorkloadBenchmark {
 
     // Initialize the benchmark database
     storage.initDB(benchmarkDbName, embeddedConfig).get(30, java.util.concurrent.TimeUnit.SECONDS);
-    
+
     // Initialize Tron-specific databases
     initializeTronDatabases(config);
   }
@@ -49,7 +49,7 @@ public class EmbeddedTronWorkloadBenchmark extends TronWorkloadBenchmark {
   protected void cleanupStorage() throws Exception {
     // Clean up Tron databases
     cleanupTronDatabases();
-    
+
     // Clean up benchmark database
     if (storage != null) {
       try {
@@ -59,4 +59,4 @@ public class EmbeddedTronWorkloadBenchmark extends TronWorkloadBenchmark {
       }
     }
   }
-} 
+}

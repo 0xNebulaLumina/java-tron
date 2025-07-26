@@ -1,0 +1,44 @@
+[package]
+name = "state-digest-jni"
+version = "0.1.0"
+edition = "2021"
+description = "JNI wrapper for StateDigest utility used in shadow execution verification"
+
+[lib]
+name = "state_digest_jni"
+crate-type = ["cdylib"]
+
+[dependencies]
+# JNI bindings
+jni = "0.21"
+
+# Cryptographic hashing
+sha3 = "0.10"
+hex = "0.4"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+log = "0.4"
+
+[build-dependencies]
+# For generating JNI headers if needed
+jni-sys = "0.3"
+
+[profile.release]
+# Optimize for size and performance
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+# Faster compilation for development
+opt-level = 0
+debug = true
