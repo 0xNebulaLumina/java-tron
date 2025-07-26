@@ -89,7 +89,7 @@ public class ExecutionSpiFactoryTest {
     String host = ExecutionSpiFactory.getRemoteHost();
     int port = ExecutionSpiFactory.getRemotePort();
     Assert.assertEquals("127.0.0.1", host);
-    Assert.assertEquals(50012, port);
+    Assert.assertEquals(50011, port);
   }
 
   @Test

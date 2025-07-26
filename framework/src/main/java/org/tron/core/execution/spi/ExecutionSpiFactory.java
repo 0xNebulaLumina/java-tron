@@ -44,7 +44,7 @@ public class ExecutionSpiFactory {
   private static final String REMOTE_PORT_SYSTEM_PROPERTY = "execution.remote.port";
   private static final String REMOTE_PORT_ENV_VAR = "EXECUTION_REMOTE_PORT";
   private static final String REMOTE_PORT_CONFIG = "execution.remote.port";
-  private static final int DEFAULT_REMOTE_PORT = 50012;
+  private static final int DEFAULT_REMOTE_PORT = 50011;
 
   /**
    * Initialize the ExecutionSPI factory and create the global instance. This should be called
