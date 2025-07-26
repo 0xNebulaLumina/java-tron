@@ -7,6 +7,8 @@ description = "Core gRPC service implementation for Tron backend"
 [dependencies]
 # Common crate
 tron-backend-common = { path = "../common" }
+# Storage crate (for type access)
+tron-backend-storage = { path = "../storage" }
 
 # gRPC and Protocol Buffers
 tonic = "0.10"

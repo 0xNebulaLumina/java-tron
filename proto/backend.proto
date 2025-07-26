@@ -8,16 +8,23 @@ service Backend {
   rpc Health(HealthRequest) returns (HealthResponse);
   rpc GetMetadata(MetadataRequest) returns (MetadataResponse);
   
-  // Storage operations (existing)
+  // Storage operations (consolidated from storage.proto)
   rpc Get(GetRequest) returns (GetResponse);
   rpc Put(PutRequest) returns (PutResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Has(HasRequest) returns (HasResponse);
   rpc BatchWrite(BatchWriteRequest) returns (BatchWriteResponse);
+  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
   rpc CreateIterator(CreateIteratorRequest) returns (CreateIteratorResponse);
   rpc IteratorNext(IteratorNextRequest) returns (IteratorNextResponse);
   rpc CloseIterator(CloseIteratorRequest) returns (CloseIteratorResponse);
+  rpc GetKeysNext(GetKeysNextRequest) returns (GetKeysNextResponse);
+  rpc GetValuesNext(GetValuesNextRequest) returns (GetValuesNextResponse);
+  rpc GetNext(GetNextRequest) returns (GetNextResponse);
+  rpc PrefixQuery(PrefixQueryRequest) returns (PrefixQueryResponse);
   rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
   rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
+  rpc GetFromSnapshot(GetFromSnapshotRequest) returns (GetFromSnapshotResponse);
   rpc CreateTransaction(CreateTransactionRequest) returns (CreateTransactionResponse);
   rpc CommitTransaction(CommitTransactionRequest) returns (CommitTransactionResponse);
   rpc RollbackTransaction(RollbackTransactionRequest) returns (RollbackTransactionResponse);
@@ -29,6 +36,12 @@ service Backend {
   rpc GetProperty(GetPropertyRequest) returns (GetPropertyResponse);
   rpc BackupDatabase(BackupDatabaseRequest) returns (BackupDatabaseResponse);
   rpc RestoreDatabase(RestoreDatabaseRequest) returns (RestoreDatabaseResponse);
+  rpc InitDatabase(InitDatabaseRequest) returns (InitDatabaseResponse);
+  rpc CloseDatabase(CloseDatabaseRequest) returns (CloseDatabaseResponse);
+  rpc ResetDatabase(ResetDatabaseRequest) returns (ResetDatabaseResponse);
+  rpc IsAlive(IsAliveRequest) returns (IsAliveResponse);
+  rpc Size(SizeRequest) returns (SizeResponse);
+  rpc IsEmpty(IsEmptyRequest) returns (IsEmptyResponse);
   
   // Execution operations (new)
   rpc ExecuteTransaction(ExecuteTransactionRequest) returns (ExecuteTransactionResponse);
@@ -282,6 +295,134 @@ message RestoreDatabaseRequest {
 message RestoreDatabaseResponse {
   bool success = 1;
   string error_message = 2;
+}
+
+// Additional Storage Messages (from storage.proto)
+message HasRequest {
+  string database = 1;
+  bytes key = 2;
+}
+
+message HasResponse {
+  bool exists = 1;
+}
+
+message BatchGetRequest {
+  string database = 1;
+  repeated bytes keys = 2;
+}
+
+message BatchGetResponse {
+  repeated KeyValue pairs = 1;
+}
+
+message GetKeysNextRequest {
+  string database = 1;
+  bytes start_key = 2;
+  int32 limit = 3;
+}
+
+message GetKeysNextResponse {
+  repeated bytes keys = 1;
+}
+
+message GetValuesNextRequest {
+  string database = 1;
+  bytes start_key = 2;
+  int32 limit = 3;
+}
+
+message GetValuesNextResponse {
+  repeated bytes values = 1;
+}
+
+message GetNextRequest {
+  string database = 1;
+  bytes start_key = 2;
+  int32 limit = 3;
+}
+
+message GetNextResponse {
+  repeated KeyValue pairs = 1;
+}
+
+message PrefixQueryRequest {
+  string database = 1;
+  bytes prefix = 2;
+}
+
+message PrefixQueryResponse {
+  repeated KeyValue pairs = 1;
+}
+
+message GetFromSnapshotRequest {
+  string snapshot_id = 1;
+  bytes key = 2;
+}
+
+message GetFromSnapshotResponse {
+  bytes value = 1;
+  bool found = 2;
+}
+
+message InitDatabaseRequest {
+  string name = 1;
+  StorageConfig config = 2;
+}
+
+message InitDatabaseResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message StorageConfig {
+  string engine = 1; // "ROCKSDB" or "LEVELDB"
+  map<string, string> engine_options = 2;
+  bool enable_statistics = 3;
+  int32 max_open_files = 4;
+  int64 block_cache_size = 5;
+}
+
+message CloseDatabaseRequest {
+  string name = 1;
+}
+
+message CloseDatabaseResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message ResetDatabaseRequest {
+  string name = 1;
+}
+
+message ResetDatabaseResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message IsAliveRequest {
+  string database = 1;
+}
+
+message IsAliveResponse {
+  bool alive = 1;
+}
+
+message SizeRequest {
+  string database = 1;
+}
+
+message SizeResponse {
+  int64 size = 1;
+}
+
+message IsEmptyRequest {
+  string database = 1;
+}
+
+message IsEmptyResponse {
+  bool empty = 1;
 }
 
 // Execution Messages (new)

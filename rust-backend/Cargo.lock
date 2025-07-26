@@ -3076,6 +3076,7 @@ dependencies = [
  "tonic-build",
  "tracing",
  "tron-backend-common",
+ "tron-backend-storage",
  "uuid",
 ]
 
@@ -3109,11 +3110,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bytes",
+ "chrono",
+ "prost",
  "rocksdb",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-stream",
+ "tonic",
  "tracing",
  "tron-backend-common",
  "uuid",

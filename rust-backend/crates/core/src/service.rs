@@ -20,11 +20,13 @@ impl BackendService {
         }
     }
     
-    fn get_storage_module(&self) -> Result<&Box<dyn tron_backend_common::Module>, Status> {
-        self.module_manager.get("storage")
-            .ok_or_else(|| Status::unavailable("Storage module not available"))
+    fn get_storage_module(&self) -> Result<&tron_backend_storage::StorageModule, Status> {
+        // For now, we'll use a placeholder approach since we can't downcast trait objects easily
+        // In a real implementation, we'd need to use Any trait or a different architecture
+        // This will be addressed in the actual integration phase
+        Err(Status::unimplemented("Storage module access not yet implemented"))
     }
-    
+
     fn get_execution_module(&self) -> Result<&Box<dyn tron_backend_common::Module>, Status> {
         self.module_manager.get("execution")
             .ok_or_else(|| Status::unavailable("Execution module not available"))
@@ -324,13 +326,161 @@ impl crate::backend::backend_server::Backend for BackendService {
     
     async fn restore_database(&self, request: Request<RestoreDatabaseRequest>) -> Result<Response<RestoreDatabaseResponse>, Status> {
         debug!("Restore database request: {:?}", request.get_ref());
-        
+
         // Placeholder implementation
         let response = RestoreDatabaseResponse {
             success: true,
             error_message: String::new(),
         };
-        
+
+        Ok(Response::new(response))
+    }
+
+    // Additional storage methods from storage.proto
+    async fn has(&self, request: Request<HasRequest>) -> Result<Response<HasResponse>, Status> {
+        debug!("Has request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = HasResponse {
+            exists: false,
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn batch_get(&self, request: Request<BatchGetRequest>) -> Result<Response<BatchGetResponse>, Status> {
+        debug!("Batch get request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = BatchGetResponse {
+            pairs: vec![],
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn get_keys_next(&self, request: Request<GetKeysNextRequest>) -> Result<Response<GetKeysNextResponse>, Status> {
+        debug!("Get keys next request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = GetKeysNextResponse {
+            keys: vec![],
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn get_values_next(&self, request: Request<GetValuesNextRequest>) -> Result<Response<GetValuesNextResponse>, Status> {
+        debug!("Get values next request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = GetValuesNextResponse {
+            values: vec![],
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn get_next(&self, request: Request<GetNextRequest>) -> Result<Response<GetNextResponse>, Status> {
+        debug!("Get next request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = GetNextResponse {
+            pairs: vec![],
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn prefix_query(&self, request: Request<PrefixQueryRequest>) -> Result<Response<PrefixQueryResponse>, Status> {
+        debug!("Prefix query request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = PrefixQueryResponse {
+            pairs: vec![],
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn get_from_snapshot(&self, request: Request<GetFromSnapshotRequest>) -> Result<Response<GetFromSnapshotResponse>, Status> {
+        debug!("Get from snapshot request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = GetFromSnapshotResponse {
+            value: vec![],
+            found: false,
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn init_database(&self, request: Request<InitDatabaseRequest>) -> Result<Response<InitDatabaseResponse>, Status> {
+        debug!("Init database request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = InitDatabaseResponse {
+            success: true,
+            error_message: String::new(),
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn close_database(&self, request: Request<CloseDatabaseRequest>) -> Result<Response<CloseDatabaseResponse>, Status> {
+        debug!("Close database request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = CloseDatabaseResponse {
+            success: true,
+            error_message: String::new(),
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn reset_database(&self, request: Request<ResetDatabaseRequest>) -> Result<Response<ResetDatabaseResponse>, Status> {
+        debug!("Reset database request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = ResetDatabaseResponse {
+            success: true,
+            error_message: String::new(),
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn is_alive(&self, request: Request<IsAliveRequest>) -> Result<Response<IsAliveResponse>, Status> {
+        debug!("Is alive request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = IsAliveResponse {
+            alive: true,
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn size(&self, request: Request<SizeRequest>) -> Result<Response<SizeResponse>, Status> {
+        debug!("Size request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = SizeResponse {
+            size: 0,
+        };
+
+        Ok(Response::new(response))
+    }
+
+    async fn is_empty(&self, request: Request<IsEmptyRequest>) -> Result<Response<IsEmptyResponse>, Status> {
+        debug!("Is empty request: {:?}", request.get_ref());
+
+        // Placeholder implementation
+        let response = IsEmptyResponse {
+            empty: true,
+        };
+
         Ok(Response::new(response))
     }
     

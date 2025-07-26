@@ -13,6 +13,11 @@ rocksdb = "0.21"
 
 # Async runtime
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+tokio-stream = "0.1"
+
+# gRPC and Protocol Buffers (for protobuf types)
+tonic = "0.10"
+prost = "0.12"
 
 # Logging
 tracing = "0.1"
@@ -27,6 +32,11 @@ async-trait = "0.1"
 # Utilities
 uuid = { version = "1.0", features = ["v4"] }
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bytes = "1.0"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tempfile = "3.20.0" 

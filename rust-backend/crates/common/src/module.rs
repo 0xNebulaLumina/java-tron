@@ -192,4 +192,9 @@ impl ModuleManager {
         }
         versions
     }
+
+    /// Get a reference to the raw modules map for advanced access patterns
+    pub fn modules(&self) -> &HashMap<String, Box<dyn Module>> {
+        &self.modules
+    }
 } 
