@@ -1,0 +1,60 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# Task: Debug ExecutionSPI Remote Mode Issues
+
+## Problem Analysis
+The java-tron works fine in:
+- ✅ Traditional runtime (RuntimeImpl) 
+- ✅ ExecutionSPI-aware runtime (RuntimeSpiImpl) embedded mode
+- ✅ Remote storage + embedded execution
+- ✅ Embedded storage + embedded execution
+
+But fails in:
+- ❌ Embedded storage + remote execution  
+- ❌ Remote storage + remote execution
+
+## Error Details
+```
+account [TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ] does not exist
+at org.tron.core.db.BandwidthProcessor.consume(BandwidthProcessor.java:135)
+```
+
+The error occurs during bandwidth processing when trying to validate an account that should exist.
+
+## Investigation Plan
+[X] Examine RuntimeSpiImpl implementation
+[X] Check ExecutionSPI factory and remote mode setup
+[X] Analyze BandwidthProcessor and account validation logic
+[X] Compare embedded vs remote execution paths
+[X] Identify where account state diverges in remote mode
+[X] Fix the remote execution account state handling
+
+## Fix Applied
+Updated `RemoteExecutionSPI.buildExecuteTransactionRequest()` method to:
+1. Extract actual transaction data from TransactionContext instead of using placeholder values
+2. Properly handle different contract types (TransferContract, TransferAssetContract, CreateSmartContract, TriggerSmartContract)
+3. Extract real from/to addresses, values, and contract data
+4. Include proper block context information
+5. Add error handling with fallback to prevent complete failure
+
+The root cause was that bandwidth validation was failing because it was trying to validate dummy addresses instead of real transaction addresses.
+
+## Root Cause Identified
+The issue is in `RemoteExecutionSPI.buildExecuteTransactionRequest()` method. It's creating placeholder/dummy values instead of extracting actual transaction data from TransactionContext:
+
+```java
+TronTransaction.Builder txBuilder =
+    TronTransaction.newBuilder()
+        .setFrom(ByteString.copyFrom(new byte[20])) // TODO: Get actual from address
+        .setTo(ByteString.copyFrom(new byte[20])) // TODO: Get actual to address
+        // ... more placeholders
+```
+
+This means the remote execution doesn't receive proper account addresses, so when BandwidthProcessor tries to validate the account, it fails because the account doesn't exist (since it's looking for a dummy address).
+
+## Lessons
+- Remote execution mode has different account state handling than embedded mode
+

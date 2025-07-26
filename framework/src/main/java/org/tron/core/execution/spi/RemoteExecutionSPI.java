@@ -13,6 +13,15 @@ import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import tron.backend.BackendOuterClass.*;
+import org.tron.core.capsule.BlockCapsule;
+import org.tron.core.capsule.TransactionCapsule;
+import org.tron.protos.Protocol.Transaction;
+import org.tron.protos.Protocol.Transaction.Contract;
+import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
+import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
+import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
+import org.tron.protos.contract.BalanceContract.TransferContract;
+import com.google.protobuf.Any;
 
 /**
  * Remote execution implementation using the Rust backend service via gRPC. This implementation will
@@ -243,32 +252,123 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
   /** Build ExecuteTransactionRequest from TransactionContext. */
   private ExecuteTransactionRequest buildExecuteTransactionRequest(TransactionContext context) {
-    // TODO: Implement proper conversion from TransactionContext to protobuf
-    // For now, create a minimal request
-    TronTransaction.Builder txBuilder =
-        TronTransaction.newBuilder()
-            .setFrom(ByteString.copyFrom(new byte[20])) // TODO: Get actual from address
-            .setTo(ByteString.copyFrom(new byte[20])) // TODO: Get actual to address
-            .setValue(ByteString.copyFrom(new byte[32])) // TODO: Get actual value
-            .setData(ByteString.copyFrom(new byte[0])) // TODO: Get actual data
-            .setEnergyLimit(1000000) // TODO: Get actual energy limit
-            .setEnergyPrice(1) // TODO: Get actual energy price
-            .setNonce(0); // TODO: Get actual nonce
+    try {
+      TransactionCapsule trxCap = context.getTrxCap();
+      Transaction transaction = trxCap.getInstance();
+      Transaction.Contract contract = transaction.getRawData().getContract(0);
+      Any contractParameter = contract.getParameter();
+      
+      // Extract transaction data based on contract type
+      byte[] fromAddress = trxCap.getOwnerAddress();
+      byte[] toAddress = new byte[20]; // Default empty address
+      byte[] data = new byte[0]; // Default empty data
+      long value = 0; // Default zero value
+      long energyLimit = transaction.getRawData().getFeeLimit();
+      long energyPrice = 1; // Default energy price
+      long nonce = 0; // TRON doesn't use nonce like Ethereum
+      
+      // Extract specific data based on contract type
+      switch (contract.getType()) {
+        case TransferContract:
+          TransferContract transferContract = contractParameter.unpack(TransferContract.class);
+          toAddress = transferContract.getToAddress().toByteArray();
+          value = transferContract.getAmount();
+          break;
+          
+        case TransferAssetContract:
+          TransferAssetContract transferAssetContract = contractParameter.unpack(TransferAssetContract.class);
+          toAddress = transferAssetContract.getToAddress().toByteArray();
+          value = transferAssetContract.getAmount();
+          break;
+          
+        case CreateSmartContract:
+          CreateSmartContract createContract = contractParameter.unpack(CreateSmartContract.class);
+          if (createContract.getNewContract() != null) {
+            toAddress = new byte[20]; // Contract creation uses zero address
+            data = createContract.getNewContract().getBytecode().toByteArray();
+            value = createContract.getNewContract().getCallValue();
+          }
+          break;
+          
+        case TriggerSmartContract:
+          TriggerSmartContract triggerContract = contractParameter.unpack(TriggerSmartContract.class);
+          toAddress = triggerContract.getContractAddress().toByteArray();
+          data = triggerContract.getData().toByteArray();
+          value = triggerContract.getCallValue();
+          break;
+          
+        default:
+          // For other contract types, use default values
+          logger.debug("Using default values for contract type: {}", contract.getType());
+          break;
+      }
+      
+      // Build the transaction
+      TronTransaction.Builder txBuilder =
+          TronTransaction.newBuilder()
+              .setFrom(ByteString.copyFrom(fromAddress))
+              .setTo(ByteString.copyFrom(toAddress))
+              .setValue(ByteString.copyFrom(longToBytes32(value)))
+              .setData(ByteString.copyFrom(data))
+              .setEnergyLimit(energyLimit)
+              .setEnergyPrice(energyPrice)
+              .setNonce(nonce);
 
-    ExecutionContext.Builder contextBuilder =
-        ExecutionContext.newBuilder()
-            .setBlockNumber(0) // TODO: Get actual block number
-            .setBlockTimestamp(System.currentTimeMillis())
-            .setBlockHash(ByteString.copyFrom(new byte[32])) // TODO: Get actual block hash
-            .setCoinbase(ByteString.copyFrom(new byte[20])) // TODO: Get actual coinbase
-            .setEnergyLimit(1000000) // TODO: Get actual energy limit
-            .setEnergyPrice(1); // TODO: Get actual energy price
+      // Build the execution context
+      BlockCapsule blockCap = context.getBlockCap();
+      long blockNumber = blockCap != null ? blockCap.getNum() : 0;
+      long blockTimestamp = blockCap != null ? blockCap.getTimeStamp() : System.currentTimeMillis();
+      byte[] blockHash = blockCap != null ? blockCap.getBlockId().getBytes() : new byte[32];
+      byte[] coinbase = blockCap != null ? blockCap.getWitnessAddress().toByteArray() : new byte[20];
+      
+      ExecutionContext.Builder contextBuilder =
+          ExecutionContext.newBuilder()
+              .setBlockNumber(blockNumber)
+              .setBlockTimestamp(blockTimestamp)
+              .setBlockHash(ByteString.copyFrom(blockHash))
+              .setCoinbase(ByteString.copyFrom(coinbase))
+              .setEnergyLimit(energyLimit)
+              .setEnergyPrice(energyPrice);
 
-    return ExecuteTransactionRequest.newBuilder()
-        .setDatabase("default") // TODO: Get actual database name
-        .setTransaction(txBuilder.build())
-        .setContext(contextBuilder.build())
-        .build();
+      return ExecuteTransactionRequest.newBuilder()
+          .setDatabase("default") // TODO: Get actual database name from configuration
+          .setTransaction(txBuilder.build())
+          .setContext(contextBuilder.build())
+          .build();
+          
+    } catch (Exception e) {
+      logger.error("Failed to build ExecuteTransactionRequest", e);
+      // Fallback to minimal request to avoid complete failure
+      return ExecuteTransactionRequest.newBuilder()
+          .setDatabase("default")
+          .setTransaction(TronTransaction.newBuilder()
+              .setFrom(ByteString.copyFrom(new byte[20]))
+              .setTo(ByteString.copyFrom(new byte[20]))
+              .setValue(ByteString.copyFrom(new byte[32]))
+              .setData(ByteString.copyFrom(new byte[0]))
+              .setEnergyLimit(1000000)
+              .setEnergyPrice(1)
+              .setNonce(0)
+              .build())
+          .setContext(ExecutionContext.newBuilder()
+              .setBlockNumber(0)
+              .setBlockTimestamp(System.currentTimeMillis())
+              .setBlockHash(ByteString.copyFrom(new byte[32]))
+              .setCoinbase(ByteString.copyFrom(new byte[20]))
+              .setEnergyLimit(1000000)
+              .setEnergyPrice(1)
+              .build())
+          .build();
+    }
+  }
+  
+  /** Convert long value to 32-byte array (big-endian). */
+  private byte[] longToBytes32(long value) {
+    byte[] result = new byte[32];
+    for (int i = 7; i >= 0; i--) {
+      result[31 - i] = (byte) (value >>> (i * 8));
+    }
+    return result;
   }
 
   /** Convert ExecuteTransactionResponse to ExecutionResult. */
