@@ -19,7 +19,6 @@ import org.slf4j.LoggerFactory;
 import tron.backend.BackendGrpc;
 import tron.backend.BackendOuterClass.BatchGetRequest;
 import tron.backend.BackendOuterClass.BatchGetResponse;
-import tron.backend.BackendOuterClass.WriteOperation;
 import tron.backend.BackendOuterClass.BatchWriteRequest;
 import tron.backend.BackendOuterClass.BeginTransactionRequest;
 import tron.backend.BackendOuterClass.BeginTransactionResponse;
@@ -60,6 +59,7 @@ import tron.backend.BackendOuterClass.ResetDBRequest;
 import tron.backend.BackendOuterClass.RollbackTransactionRequest;
 import tron.backend.BackendOuterClass.SizeRequest;
 import tron.backend.BackendOuterClass.SizeResponse;
+import tron.backend.BackendOuterClass.WriteOperation;
 
 /**
  * gRPC-based implementation of StorageSPI that communicates with Rust backend service. This
@@ -88,14 +88,15 @@ public class RemoteStorageSPI implements StorageSPI {
     if (port <= 0 || port > 65535) {
       throw new IllegalArgumentException("Port must be between 1 and 65535, got: " + port);
     }
-    
+
     this.host = host.trim();
     this.port = port;
-    
+
     try {
       this.channel = ManagedChannelBuilder.forAddress(this.host, this.port).usePlaintext().build();
     } catch (Exception e) {
-      throw new RuntimeException("Failed to create gRPC channel for " + this.host + ":" + this.port, e);
+      throw new RuntimeException(
+          "Failed to create gRPC channel for " + this.host + ":" + this.port, e);
     }
 
     this.blockingStub = BackendGrpc.newBlockingStub(channel);
@@ -110,7 +111,10 @@ public class RemoteStorageSPI implements StorageSPI {
         () -> {
           try {
             GetRequest request =
-                GetRequest.newBuilder().setDatabase(dbName).setKey(ByteString.copyFrom(key)).build();
+                GetRequest.newBuilder()
+                    .setDatabase(dbName)
+                    .setKey(ByteString.copyFrom(key))
+                    .build();
 
             GetResponse response = blockingStub.get(request);
             logger.debug(
@@ -178,7 +182,10 @@ public class RemoteStorageSPI implements StorageSPI {
         () -> {
           try {
             HasRequest request =
-                HasRequest.newBuilder().setDatabase(dbName).setKey(ByteString.copyFrom(key)).build();
+                HasRequest.newBuilder()
+                    .setDatabase(dbName)
+                    .setKey(ByteString.copyFrom(key))
+                    .build();
 
             HasResponse response = blockingStub.has(request);
             logger.debug(
@@ -234,7 +241,8 @@ public class RemoteStorageSPI implements StorageSPI {
     return CompletableFuture.supplyAsync(
         () -> {
           try {
-            BatchGetRequest.Builder requestBuilder = BatchGetRequest.newBuilder().setDatabase(dbName);
+            BatchGetRequest.Builder requestBuilder =
+                BatchGetRequest.newBuilder().setDatabase(dbName);
 
             for (byte[] key : keys) {
               requestBuilder.addKeys(ByteString.copyFrom(key));
