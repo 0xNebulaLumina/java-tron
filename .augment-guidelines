@@ -84,7 +84,7 @@ JVM (java-tron core) ⇄ gRPC/IPC ⇄ Rust-Backend (unified process)
   - ✅ Successful compilation of all crates
   - ✅ Binary creation (`target/debug/tron-backend`)
   - ✅ Startup verification with proper logging
-  - ✅ gRPC server listening on port 50012
+  - ✅ gRPC server listening on port 50011
   - ✅ Module registration and initialization
 
 ### ✅ PHASE 2 COMPLETED - REVM Integration
@@ -300,7 +300,7 @@ target/debug/
 ```
 
 ### Key Configuration
-- **Server**: `127.0.0.1:50012` (different from storage service port 50011)
+- **Server**: `127.0.0.1:50011`
 - **Modules**: Both storage and execution enabled by default
 - **Logging**: Configurable via `RUST_LOG` environment variable
 - **Features**: Compile-time module inclusion via Cargo features
@@ -308,7 +308,7 @@ target/debug/
 ## Integration Points
 
 ### With Existing Systems
-- **Java-tron**: Ready for gRPC integration on port 50012
+- **Java-tron**: Ready for gRPC integration on port 50011
 - **Storage Service**: Being replaced by embedded storage module
 - **Performance Testing**: Existing test infrastructure can be adapted
 - **Docker Compose**: Ready for container orchestration

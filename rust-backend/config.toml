@@ -1,6 +1,6 @@
 [server]
 host = "127.0.0.1"
-port = 50012
+port = 50011
 max_connections = 1000
 keepalive_timeout = 60
 

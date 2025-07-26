@@ -210,4 +210,8 @@ impl Module for ExecutionModule {
         metrics.insert("bandwidth_limit".to_string(), self.config.bandwidth_limit as f64);
         metrics
     }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 } 

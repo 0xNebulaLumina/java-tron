@@ -8,29 +8,53 @@ service Backend {
   rpc Health(HealthRequest) returns (HealthResponse);
   rpc GetMetadata(MetadataRequest) returns (MetadataResponse);
   
-  // Storage operations (existing)
+  // Basic Storage Operations
   rpc Get(GetRequest) returns (GetResponse);
   rpc Put(PutRequest) returns (PutResponse);
   rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Has(HasRequest) returns (HasResponse);
+  
+  // Batch Storage Operations
   rpc BatchWrite(BatchWriteRequest) returns (BatchWriteResponse);
-  rpc CreateIterator(CreateIteratorRequest) returns (CreateIteratorResponse);
-  rpc IteratorNext(IteratorNextRequest) returns (IteratorNextResponse);
-  rpc CloseIterator(CloseIteratorRequest) returns (CloseIteratorResponse);
-  rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
-  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
-  rpc CreateTransaction(CreateTransactionRequest) returns (CreateTransactionResponse);
+  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
+  
+  // Iterator Operations
+  rpc Iterator(IteratorRequest) returns (stream IteratorResponse);
+  rpc GetKeysNext(GetKeysNextRequest) returns (GetKeysNextResponse);
+  rpc GetValuesNext(GetValuesNextRequest) returns (GetValuesNextResponse);
+  rpc GetNext(GetNextRequest) returns (GetNextResponse);
+  rpc PrefixQuery(PrefixQueryRequest) returns (PrefixQueryResponse);
+  
+  // Database Management
+  rpc InitDB(InitDBRequest) returns (InitDBResponse);
+  rpc CloseDB(CloseDBRequest) returns (CloseDBResponse);
+  rpc ResetDB(ResetDBRequest) returns (ResetDBResponse);
+  rpc IsAlive(IsAliveRequest) returns (IsAliveResponse);
+  rpc Size(SizeRequest) returns (SizeResponse);
+  rpc IsEmpty(IsEmptyRequest) returns (IsEmptyResponse);
+  
+  // Transaction Support
+  rpc BeginTransaction(BeginTransactionRequest) returns (BeginTransactionResponse);
   rpc CommitTransaction(CommitTransactionRequest) returns (CommitTransactionResponse);
   rpc RollbackTransaction(RollbackTransactionRequest) returns (RollbackTransactionResponse);
-  rpc CreateDatabase(CreateDatabaseRequest) returns (CreateDatabaseResponse);
-  rpc DropDatabase(DropDatabaseRequest) returns (DropDatabaseResponse);
-  rpc ListDatabases(ListDatabasesRequest) returns (ListDatabasesResponse);
+  
+  // Snapshot Support
+  rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
+  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
+  rpc GetFromSnapshot(GetFromSnapshotRequest) returns (GetFromSnapshotResponse);
+  
+  // Storage Metadata & Monitoring
   rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+  rpc ListDatabases(ListDatabasesRequest) returns (ListDatabasesResponse);
+  rpc StreamMetrics(StreamMetricsRequest) returns (stream MetricsResponse);
+  
+  // Advanced Database Operations
   rpc CompactRange(CompactRangeRequest) returns (CompactRangeResponse);
   rpc GetProperty(GetPropertyRequest) returns (GetPropertyResponse);
   rpc BackupDatabase(BackupDatabaseRequest) returns (BackupDatabaseResponse);
   rpc RestoreDatabase(RestoreDatabaseRequest) returns (RestoreDatabaseResponse);
   
-  // Execution operations (new)
+  // Execution operations
   rpc ExecuteTransaction(ExecuteTransactionRequest) returns (ExecuteTransactionResponse);
   rpc CallContract(CallContractRequest) returns (CallContractResponse);
   rpc EstimateEnergy(EstimateEnergyRequest) returns (EstimateEnergyResponse);
@@ -67,23 +91,25 @@ message MetadataResponse {
   int64 uptime_seconds = 4;
 }
 
-// Storage Messages (existing from storage.proto)
+// Basic Storage Operations Messages
 message GetRequest {
   string database = 1;
   bytes key = 2;
-  string snapshot_id = 3;
+  string snapshot_id = 3; // optional
 }
 
 message GetResponse {
   bytes value = 1;
   bool found = 2;
+  bool success = 3;
+  string error_message = 4;
 }
 
 message PutRequest {
   string database = 1;
   bytes key = 2;
   bytes value = 3;
-  string transaction_id = 4;
+  string transaction_id = 4; // optional
 }
 
 message PutResponse {
@@ -94,7 +120,7 @@ message PutResponse {
 message DeleteRequest {
   string database = 1;
   bytes key = 2;
-  string transaction_id = 3;
+  string transaction_id = 3; // optional
 }
 
 message DeleteResponse {
@@ -102,10 +128,23 @@ message DeleteResponse {
   string error_message = 2;
 }
 
+message HasRequest {
+  string database = 1;
+  bytes key = 2;
+  string snapshot_id = 3; // optional
+}
+
+message HasResponse {
+  bool exists = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+// Batch Operations Messages
 message BatchWriteRequest {
   string database = 1;
   repeated WriteOperation operations = 2;
-  string transaction_id = 3;
+  string transaction_id = 3; // optional
 }
 
 message WriteOperation {
@@ -124,69 +163,162 @@ message BatchWriteResponse {
   int32 operations_applied = 3;
 }
 
-message CreateIteratorRequest {
+message BatchGetRequest {
   string database = 1;
-  bytes start_key = 2;
-  bytes end_key = 3;
-  string snapshot_id = 4;
+  repeated bytes keys = 2;
+  string snapshot_id = 3; // optional
 }
 
-message CreateIteratorResponse {
-  string iterator_id = 1;
+message BatchGetResponse {
+  repeated KeyValue pairs = 1;
   bool success = 2;
   string error_message = 3;
-}
-
-message IteratorNextRequest {
-  string iterator_id = 1;
-  int32 count = 2;
-}
-
-message IteratorNextResponse {
-  repeated KeyValue pairs = 1;
-  bool has_more = 2;
-  bool success = 3;
-  string error_message = 4;
 }
 
 message KeyValue {
   bytes key = 1;
   bytes value = 2;
+  bool found = 3;
 }
 
-message CloseIteratorRequest {
-  string iterator_id = 1;
-}
-
-message CloseIteratorResponse {
-  bool success = 1;
-  string error_message = 2;
-}
-
-message CreateSnapshotRequest {
+// Iterator Operations Messages
+message IteratorRequest {
   string database = 1;
+  bytes start_key = 2; // optional
+  bytes end_key = 3; // optional
+  string snapshot_id = 4; // optional
 }
 
-message CreateSnapshotResponse {
-  string snapshot_id = 1;
+message IteratorResponse {
+  bytes key = 1;
+  bytes value = 2;
+  bool end_of_stream = 3;
+}
+
+message GetKeysNextRequest {
+  string database = 1;
+  bytes start_key = 2;
+  int32 limit = 3;
+  string snapshot_id = 4; // optional
+}
+
+message GetKeysNextResponse {
+  repeated bytes keys = 1;
   bool success = 2;
   string error_message = 3;
 }
 
-message DeleteSnapshotRequest {
-  string snapshot_id = 1;
+message GetValuesNextRequest {
+  string database = 1;
+  bytes start_key = 2;
+  int32 limit = 3;
+  string snapshot_id = 4; // optional
 }
 
-message DeleteSnapshotResponse {
+message GetValuesNextResponse {
+  repeated bytes values = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message GetNextRequest {
+  string database = 1;
+  bytes start_key = 2;
+  int32 limit = 3;
+  string snapshot_id = 4; // optional
+}
+
+message GetNextResponse {
+  repeated KeyValue pairs = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message PrefixQueryRequest {
+  string database = 1;
+  bytes prefix = 2;
+  string snapshot_id = 3; // optional
+}
+
+message PrefixQueryResponse {
+  repeated KeyValue pairs = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+// Database Management Messages
+message InitDBRequest {
+  string database = 1;
+  StorageConfig config = 2;
+}
+
+message InitDBResponse {
   bool success = 1;
   string error_message = 2;
 }
 
-message CreateTransactionRequest {
+message StorageConfig {
+  string engine = 1; // "ROCKSDB" or "LEVELDB"
+  map<string, string> engine_options = 2;
+  bool enable_statistics = 3;
+  int32 max_open_files = 4;
+  int64 block_cache_size = 5;
+}
+
+message CloseDBRequest {
   string database = 1;
 }
 
-message CreateTransactionResponse {
+message CloseDBResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message ResetDBRequest {
+  string database = 1;
+}
+
+message ResetDBResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message IsAliveRequest {
+  string database = 1;
+}
+
+message IsAliveResponse {
+  bool alive = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message SizeRequest {
+  string database = 1;
+}
+
+message SizeResponse {
+  int64 size = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message IsEmptyRequest {
+  string database = 1;
+}
+
+message IsEmptyResponse {
+  bool empty = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+// Transaction Messages
+message BeginTransactionRequest {
+  string database = 1;
+}
+
+message BeginTransactionResponse {
   string transaction_id = 1;
   bool success = 2;
   string error_message = 3;
@@ -210,39 +342,75 @@ message RollbackTransactionResponse {
   string error_message = 2;
 }
 
-message CreateDatabaseRequest {
-  string name = 1;
-  map<string, string> options = 2;
+// Snapshot Messages
+message CreateSnapshotRequest {
+  string database = 1;
 }
 
-message CreateDatabaseResponse {
+message CreateSnapshotResponse {
+  string snapshot_id = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message DeleteSnapshotRequest {
+  string snapshot_id = 1;
+}
+
+message DeleteSnapshotResponse {
   bool success = 1;
   string error_message = 2;
 }
 
-message DropDatabaseRequest {
-  string name = 1;
+message GetFromSnapshotRequest {
+  string snapshot_id = 1;
+  bytes key = 2;
 }
 
-message DropDatabaseResponse {
-  bool success = 1;
-  string error_message = 2;
+message GetFromSnapshotResponse {
+  bytes value = 1;
+  bool found = 2;
+  bool success = 3;
+  string error_message = 4;
+}
+
+// Storage Metadata Messages
+message GetStatsRequest {
+  string database = 1;
+}
+
+message GetStatsResponse {
+  StorageStats stats = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message StorageStats {
+  int64 total_keys = 1;
+  int64 total_size = 2;
+  map<string, string> engine_stats = 3;
+  int64 last_modified = 4;
 }
 
 message ListDatabasesRequest {}
 
 message ListDatabasesResponse {
   repeated string databases = 1;
+  bool success = 2;
+  string error_message = 3;
 }
 
-message GetStatsRequest {
+message StreamMetricsRequest {
+  string database = 1; // optional, empty for all databases
+}
+
+message MetricsResponse {
   string database = 1;
+  map<string, double> metrics = 2;
+  int64 timestamp = 3;
 }
 
-message GetStatsResponse {
-  map<string, string> stats = 1;
-}
-
+// Advanced Database Operations
 message CompactRangeRequest {
   string database = 1;
   bytes start_key = 2;
@@ -262,6 +430,8 @@ message GetPropertyRequest {
 message GetPropertyResponse {
   string value = 1;
   bool found = 2;
+  bool success = 3;
+  string error_message = 4;
 }
 
 message BackupDatabaseRequest {
@@ -284,7 +454,7 @@ message RestoreDatabaseResponse {
   string error_message = 2;
 }
 
-// Execution Messages (new)
+// Execution Messages (preserved from original backend.proto)
 message ExecuteTransactionRequest {
   string database = 1;
   TronTransaction transaction = 2;
@@ -417,6 +587,8 @@ message GetCodeRequest {
 message GetCodeResponse {
   bytes code = 1;
   bool found = 2;
+  bool success = 3;
+  string error_message = 4;
 }
 
 message GetStorageAtRequest {
@@ -429,6 +601,8 @@ message GetStorageAtRequest {
 message GetStorageAtResponse {
   bytes value = 1;
   bool found = 2;
+  bool success = 3;
+  string error_message = 4;
 }
 
 message GetNonceRequest {
@@ -440,6 +614,8 @@ message GetNonceRequest {
 message GetNonceResponse {
   int64 nonce = 1;
   bool found = 2;
+  bool success = 3;
+  string error_message = 4;
 }
 
 message GetBalanceRequest {
@@ -451,6 +627,8 @@ message GetBalanceRequest {
 message GetBalanceResponse {
   bytes balance = 1;
   bool found = 2;
+  bool success = 3;
+  string error_message = 4;
 }
 
 message CreateEvmSnapshotRequest {

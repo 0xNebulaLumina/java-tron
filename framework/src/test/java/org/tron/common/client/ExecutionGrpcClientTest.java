@@ -18,7 +18,7 @@ public class ExecutionGrpcClientTest {
   @Before
   public void setUp() {
     // Create client with default test configuration
-    client = new ExecutionGrpcClient("localhost", 50012);
+    client = new ExecutionGrpcClient("localhost", 50011);
   }
 
   @After
@@ -37,7 +37,7 @@ public class ExecutionGrpcClientTest {
 
   @Test
   public void testClientCreationWithTarget() {
-    ExecutionGrpcClient targetClient = new ExecutionGrpcClient("localhost:50012");
+    ExecutionGrpcClient targetClient = new ExecutionGrpcClient("localhost:50011");
     Assert.assertNotNull(targetClient);
     Assert.assertFalse(targetClient.isShutdown());
     targetClient.shutdown();
@@ -46,14 +46,14 @@ public class ExecutionGrpcClientTest {
   @Test
   public void testInvalidHostThrowsException() {
     try {
-      new ExecutionGrpcClient(null, 50012);
+      new ExecutionGrpcClient(null, 50011);
       Assert.fail("Should have thrown IllegalArgumentException");
     } catch (IllegalArgumentException e) {
       Assert.assertTrue(e.getMessage().contains("Host cannot be null"));
     }
 
     try {
-      new ExecutionGrpcClient("", 50012);
+      new ExecutionGrpcClient("", 50011);
       Assert.fail("Should have thrown IllegalArgumentException");
     } catch (IllegalArgumentException e) {
       Assert.assertTrue(e.getMessage().contains("Host cannot be null"));
