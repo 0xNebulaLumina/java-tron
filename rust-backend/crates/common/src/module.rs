@@ -26,6 +26,9 @@ pub trait Module: Send + Sync {
     
     /// Get module-specific metrics
     fn metrics(&self) -> HashMap<String, f64>;
+    
+    /// Allow downcasting to concrete module types
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 #[derive(Debug, Clone)]
