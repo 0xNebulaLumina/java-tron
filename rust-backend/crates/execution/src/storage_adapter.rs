@@ -88,6 +88,145 @@ impl StorageAdapter for InMemoryStorageAdapter {
     }
 }
 
+/// Storage adapter that uses the actual storage engine
+pub struct StorageEngineAdapter {
+    engine: tron_backend_storage::StorageEngine,
+    database: String,
+}
+
+impl StorageEngineAdapter {
+    pub fn new(engine: tron_backend_storage::StorageEngine, database: String) -> Self {
+        Self { engine, database }
+    }
+
+    /// Convert address to storage key for accounts
+    fn account_key(&self, address: &Address) -> Vec<u8> {
+        let mut key = Vec::with_capacity(21);
+        key.push(0x01); // Account prefix
+        key.extend_from_slice(address.as_slice());
+        key
+    }
+
+    /// Convert address to storage key for code
+    fn code_key(&self, address: &Address) -> Vec<u8> {
+        let mut key = Vec::with_capacity(21);
+        key.push(0x02); // Code prefix
+        key.extend_from_slice(address.as_slice());
+        key
+    }
+
+    /// Convert address and storage key to storage key
+    fn storage_key(&self, address: &Address, key: &U256) -> Vec<u8> {
+        let mut storage_key = Vec::with_capacity(53);
+        storage_key.push(0x03); // Storage prefix
+        storage_key.extend_from_slice(address.as_slice());
+        let key_bytes = key.to_be_bytes::<32>();
+        storage_key.extend_from_slice(&key_bytes);
+        storage_key
+    }
+}
+
+impl StorageAdapter for StorageEngineAdapter {
+    fn get_account(&self, address: &Address) -> Result<Option<AccountInfo>> {
+        let key = self.account_key(address);
+        match self.engine.get(&self.database, &key)? {
+            Some(data) => {
+                // Deserialize account info from bytes
+                // For now, use a simple format: balance(32) + nonce(8) + code_hash(32)
+                if data.len() >= 72 {
+                    let balance = U256::from_be_bytes(data[0..32].try_into().unwrap_or([0u8; 32]));
+                    let nonce = u64::from_be_bytes(data[32..40].try_into().unwrap_or([0u8; 8]));
+                    let code_hash = B256::from_slice(&data[40..72]);
+
+                    Ok(Some(AccountInfo {
+                        balance,
+                        nonce,
+                        code_hash,
+                        code: None, // Code is stored separately
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn get_code(&self, address: &Address) -> Result<Option<Bytecode>> {
+        let key = self.code_key(address);
+        match self.engine.get(&self.database, &key)? {
+            Some(data) => {
+                let bytecode = Bytecode::new_raw(data.into());
+                Ok(Some(bytecode))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn get_storage(&self, address: &Address, key: &U256) -> Result<U256> {
+        let storage_key = self.storage_key(address, key);
+        match self.engine.get(&self.database, &storage_key)? {
+            Some(data) => {
+                if data.len() >= 32 {
+                    Ok(U256::from_be_bytes(data[0..32].try_into().unwrap_or([0u8; 32])))
+                } else {
+                    Ok(U256::ZERO)
+                }
+            }
+            None => Ok(U256::ZERO),
+        }
+    }
+
+    fn set_account(&mut self, address: Address, account: AccountInfo) -> Result<()> {
+        let key = self.account_key(&address);
+        let mut data = Vec::with_capacity(72);
+
+        // Serialize account info: balance(32) + nonce(8) + code_hash(32)
+        let balance_bytes = account.balance.to_be_bytes::<32>();
+        data.extend_from_slice(&balance_bytes);
+
+        data.extend_from_slice(&account.nonce.to_be_bytes());
+        data.extend_from_slice(account.code_hash.as_slice());
+
+        self.engine.put(&self.database, &key, &data)?;
+        Ok(())
+    }
+
+    fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+        let key = self.code_key(&address);
+        let data = code.bytes();
+        self.engine.put(&self.database, &key, &data)?;
+        Ok(())
+    }
+
+    fn set_storage(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        let storage_key = self.storage_key(&address, &key);
+        if value == U256::ZERO {
+            // Delete zero values to save space
+            self.engine.delete(&self.database, &storage_key)?;
+        } else {
+            let data = value.to_be_bytes::<32>();
+            self.engine.put(&self.database, &storage_key, &data)?;
+        }
+        Ok(())
+    }
+
+    fn remove_account(&mut self, address: &Address) -> Result<()> {
+        // Remove account data
+        let account_key = self.account_key(address);
+        self.engine.delete(&self.database, &account_key)?;
+
+        // Remove code
+        let code_key = self.code_key(address);
+        self.engine.delete(&self.database, &code_key)?;
+
+        // Note: In a real implementation, we'd need to iterate and remove all storage keys
+        // For now, we'll leave storage cleanup for later optimization
+
+        Ok(())
+    }
+}
+
 /// Snapshot hook callback for capturing modified accounts
 pub type SnapshotHook = Box<dyn Fn(&HashSet<Address>) + Send + Sync>;
 

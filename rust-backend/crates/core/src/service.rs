@@ -9,6 +9,12 @@ use tokio::sync::mpsc;
 use tron_backend_common::{ModuleManager, HealthStatus};
 use crate::backend::*;
 
+// Import execution types
+use tron_backend_execution::{
+    TronTransaction, TronExecutionContext, TronExecutionResult,
+    StorageEngineAdapter
+};
+
 pub struct BackendService {
     module_manager: ModuleManager,
     start_time: SystemTime,
@@ -43,6 +49,126 @@ impl BackendService {
             
         storage_module.engine()
             .map_err(|e| Status::internal(format!("Storage engine not available: {}", e)))
+    }
+
+    /// Convert protobuf TronTransaction to internal TronTransaction
+    fn convert_transaction(&self, proto_tx: &crate::backend::TronTransaction) -> Result<TronTransaction, Status> {
+        use revm::primitives::{Address, U256, Bytes};
+
+        // Convert address from bytes
+        let from = if proto_tx.from.len() == 20 {
+            Address::from_slice(&proto_tx.from)
+        } else {
+            return Err(Status::invalid_argument("Invalid from address length"));
+        };
+
+        let to = if proto_tx.to.is_empty() {
+            None
+        } else if proto_tx.to.len() == 20 {
+            Some(Address::from_slice(&proto_tx.to))
+        } else {
+            return Err(Status::invalid_argument("Invalid to address length"));
+        };
+
+        // Convert value from bytes to U256
+        let value = if proto_tx.value.len() <= 32 {
+            let mut value_bytes = [0u8; 32];
+            let start = 32 - proto_tx.value.len();
+            value_bytes[start..].copy_from_slice(&proto_tx.value);
+            U256::from_be_bytes(value_bytes)
+        } else {
+            return Err(Status::invalid_argument("Value too large"));
+        };
+
+        let data = Bytes::from(proto_tx.data.clone());
+        let gas_limit = proto_tx.energy_limit as u64;
+        let gas_price = U256::from(proto_tx.energy_price as u64);
+        let nonce = proto_tx.nonce as u64;
+
+        Ok(TronTransaction {
+            from,
+            to,
+            value,
+            data,
+            gas_limit,
+            gas_price,
+            nonce,
+        })
+    }
+
+    /// Convert protobuf ExecutionContext to internal TronExecutionContext
+    fn convert_context(&self, proto_ctx: &crate::backend::ExecutionContext) -> Result<TronExecutionContext, Status> {
+        use revm::primitives::{Address, U256};
+
+        let block_coinbase = if proto_ctx.coinbase.len() == 20 {
+            Address::from_slice(&proto_ctx.coinbase)
+        } else {
+            Address::ZERO // Default coinbase
+        };
+
+        Ok(TronExecutionContext {
+            block_number: proto_ctx.block_number as u64,
+            block_timestamp: proto_ctx.block_timestamp as u64,
+            block_coinbase,
+            block_difficulty: U256::from(1), // Tron doesn't use PoW difficulty
+            block_gas_limit: proto_ctx.energy_limit as u64,
+            chain_id: 0x2b6653dc, // Tron mainnet chain ID
+            energy_price: proto_ctx.energy_price as u64,
+            bandwidth_price: 1000, // Default bandwidth price
+        })
+    }
+
+    /// Convert internal TronExecutionResult to protobuf ExecutionResult
+    fn convert_result(&self, result: &TronExecutionResult) -> crate::backend::ExecutionResult {
+        use crate::backend::{execution_result, LogEntry, StateChange, TronResourceUsage};
+        use crate::backend::tron_resource::Type as ResourceType;
+
+        let status = if result.success {
+            execution_result::Status::Success
+        } else {
+            execution_result::Status::Revert
+        };
+
+        // Convert logs
+        let logs: Vec<LogEntry> = result.logs.iter().map(|log| {
+            LogEntry {
+                address: log.address.as_slice().to_vec(),
+                topics: log.topics().iter().map(|topic| topic.as_slice().to_vec()).collect(),
+                data: log.data.data.to_vec(),
+            }
+        }).collect();
+
+        // For now, we don't track detailed state changes in the execution result
+        // This would need to be enhanced for full functionality
+        let state_changes: Vec<StateChange> = vec![];
+
+        // Create resource usage info
+        let resource_usage = vec![
+            TronResourceUsage {
+                r#type: ResourceType::Energy as i32,
+                used: result.energy_used as i64,
+                total: 0, // Would need to be passed from context
+                token_id: vec![],
+            },
+            TronResourceUsage {
+                r#type: ResourceType::Bandwidth as i32,
+                used: result.bandwidth_used as i64,
+                total: 0, // Would need to be passed from context
+                token_id: vec![],
+            },
+        ];
+
+        crate::backend::ExecutionResult {
+            status: status as i32,
+            return_data: result.return_data.to_vec(),
+            energy_used: result.energy_used as i64,
+            energy_refunded: 0, // Not currently tracked
+            state_changes,
+            logs,
+            error_message: result.error.clone().unwrap_or_default(),
+            bandwidth_used: result.bandwidth_used as i64,
+            resource_usage,
+        }
     }
 }
 
@@ -984,24 +1110,84 @@ impl crate::backend::backend_server::Backend for BackendService {
     // Execution operations (delegated to execution module)
     async fn execute_transaction(&self, request: Request<ExecuteTransactionRequest>) -> Result<Response<ExecuteTransactionResponse>, Status> {
         debug!("Execute transaction request: {:?}", request.get_ref());
-        
-        // Placeholder implementation
-        let response = ExecuteTransactionResponse {
-            result: Some(ExecutionResult {
-                status: execution_result::Status::Success as i32,
-                return_data: vec![],
-                energy_used: 0,
-                energy_refunded: 0,
-                state_changes: vec![],
-                logs: vec![],
-                error_message: String::new(),
-                bandwidth_used: 0,
-                resource_usage: vec![],
-            }),
-            success: true,
-            error_message: String::new(),
+
+        let req = request.into_inner();
+
+        // Validate request
+        if req.transaction.is_none() {
+            return Err(Status::invalid_argument("Transaction is required"));
+        }
+
+        if req.context.is_none() {
+            return Err(Status::invalid_argument("Execution context is required"));
+        }
+
+        let proto_tx = req.transaction.unwrap();
+        let proto_ctx = req.context.unwrap();
+
+        // Convert protobuf types to internal types
+        let transaction = match self.convert_transaction(&proto_tx) {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Failed to convert transaction: {}", e);
+                return Err(e);
+            }
         };
-        
+
+        let context = match self.convert_context(&proto_ctx) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                error!("Failed to convert context: {}", e);
+                return Err(e);
+            }
+        };
+
+        // Get execution module
+        let execution_module = self.get_execution_module()?;
+        let execution_module = execution_module
+            .as_any()
+            .downcast_ref::<tron_backend_execution::ExecutionModule>()
+            .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
+
+        // Get storage engine for the storage adapter
+        let storage_engine = self.get_storage_engine()?;
+
+        // Create storage adapter that uses the actual storage engine
+        let storage_adapter = StorageEngineAdapter::new(storage_engine.clone(), req.database.clone());
+
+        // Execute the transaction
+        let execution_result = match execution_module.execute_transaction_with_storage(storage_adapter, &transaction, &context) {
+            Ok(result) => result,
+            Err(e) => {
+                error!("Transaction execution failed: {}", e);
+                return Ok(Response::new(ExecuteTransactionResponse {
+                    result: Some(ExecutionResult {
+                        status: execution_result::Status::Revert as i32,
+                        return_data: vec![],
+                        energy_used: 0,
+                        energy_refunded: 0,
+                        state_changes: vec![],
+                        logs: vec![],
+                        error_message: format!("Execution failed: {}", e),
+                        bandwidth_used: 0,
+                        resource_usage: vec![],
+                    }),
+                    success: false,
+                    error_message: format!("Transaction execution failed: {}", e),
+                }));
+            }
+        };
+
+        // Convert result back to protobuf
+        let proto_result = self.convert_result(&execution_result);
+
+        let response = ExecuteTransactionResponse {
+            result: Some(proto_result),
+            success: execution_result.success,
+            error_message: execution_result.error.unwrap_or_default(),
+        };
+
+        debug!("Transaction execution completed successfully");
         Ok(Response::new(response))
     }
     

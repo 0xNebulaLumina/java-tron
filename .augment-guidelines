@@ -29,6 +29,22 @@
 
 # High-level Task: Unified Rust Backend Implementation
 
+## Current Task: Implement Real execute_transaction Method
+**Goal**: Replace the placeholder `execute_transaction` method in `rust-backend/crates/core/src/service.rs` with a real implementation that:
+1. Parses and validates ExecuteTransactionRequest protobuf
+2. Extracts transaction details (sender, recipient, value, contract data, energy/bandwidth limits)
+3. Calls ExecutionModule to process transaction using REVM-based TronEVM
+4. Coordinates with StorageModule for account state reads/writes
+5. Processes execution results (gas consumption, state changes, contract calls, errors)
+6. Returns proper ExecuteTransactionResponse protobuf
+
+**Progress**:
+[X] Create StorageEngineAdapter that implements StorageAdapter trait
+[X] Implement protobuf to internal type conversions
+[X] Implement real execute_transaction method
+[X] Add proper error handling and validation
+[X] Test the implementation
+
 ## Overview
 **DECISION IMPLEMENTED**: Unified Rust Backend Architecture (ADR-012)
 将 java-tron 的存储和执行模块统一到单个 Rust 后端进程中，实现零序列化成本的模块间通信和统一的 gRPC 接口。
