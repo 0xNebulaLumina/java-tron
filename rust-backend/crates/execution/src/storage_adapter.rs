@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use revm::primitives::{Account, AccountInfo, Bytecode, B256, U256, Address};
 use revm::{Database, DatabaseCommit};
+use crate::tron_evm::{StateChange, StateChangeType};
 
 /// Storage adapter trait for different storage backends
 pub trait StorageAdapter: Send + Sync {
@@ -246,6 +247,11 @@ pub struct StorageAdapterDatabase<S: StorageAdapter> {
     modified_accounts: HashSet<Address>,
     // Snapshot hooks for state comparison
     snapshot_hooks: Vec<SnapshotHook>,
+    // State change tracking
+    state_changes: Vec<StateChange>,
+    // Account snapshots for state change tracking
+    account_snapshots: HashMap<Address, Option<AccountInfo>>,
+    storage_snapshots: HashMap<Address, HashMap<U256, U256>>,
 }
 
 impl<S: StorageAdapter> StorageAdapterDatabase<S> {
@@ -260,6 +266,9 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
             snapshots: Vec::new(),
             modified_accounts: HashSet::new(),
             snapshot_hooks: Vec::new(),
+            state_changes: Vec::new(),
+            account_snapshots: HashMap::new(),
+            storage_snapshots: HashMap::new(),
         }
     }
     
@@ -302,6 +311,25 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
         self.modified_accounts.clear();
     }
 
+    /// Get the current state changes
+    pub fn get_state_changes(&self) -> &Vec<StateChange> {
+        &self.state_changes
+    }
+
+    /// Clear the state changes
+    pub fn clear_state_changes(&mut self) {
+        self.state_changes.clear();
+        self.account_snapshots.clear();
+        self.storage_snapshots.clear();
+    }
+
+    /// Take ownership of state changes (clears internal state)
+    pub fn take_state_changes(&mut self) -> Vec<StateChange> {
+        let changes = self.state_changes.clone();
+        self.clear_state_changes();
+        changes
+    }
+
     /// Trigger snapshot hooks with current modified accounts
     pub fn trigger_snapshot_hooks(&self) {
         for hook in &self.snapshot_hooks {
@@ -315,6 +343,63 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
         if was_new {
             // Trigger hooks when a new account is modified
             self.trigger_snapshot_hooks();
+        }
+    }
+
+    /// Generate state changes for an account
+    fn generate_account_state_changes(&mut self, address: Address, account: &Account) {
+        let old_info_opt = self.account_snapshots.get(&address);
+        let new_info = &account.info;
+
+        match old_info_opt {
+            Some(Some(old_info)) => {
+                // Track balance changes
+                if old_info.balance != new_info.balance {
+                    self.state_changes.push(StateChange {
+                        address,
+                        change_type: StateChangeType::AccountBalance {
+                            old_value: old_info.balance,
+                            new_value: new_info.balance,
+                        },
+                    });
+                }
+
+                // Track nonce changes
+                if old_info.nonce != new_info.nonce {
+                    self.state_changes.push(StateChange {
+                        address,
+                        change_type: StateChangeType::AccountNonce {
+                            old_value: old_info.nonce,
+                            new_value: new_info.nonce,
+                        },
+                    });
+                }
+
+                // Track code changes
+                if old_info.code_hash != new_info.code_hash {
+                    self.state_changes.push(StateChange {
+                        address,
+                        change_type: StateChangeType::AccountCode {
+                            old_value: old_info.code.as_ref().map(|c| c.bytes()),
+                            new_value: new_info.code.as_ref().map(|c| c.bytes()),
+                        },
+                    });
+                }
+            }
+            Some(None) => {
+                // Account was previously deleted, now being recreated
+                self.state_changes.push(StateChange {
+                    address,
+                    change_type: StateChangeType::AccountCreated,
+                });
+            }
+            None => {
+                // New account created
+                self.state_changes.push(StateChange {
+                    address,
+                    change_type: StateChangeType::AccountCreated,
+                });
+            }
         }
     }
 }
@@ -346,6 +431,12 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
 
         // Load from storage
         let result = self.storage.get_account(&address)?;
+
+        // Capture account snapshot for state change tracking (only if not already captured)
+        if !self.account_snapshots.contains_key(&address) {
+            self.account_snapshots.insert(address, result.clone());
+        }
+
         self.account_cache.insert(address, result.clone());
         Ok(result)
     }
@@ -374,6 +465,13 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
 
         // Load from storage
         let value = self.storage.get_storage(&address, &index)?;
+
+        // Capture storage snapshot for state change tracking (only if not already captured)
+        let storage_map = self.storage_snapshots.entry(address).or_insert_with(HashMap::new);
+        if !storage_map.contains_key(&index) {
+            storage_map.insert(index, value);
+        }
+
         self.storage_cache.insert(key, value);
         Ok(value)
     }
@@ -393,10 +491,33 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
             // Mark account as modified for shadow verification
             self.mark_account_modified(address);
 
+            // Generate state changes for this account
+            self.generate_account_state_changes(address, &account);
+
             // Clone storage before iterating to avoid borrow checker issues
             let storage_changes: HashMap<U256, U256> = account.storage.iter()
                 .map(|(k, slot)| (*k, slot.present_value))
                 .collect();
+
+            // Generate storage state changes
+            for (key, new_value) in &storage_changes {
+                let old_value = self.storage_snapshots
+                    .get(&address)
+                    .and_then(|map| map.get(key))
+                    .copied()
+                    .unwrap_or(U256::ZERO);
+
+                if old_value != *new_value {
+                    self.state_changes.push(StateChange {
+                        address,
+                        change_type: StateChangeType::StorageSlot {
+                            key: *key,
+                            old_value,
+                            new_value: *new_value,
+                        },
+                    });
+                }
+            }
 
             // Store account changes
             self.accounts.insert(address, Some(account.clone()));
@@ -411,6 +532,10 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
 
             // Handle self-destruct
             if account.is_selfdestructed() {
+                self.state_changes.push(StateChange {
+                    address,
+                    change_type: StateChangeType::AccountDeleted,
+                });
                 self.accounts.insert(address, None);
             }
         }

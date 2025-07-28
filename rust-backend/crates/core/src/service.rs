@@ -138,9 +138,10 @@ impl BackendService {
             }
         }).collect();
 
-        // For now, we don't track detailed state changes in the execution result
-        // This would need to be enhanced for full functionality
-        let state_changes: Vec<StateChange> = vec![];
+        // Convert state changes from execution result
+        let state_changes: Vec<StateChange> = result.state_changes.iter().map(|change| {
+            self.convert_state_change(change)
+        }).collect();
 
         // Create resource usage info
         let resource_usage = vec![
@@ -168,6 +169,62 @@ impl BackendService {
             error_message: result.error.clone().unwrap_or_default(),
             bandwidth_used: result.bandwidth_used as i64,
             resource_usage,
+        }
+    }
+
+    /// Convert internal StateChange to protobuf StateChange
+    fn convert_state_change(&self, change: &tron_backend_execution::StateChange) -> crate::backend::StateChange {
+        use tron_backend_execution::StateChangeType;
+
+        match &change.change_type {
+            StateChangeType::AccountBalance { old_value, new_value } => {
+                crate::backend::StateChange {
+                    address: change.address.as_slice().to_vec(),
+                    key: b"balance".to_vec(), // Special key for balance
+                    old_value: old_value.to_be_bytes::<32>().to_vec(),
+                    new_value: new_value.to_be_bytes::<32>().to_vec(),
+                }
+            }
+            StateChangeType::AccountNonce { old_value, new_value } => {
+                crate::backend::StateChange {
+                    address: change.address.as_slice().to_vec(),
+                    key: b"nonce".to_vec(), // Special key for nonce
+                    old_value: old_value.to_be_bytes().to_vec(),
+                    new_value: new_value.to_be_bytes().to_vec(),
+                }
+            }
+            StateChangeType::AccountCode { old_value, new_value } => {
+                crate::backend::StateChange {
+                    address: change.address.as_slice().to_vec(),
+                    key: b"code".to_vec(), // Special key for code
+                    old_value: old_value.as_ref().map(|c| c.to_vec()).unwrap_or_default(),
+                    new_value: new_value.as_ref().map(|c| c.to_vec()).unwrap_or_default(),
+                }
+            }
+            StateChangeType::StorageSlot { key, old_value, new_value } => {
+                crate::backend::StateChange {
+                    address: change.address.as_slice().to_vec(),
+                    key: key.to_be_bytes::<32>().to_vec(),
+                    old_value: old_value.to_be_bytes::<32>().to_vec(),
+                    new_value: new_value.to_be_bytes::<32>().to_vec(),
+                }
+            }
+            StateChangeType::AccountCreated => {
+                crate::backend::StateChange {
+                    address: change.address.as_slice().to_vec(),
+                    key: b"created".to_vec(), // Special key for account creation
+                    old_value: vec![],
+                    new_value: vec![1], // Indicate creation
+                }
+            }
+            StateChangeType::AccountDeleted => {
+                crate::backend::StateChange {
+                    address: change.address.as_slice().to_vec(),
+                    key: b"deleted".to_vec(), // Special key for account deletion
+                    old_value: vec![1], // Indicate existence
+                    new_value: vec![], // Indicate deletion
+                }
+            }
         }
     }
 }

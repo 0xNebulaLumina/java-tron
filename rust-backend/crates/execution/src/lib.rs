@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use tron_backend_common::{Module, ModuleHealth, ExecutionConfig};
 
 // Re-export key types for external use
-pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult};
+pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, StateChange, StateChangeType};
 pub use precompiles::TronPrecompiles;
 pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageAdapterDatabase, StorageEngineAdapter};
 
@@ -36,9 +36,17 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
-        let database = StorageAdapterDatabase::new(storage);
+        let mut database = StorageAdapterDatabase::new(storage);
         let mut evm = TronEvm::new(database, &self.config)?;
-        evm.execute_transaction(tx, context)
+
+        // Execute the transaction
+        let mut result = evm.execute_transaction(tx, context)?;
+
+        // Extract state changes from the database
+        let state_changes = evm.database_mut().take_state_changes();
+        result.state_changes = state_changes;
+
+        Ok(result)
     }
 
     /// Call a contract without state changes

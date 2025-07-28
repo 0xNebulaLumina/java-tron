@@ -1,13 +1,108 @@
+use std::collections::HashMap;
 use anyhow::{Result, anyhow};
 use revm::{
     primitives::{
-        ExecutionResult, Output,
+        ExecutionResult, Output, Address, U256, Bytes, AccountInfo, Bytecode, B256,
     },
     Evm, Database, DatabaseCommit,
 };
 
 use tron_backend_common::ExecutionConfig;
 use crate::precompiles::TronPrecompiles;
+
+// State change tracking types
+#[derive(Debug, Clone)]
+pub enum StateChangeType {
+    AccountBalance { old_value: U256, new_value: U256 },
+    AccountNonce { old_value: u64, new_value: u64 },
+    AccountCode { old_value: Option<Bytes>, new_value: Option<Bytes> },
+    StorageSlot { key: U256, old_value: U256, new_value: U256 },
+    AccountCreated,
+    AccountDeleted,
+}
+
+#[derive(Debug, Clone)]
+pub struct StateChange {
+    pub address: Address,
+    pub change_type: StateChangeType,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StateChangeTracker {
+    pub changes: Vec<StateChange>,
+    // Track account states before modification for comparison
+    pub account_snapshots: HashMap<Address, AccountInfo>,
+    pub storage_snapshots: HashMap<Address, HashMap<U256, U256>>,
+}
+
+impl StateChangeTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn track_account_change(&mut self, address: Address, old_info: Option<AccountInfo>, new_info: AccountInfo) {
+        if let Some(old) = old_info {
+            // Track balance changes
+            if old.balance != new_info.balance {
+                self.changes.push(StateChange {
+                    address,
+                    change_type: StateChangeType::AccountBalance {
+                        old_value: old.balance,
+                        new_value: new_info.balance,
+                    },
+                });
+            }
+
+            // Track nonce changes
+            if old.nonce != new_info.nonce {
+                self.changes.push(StateChange {
+                    address,
+                    change_type: StateChangeType::AccountNonce {
+                        old_value: old.nonce,
+                        new_value: new_info.nonce,
+                    },
+                });
+            }
+
+            // Track code changes
+            if old.code_hash != new_info.code_hash {
+                self.changes.push(StateChange {
+                    address,
+                    change_type: StateChangeType::AccountCode {
+                        old_value: old.code.map(|c| c.bytes()),
+                        new_value: new_info.code.map(|c| c.bytes()),
+                    },
+                });
+            }
+        } else {
+            // New account created
+            self.changes.push(StateChange {
+                address,
+                change_type: StateChangeType::AccountCreated,
+            });
+        }
+    }
+
+    pub fn track_storage_change(&mut self, address: Address, key: U256, old_value: U256, new_value: U256) {
+        if old_value != new_value {
+            self.changes.push(StateChange {
+                address,
+                change_type: StateChangeType::StorageSlot {
+                    key,
+                    old_value,
+                    new_value,
+                },
+            });
+        }
+    }
+
+    pub fn track_account_deletion(&mut self, address: Address) {
+        self.changes.push(StateChange {
+            address,
+            change_type: StateChangeType::AccountDeleted,
+        });
+    }
+}
 
 // Tron-specific transaction and execution types
 #[derive(Debug, Clone)]
@@ -41,6 +136,7 @@ pub struct TronExecutionResult {
     pub bandwidth_used: u64,
     pub logs: Vec<revm::primitives::Log>,
     pub error: Option<String>,
+    pub state_changes: Vec<StateChange>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -80,6 +176,11 @@ where
             energy_accounting,
             bandwidth_accounting,
         })
+    }
+
+    /// Get mutable access to the database
+    pub fn database_mut(&mut self) -> &mut DB {
+        &mut self.evm.context.evm.db
     }
 
     /// Execute a transaction and modify state
@@ -167,6 +268,7 @@ where
                     bandwidth_used,
                     logs,
                     error: None,
+                    state_changes: vec![], // TODO: Implement state change tracking
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -177,6 +279,7 @@ where
                     bandwidth_used,
                     logs: vec![],
                     error: Some("Transaction reverted".to_string()),
+                    state_changes: vec![], // TODO: Implement state change tracking
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -187,6 +290,7 @@ where
                     bandwidth_used,
                     logs: vec![],
                     error: Some(format!("Transaction halted: {:?}", reason)),
+                    state_changes: vec![], // TODO: Implement state change tracking
                 })
             }
         }
@@ -211,6 +315,7 @@ where
                     bandwidth_used: 0, // Call doesn't use bandwidth
                     logs,
                     error: None,
+                    state_changes: vec![], // TODO: Implement state change tracking
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -221,6 +326,7 @@ where
                     bandwidth_used: 0,
                     logs: vec![],
                     error: Some("Call reverted".to_string()),
+                    state_changes: vec![], // TODO: Implement state change tracking
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -231,6 +337,7 @@ where
                     bandwidth_used: 0,
                     logs: vec![],
                     error: Some(format!("Call halted: {:?}", reason)),
+                    state_changes: vec![], // TODO: Implement state change tracking
                 })
             }
         }
