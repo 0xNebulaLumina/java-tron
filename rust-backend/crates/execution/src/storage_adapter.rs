@@ -91,6 +91,15 @@ impl StorageAdapter for InMemoryStorageAdapter {
 /// Snapshot hook callback for capturing modified accounts
 pub type SnapshotHook = Box<dyn Fn(&HashSet<Address>) + Send + Sync>;
 
+/// Represents a single state change with old and new values
+#[derive(Debug, Clone)]
+pub struct StateChangeRecord {
+    pub address: Address,
+    pub key: U256,
+    pub old_value: U256,
+    pub new_value: U256,
+}
+
 /// Database adapter that implements REVM's Database trait
 pub struct StorageAdapterDatabase<S: StorageAdapter> {
     storage: S,
@@ -101,6 +110,8 @@ pub struct StorageAdapterDatabase<S: StorageAdapter> {
     // Track changes for commit
     accounts: HashMap<Address, Option<Account>>,
     storage_changes: HashMap<Address, HashMap<U256, U256>>,
+    // Track detailed state changes with old and new values
+    state_change_records: Vec<StateChangeRecord>,
     // Snapshots for revert support
     snapshots: Vec<(HashMap<Address, Option<Account>>, HashMap<Address, HashMap<U256, U256>>)>,
     // Track modified accounts for shadow verification
@@ -118,6 +129,7 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
             storage_cache: HashMap::new(),
             accounts: HashMap::new(),
             storage_changes: HashMap::new(),
+            state_change_records: Vec::new(),
             snapshots: Vec::new(),
             modified_accounts: HashSet::new(),
             snapshot_hooks: Vec::new(),
@@ -153,6 +165,16 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
     /// Get the current account changes tracked by this database
     pub fn get_account_changes(&self) -> &HashMap<Address, Option<Account>> {
         &self.accounts
+    }
+
+    /// Get the detailed state change records with old and new values
+    pub fn get_state_change_records(&self) -> &Vec<StateChangeRecord> {
+        &self.state_change_records
+    }
+
+    /// Clear all state change records (useful after processing)
+    pub fn clear_state_change_records(&mut self) {
+        self.state_change_records.clear();
     }
 
     /// Add a snapshot hook for capturing modified accounts
@@ -272,12 +294,37 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
             // Store account changes
             self.accounts.insert(address, Some(account.clone()));
 
-            // Store storage changes
-            for (key, value) in storage_changes {
+            // Store storage changes and track detailed state changes
+            for (key, new_value) in storage_changes {
+                // Get the old value before updating
+                let old_value = self.storage_changes
+                    .get(&address)
+                    .and_then(|storage| storage.get(&key))
+                    .copied()
+                    .unwrap_or_else(|| {
+                        // If not in our changes, try to get from storage cache
+                        self.storage_cache.get(&(address, key)).copied()
+                            .unwrap_or_else(|| {
+                                // If not in cache, try to load from storage
+                                self.storage.get_storage(&address, &key).unwrap_or(U256::ZERO)
+                            })
+                    });
+
+                // Only record the change if the value actually changed
+                if old_value != new_value {
+                    self.state_change_records.push(StateChangeRecord {
+                        address,
+                        key,
+                        old_value,
+                        new_value,
+                    });
+                }
+
+                // Update the storage changes map
                 self.storage_changes
                     .entry(address)
                     .or_insert_with(HashMap::new)
-                    .insert(key, value);
+                    .insert(key, new_value);
             }
 
             // Handle self-destruct

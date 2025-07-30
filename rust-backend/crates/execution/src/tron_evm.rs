@@ -8,6 +8,7 @@ use revm::{
 
 use tron_backend_common::ExecutionConfig;
 use crate::precompiles::TronPrecompiles;
+use crate::storage_adapter::{StorageAdapterDatabase, StorageAdapter};
 
 // Tron-specific transaction and execution types
 #[derive(Debug, Clone)]
@@ -291,6 +292,49 @@ where
         // 3. Capturing old values before changes occur
         
         self.state_changes.clone()
+    }
+}
+
+// Specialized implementation for StorageAdapterDatabase
+impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S>> {
+    /// Extract state changes from StorageAdapterDatabase after execution
+    pub fn extract_state_changes_from_db(&mut self) -> Vec<TronStateChange> {
+        let db = &mut self.evm.context.evm.db;
+        let state_records = db.get_state_change_records();
+        
+        let state_changes: Vec<TronStateChange> = state_records.iter().map(|record| {
+            TronStateChange {
+                address: record.address,
+                key: record.key,
+                old_value: record.old_value,
+                new_value: record.new_value,
+            }
+        }).collect();
+        
+        // Clear the records after extracting them
+        db.clear_state_change_records();
+        
+        state_changes
+    }
+
+    /// Execute a transaction and capture real state changes
+    pub fn execute_transaction_with_state_tracking(
+        &mut self,
+        tx: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult> {
+        // Clear previous state changes
+        self.state_changes.clear();
+        
+        self.setup_environment(tx, context);
+
+        let result = self.evm.transact().map_err(|e| anyhow!("Transaction execution failed: {:?}", e))?;
+        let mut execution_result = self.process_execution_result(result.result, tx, context)?;
+        
+        // Extract real state changes from the database
+        execution_result.state_changes = self.extract_state_changes_from_db();
+        
+        Ok(execution_result)
     }
 }
 
