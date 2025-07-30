@@ -7,7 +7,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
 
 use tron_backend_common::{ModuleManager, HealthStatus};
-use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, ExecutionModule};
+use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule};
 use crate::backend::*;
 
 pub struct BackendService {
@@ -1254,6 +1254,15 @@ impl BackendService {
                 data: log.data.data.to_vec(),
             }
         }).collect();
+
+        let state_changes: Vec<StateChange> = result.state_changes.iter().map(|change| {
+            StateChange {
+                address: change.address.as_slice().to_vec(),
+                key: change.key.to_be_bytes::<32>().to_vec(),
+                old_value: change.old_value.to_be_bytes::<32>().to_vec(),
+                new_value: change.new_value.to_be_bytes::<32>().to_vec(),
+            }
+        }).collect();
         
         let error_message = result.error.unwrap_or_default();
         
@@ -1263,7 +1272,7 @@ impl BackendService {
                 return_data: result.return_data.to_vec(),
                 energy_used: result.energy_used as i64,
                 energy_refunded: 0, // Not provided by TronExecutionResult
-                state_changes: vec![], // Not implemented yet
+                state_changes,
                 logs,
                 error_message: error_message.clone(),
                 bandwidth_used: result.bandwidth_used as i64,

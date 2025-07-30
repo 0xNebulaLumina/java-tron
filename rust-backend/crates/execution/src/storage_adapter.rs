@@ -145,6 +145,16 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
         }
     }
 
+    /// Get the current state changes tracked by this database
+    pub fn get_state_changes(&self) -> &HashMap<Address, HashMap<U256, U256>> {
+        &self.storage_changes
+    }
+
+    /// Get the current account changes tracked by this database
+    pub fn get_account_changes(&self) -> &HashMap<Address, Option<Account>> {
+        &self.accounts
+    }
+
     /// Add a snapshot hook for capturing modified accounts
     pub fn add_snapshot_hook<F>(&mut self, hook: F)
     where

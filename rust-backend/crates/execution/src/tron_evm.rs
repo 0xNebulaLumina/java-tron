@@ -34,12 +34,21 @@ pub struct TronExecutionContext {
 }
 
 #[derive(Debug, Clone)]
+pub struct TronStateChange {
+    pub address: revm::primitives::Address,
+    pub key: revm::primitives::U256,
+    pub old_value: revm::primitives::U256,
+    pub new_value: revm::primitives::U256,
+}
+
+#[derive(Debug, Clone)]
 pub struct TronExecutionResult {
     pub success: bool,
     pub return_data: revm::primitives::Bytes,
     pub energy_used: u64,
     pub bandwidth_used: u64,
     pub logs: Vec<revm::primitives::Log>,
+    pub state_changes: Vec<TronStateChange>,
     pub error: Option<String>,
 }
 
@@ -50,6 +59,8 @@ pub struct TronEvm<DB: Database + DatabaseCommit + Send + Sync + 'static> {
     precompiles: TronPrecompiles,
     energy_accounting: EnergyAccounting,
     bandwidth_accounting: BandwidthAccounting,
+    // Track state changes during execution
+    state_changes: Vec<TronStateChange>,
 }
 
 impl<DB: Database + DatabaseCommit + Send + Sync + 'static> TronEvm<DB> 
@@ -79,6 +90,7 @@ where
             precompiles,
             energy_accounting,
             bandwidth_accounting,
+            state_changes: Vec::new(),
         })
     }
 
@@ -88,10 +100,18 @@ where
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
+        // Clear previous state changes
+        self.state_changes.clear();
+        
         self.setup_environment(tx, context);
 
         let result = self.evm.transact().map_err(|e| anyhow!("Transaction execution failed: {:?}", e))?;
-        self.process_execution_result(result.result, tx, context)
+        let mut execution_result = self.process_execution_result(result.result, tx, context)?;
+        
+        // Extract state changes from the database
+        execution_result.state_changes = self.extract_state_changes();
+        
+        Ok(execution_result)
     }
 
     /// Call a contract without modifying state
@@ -148,7 +168,7 @@ where
         &mut self,
         result: ExecutionResult,
         tx: &TronTransaction,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
         let energy_used = self.calculate_energy_usage(&result, tx);
         let bandwidth_used = self.calculate_bandwidth_usage(tx);
@@ -166,6 +186,7 @@ where
                     energy_used,
                     bandwidth_used,
                     logs,
+                    state_changes: vec![], // Will be populated by caller
                     error: None,
                 })
             }
@@ -176,6 +197,7 @@ where
                     energy_used,
                     bandwidth_used,
                     logs: vec![],
+                    state_changes: vec![],
                     error: Some("Transaction reverted".to_string()),
                 })
             }
@@ -186,6 +208,7 @@ where
                     energy_used,
                     bandwidth_used,
                     logs: vec![],
+                    state_changes: vec![],
                     error: Some(format!("Transaction halted: {:?}", reason)),
                 })
             }
@@ -195,7 +218,7 @@ where
     fn process_call_result(
         &mut self,
         result: ExecutionResult,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
         match result {
             ExecutionResult::Success { reason: _, gas_used, gas_refunded: _, logs, output } => {
@@ -210,6 +233,7 @@ where
                     energy_used: gas_used,
                     bandwidth_used: 0, // Call doesn't use bandwidth
                     logs,
+                    state_changes: vec![], // Calls don't modify state
                     error: None,
                 })
             }
@@ -220,6 +244,7 @@ where
                     energy_used: gas_used,
                     bandwidth_used: 0,
                     logs: vec![],
+                    state_changes: vec![],
                     error: Some("Call reverted".to_string()),
                 })
             }
@@ -230,6 +255,7 @@ where
                     energy_used: gas_used,
                     bandwidth_used: 0,
                     logs: vec![],
+                    state_changes: vec![],
                     error: Some(format!("Call halted: {:?}", reason)),
                 })
             }
@@ -249,6 +275,22 @@ where
         let base_size = 32; // Basic transaction overhead
         let data_size = tx.data.len() as u64;
         base_size + data_size
+    }
+
+    /// Extract state changes from the database after execution
+    fn extract_state_changes(&mut self) -> Vec<TronStateChange> {
+        // For now, return the tracked state changes
+        // In a full implementation, this would extract changes from REVM's state
+        // after transaction execution. This requires deeper integration with REVM's
+        // internal state tracking mechanisms.
+        
+        // TODO: Implement proper state change extraction
+        // This would involve:
+        // 1. Hooking into REVM's state change notifications
+        // 2. Tracking storage slot changes during execution
+        // 3. Capturing old values before changes occur
+        
+        self.state_changes.clone()
     }
 }
 

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use tron_backend_common::{Module, ModuleHealth, ExecutionConfig};
 
 // Re-export key types for external use
-pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult};
+pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange};
 pub use precompiles::TronPrecompiles;
 pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageAdapterDatabase};
 
