@@ -8,6 +8,7 @@ description = "Core gRPC service implementation for Tron backend"
 # Common crate
 tron-backend-common = { path = "../common" }
 tron-backend-storage = { path = "../storage" }
+tron-backend-execution = { path = "../execution" }
 
 # gRPC and Protocol Buffers
 tonic = "0.10"
@@ -28,6 +29,10 @@ async-trait = "0.1"
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }
+
+# REVM dependencies (matching execution crate)
+revm = { version = "14.0", features = ["std"] }
+revm-primitives = "10.0"
 
 [build-dependencies]
 tonic-build = "0.10" 
