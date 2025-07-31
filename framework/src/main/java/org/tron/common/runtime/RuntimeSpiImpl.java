@@ -193,6 +193,20 @@ public class RuntimeSpiImpl implements Runtime {
     try {
       String addressStr = org.tron.common.utils.StringUtil.encode58Check(address);
       
+      // Check for account deletion
+      if (newValue == null || newValue.length == 0) {
+        // Handle account deletion
+        AccountCapsule existingAccount = chainBaseManager.getAccountStore().get(address);
+        if (existingAccount != null) {
+          // Delete the account from the store
+          chainBaseManager.getAccountStore().delete(address);
+          logger.info("Deleted account: {} due to remote execution state sync", addressStr);
+        } else {
+          logger.debug("Account deletion requested for non-existent account: {}", addressStr);
+        }
+        return;
+      }
+      
       // Get or create account
       AccountCapsule accountCapsule = chainBaseManager.getAccountStore().get(address);
       boolean isNewAccount = (accountCapsule == null);
