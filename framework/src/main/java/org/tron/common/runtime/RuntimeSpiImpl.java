@@ -174,8 +174,8 @@ public class RuntimeSpiImpl implements Runtime {
         // This is likely an account balance update
         updateAccountState(address, newValue, chainBaseManager, context);
       } else {
-        // This is contract storage update
-        updateContractStorage(address, key, newValue, chainBaseManager, context);
+        // This is storage update
+        updateAccountStorage(address, key, newValue, chainBaseManager, context);
       }
       
     } catch (Exception e) {
@@ -242,20 +242,20 @@ public class RuntimeSpiImpl implements Runtime {
   }
 
   /**
-   * Update contract storage in the local database.
+   * Update account storage in the local database.
    */
-  private void updateContractStorage(byte[] address, byte[] key, byte[] newValue,
+  private void updateAccountStorage(byte[] address, byte[] key, byte[] newValue,
                                    ChainBaseManager chainBaseManager,
                                    TransactionContext context) {
     try {
-      // Contract storage updates would go here
-      // This is more complex and depends on how contract storage is managed
-      logger.debug("Contract storage update for address: {}, key: {}", 
+      // Account storage updates would go here
+      // This is more complex and depends on how Account storage is managed
+      logger.debug("Account storage update for address: {}, key: {}", 
           address, key);
-      // TODO: Implement contract storage synchronization if needed
+      // TODO: Implement account storage synchronization if needed
       
     } catch (Exception e) {
-      logger.warn("Failed to update contract storage for address: {}, key: {}, error: {}", 
+      logger.warn("Failed to update account storage for address: {}, key: {}, error: {}", 
           address, key, e.getMessage());
     }
   }
