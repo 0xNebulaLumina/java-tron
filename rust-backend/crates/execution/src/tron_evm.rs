@@ -104,26 +104,6 @@ where
         })
     }
 
-    /// Execute a transaction and modify state
-    pub fn execute_transaction(
-        &mut self,
-        tx: &TronTransaction,
-        context: &TronExecutionContext,
-    ) -> Result<TronExecutionResult> {
-        // Clear previous state changes
-        self.state_changes.clear();
-        
-        self.setup_environment(tx, context);
-
-        let result = self.evm.transact().map_err(|e| anyhow!("Transaction execution failed: {:?}", e))?;
-        let mut execution_result = self.process_execution_result(result.result, tx, context)?;
-        
-        // Extract state changes from the database
-        execution_result.state_changes = self.extract_state_changes();
-        
-        Ok(execution_result)
-    }
-
     /// Call a contract without modifying state
     pub fn call_contract(
         &mut self,
@@ -285,22 +265,6 @@ where
         let base_size = 32; // Basic transaction overhead
         let data_size = tx.data.len() as u64;
         base_size + data_size
-    }
-
-    /// Extract state changes from the database after execution
-    fn extract_state_changes(&mut self) -> Vec<TronStateChange> {
-        // For now, return the tracked state changes
-        // In a full implementation, this would extract changes from REVM's state
-        // after transaction execution. This requires deeper integration with REVM's
-        // internal state tracking mechanisms.
-        
-        // TODO: Implement proper state change extraction
-        // This would involve:
-        // 1. Hooking into REVM's state change notifications
-        // 2. Tracking storage slot changes during execution
-        // 3. Capturing old values before changes occur
-        
-        self.state_changes.clone()
     }
 }
 
