@@ -1180,23 +1180,37 @@ impl crate::backend::backend_server::Backend for BackendService {
 }
 
 impl BackendService {
+    // Helper functions for Tron address format conversion
+    fn strip_tron_address_prefix(address_bytes: &[u8]) -> Result<&[u8], String> {
+        if address_bytes.len() == 21 && address_bytes[0] == 0x41 {
+            Ok(&address_bytes[1..]) // Skip the 0x41 prefix, return 20 bytes
+        } else if address_bytes.len() == 20 {
+            Ok(address_bytes) // Already 20 bytes, no prefix
+        } else {
+            Err(format!("Invalid address length: expected 20 or 21 bytes (with 0x41 prefix), got {}", address_bytes.len()))
+        }
+    }
+    
+    fn add_tron_address_prefix(address: &revm_primitives::Address) -> Vec<u8> {
+        let mut result = Vec::with_capacity(21);
+        result.push(0x41); // Add Tron address prefix
+        result.extend_from_slice(address.as_slice());
+        result
+    }
+    
     // Helper functions for converting between protobuf and execution types
     fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>) -> Result<TronTransaction, String> {
         let tx = tx.ok_or("Transaction is required")?;
         
-        // Convert bytes to Address (20 bytes)
-        let from = if tx.from.len() == 20 {
-            revm_primitives::Address::from_slice(&tx.from)
-        } else {
-            return Err("Invalid from address length".to_string());
-        };
+        // Convert bytes to Address (strip Tron 0x41 prefix if present)
+        let from_bytes = Self::strip_tron_address_prefix(&tx.from)?;
+        let from = revm_primitives::Address::from_slice(from_bytes);
         
         let to = if tx.to.is_empty() {
             None // Contract creation
-        } else if tx.to.len() == 20 {
-            Some(revm_primitives::Address::from_slice(&tx.to))
         } else {
-            return Err("Invalid to address length".to_string());
+            let to_bytes = Self::strip_tron_address_prefix(&tx.to)?;
+            Some(revm_primitives::Address::from_slice(to_bytes))
         };
         
         // Convert bytes to U256 (32 bytes max)
@@ -1222,11 +1236,9 @@ impl BackendService {
     fn convert_protobuf_context(&self, ctx: Option<&crate::backend::ExecutionContext>) -> Result<TronExecutionContext, String> {
         let ctx = ctx.ok_or("Execution context is required")?;
         
-        let block_coinbase = if ctx.coinbase.len() == 20 {
-            revm_primitives::Address::from_slice(&ctx.coinbase)
-        } else {
-            return Err("Invalid coinbase address length".to_string());
-        };
+        // Strip Tron 0x41 prefix from coinbase address if present
+        let coinbase_bytes = Self::strip_tron_address_prefix(&ctx.coinbase)?;
+        let block_coinbase = revm_primitives::Address::from_slice(coinbase_bytes);
         
         Ok(TronExecutionContext {
             block_number: ctx.block_number as u64,
@@ -1249,7 +1261,7 @@ impl BackendService {
         
         let logs: Vec<LogEntry> = result.logs.iter().map(|log| {
             LogEntry {
-                address: log.address.as_slice().to_vec(),
+                address: Self::add_tron_address_prefix(&log.address),
                 topics: log.topics().iter().map(|t| t.as_slice().to_vec()).collect(),
                 data: log.data.data.to_vec(),
             }
@@ -1261,7 +1273,7 @@ impl BackendService {
                     StateChange {
                         change: Some(crate::backend::state_change::Change::StorageChange(
                             crate::backend::StorageChange {
-                                address: address.as_slice().to_vec(),
+                                address: Self::add_tron_address_prefix(address),
                                 key: key.to_be_bytes::<32>().to_vec(),
                                 old_value: old_value.to_be_bytes::<32>().to_vec(),
                                 new_value: new_value.to_be_bytes::<32>().to_vec(),
@@ -1273,7 +1285,7 @@ impl BackendService {
                     // Helper function to convert AccountInfo to protobuf
                     let convert_account_info = |addr: &revm::primitives::Address, acc_info: &revm::primitives::AccountInfo| {
                         crate::backend::AccountInfo {
-                            address: addr.as_slice().to_vec(),
+                            address: Self::add_tron_address_prefix(addr),
                             balance: acc_info.balance.to_be_bytes::<32>().to_vec(),
                             nonce: acc_info.nonce,
                             code_hash: acc_info.code_hash.as_slice().to_vec(),
@@ -1287,7 +1299,7 @@ impl BackendService {
                     StateChange {
                         change: Some(crate::backend::state_change::Change::AccountChange(
                             crate::backend::AccountChange {
-                                address: address.as_slice().to_vec(),
+                                address: Self::add_tron_address_prefix(address),
                                 old_account: old_account_proto,
                                 new_account: new_account_proto,
                                 is_creation: old_account.is_none() && new_account.is_some(),
