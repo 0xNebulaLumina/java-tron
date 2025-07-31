@@ -207,20 +207,22 @@ public class RuntimeSpiImpl implements Runtime {
         logger.info("Created new account: {} for remote execution state sync", addressStr);
       }
 
-      // Update account state based on newValue
+      // Update account state based on newValue (deserialize AccountInfo)
       // Note: accountCapsule is guaranteed to be non-null here due to creation above
       if (newValue != null && newValue.length > 0) {
-        if (newValue.length >= 8) {
-          // Extract balance from newValue (assuming it's stored as long in first 8 bytes)
-          long newBalance = bytesToLong(newValue);
-          long oldBalance = accountCapsule.getBalance();
-          accountCapsule.setBalance(newBalance);
-          logger.debug("Updated account balance for {}: {} -> {}", 
-              addressStr, oldBalance, newBalance);
-        } else {
-          // Handle other types of account state updates
-          logger.debug("Received account state update with {} bytes for {}", 
-              newValue.length, addressStr);
+        // Deserialize the AccountInfo from the serialized format
+        AccountInfo accountInfo = deserializeAccountInfo(newValue);
+        if (accountInfo != null) {
+          long oldBalance = accountCapsule.getBalance();        
+          // Update balance
+          accountCapsule.setBalance(accountInfo.balance);
+
+          // Note: TRON doesn't have explicit nonce like Ethereum, so we'll just track it for logging
+          // Note: Getting/Setting contract code in TRON requires different mechanisms than just accessing AccountCapsule
+          // This would typically involve ContractStore and other TRON-specific storage, for now we'll just log the values
+          logger.debug("Updated account for {}: balance {} -> {}, nonce: {}, codeHash: {}, code: {} bytes", 
+              addressStr, oldBalance, accountInfo.balance, accountInfo.nonce, 
+              java.util.Arrays.toString(accountInfo.codeHash), accountInfo.code.length);
         }
       }
 
@@ -270,5 +272,88 @@ public class RuntimeSpiImpl implements Runtime {
       result = (result << 8) | (bytes[i] & 0xFF);
     }
     return result;
+  }
+
+  /**
+   * Convert 32-byte balance array to long (big-endian).
+   */
+  private long bytesToLongFromBalance(byte[] bytes) {
+    if (bytes == null || bytes.length < 32) {
+      return 0;
+    }
+    long result = 0;
+    // Take the last 8 bytes from the 32-byte balance
+    for (int i = 24; i < 32; i++) {
+      result = (result << 8) | (bytes[i] & 0xFF);
+    }
+    return result;
+  }
+
+  /**
+   * Simple AccountInfo class to hold deserialized account information.
+   */
+  private static class AccountInfo {
+    public final long balance;
+    public final long nonce;
+    public final byte[] codeHash;
+    public final byte[] code;
+    
+    public AccountInfo(long balance, long nonce, byte[] codeHash, byte[] code) {
+      this.balance = balance;
+      this.nonce = nonce;
+      this.codeHash = codeHash != null ? codeHash : new byte[0];
+      this.code = code != null ? code : new byte[0];
+    }
+  }
+
+  /**
+   * Deserialize AccountInfo from byte array.
+   * Format: [balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]
+   */
+  private AccountInfo deserializeAccountInfo(byte[] data) {
+    if (data == null || data.length < 76) { // 32 + 8 + 32 + 4 = 76 minimum
+      return null;
+    }
+    
+    try {
+      int offset = 0;
+      
+      // Extract balance (32 bytes, big-endian)
+      byte[] balanceBytes = new byte[32];
+      System.arraycopy(data, offset, balanceBytes, 0, 32);
+      long balance = bytesToLongFromBalance(balanceBytes);
+      offset += 32;
+      
+      // Extract nonce (8 bytes, big-endian)
+      long nonce = 0;
+      for (int i = 0; i < 8; i++) {
+        nonce = (nonce << 8) | (data[offset + i] & 0xFF);
+      }
+      offset += 8;
+      
+      // Extract code hash (32 bytes)
+      byte[] codeHash = new byte[32];
+      System.arraycopy(data, offset, codeHash, 0, 32);
+      offset += 32;
+      
+      // Extract code length (4 bytes, big-endian)
+      int codeLength = 0;
+      for (int i = 0; i < 4; i++) {
+        codeLength = (codeLength << 8) | (data[offset + i] & 0xFF);
+      }
+      offset += 4;
+      
+      // Extract code (variable length)
+      byte[] code = new byte[codeLength];
+      if (codeLength > 0 && offset + codeLength <= data.length) {
+        System.arraycopy(data, offset, code, 0, codeLength);
+      }
+      
+      return new AccountInfo(balance, nonce, codeHash, code);
+      
+    } catch (Exception e) {
+      logger.warn("Failed to deserialize AccountInfo from {} bytes: {}", data.length, e.getMessage());
+      return null;
+    }
   }
 }

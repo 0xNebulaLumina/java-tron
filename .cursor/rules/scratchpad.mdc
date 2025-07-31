@@ -10,14 +10,41 @@ alwaysApply: true
 ✅ Extended protobuf with AccountChange message and oneof union type
 ✅ Successfully compiled and tested Rust backend
 
-## Current Task: Update Java Files for New Protobuf Structure - COMPLETED ✅
-✅ Protobuf structure updated with oneof union (StorageChange/AccountChange)
-✅ Update RemoteExecutionSPI.java to handle new StateChange structure
-✅ RuntimeSpiImpl.java already compatible (uses ExecutionSPI.StateChange, not protobuf)
-✅ Test compilation and functionality - BUILD SUCCESSFUL
+## Current Task: Fix Account Serialization in State Changes - IN PROGRESS 🔄
 
-## Key Issue
-Java files are still trying to access old StateChange fields (getAddress(), getKey(), etc.) directly, but now StateChange uses oneof union with StorageChange and AccountChange variants.
+### Issues Identified:
+1. `RemoteExecutionSPI.java` not properly serializing AccountInfo when converting AccountChange to StateChange
+2. `RuntimeSpiImpl.java` making incorrect assumptions about account data format in `updateAccountState`
+3. Need to serialize/deserialize AccountInfo properly for state synchronization
+
+### AccountInfo Structure (from protobuf):
+```protobuf
+message AccountInfo {
+  bytes address = 1;
+  bytes balance = 2;        // 32-byte big-endian encoded balance  
+  uint64 nonce = 3;
+  bytes code_hash = 4;      // 32-byte hash of the code
+  bytes code = 5;           // Contract bytecode (empty for EOAs)
+}
+```
+
+### Tasks:
+[X] Update RemoteExecutionSPI.java to serialize AccountInfo in convertExecuteTransactionResponse
+[X] Update RuntimeSpiImpl.java to deserialize AccountInfo in updateAccountState  
+[X] Test the account state synchronization - BUILD SUCCESSFUL
+
+### Implementation Summary:
+**RemoteExecutionSPI.java:**
+- Added `serializeAccountInfo()` method to properly serialize AccountInfo from protobuf
+- Format: [balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]
+- Updated `convertExecuteTransactionResponse()` to use proper serialization for AccountChange
+
+**RuntimeSpiImpl.java:**
+- Added `AccountInfo` inner class to hold deserialized account data
+- Added `deserializeAccountInfo()` method to parse the serialized format
+- Added `bytesToLongFromBalance()` for proper 32-byte balance conversion
+- Updated `updateAccountState()` to properly deserialize and apply account changes
+- Added fallback logic for backward compatibility
 
 ## New Protobuf Structure
 ```protobuf
