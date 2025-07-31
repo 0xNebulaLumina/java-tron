@@ -295,12 +295,16 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
             // Mark account as modified for shadow verification
             self.mark_account_modified(address);
 
-            // Get old account info for comparison
+            // Get old account info for comparison using comprehensive fallback pattern
             let old_account_info = self.account_snapshots.get(&address)
                 .and_then(|acc_opt| acc_opt.as_ref())
                 .map(|acc| acc.info.clone())
                 .or_else(|| {
-                    // Try to load from storage if not in our changes
+                    // If not in our changes, try to get from account cache
+                    self.account_cache.get(&address).cloned().flatten()
+                })
+                .or_else(|| {
+                    // If not in cache, try to load from storage
                     self.storage.get_account(&address).ok().flatten()
                 });
 
