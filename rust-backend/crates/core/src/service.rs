@@ -1256,11 +1256,46 @@ impl BackendService {
         }).collect();
 
         let state_changes: Vec<StateChange> = result.state_changes.iter().map(|change| {
-            StateChange {
-                address: change.address.as_slice().to_vec(),
-                key: change.key.to_be_bytes::<32>().to_vec(),
-                old_value: change.old_value.to_be_bytes::<32>().to_vec(),
-                new_value: change.new_value.to_be_bytes::<32>().to_vec(),
+            match change {
+                TronStateChange::StorageChange { address, key, old_value, new_value } => {
+                    StateChange {
+                        change: Some(crate::backend::state_change::Change::StorageChange(
+                            crate::backend::StorageChange {
+                                address: address.as_slice().to_vec(),
+                                key: key.to_be_bytes::<32>().to_vec(),
+                                old_value: old_value.to_be_bytes::<32>().to_vec(),
+                                new_value: new_value.to_be_bytes::<32>().to_vec(),
+                            }
+                        ))
+                    }
+                },
+                TronStateChange::AccountChange { address, old_account, new_account } => {
+                    // Helper function to convert AccountInfo to protobuf
+                    let convert_account_info = |addr: &revm::primitives::Address, acc_info: &revm::primitives::AccountInfo| {
+                        crate::backend::AccountInfo {
+                            address: addr.as_slice().to_vec(),
+                            balance: acc_info.balance.to_be_bytes::<32>().to_vec(),
+                            nonce: acc_info.nonce,
+                            code_hash: acc_info.code_hash.as_slice().to_vec(),
+                            code: acc_info.code.as_ref().map_or(Vec::new(), |c| c.bytes().to_vec()),
+                        }
+                    };
+
+                    let old_account_proto = old_account.as_ref().map(|acc| convert_account_info(address, acc));
+                    let new_account_proto = new_account.as_ref().map(|acc| convert_account_info(address, acc));
+                    
+                    StateChange {
+                        change: Some(crate::backend::state_change::Change::AccountChange(
+                            crate::backend::AccountChange {
+                                address: address.as_slice().to_vec(),
+                                old_account: old_account_proto,
+                                new_account: new_account_proto,
+                                is_creation: old_account.is_none() && new_account.is_some(),
+                                is_deletion: old_account.is_some() && new_account.is_none(),
+                            }
+                        ))
+                    }
+                }
             }
         }).collect();
         

@@ -35,11 +35,20 @@ pub struct TronExecutionContext {
 }
 
 #[derive(Debug, Clone)]
-pub struct TronStateChange {
-    pub address: revm::primitives::Address,
-    pub key: revm::primitives::U256,
-    pub old_value: revm::primitives::U256,
-    pub new_value: revm::primitives::U256,
+pub enum TronStateChange {
+    /// Storage slot change within a contract
+    StorageChange {
+        address: revm::primitives::Address,
+        key: revm::primitives::U256,
+        old_value: revm::primitives::U256,
+        new_value: revm::primitives::U256,
+    },
+    /// Account-level change (balance, nonce, code, etc.)
+    AccountChange {
+        address: revm::primitives::Address,
+        old_account: Option<revm::primitives::AccountInfo>,
+        new_account: Option<revm::primitives::AccountInfo>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -303,11 +312,22 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
         let state_records = db.get_state_change_records();
         
         let state_changes: Vec<TronStateChange> = state_records.iter().map(|record| {
-            TronStateChange {
-                address: record.address,
-                key: record.key,
-                old_value: record.old_value,
-                new_value: record.new_value,
+            match record {
+                crate::storage_adapter::StateChangeRecord::StorageChange { 
+                    address, key, old_value, new_value 
+                } => TronStateChange::StorageChange {
+                    address: *address,
+                    key: *key,
+                    old_value: *old_value,
+                    new_value: *new_value,
+                },
+                crate::storage_adapter::StateChangeRecord::AccountChange { 
+                    address, old_account, new_account 
+                } => TronStateChange::AccountChange {
+                    address: *address,
+                    old_account: old_account.clone(),
+                    new_account: new_account.clone(),
+                },
             }
         }).collect();
         

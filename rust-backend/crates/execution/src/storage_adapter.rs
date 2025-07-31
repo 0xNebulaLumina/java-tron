@@ -91,13 +91,22 @@ impl StorageAdapter for InMemoryStorageAdapter {
 /// Snapshot hook callback for capturing modified accounts
 pub type SnapshotHook = Box<dyn Fn(&HashSet<Address>) + Send + Sync>;
 
-/// Represents a single state change with old and new values
+/// Represents different types of state changes with old and new values
 #[derive(Debug, Clone)]
-pub struct StateChangeRecord {
-    pub address: Address,
-    pub key: U256,
-    pub old_value: U256,
-    pub new_value: U256,
+pub enum StateChangeRecord {
+    /// Storage slot change within a contract
+    StorageChange {
+        address: Address,
+        key: U256,
+        old_value: U256,
+        new_value: U256,
+    },
+    /// Account-level change (balance, nonce, code, etc.)
+    AccountChange {
+        address: Address,
+        old_account: Option<AccountInfo>,
+        new_account: Option<AccountInfo>,
+    },
 }
 
 /// Database adapter that implements REVM's Database trait
@@ -286,6 +295,36 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
             // Mark account as modified for shadow verification
             self.mark_account_modified(address);
 
+            // Get old account info for comparison
+            let old_account_info = self.accounts.get(&address)
+                .and_then(|acc_opt| acc_opt.as_ref())
+                .map(|acc| acc.info.clone())
+                .or_else(|| {
+                    // Try to load from storage if not in our changes
+                    self.storage.get_account(&address).ok().flatten()
+                });
+
+            // Track account-level changes
+            let new_account_info = account.info.clone();
+            let account_changed = match &old_account_info {
+                Some(old_info) => {
+                    old_info.balance != new_account_info.balance ||
+                    old_info.nonce != new_account_info.nonce ||
+                    old_info.code_hash != new_account_info.code_hash ||
+                    old_info.code != new_account_info.code
+                },
+                None => true, // New account
+            };
+
+            // Record account change if there was a change
+            if account_changed {
+                self.state_change_records.push(StateChangeRecord::AccountChange {
+                    address,
+                    old_account: old_account_info.clone(),
+                    new_account: Some(new_account_info),
+                });
+            }
+
             // Clone storage before iterating to avoid borrow checker issues
             let storage_changes: HashMap<U256, U256> = account.storage.iter()
                 .map(|(k, slot)| (*k, slot.present_value))
@@ -312,7 +351,7 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
 
                 // Only record the change if the value actually changed
                 if old_value != new_value {
-                    self.state_change_records.push(StateChangeRecord {
+                    self.state_change_records.push(StateChangeRecord::StorageChange {
                         address,
                         key,
                         old_value,
@@ -329,6 +368,14 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
 
             // Handle self-destruct
             if account.is_selfdestructed() {
+                // Record account deletion
+                if old_account_info.is_some() {
+                    self.state_change_records.push(StateChangeRecord::AccountChange {
+                        address,
+                        old_account: old_account_info,
+                        new_account: None, // Account deleted
+                    });
+                }
                 self.accounts.insert(address, None);
             }
         }
