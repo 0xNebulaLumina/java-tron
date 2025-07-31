@@ -398,18 +398,43 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     // Convert protobuf state changes to ExecutionSPI state changes
     for (tron.backend.BackendOuterClass.StateChange protoChange :
         protoResult.getStateChangesList()) {
-      StateChange stateChange = new StateChange(
-          protoChange.getAddress().toByteArray(),
-          protoChange.getKey().toByteArray(),
-          protoChange.getOldValue().toByteArray(),
-          protoChange.getNewValue().toByteArray());
-      stateChanges.add(stateChange);
       
-      logger.debug("Remote execution state change - Address: {}, Key: {}, OldValue: {}, NewValue: {}",
-          protoChange.getAddress().toByteArray(),
-          protoChange.getKey().toByteArray(),
-          protoChange.getOldValue().toByteArray(),
-          protoChange.getNewValue().toByteArray());
+      // Handle the oneof union type
+      if (protoChange.hasStorageChange()) {
+        // Handle storage change
+        tron.backend.BackendOuterClass.StorageChange storageChange = protoChange.getStorageChange();
+        StateChange stateChange = new StateChange(
+            storageChange.getAddress().toByteArray(),
+            storageChange.getKey().toByteArray(),
+            storageChange.getOldValue().toByteArray(),
+            storageChange.getNewValue().toByteArray());
+        stateChanges.add(stateChange);
+        
+        logger.debug("Remote execution storage change - Address: {}, Key: {}, OldValue: {}, NewValue: {}",
+            storageChange.getAddress().toByteArray(),
+            storageChange.getKey().toByteArray(),
+            storageChange.getOldValue().toByteArray(),
+            storageChange.getNewValue().toByteArray());
+            
+      } else if (protoChange.hasAccountChange()) {
+        // Handle account change - convert to storage-like format for compatibility
+        tron.backend.BackendOuterClass.AccountChange accountChange = protoChange.getAccountChange();
+        
+        // For account changes, we'll use empty key to indicate it's an account-level change
+        // and encode account info in the values
+        byte[] address = accountChange.getAddress().toByteArray();
+        byte[] emptyKey = new byte[0]; // Empty key indicates account change
+        byte[] oldValue = new byte[0]; // TODO: Serialize old account info if needed
+        byte[] newValue = new byte[0]; // TODO: Serialize new account info if needed
+        
+        StateChange stateChange = new StateChange(address, emptyKey, oldValue, newValue);
+        stateChanges.add(stateChange);
+        
+        logger.debug("Remote execution account change - Address: {}, IsCreation: {}, IsDeletion: {}",
+            address,
+            accountChange.getIsCreation(),
+            accountChange.getIsDeletion());
+      }
     }
     
     logger.debug("Remote execution returned {} state changes and {} logs",
