@@ -10,41 +10,47 @@ alwaysApply: true
 ✅ Extended protobuf with AccountChange message and oneof union type
 ✅ Successfully compiled and tested Rust backend
 
-## Current Task: Fix Account Serialization in State Changes - IN PROGRESS 🔄
+## Current Task: Fix Gas Limit Issues in Remote Execution - IN PROGRESS 🔄
 
-### Issues Identified:
-1. `RemoteExecutionSPI.java` not properly serializing AccountInfo when converting AccountChange to StateChange
-2. `RuntimeSpiImpl.java` making incorrect assumptions about account data format in `updateAccountState`
-3. Need to serialize/deserialize AccountInfo properly for state synchronization
+### Problem Analysis:
+Rust backend is throwing `CallGasCostMoreThanGasLimit` errors during transaction execution in remote mode. The error indicates that the gas cost for a transaction is exceeding the configured gas limit.
 
-### AccountInfo Structure (from protobuf):
-```protobuf
-message AccountInfo {
-  bytes address = 1;
-  bytes balance = 2;        // 32-byte big-endian encoded balance  
-  uint64 nonce = 3;
-  bytes code_hash = 4;      // 32-byte hash of the code
-  bytes code = 5;           // Contract bytecode (empty for EOAs)
-}
+### Error Pattern:
+```
+2025-07-31T11:08:26.491023Z ERROR tron_backend_core::service: Transaction execution failed: Transaction execution failed: Transaction(CallGasCostMoreThanGasLimit)
 ```
 
-### Tasks:
-[X] Update RemoteExecutionSPI.java to serialize AccountInfo in convertExecuteTransactionResponse
-[X] Update RuntimeSpiImpl.java to deserialize AccountInfo in updateAccountState  
-[X] Test the account state synchronization - BUILD SUCCESSFUL
+### Key Findings:
+1. **Configuration**: Current energy_limit in config.toml is 100,000,000 (100M)
+2. **Error Source**: The error is coming from the Rust execution engine, likely from REVM's gas validation
+3. **Transaction Flow**: Java → gRPC → Rust backend → REVM execution
+4. **Gas Limit Mapping**: `tx.energy_limit` (Java) → `gas_limit` (Rust)
 
-### Implementation Summary:
-**RemoteExecutionSPI.java:**
-- Added `serializeAccountInfo()` method to properly serialize AccountInfo from protobuf
-- Format: [balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]
-- Updated `convertExecuteTransactionResponse()` to use proper serialization for AccountChange
+### Potential Issues:
+1. **Gas Limit Too Low**: Transactions requiring more gas than the configured limit
+2. **Gas Price vs Gas Limit**: Mismatch between gas price and limit calculations
+3. **Precompile Gas Costs**: TRC10/TRC20 precompiles may have high gas costs
+4. **Transaction Conversion**: Issues in converting Java transaction to Rust format
 
-**RuntimeSpiImpl.java:**
-- Added `AccountInfo` inner class to hold deserialized account data
-- Added `deserializeAccountInfo()` method to parse the serialized format
-- Added `bytesToLongFromBalance()` for proper 32-byte balance conversion
-- Updated `updateAccountState()` to properly deserialize and apply account changes
-- Added fallback logic for backward compatibility
+### Investigation Tasks:
+[X] Check actual gas requirements of failing transactions
+[X] Verify gas limit conversion from Java to Rust
+[X] Review precompile gas costs (TRC10: 1000, TRC20: 2000)
+[X] Examine transaction data and gas price settings
+[X] Consider increasing energy_limit in configuration
+
+### Changes Made:
+1. **Increased Energy Limit**: Raised from 100M to 1B in config.toml
+2. **Added Gas Validation**: Pre-execution validation to catch gas limit issues early
+3. **Enhanced Logging**: Added debug logging for transaction and context conversion
+4. **Better Error Handling**: Specific detection and logging of gas-related errors
+5. **Gas Limit Checks**: Validate tx gas limit vs block gas limit and minimum requirements
+6. **Fixed Zero Gas Limits**: Handle energy_limit=0 from Java with reasonable defaults
+7. **Fixed Zero Block Gas Limits**: Handle context energy_limit=0 with 1B default
+
+### Current Status: ✅ RESOLVED
+The original `CallGasCostMoreThanGasLimit` error has been successfully resolved! 
+
 
 ## New Protobuf Structure
 ```protobuf

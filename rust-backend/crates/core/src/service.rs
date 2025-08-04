@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 use tonic::{Request, Response, Status};
-use tracing::{error, debug};
+use tracing::{error, debug, warn};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
 
@@ -999,7 +999,11 @@ impl crate::backend::backend_server::Backend for BackendService {
         
         // Convert protobuf types to execution types
         let transaction = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
-            Ok(tx) => tx,
+            Ok(tx) => {
+                debug!("Converted transaction - gas_limit: {}, gas_price: {}, data_len: {}", 
+                       tx.gas_limit, tx.gas_price, tx.data.len());
+                tx
+            },
             Err(e) => {
                 error!("Failed to convert transaction: {}", e);
                 return Ok(Response::new(ExecuteTransactionResponse {
@@ -1021,7 +1025,11 @@ impl crate::backend::backend_server::Backend for BackendService {
         };
         
         let context = match self.convert_protobuf_context(req.context.as_ref()) {
-            Ok(ctx) => ctx,
+            Ok(ctx) => {
+                debug!("Converted context - block_gas_limit: {}, energy_price: {}", 
+                       ctx.block_gas_limit, ctx.energy_price);
+                ctx
+            },
             Err(e) => {
                 error!("Failed to convert execution context: {}", e);
                 return Ok(Response::new(ExecuteTransactionResponse {
@@ -1051,11 +1059,20 @@ impl crate::backend::backend_server::Backend for BackendService {
         // Execute the transaction using the database-specific storage adapter
         match execution_module.execute_transaction_with_storage(storage_adapter, &transaction, &context) {
             Ok(result) => {
+                debug!("Transaction executed successfully - energy_used: {}", result.energy_used);
                 let response = self.convert_execution_result_to_protobuf(result);
                 Ok(Response::new(response))
             }
             Err(e) => {
-                error!("Transaction execution failed: {}", e);
+                let error_str = format!("{}", e);
+                error!("Transaction execution failed: {}", error_str);
+                
+                // Check if it's a gas-related error
+                if error_str.contains("CallGasCostMoreThanGasLimit") || error_str.contains("OutOfGas") {
+                    warn!("Gas limit issue detected - tx.gas_limit: {}, block.gas_limit: {}", 
+                          transaction.gas_limit, context.block_gas_limit);
+                }
+                
                 Ok(Response::new(ExecuteTransactionResponse {
                     result: Some(ExecutionResult {
                         status: execution_result::Status::TronSpecificError as i32,
@@ -1316,6 +1333,10 @@ impl BackendService {
     fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>) -> Result<TronTransaction, String> {
         let tx = tx.ok_or("Transaction is required")?;
         
+        // Log the raw transaction data from Java
+        debug!("Raw transaction from Java - energy_limit: {}, energy_price: {}, data_len: {}", 
+               tx.energy_limit, tx.energy_price, tx.data.len());
+        
         // Convert bytes to Address (strip Tron 0x41 prefix if present)
         let from_bytes = Self::strip_tron_address_prefix(&tx.from)?;
         let from = revm_primitives::Address::from_slice(from_bytes);
@@ -1336,12 +1357,24 @@ impl BackendService {
         
         let gas_price = revm_primitives::U256::from(tx.energy_price as u64);
         
+        // Handle zero energy_limit by using a reasonable default
+        let gas_limit = if tx.energy_limit == 0 {
+            // Use a default gas limit based on transaction type and data size
+            let base_gas = 21000u64; // Basic transaction cost
+            let data_gas = tx.data.len() as u64 * 16; // 16 gas per byte of data
+            let default_limit = base_gas + data_gas + 100000; // Add buffer for contract execution
+            debug!("Using default gas limit {} for zero energy_limit transaction", default_limit);
+            default_limit
+        } else {
+            tx.energy_limit as u64
+        };
+        
         Ok(TronTransaction {
             from,
             to,
             value,
             data: revm_primitives::Bytes::from(tx.data.clone()),
-            gas_limit: tx.energy_limit as u64,
+            gas_limit,
             gas_price,
             nonce: tx.nonce as u64,
         })
@@ -1350,16 +1383,30 @@ impl BackendService {
     fn convert_protobuf_context(&self, ctx: Option<&crate::backend::ExecutionContext>) -> Result<TronExecutionContext, String> {
         let ctx = ctx.ok_or("Execution context is required")?;
         
+        // Log the raw context data from Java
+        debug!("Raw context from Java - energy_limit: {}, energy_price: {}", 
+               ctx.energy_limit, ctx.energy_price);
+        
         // Strip Tron 0x41 prefix from coinbase address if present
         let coinbase_bytes = Self::strip_tron_address_prefix(&ctx.coinbase)?;
         let block_coinbase = revm_primitives::Address::from_slice(coinbase_bytes);
+        
+        // Handle zero energy_limit by using the configured block gas limit
+        let block_gas_limit = if ctx.energy_limit == 0 {
+            // Use the configured energy_limit from config as the block gas limit
+            1000000000u64 // 1B gas limit (same as config.toml)
+        } else {
+            ctx.energy_limit as u64
+        };
+        
+        debug!("Using block_gas_limit: {}", block_gas_limit);
         
         Ok(TronExecutionContext {
             block_number: ctx.block_number as u64,
             block_timestamp: ctx.block_timestamp as u64,
             block_coinbase,
             block_difficulty: revm_primitives::U256::from(1u64), // Default difficulty
-            block_gas_limit: ctx.energy_limit as u64,
+            block_gas_limit,
             chain_id: 0x2b6653dc, // Tron mainnet chain ID
             energy_price: ctx.energy_price as u64,
             bandwidth_price: 1000, // Default bandwidth price

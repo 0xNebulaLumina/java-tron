@@ -310,6 +310,17 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
         // Clear previous state changes
         self.state_changes.clear();
         
+        // Validate gas limits before execution
+        if tx.gas_limit > context.block_gas_limit {
+            return Err(anyhow!("Transaction gas limit ({}) exceeds block gas limit ({})", 
+                              tx.gas_limit, context.block_gas_limit));
+        }
+        
+        // Check if gas limit is reasonable (not zero or too small)
+        if tx.gas_limit < 21000 {
+            return Err(anyhow!("Transaction gas limit ({}) is too low (minimum 21000)", tx.gas_limit));
+        }
+        
         self.setup_environment(tx, context);
 
         let result = self.evm.transact().map_err(|e| anyhow!("Transaction execution failed: {:?}", e))?;
