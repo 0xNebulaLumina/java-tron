@@ -91,6 +91,24 @@ impl StorageAdapter for InMemoryStorageAdapter {
 /// Snapshot hook callback for capturing modified accounts
 pub type SnapshotHook = Box<dyn Fn(&HashSet<Address>) + Send + Sync>;
 
+/// Represents different types of state changes with old and new values
+#[derive(Debug, Clone)]
+pub enum StateChangeRecord {
+    /// Storage slot change within a contract
+    StorageChange {
+        address: Address,
+        key: U256,
+        old_value: U256,
+        new_value: U256,
+    },
+    /// Account-level change (balance, nonce, code, etc.)
+    AccountChange {
+        address: Address,
+        old_account: Option<AccountInfo>,
+        new_account: Option<AccountInfo>,
+    },
+}
+
 /// Database adapter that implements REVM's Database trait
 pub struct StorageAdapterDatabase<S: StorageAdapter> {
     storage: S,
@@ -99,8 +117,10 @@ pub struct StorageAdapterDatabase<S: StorageAdapter> {
     code_cache: HashMap<Address, Option<Bytecode>>,
     storage_cache: HashMap<(Address, U256), U256>,
     // Track changes for commit
-    accounts: HashMap<Address, Option<Account>>,
-    storage_changes: HashMap<Address, HashMap<U256, U256>>,
+    account_snapshots: HashMap<Address, Option<Account>>,
+    storage_snapshots: HashMap<Address, HashMap<U256, U256>>,
+    // Track detailed state changes with old and new values
+    state_change_records: Vec<StateChangeRecord>,
     // Snapshots for revert support
     snapshots: Vec<(HashMap<Address, Option<Account>>, HashMap<Address, HashMap<U256, U256>>)>,
     // Track modified accounts for shadow verification
@@ -116,8 +136,9 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
             account_cache: HashMap::new(),
             code_cache: HashMap::new(),
             storage_cache: HashMap::new(),
-            accounts: HashMap::new(),
-            storage_changes: HashMap::new(),
+            account_snapshots: HashMap::new(),
+            storage_snapshots: HashMap::new(),
+            state_change_records: Vec::new(),
             snapshots: Vec::new(),
             modified_accounts: HashSet::new(),
             snapshot_hooks: Vec::new(),
@@ -126,7 +147,7 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
     
     pub fn snapshot(&mut self) -> U256 {
         let snapshot_id = U256::from(self.snapshots.len());
-        self.snapshots.push((self.accounts.clone(), self.storage_changes.clone()));
+        self.snapshots.push((self.account_snapshots.clone(), self.storage_snapshots.clone()));
         snapshot_id
     }
     
@@ -134,8 +155,8 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
         let id = snapshot_id.to::<usize>();
         if id < self.snapshots.len() {
             let (accounts, storage) = self.snapshots[id].clone();
-            self.accounts = accounts;
-            self.storage_changes = storage;
+            self.account_snapshots = accounts;
+            self.storage_snapshots = storage;
             self.snapshots.truncate(id);
             // Clear modified accounts on revert
             self.modified_accounts.clear();
@@ -143,6 +164,26 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
         } else {
             false
         }
+    }
+
+    /// Get the current state changes tracked by this database
+    pub fn get_storage_snapshots(&self) -> &HashMap<Address, HashMap<U256, U256>> {
+        &self.storage_snapshots
+    }
+
+    /// Get the current account changes tracked by this database
+    pub fn get_account_snapshots(&self) -> &HashMap<Address, Option<Account>> {
+        &self.account_snapshots
+    }
+
+    /// Get the detailed state change records with old and new values
+    pub fn get_state_change_records(&self) -> &Vec<StateChangeRecord> {
+        &self.state_change_records
+    }
+
+    /// Clear all state change records (useful after processing)
+    pub fn clear_state_change_records(&mut self) {
+        self.state_change_records.clear();
     }
 
     /// Add a snapshot hook for capturing modified accounts
@@ -190,7 +231,7 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
         }
 
         // Check pending changes
-        if let Some(Some(account)) = self.accounts.get(&address) {
+        if let Some(Some(account)) = self.account_snapshots.get(&address) {
             let info = AccountInfo {
                 balance: account.info.balance,
                 nonce: account.info.nonce,
@@ -199,7 +240,7 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
             };
             self.account_cache.insert(address, Some(info.clone()));
             return Ok(Some(info));
-        } else if self.accounts.get(&address) == Some(&None) {
+        } else if self.account_snapshots.get(&address) == Some(&None) {
             // Account was deleted
             self.account_cache.insert(address, None);
             return Ok(None);
@@ -226,7 +267,7 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
         }
 
         // Check pending changes
-        if let Some(storage_map) = self.storage_changes.get(&address) {
+        if let Some(storage_map) = self.storage_snapshots.get(&address) {
             if let Some(&value) = storage_map.get(&index) {
                 self.storage_cache.insert(key, value);
                 return Ok(value);
@@ -254,25 +295,91 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
             // Mark account as modified for shadow verification
             self.mark_account_modified(address);
 
+            // Get old account info for comparison using comprehensive fallback pattern
+            let old_account_info = self.account_snapshots.get(&address)
+                .and_then(|acc_opt| acc_opt.as_ref())
+                .map(|acc| acc.info.clone())
+                .or_else(|| {
+                    // If not in our changes, try to get from account cache
+                    self.account_cache.get(&address).cloned().flatten()
+                })
+                .or_else(|| {
+                    // If not in cache, try to load from storage
+                    self.storage.get_account(&address).ok().flatten()
+                });
+
+            // Track account-level changes
+            let new_account_info = account.info.clone();
+            let account_changed = match &old_account_info {
+                Some(old_info) => {
+                    old_info.balance != new_account_info.balance ||
+                    old_info.nonce != new_account_info.nonce ||
+                    old_info.code_hash != new_account_info.code_hash ||
+                    old_info.code != new_account_info.code
+                },
+                None => true, // New account
+            };
+
+            // Record account change if there was a change
+            if account_changed {
+                self.state_change_records.push(StateChangeRecord::AccountChange {
+                    address,
+                    old_account: old_account_info.clone(),
+                    new_account: Some(new_account_info),
+                });
+            }
+
+            // Update the account snapshots
+            self.account_snapshots.insert(address, Some(account.clone()));
+            // Handle self-destruct
+            if account.is_selfdestructed() {
+                // Record account deletion
+                if old_account_info.is_some() {
+                    self.state_change_records.push(StateChangeRecord::AccountChange {
+                        address,
+                        old_account: old_account_info,
+                        new_account: None, // Account deleted
+                    });
+                }
+                self.account_snapshots.insert(address, None);
+            }
+
             // Clone storage before iterating to avoid borrow checker issues
-            let storage_changes: HashMap<U256, U256> = account.storage.iter()
+            let new_values: HashMap<U256, U256> = account.storage.iter()
                 .map(|(k, slot)| (*k, slot.present_value))
                 .collect();
 
-            // Store account changes
-            self.accounts.insert(address, Some(account.clone()));
+            // Store storage changes and track detailed state changes
+            for (key, new_value) in new_values {
+                // Get the old value before updating
+                let old_value = self.storage_snapshots
+                    .get(&address)
+                    .and_then(|storage| storage.get(&key))
+                    .copied()
+                    .unwrap_or_else(|| {
+                        // If not in our changes, try to get from storage cache
+                        self.storage_cache.get(&(address, key)).copied()
+                            .unwrap_or_else(|| {
+                                // If not in cache, try to load from storage
+                                self.storage.get_storage(&address, &key).unwrap_or(U256::ZERO)
+                            })
+                    });
 
-            // Store storage changes
-            for (key, value) in storage_changes {
-                self.storage_changes
+                // Only record the change if the value actually changed
+                if old_value != new_value {
+                    self.state_change_records.push(StateChangeRecord::StorageChange {
+                        address,
+                        key,
+                        old_value,
+                        new_value,
+                    });
+                }
+
+                // Update the storage snapshots
+                self.storage_snapshots
                     .entry(address)
                     .or_insert_with(HashMap::new)
-                    .insert(key, value);
-            }
-
-            // Handle self-destruct
-            if account.is_selfdestructed() {
-                self.accounts.insert(address, None);
+                    .insert(key, new_value);
             }
         }
     }

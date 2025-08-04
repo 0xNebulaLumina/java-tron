@@ -7,6 +7,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
 
 use tron_backend_common::{ModuleManager, HealthStatus};
+use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule};
 use crate::backend::*;
 
 pub struct BackendService {
@@ -985,24 +986,88 @@ impl crate::backend::backend_server::Backend for BackendService {
     async fn execute_transaction(&self, request: Request<ExecuteTransactionRequest>) -> Result<Response<ExecuteTransactionResponse>, Status> {
         debug!("Execute transaction request: {:?}", request.get_ref());
         
-        // Placeholder implementation
-        let response = ExecuteTransactionResponse {
-            result: Some(ExecutionResult {
-                status: execution_result::Status::Success as i32,
-                return_data: vec![],
-                energy_used: 0,
-                energy_refunded: 0,
-                state_changes: vec![],
-                logs: vec![],
-                error_message: String::new(),
-                bandwidth_used: 0,
-                resource_usage: vec![],
-            }),
-            success: true,
-            error_message: String::new(),
+        let req = request.get_ref();
+        
+        // Get the execution module
+        let execution_module = self.get_execution_module()?;
+        
+        // Downcast to the concrete execution module type
+        let execution_module = execution_module
+            .as_any()
+            .downcast_ref::<ExecutionModule>()
+            .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
+        
+        // Convert protobuf types to execution types
+        let transaction = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Failed to convert transaction: {}", e);
+                return Ok(Response::new(ExecuteTransactionResponse {
+                    result: Some(ExecutionResult {
+                        status: execution_result::Status::TronSpecificError as i32,
+                        return_data: vec![],
+                        energy_used: 0,
+                        energy_refunded: 0,
+                        state_changes: vec![],
+                        logs: vec![],
+                        error_message: format!("Transaction conversion error: {}", e),
+                        bandwidth_used: 0,
+                        resource_usage: vec![],
+                    }),
+                    success: false,
+                    error_message: format!("Transaction conversion error: {}", e),
+                }));
+            }
         };
         
-        Ok(Response::new(response))
+        let context = match self.convert_protobuf_context(req.context.as_ref()) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                error!("Failed to convert execution context: {}", e);
+                return Ok(Response::new(ExecuteTransactionResponse {
+                    result: Some(ExecutionResult {
+                        status: execution_result::Status::TronSpecificError as i32,
+                        return_data: vec![],
+                        energy_used: 0,
+                        energy_refunded: 0,
+                        state_changes: vec![],
+                        logs: vec![],
+                        error_message: format!("Context conversion error: {}", e),
+                        bandwidth_used: 0,
+                        resource_usage: vec![],
+                    }),
+                    success: false,
+                    error_message: format!("Context conversion error: {}", e),
+                }));
+            }
+        };
+        
+        // Execute the transaction using in-memory storage for now
+        // In a real implementation, we would use the database specified in the request
+        match execution_module.execute_transaction(&transaction, &context) {
+            Ok(result) => {
+                let response = self.convert_execution_result_to_protobuf(result);
+                Ok(Response::new(response))
+            }
+            Err(e) => {
+                error!("Transaction execution failed: {}", e);
+                Ok(Response::new(ExecuteTransactionResponse {
+                    result: Some(ExecutionResult {
+                        status: execution_result::Status::TronSpecificError as i32,
+                        return_data: vec![],
+                        energy_used: 0,
+                        energy_refunded: 0,
+                        state_changes: vec![],
+                        logs: vec![],
+                        error_message: format!("Execution error: {}", e),
+                        bandwidth_used: 0,
+                        resource_usage: vec![],
+                    }),
+                    success: false,
+                    error_message: format!("Execution error: {}", e),
+                }))
+            }
+        }
     }
     
     async fn call_contract(&self, request: Request<CallContractRequest>) -> Result<Response<CallContractResponse>, Status> {
@@ -1111,5 +1176,157 @@ impl crate::backend::backend_server::Backend for BackendService {
         };
         
         Ok(Response::new(response))
+    }
+}
+
+impl BackendService {
+    // Helper functions for Tron address format conversion
+    fn strip_tron_address_prefix(address_bytes: &[u8]) -> Result<&[u8], String> {
+        if address_bytes.len() == 21 && address_bytes[0] == 0x41 {
+            Ok(&address_bytes[1..]) // Skip the 0x41 prefix, return 20 bytes
+        } else if address_bytes.len() == 20 {
+            Ok(address_bytes) // Already 20 bytes, no prefix
+        } else {
+            Err(format!("Invalid address length: expected 20 or 21 bytes (with 0x41 prefix), got {}", address_bytes.len()))
+        }
+    }
+    
+    fn add_tron_address_prefix(address: &revm_primitives::Address) -> Vec<u8> {
+        let mut result = Vec::with_capacity(21);
+        result.push(0x41); // Add Tron address prefix
+        result.extend_from_slice(address.as_slice());
+        result
+    }
+    
+    // Helper functions for converting between protobuf and execution types
+    fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>) -> Result<TronTransaction, String> {
+        let tx = tx.ok_or("Transaction is required")?;
+        
+        // Convert bytes to Address (strip Tron 0x41 prefix if present)
+        let from_bytes = Self::strip_tron_address_prefix(&tx.from)?;
+        let from = revm_primitives::Address::from_slice(from_bytes);
+        
+        let to = if tx.to.is_empty() {
+            None // Contract creation
+        } else {
+            let to_bytes = Self::strip_tron_address_prefix(&tx.to)?;
+            Some(revm_primitives::Address::from_slice(to_bytes))
+        };
+        
+        // Convert bytes to U256 (32 bytes max)
+        let value = if tx.value.len() <= 32 {
+            revm_primitives::U256::from_be_slice(&tx.value)
+        } else {
+            return Err("Invalid value length".to_string());
+        };
+        
+        let gas_price = revm_primitives::U256::from(tx.energy_price as u64);
+        
+        Ok(TronTransaction {
+            from,
+            to,
+            value,
+            data: revm_primitives::Bytes::from(tx.data.clone()),
+            gas_limit: tx.energy_limit as u64,
+            gas_price,
+            nonce: tx.nonce as u64,
+        })
+    }
+    
+    fn convert_protobuf_context(&self, ctx: Option<&crate::backend::ExecutionContext>) -> Result<TronExecutionContext, String> {
+        let ctx = ctx.ok_or("Execution context is required")?;
+        
+        // Strip Tron 0x41 prefix from coinbase address if present
+        let coinbase_bytes = Self::strip_tron_address_prefix(&ctx.coinbase)?;
+        let block_coinbase = revm_primitives::Address::from_slice(coinbase_bytes);
+        
+        Ok(TronExecutionContext {
+            block_number: ctx.block_number as u64,
+            block_timestamp: ctx.block_timestamp as u64,
+            block_coinbase,
+            block_difficulty: revm_primitives::U256::from(1u64), // Default difficulty
+            block_gas_limit: ctx.energy_limit as u64,
+            chain_id: 0x2b6653dc, // Tron mainnet chain ID
+            energy_price: ctx.energy_price as u64,
+            bandwidth_price: 1000, // Default bandwidth price
+        })
+    }
+    
+    fn convert_execution_result_to_protobuf(&self, result: TronExecutionResult) -> ExecuteTransactionResponse {
+        let status = if result.success {
+            execution_result::Status::Success
+        } else {
+            execution_result::Status::Revert
+        };
+        
+        let logs: Vec<LogEntry> = result.logs.iter().map(|log| {
+            LogEntry {
+                address: Self::add_tron_address_prefix(&log.address),
+                topics: log.topics().iter().map(|t| t.as_slice().to_vec()).collect(),
+                data: log.data.data.to_vec(),
+            }
+        }).collect();
+
+        let state_changes: Vec<StateChange> = result.state_changes.iter().map(|change| {
+            match change {
+                TronStateChange::StorageChange { address, key, old_value, new_value } => {
+                    StateChange {
+                        change: Some(crate::backend::state_change::Change::StorageChange(
+                            crate::backend::StorageChange {
+                                address: Self::add_tron_address_prefix(address),
+                                key: key.to_be_bytes::<32>().to_vec(),
+                                old_value: old_value.to_be_bytes::<32>().to_vec(),
+                                new_value: new_value.to_be_bytes::<32>().to_vec(),
+                            }
+                        ))
+                    }
+                },
+                TronStateChange::AccountChange { address, old_account, new_account } => {
+                    // Helper function to convert AccountInfo to protobuf
+                    let convert_account_info = |addr: &revm::primitives::Address, acc_info: &revm::primitives::AccountInfo| {
+                        crate::backend::AccountInfo {
+                            address: Self::add_tron_address_prefix(addr),
+                            balance: acc_info.balance.to_be_bytes::<32>().to_vec(),
+                            nonce: acc_info.nonce,
+                            code_hash: acc_info.code_hash.as_slice().to_vec(),
+                            code: acc_info.code.as_ref().map_or(Vec::new(), |c| c.bytes().to_vec()),
+                        }
+                    };
+
+                    let old_account_proto = old_account.as_ref().map(|acc| convert_account_info(address, acc));
+                    let new_account_proto = new_account.as_ref().map(|acc| convert_account_info(address, acc));
+                    
+                    StateChange {
+                        change: Some(crate::backend::state_change::Change::AccountChange(
+                            crate::backend::AccountChange {
+                                address: Self::add_tron_address_prefix(address),
+                                old_account: old_account_proto,
+                                new_account: new_account_proto,
+                                is_creation: old_account.is_none() && new_account.is_some(),
+                                is_deletion: old_account.is_some() && new_account.is_none(),
+                            }
+                        ))
+                    }
+                }
+            }
+        }).collect();
+        
+        let error_message = result.error.unwrap_or_default();
+        
+        ExecuteTransactionResponse {
+            result: Some(ExecutionResult {
+                status: status as i32,
+                return_data: result.return_data.to_vec(),
+                energy_used: result.energy_used as i64,
+                energy_refunded: 0, // Not provided by TronExecutionResult
+                state_changes,
+                logs,
+                error_message: error_message.clone(),
+                bandwidth_used: result.bandwidth_used as i64,
+                resource_usage: vec![], // Not implemented yet
+            }),
+            success: result.success,
+            error_message,
+        }
     }
 } 

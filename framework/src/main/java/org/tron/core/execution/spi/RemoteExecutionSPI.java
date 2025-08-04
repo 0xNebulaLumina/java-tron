@@ -376,6 +376,78 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     return result;
   }
 
+  /** 
+   * Serialize AccountInfo to byte array for state synchronization.
+   * Format: [balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]
+   */
+  private byte[] serializeAccountInfo(tron.backend.BackendOuterClass.AccountInfo accountInfo) {
+    if (accountInfo == null) {
+      return new byte[0]; // Empty for null account (creation/deletion cases)
+    }
+    
+    try {
+      // Extract account info components
+      byte[] balance = accountInfo.getBalance().toByteArray();
+      long nonce = accountInfo.getNonce();
+      byte[] codeHash = accountInfo.getCodeHash().toByteArray();
+      byte[] code = accountInfo.getCode().toByteArray();
+      
+      // Ensure balance is 32 bytes (pad with zeros if needed)
+      byte[] paddedBalance = new byte[32];
+      if (balance.length > 0) {
+        System.arraycopy(balance, 0, paddedBalance, Math.max(0, 32 - balance.length), Math.min(balance.length, 32));
+      }
+      
+      // Convert nonce to 8 bytes (big-endian)
+      byte[] nonceBytes = new byte[8];
+      for (int i = 7; i >= 0; i--) {
+        nonceBytes[7 - i] = (byte) (nonce >>> (i * 8));
+      }
+      
+      // Ensure code hash is 32 bytes (pad with zeros if needed)
+      byte[] paddedCodeHash = new byte[32];
+      if (codeHash.length > 0) {
+        System.arraycopy(codeHash, 0, paddedCodeHash, Math.max(0, 32 - codeHash.length), Math.min(codeHash.length, 32));
+      }
+      
+      // Code length as 4 bytes (big-endian)
+      byte[] codeLengthBytes = new byte[4];
+      int codeLength = code.length;
+      for (int i = 3; i >= 0; i--) {
+        codeLengthBytes[3 - i] = (byte) (codeLength >>> (i * 8));
+      }
+      
+      // Combine all components
+      byte[] result = new byte[32 + 8 + 32 + 4 + code.length];
+      int offset = 0;
+      
+      System.arraycopy(paddedBalance, 0, result, offset, 32);
+      offset += 32;
+      
+      System.arraycopy(nonceBytes, 0, result, offset, 8);
+      offset += 8;
+      
+      System.arraycopy(paddedCodeHash, 0, result, offset, 32);
+      offset += 32;
+      
+      System.arraycopy(codeLengthBytes, 0, result, offset, 4);
+      offset += 4;
+      
+      if (code.length > 0) {
+        System.arraycopy(code, 0, result, offset, code.length);
+      }
+      
+      logger.debug("Serialized AccountInfo: balance={} bytes, nonce={}, codeHash={} bytes, code={} bytes, total={} bytes",
+          balance.length, nonce, codeHash.length, code.length, result.length);
+      
+      return result;
+      
+    } catch (Exception e) {
+      logger.error("Failed to serialize AccountInfo", e);
+      return new byte[0]; // Return empty array on error
+    }
+  }
+
   /** Convert ExecuteTransactionResponse to ExecutionResult. */
   private ExecutionResult convertExecuteTransactionResponse(ExecuteTransactionResponse response) {
     if (!response.getSuccess()) {
@@ -398,13 +470,49 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     // Convert protobuf state changes to ExecutionSPI state changes
     for (tron.backend.BackendOuterClass.StateChange protoChange :
         protoResult.getStateChangesList()) {
-      stateChanges.add(
-          new StateChange(
-              protoChange.getAddress().toByteArray(),
-              protoChange.getKey().toByteArray(),
-              protoChange.getOldValue().toByteArray(),
-              protoChange.getNewValue().toByteArray()));
+      
+      // Handle the oneof union type
+      if (protoChange.hasStorageChange()) {
+        // Handle storage change
+        tron.backend.BackendOuterClass.StorageChange storageChange = protoChange.getStorageChange();
+        StateChange stateChange = new StateChange(
+            storageChange.getAddress().toByteArray(),
+            storageChange.getKey().toByteArray(),
+            storageChange.getOldValue().toByteArray(),
+            storageChange.getNewValue().toByteArray());
+        stateChanges.add(stateChange);
+        
+        logger.debug("Remote execution storage change - Address: {}, Key: {}, OldValue: {}, NewValue: {}",
+            storageChange.getAddress().toByteArray(),
+            storageChange.getKey().toByteArray(),
+            storageChange.getOldValue().toByteArray(),
+            storageChange.getNewValue().toByteArray());
+            
+      } else if (protoChange.hasAccountChange()) {
+        // Handle account change - serialize AccountInfo properly
+        tron.backend.BackendOuterClass.AccountChange accountChange = protoChange.getAccountChange();
+        
+        // For account changes, we'll use empty key to indicate it's an account-level change
+        // and serialize account info in the values
+        byte[] address = accountChange.getAddress().toByteArray();
+        byte[] emptyKey = new byte[0]; // Empty key indicates account change
+        byte[] oldValue = serializeAccountInfo(accountChange.getOldAccount());
+        byte[] newValue = serializeAccountInfo(accountChange.getNewAccount());
+        
+        StateChange stateChange = new StateChange(address, emptyKey, oldValue, newValue);
+        stateChanges.add(stateChange);
+        
+        logger.debug("Remote execution account change - Address: {}, IsCreation: {}, IsDeletion: {}, OldValue size: {}, NewValue size: {}",
+            address,
+            accountChange.getIsCreation(),
+            accountChange.getIsDeletion(),
+            oldValue.length,
+            newValue.length);
+      }
     }
+    
+    logger.debug("Remote execution returned {} state changes and {} logs",
+        stateChanges.size(), logs.size());
 
     // Convert protobuf logs to ExecutionSPI logs
     for (tron.backend.BackendOuterClass.LogEntry protoLog : protoResult.getLogsList()) {

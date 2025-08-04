@@ -3070,6 +3070,8 @@ dependencies = [
  "async-trait",
  "chrono",
  "prost",
+ "revm",
+ "revm-primitives",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
@@ -3077,6 +3079,7 @@ dependencies = [
  "tonic-build",
  "tracing",
  "tron-backend-common",
+ "tron-backend-execution",
  "tron-backend-storage",
  "uuid",
 ]

@@ -531,11 +531,38 @@ message ExecutionResult {
   repeated TronResourceUsage resource_usage = 9;
 }
 
-message StateChange {
+// Account information for account changes
+message AccountInfo {
   bytes address = 1;
-  bytes key = 2;
-  bytes old_value = 3;
-  bytes new_value = 4;
+  bytes balance = 2;        // 32-byte big-endian encoded balance
+  uint64 nonce = 3;
+  bytes code_hash = 4;      // 32-byte hash of the code
+  bytes code = 5;           // Contract bytecode (empty for EOAs)
+}
+
+// Storage slot change within a contract
+message StorageChange {
+  bytes address = 1;
+  bytes key = 2;            // 32-byte storage key
+  bytes old_value = 3;      // 32-byte old value
+  bytes new_value = 4;      // 32-byte new value
+}
+
+// Account-level change (balance, nonce, code, etc.)
+message AccountChange {
+  bytes address = 1;
+  AccountInfo old_account = 2;  // null/empty if account was created
+  AccountInfo new_account = 3;  // null/empty if account was deleted
+  bool is_creation = 4;         // true if this is account creation
+  bool is_deletion = 5;         // true if this is account deletion (self-destruct)
+}
+
+// Union type for different kinds of state changes
+message StateChange {
+  oneof change {
+    StorageChange storage_change = 1;
+    AccountChange account_change = 2;
+  }
 }
 
 message LogEntry {
