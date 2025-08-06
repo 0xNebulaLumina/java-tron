@@ -1042,9 +1042,15 @@ impl crate::backend::backend_server::Backend for BackendService {
             }
         };
         
-        // Execute the transaction using in-memory storage for now
-        // In a real implementation, we would use the database specified in the request
-        match execution_module.execute_transaction(&transaction, &context) {
+        // Get the storage engine and create a storage adapter for the specified database
+        let storage_engine = self.get_storage_engine()?;
+        let storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
+            storage_engine.clone(),
+            req.database.clone(),
+        );
+
+        // Execute the transaction using the database-specific storage adapter
+        match execution_module.execute_transaction_with_storage(storage_adapter, &transaction, &context) {
             Ok(result) => {
                 let response = self.convert_execution_result_to_protobuf(result);
                 Ok(Response::new(response))
@@ -1072,29 +1078,140 @@ impl crate::backend::backend_server::Backend for BackendService {
     
     async fn call_contract(&self, request: Request<CallContractRequest>) -> Result<Response<CallContractResponse>, Status> {
         debug!("Call contract request: {:?}", request.get_ref());
-        
-        // Placeholder implementation
-        let response = CallContractResponse {
-            return_data: vec![],
-            success: true,
-            error_message: String::new(),
-            energy_used: 0,
+
+        let req = request.get_ref();
+
+        // Get the execution module
+        let execution_module = self.get_execution_module()?;
+
+        // Downcast to the concrete execution module type
+        let execution_module = execution_module
+            .as_any()
+            .downcast_ref::<ExecutionModule>()
+            .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
+
+        // Convert protobuf types to execution types
+        let transaction = match self.convert_call_contract_request_to_transaction(req) {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Failed to convert call contract request: {}", e);
+                return Ok(Response::new(CallContractResponse {
+                    return_data: vec![],
+                    success: false,
+                    error_message: format!("Request conversion error: {}", e),
+                    energy_used: 0,
+                }));
+            }
         };
-        
-        Ok(Response::new(response))
+
+        let context = match self.convert_protobuf_context(req.context.as_ref()) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                error!("Failed to convert execution context: {}", e);
+                return Ok(Response::new(CallContractResponse {
+                    return_data: vec![],
+                    success: false,
+                    error_message: format!("Context conversion error: {}", e),
+                    energy_used: 0,
+                }));
+            }
+        };
+
+        // Get the storage engine and create a storage adapter for the specified database
+        let storage_engine = self.get_storage_engine()?;
+        let storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
+            storage_engine.clone(),
+            req.database.clone(),
+        );
+
+        // Call the contract using the database-specific storage adapter
+        match execution_module.call_contract_with_storage(storage_adapter, &transaction, &context) {
+            Ok(result) => {
+                let response = CallContractResponse {
+                    return_data: result.return_data.to_vec(),
+                    success: true,
+                    error_message: String::new(),
+                    energy_used: result.energy_used as i64,
+                };
+                Ok(Response::new(response))
+            }
+            Err(e) => {
+                error!("Contract call failed: {}", e);
+                Ok(Response::new(CallContractResponse {
+                    return_data: vec![],
+                    success: false,
+                    error_message: format!("Contract call error: {}", e),
+                    energy_used: 0,
+                }))
+            }
+        }
     }
     
     async fn estimate_energy(&self, request: Request<EstimateEnergyRequest>) -> Result<Response<EstimateEnergyResponse>, Status> {
         debug!("Estimate energy request: {:?}", request.get_ref());
-        
-        // Placeholder implementation
-        let response = EstimateEnergyResponse {
-            energy_estimate: 21000, // Basic transaction cost
-            success: true,
-            error_message: String::new(),
+
+        let req = request.get_ref();
+
+        // Get the execution module
+        let execution_module = self.get_execution_module()?;
+
+        // Downcast to the concrete execution module type
+        let execution_module = execution_module
+            .as_any()
+            .downcast_ref::<ExecutionModule>()
+            .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
+
+        // Convert protobuf types to execution types
+        let transaction = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("Failed to convert transaction: {}", e);
+                return Ok(Response::new(EstimateEnergyResponse {
+                    energy_estimate: 21000, // Default estimate on error
+                    success: false,
+                    error_message: format!("Transaction conversion error: {}", e),
+                }));
+            }
         };
-        
-        Ok(Response::new(response))
+
+        let context = match self.convert_protobuf_context(req.context.as_ref()) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                error!("Failed to convert execution context: {}", e);
+                return Ok(Response::new(EstimateEnergyResponse {
+                    energy_estimate: 21000, // Default estimate on error
+                    success: false,
+                    error_message: format!("Context conversion error: {}", e),
+                }));
+            }
+        };
+
+        // Get the storage engine and create a storage adapter for the specified database
+        let storage_engine = self.get_storage_engine()?;
+        let storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
+            storage_engine.clone(),
+            req.database.clone(),
+        );
+
+        // Estimate energy using the database-specific storage adapter
+        match execution_module.estimate_energy_with_storage(storage_adapter, &transaction, &context) {
+            Ok(estimate) => {
+                let response = EstimateEnergyResponse {
+                    energy_estimate: estimate as i64,
+                    success: true,
+                    error_message: String::new(),
+                };
+                Ok(Response::new(response))
+            }
+            Err(e) => {
+                error!("Energy estimation failed: {}", e);
+                Ok(Response::new(EstimateEnergyResponse {
+                    energy_estimate: 21000, // Default estimate on error
+                    success: false,
+                    error_message: format!("Energy estimation error: {}", e),
+                }))
+            }
+        }
     }
     
     async fn get_code(&self, request: Request<GetCodeRequest>) -> Result<Response<GetCodeResponse>, Status> {
@@ -1251,7 +1368,26 @@ impl BackendService {
             bandwidth_price: 1000, // Default bandwidth price
         })
     }
-    
+
+    fn convert_call_contract_request_to_transaction(&self, req: &crate::backend::CallContractRequest) -> Result<TronTransaction, String> {
+        // Convert bytes to Address (strip Tron 0x41 prefix if present)
+        let from_bytes = Self::strip_tron_address_prefix(&req.from)?;
+        let from = revm_primitives::Address::from_slice(from_bytes);
+
+        let to_bytes = Self::strip_tron_address_prefix(&req.to)?;
+        let to = revm_primitives::Address::from_slice(to_bytes);
+
+        Ok(TronTransaction {
+            from,
+            to: Some(to),
+            value: revm_primitives::U256::ZERO, // Contract calls typically don't transfer value
+            data: req.data.clone().into(),
+            gas_limit: 1000000, // Default gas limit for contract calls
+            gas_price: revm_primitives::U256::from(1),
+            nonce: 0, // Contract calls don't use nonce
+        })
+    }
+
     fn convert_execution_result_to_protobuf(&self, result: TronExecutionResult) -> ExecuteTransactionResponse {
         let status = if result.success {
             execution_result::Status::Success

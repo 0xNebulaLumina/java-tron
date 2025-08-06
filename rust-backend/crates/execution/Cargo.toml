@@ -32,6 +32,7 @@ parking_lot = "0.12"
 
 # Internal dependencies
 tron-backend-common = { path = "../common" }
+tron-backend-storage = { path = "../storage" }
 
 [dev-dependencies]
 hex = "0.4" 

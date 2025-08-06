@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 use revm::primitives::{Account, AccountInfo, Bytecode, B256, U256, Address};
 use revm::{Database, DatabaseCommit};
+use tron_backend_storage::StorageEngine;
 
 /// Storage adapter trait for different storage backends
 pub trait StorageAdapter: Send + Sync {
@@ -84,6 +85,142 @@ impl StorageAdapter for InMemoryStorageAdapter {
         // Remove all storage for this address
         self.storage.retain(|(addr, _), _| addr != address);
         
+        Ok(())
+    }
+}
+
+/// Storage module adapter that bridges execution to the unified backend storage
+pub struct StorageModuleAdapter {
+    storage_engine: StorageEngine,
+    database_name: String,
+}
+
+impl StorageModuleAdapter {
+    pub fn new(storage_engine: StorageEngine, database_name: String) -> Self {
+        Self {
+            storage_engine,
+            database_name,
+        }
+    }
+
+    /// Convert Address to storage key for accounts
+    fn account_key(&self, address: &Address) -> Vec<u8> {
+        let mut key = Vec::with_capacity(21);
+        key.push(b'a'); // 'a' for account
+        key.extend_from_slice(address.as_slice());
+        key
+    }
+
+    /// Convert Address to storage key for code
+    fn code_key(&self, address: &Address) -> Vec<u8> {
+        let mut key = Vec::with_capacity(21);
+        key.push(b'c'); // 'c' for code
+        key.extend_from_slice(address.as_slice());
+        key
+    }
+
+    /// Convert Address and storage key to storage key for contract storage
+    fn storage_key(&self, address: &Address, storage_key: &U256) -> Vec<u8> {
+        let mut key = Vec::with_capacity(53);
+        key.push(b's'); // 's' for storage
+        key.extend_from_slice(address.as_slice());
+        key.extend_from_slice(&storage_key.to_be_bytes::<32>());
+        key
+    }
+
+    /// Serialize AccountInfo to bytes
+    fn serialize_account(&self, account: &AccountInfo) -> Vec<u8> {
+        // Simple serialization: balance(32) + nonce(8) + code_hash(32)
+        let mut data = Vec::with_capacity(72);
+        data.extend_from_slice(&account.balance.to_be_bytes::<32>());
+        data.extend_from_slice(&account.nonce.to_be_bytes());
+        data.extend_from_slice(account.code_hash.as_slice());
+        data
+    }
+
+    /// Deserialize AccountInfo from bytes
+    fn deserialize_account(&self, data: &[u8]) -> Result<AccountInfo> {
+        if data.len() != 72 {
+            return Err(anyhow::anyhow!("Invalid account data length: {}", data.len()));
+        }
+
+        let balance = U256::from_be_bytes::<32>(data[0..32].try_into().unwrap());
+        let nonce = u64::from_be_bytes(data[32..40].try_into().unwrap());
+        let code_hash = B256::from_slice(&data[40..72]);
+
+        Ok(AccountInfo {
+            balance,
+            nonce,
+            code_hash,
+            code: None,
+        })
+    }
+}
+
+impl StorageAdapter for StorageModuleAdapter {
+    fn get_account(&self, address: &Address) -> Result<Option<AccountInfo>> {
+        let key = self.account_key(address);
+        match self.storage_engine.get(&self.database_name, &key)? {
+            Some(data) => Ok(Some(self.deserialize_account(&data)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn get_code(&self, address: &Address) -> Result<Option<Bytecode>> {
+        let key = self.code_key(address);
+        match self.storage_engine.get(&self.database_name, &key)? {
+            Some(data) => Ok(Some(Bytecode::new_raw(data.into()))),
+            None => Ok(None),
+        }
+    }
+
+    fn get_storage(&self, address: &Address, key: &U256) -> Result<U256> {
+        let storage_key = self.storage_key(address, key);
+        match self.storage_engine.get(&self.database_name, &storage_key)? {
+            Some(data) => {
+                if data.len() == 32 {
+                    Ok(U256::from_be_bytes::<32>(data.try_into().unwrap()))
+                } else {
+                    Ok(U256::ZERO)
+                }
+            }
+            None => Ok(U256::ZERO),
+        }
+    }
+
+    fn set_account(&mut self, address: Address, account: AccountInfo) -> Result<()> {
+        let key = self.account_key(&address);
+        let data = self.serialize_account(&account);
+        self.storage_engine.put(&self.database_name, &key, &data)?;
+        Ok(())
+    }
+
+    fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+        let key = self.code_key(&address);
+        self.storage_engine.put(&self.database_name, &key, &code.bytes())?;
+        Ok(())
+    }
+
+    fn set_storage(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        let storage_key = self.storage_key(&address, &key);
+        let data = value.to_be_bytes::<32>();
+        self.storage_engine.put(&self.database_name, &storage_key, &data)?;
+        Ok(())
+    }
+
+    fn remove_account(&mut self, address: &Address) -> Result<()> {
+        // Remove account data
+        let account_key = self.account_key(address);
+        self.storage_engine.delete(&self.database_name, &account_key)?;
+
+        // Remove code
+        let code_key = self.code_key(address);
+        self.storage_engine.delete(&self.database_name, &code_key)?;
+
+        // Note: We don't remove storage slots here as it would require iteration
+        // In a real implementation, we might want to track storage slots separately
+        // or use a different key scheme that allows prefix deletion
+
         Ok(())
     }
 }

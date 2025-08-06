@@ -3106,6 +3106,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tron-backend-common",
+ "tron-backend-storage",
 ]
 
 [[package]]
