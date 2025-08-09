@@ -1042,11 +1042,10 @@ impl crate::backend::backend_server::Backend for BackendService {
             }
         };
         
-        // Get the storage engine and create a storage adapter for the specified database
+        // Get the storage engine and create a unified storage adapter
         let storage_engine = self.get_storage_engine()?;
         let storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
             storage_engine.clone(),
-            req.database.clone(),
         );
 
         // Execute the transaction using the database-specific storage adapter
@@ -1117,11 +1116,10 @@ impl crate::backend::backend_server::Backend for BackendService {
             }
         };
 
-        // Get the storage engine and create a storage adapter for the specified database
+        // Get the storage engine and create a unified storage adapter
         let storage_engine = self.get_storage_engine()?;
         let storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
             storage_engine.clone(),
-            req.database.clone(),
         );
 
         // Call the contract using the database-specific storage adapter
@@ -1186,11 +1184,10 @@ impl crate::backend::backend_server::Backend for BackendService {
             }
         };
 
-        // Get the storage engine and create a storage adapter for the specified database
+        // Get the storage engine and create a unified storage adapter
         let storage_engine = self.get_storage_engine()?;
         let storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
             storage_engine.clone(),
-            req.database.clone(),
         );
 
         // Estimate energy using the database-specific storage adapter

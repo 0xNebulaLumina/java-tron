@@ -456,9 +456,9 @@ message RestoreDatabaseResponse {
 
 // Execution Messages (preserved from original backend.proto)
 message ExecuteTransactionRequest {
-  string database = 1;
-  TronTransaction transaction = 2;
-  ExecutionContext context = 3;
+  // Note: database field removed - execution uses unified storage context
+  TronTransaction transaction = 1;
+  ExecutionContext context = 2;
 }
 
 message ExecuteTransactionResponse {
@@ -579,11 +579,11 @@ message TronResourceUsage {
 }
 
 message CallContractRequest {
-  string database = 1;
-  bytes from = 2;
-  bytes to = 3;
-  bytes data = 4;
-  ExecutionContext context = 5;
+  // Note: database field removed - execution uses unified storage context
+  bytes from = 1;
+  bytes to = 2;
+  bytes data = 3;
+  ExecutionContext context = 4;
 }
 
 message CallContractResponse {
@@ -594,9 +594,9 @@ message CallContractResponse {
 }
 
 message EstimateEnergyRequest {
-  string database = 1;
-  TronTransaction transaction = 2;
-  ExecutionContext context = 3;
+  // Note: database field removed - execution uses unified storage context
+  TronTransaction transaction = 1;
+  ExecutionContext context = 2;
 }
 
 message EstimateEnergyResponse {
@@ -606,9 +606,9 @@ message EstimateEnergyResponse {
 }
 
 message GetCodeRequest {
-  string database = 1;
-  bytes address = 2;
-  string snapshot_id = 3;
+  // Note: database field removed - execution uses unified storage context
+  bytes address = 1;
+  string snapshot_id = 2;
 }
 
 message GetCodeResponse {
@@ -619,10 +619,10 @@ message GetCodeResponse {
 }
 
 message GetStorageAtRequest {
-  string database = 1;
-  bytes address = 2;
-  bytes key = 3;
-  string snapshot_id = 4;
+  // Note: database field removed - execution uses unified storage context
+  bytes address = 1;
+  bytes key = 2;
+  string snapshot_id = 3;
 }
 
 message GetStorageAtResponse {
@@ -633,9 +633,9 @@ message GetStorageAtResponse {
 }
 
 message GetNonceRequest {
-  string database = 1;
-  bytes address = 2;
-  string snapshot_id = 3;
+  // Note: database field removed - execution uses unified storage context
+  bytes address = 1;
+  string snapshot_id = 2;
 }
 
 message GetNonceResponse {
@@ -646,9 +646,9 @@ message GetNonceResponse {
 }
 
 message GetBalanceRequest {
-  string database = 1;
-  bytes address = 2;
-  string snapshot_id = 3;
+  // Note: database field removed - execution uses unified storage context
+  bytes address = 1;
+  string snapshot_id = 2;
 }
 
 message GetBalanceResponse {
@@ -659,7 +659,7 @@ message GetBalanceResponse {
 }
 
 message CreateEvmSnapshotRequest {
-  string database = 1;
+  // Note: database field removed - execution uses unified storage context
 }
 
 message CreateEvmSnapshotResponse {

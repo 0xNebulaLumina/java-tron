@@ -334,7 +334,6 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               .setEnergyPrice(energyPrice);
 
       return ExecuteTransactionRequest.newBuilder()
-          .setDatabase("default") // TODO: Get actual database name from configuration
           .setTransaction(txBuilder.build())
           .setContext(contextBuilder.build())
           .build();
@@ -343,7 +342,6 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       logger.error("Failed to build ExecuteTransactionRequest", e);
       // Fallback to minimal request to avoid complete failure
       return ExecuteTransactionRequest.newBuilder()
-          .setDatabase("default")
           .setTransaction(
               TronTransaction.newBuilder()
                   .setFrom(ByteString.copyFrom(new byte[20]))

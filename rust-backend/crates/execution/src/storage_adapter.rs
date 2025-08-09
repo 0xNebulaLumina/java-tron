@@ -89,43 +89,60 @@ impl StorageAdapter for InMemoryStorageAdapter {
     }
 }
 
-/// Storage module adapter that bridges execution to the unified backend storage
+/// Multi-database unified storage adapter that routes data to appropriate databases
+/// This matches java-tron's database organization while providing a unified interface for EVM execution
 pub struct StorageModuleAdapter {
     storage_engine: StorageEngine,
-    database_name: String,
 }
 
 impl StorageModuleAdapter {
-    pub fn new(storage_engine: StorageEngine, database_name: String) -> Self {
+    pub fn new(storage_engine: StorageEngine) -> Self {
         Self {
             storage_engine,
-            database_name,
         }
     }
 
-    /// Convert Address to storage key for accounts
+    /// Get the appropriate database name for account data
+    fn account_database(&self) -> &str {
+        "account"
+    }
+
+    /// Get the appropriate database name for contract code
+    fn code_database(&self) -> &str {
+        "code"
+    }
+
+    /// Get the appropriate database name for contract storage
+    fn contract_state_database(&self) -> &str {
+        "contract-state"
+    }
+
+    /// Get the appropriate database name for contract metadata
+    fn contract_database(&self) -> &str {
+        "contract"
+    }
+
+    /// Convert Address to storage key for accounts (raw address, matching java-tron)
     fn account_key(&self, address: &Address) -> Vec<u8> {
-        let mut key = Vec::with_capacity(21);
-        key.push(b'a'); // 'a' for account
-        key.extend_from_slice(address.as_slice());
-        key
+        address.as_slice().to_vec()
     }
 
-    /// Convert Address to storage key for code
+    /// Convert Address to storage key for code (raw address, matching java-tron)
     fn code_key(&self, address: &Address) -> Vec<u8> {
-        let mut key = Vec::with_capacity(21);
-        key.push(b'c'); // 'c' for code
-        key.extend_from_slice(address.as_slice());
-        key
+        address.as_slice().to_vec()
     }
 
-    /// Convert Address and storage key to storage key for contract storage
-    fn storage_key(&self, address: &Address, storage_key: &U256) -> Vec<u8> {
-        let mut key = Vec::with_capacity(53);
-        key.push(b's'); // 's' for storage
-        key.extend_from_slice(address.as_slice());
-        key.extend_from_slice(&storage_key.to_be_bytes::<32>());
-        key
+    /// Convert Address and storage key to contract storage key (matching java-tron's Storage.compose format)
+    fn contract_storage_key(&self, address: &Address, storage_key: &U256) -> Vec<u8> {
+        // Match java-tron's Storage.compose() method:
+        // addrHash[0:16] + storageKey[16:32] (32 bytes total)
+        let addr_hash = keccak256(address.as_slice());
+        let storage_key_bytes = storage_key.to_be_bytes::<32>();
+
+        let mut composed_key = Vec::with_capacity(32);
+        composed_key.extend_from_slice(&addr_hash.as_slice()[0..16]); // First 16 bytes of address hash
+        composed_key.extend_from_slice(&storage_key_bytes[16..32]);   // Last 16 bytes of storage key
+        composed_key
     }
 
     /// Serialize AccountInfo to bytes
@@ -160,7 +177,7 @@ impl StorageModuleAdapter {
 impl StorageAdapter for StorageModuleAdapter {
     fn get_account(&self, address: &Address) -> Result<Option<AccountInfo>> {
         let key = self.account_key(address);
-        match self.storage_engine.get(&self.database_name, &key)? {
+        match self.storage_engine.get(self.account_database(), &key)? {
             Some(data) => Ok(Some(self.deserialize_account(&data)?)),
             None => Ok(None),
         }
@@ -168,15 +185,15 @@ impl StorageAdapter for StorageModuleAdapter {
 
     fn get_code(&self, address: &Address) -> Result<Option<Bytecode>> {
         let key = self.code_key(address);
-        match self.storage_engine.get(&self.database_name, &key)? {
+        match self.storage_engine.get(self.code_database(), &key)? {
             Some(data) => Ok(Some(Bytecode::new_raw(data.into()))),
             None => Ok(None),
         }
     }
 
     fn get_storage(&self, address: &Address, key: &U256) -> Result<U256> {
-        let storage_key = self.storage_key(address, key);
-        match self.storage_engine.get(&self.database_name, &storage_key)? {
+        let storage_key = self.contract_storage_key(address, key);
+        match self.storage_engine.get(self.contract_state_database(), &storage_key)? {
             Some(data) => {
                 if data.len() == 32 {
                     Ok(U256::from_be_bytes::<32>(data.try_into().unwrap()))
@@ -191,31 +208,31 @@ impl StorageAdapter for StorageModuleAdapter {
     fn set_account(&mut self, address: Address, account: AccountInfo) -> Result<()> {
         let key = self.account_key(&address);
         let data = self.serialize_account(&account);
-        self.storage_engine.put(&self.database_name, &key, &data)?;
+        self.storage_engine.put(self.account_database(), &key, &data)?;
         Ok(())
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         let key = self.code_key(&address);
-        self.storage_engine.put(&self.database_name, &key, &code.bytes())?;
+        self.storage_engine.put(self.code_database(), &key, &code.bytes())?;
         Ok(())
     }
 
     fn set_storage(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-        let storage_key = self.storage_key(&address, &key);
+        let storage_key = self.contract_storage_key(&address, &key);
         let data = value.to_be_bytes::<32>();
-        self.storage_engine.put(&self.database_name, &storage_key, &data)?;
+        self.storage_engine.put(self.contract_state_database(), &storage_key, &data)?;
         Ok(())
     }
 
     fn remove_account(&mut self, address: &Address) -> Result<()> {
         // Remove account data
         let account_key = self.account_key(address);
-        self.storage_engine.delete(&self.database_name, &account_key)?;
+        self.storage_engine.delete(self.account_database(), &account_key)?;
 
         // Remove code
         let code_key = self.code_key(address);
-        self.storage_engine.delete(&self.database_name, &code_key)?;
+        self.storage_engine.delete(self.code_database(), &code_key)?;
 
         // Note: We don't remove storage slots here as it would require iteration
         // In a real implementation, we might want to track storage slots separately
