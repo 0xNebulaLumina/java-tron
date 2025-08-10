@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 use tonic::{Request, Response, Status};
-use tracing::{error, debug, warn};
+use tracing::{info, error, debug, warn};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
 
@@ -1059,7 +1059,7 @@ impl crate::backend::backend_server::Backend for BackendService {
         // Execute the transaction using the database-specific storage adapter
         match execution_module.execute_transaction_with_storage(storage_adapter, &transaction, &context) {
             Ok(result) => {
-                debug!("Transaction executed successfully - energy_used: {}", result.energy_used);
+                info!("Transaction executed successfully - energy_used: {}", result.energy_used); // TODO: change to debug in the future
                 let response = self.convert_execution_result_to_protobuf(result);
                 Ok(Response::new(response))
             }
@@ -1368,6 +1368,7 @@ impl BackendService {
         } else {
             // Convert SUN to a reasonable gas price range (1-1000)
             // This ensures max_fee = gas_limit * gas_price stays reasonable
+            // TODO: fix me in the future
             let converted_price = std::cmp::min(energy_price_sun / 1000, 1000);
             let final_price = std::cmp::max(converted_price, 1); // Minimum 1
             revm_primitives::U256::from(final_price)

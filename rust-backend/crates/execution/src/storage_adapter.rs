@@ -174,7 +174,7 @@ impl StorageModuleAdapter {
         // In a full implementation, we'd parse all fields from the protobuf
         Ok(AccountInfo {
             balance: U256::from(balance),
-            nonce: 0, // TODO: Extract from protobuf if needed
+            nonce: 0, // TRON doesn't use nonce, so we can use 0
             code_hash: revm::primitives::B256::ZERO, // TODO: Extract from protobuf if needed
             code: None,
         })
@@ -259,7 +259,7 @@ impl StorageModuleAdapter {
 impl StorageAdapter for StorageModuleAdapter {
     fn get_account(&self, address: &Address) -> Result<Option<AccountInfo>> {
         let key = self.account_key(address);
-        tracing::debug!("Getting account for address {:?}, key: {:02x?}", address, key);
+        tracing::info!("Getting account for address {:?}, key: {:02x?}", address, key);
 
         match self.storage_engine.get(self.account_database(), &key)? {
             Some(data) => {
@@ -274,7 +274,7 @@ impl StorageAdapter for StorageModuleAdapter {
                     Err(e) => {
                         tracing::error!("Failed to deserialize account data: {}", e);
                         // Provide default account as fallback
-                        let default_balance = revm::primitives::U256::from(1000000000000000000u64); // 1 TRX in SUN
+                        let default_balance = revm::primitives::U256::from(0u64);
                         let default_account = AccountInfo {
                             balance: default_balance,
                             nonce: 0,
@@ -287,11 +287,11 @@ impl StorageAdapter for StorageModuleAdapter {
                 }
             },
             None => {
-                tracing::debug!("No account data found for address {:?} with key {:02x?}", address, key);
+                tracing::error!("No account data found for address {:?} with key {:02x?}", address, key);
 
                 // For testing: provide a default account with some balance to avoid LackOfFundForMaxFee
                 // This is a temporary fix to test the gas price conversion
-                let default_balance = revm::primitives::U256::from(1000000000000000000u64); // 1 TRX in SUN
+                let default_balance = revm::primitives::U256::from(0u64);
                 let default_account = AccountInfo {
                     balance: default_balance,
                     nonce: 0,
