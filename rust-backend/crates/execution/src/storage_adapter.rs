@@ -522,13 +522,19 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
             None => {
                 tracing::info!("Creating default account for non-existent address {:?}", address);
                 // Create a default account with zero balance
-                // This will be properly tracked when the transaction commits
-                Some(AccountInfo {
+                let default_account = AccountInfo {
                     balance: revm::primitives::U256::ZERO,
                     nonce: 0,
                     code_hash: revm::primitives::B256::ZERO,
                     code: None,
-                })
+                };
+                
+                // **CRITICAL FIX: Pre-register this as a new account in snapshots**
+                // This ensures that when REVM commits changes, it will detect this as account creation
+                // even if the balance remains zero
+                self.account_snapshots.insert(address, None); // Mark as "was non-existent"
+                
+                Some(default_account)
             }
         };
         
@@ -580,6 +586,7 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
             self.mark_account_modified(address);
 
             // Get old account info for comparison using comprehensive fallback pattern
+            let was_nonexistent_in_snapshots = self.account_snapshots.get(&address) == Some(&None);
             let old_account_info = self.account_snapshots.get(&address)
                 .and_then(|acc_opt| acc_opt.as_ref())
                 .map(|acc| acc.info.clone())
@@ -594,7 +601,7 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
 
             // Track account-level changes
             let new_account_info = account.info.clone();
-            let is_account_creation = old_account_info.is_none();
+            let is_account_creation = old_account_info.is_none() || was_nonexistent_in_snapshots;
             let account_changed = match &old_account_info {
                 Some(old_info) => {
                     old_info.balance != new_account_info.balance ||
@@ -603,7 +610,7 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
                     old_info.code != new_account_info.code
                 },
                 None => true, // New account
-            };
+            } || was_nonexistent_in_snapshots; // Force account creation tracking
 
             // Record account change if there was a change
             if account_changed {
