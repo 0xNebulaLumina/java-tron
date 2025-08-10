@@ -600,12 +600,32 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
                 self.state_change_records.push(StateChangeRecord::AccountChange {
                     address,
                     old_account: old_account_info.clone(),
-                    new_account: Some(new_account_info),
+                    new_account: Some(new_account_info.clone()),
                 });
             }
 
-            // Update the account snapshots
+            // **CRITICAL FIX: Persist account changes to underlying storage**
+            if account_changed {
+                if let Err(e) = self.storage.set_account(address, new_account_info.clone()) {
+                    tracing::error!("Failed to persist account changes for {:?}: {}", address, e);
+                } else {
+                    tracing::debug!("Successfully persisted account changes for {:?} - balance: {}",
+                                   address, new_account_info.balance);
+                }
+            }
+
+            // **CRITICAL FIX: Persist code changes if present**
+            if let Some(code) = &account.info.code {
+                if let Err(e) = self.storage.set_code(address, code.clone()) {
+                    tracing::error!("Failed to persist code for {:?}: {}", address, e);
+                } else {
+                    tracing::debug!("Successfully persisted code for {:?}", address);
+                }
+            }
+
+            // Update the account snapshots (keep existing in-memory tracking)
             self.account_snapshots.insert(address, Some(account.clone()));
+
             // Handle self-destruct
             if account.is_selfdestructed() {
                 // Record account deletion
@@ -616,6 +636,14 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
                         new_account: None, // Account deleted
                     });
                 }
+
+                // **CRITICAL FIX: Persist account deletion to underlying storage**
+                if let Err(e) = self.storage.remove_account(&address) {
+                    tracing::error!("Failed to remove account {:?}: {}", address, e);
+                } else {
+                    tracing::debug!("Successfully removed account {:?}", address);
+                }
+
                 self.account_snapshots.insert(address, None);
             }
 
@@ -640,7 +668,7 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
                             })
                     });
 
-                // Only record the change if the value actually changed
+                // Only record and persist the change if the value actually changed
                 if old_value != new_value {
                     self.state_change_records.push(StateChangeRecord::StorageChange {
                         address,
@@ -648,9 +676,17 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
                         old_value,
                         new_value,
                     });
+
+                    // **CRITICAL FIX: Persist storage changes to underlying storage**
+                    if let Err(e) = self.storage.set_storage(address, key, new_value) {
+                        tracing::error!("Failed to persist storage change for {:?}[{:?}]: {}", address, key, e);
+                    } else {
+                        tracing::debug!("Successfully persisted storage change for {:?}[{:?}] = {:?}",
+                                       address, key, new_value);
+                    }
                 }
 
-                // Update the storage snapshots
+                // Update the storage snapshots (keep existing in-memory tracking)
                 self.storage_snapshots
                     .entry(address)
                     .or_insert_with(HashMap::new)
