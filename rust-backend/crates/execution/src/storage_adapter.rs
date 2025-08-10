@@ -287,19 +287,10 @@ impl StorageAdapter for StorageModuleAdapter {
                 }
             },
             None => {
-                tracing::error!("No account data found for address {:?} with key {:02x?}", address, key);
-
-                // For testing: provide a default account with some balance to avoid LackOfFundForMaxFee
-                // This is a temporary fix to test the gas price conversion
-                let default_balance = revm::primitives::U256::from(0u64);
-                let default_account = AccountInfo {
-                    balance: default_balance,
-                    nonce: 0,
-                    code_hash: revm::primitives::B256::ZERO,
-                    code: None,
-                };
-                tracing::warn!("Providing default account with balance: {}", default_balance);
-                Ok(Some(default_account))
+                tracing::info!("No account data found for address {:?} with key {:02x?} - account does not exist", address, key);
+                // Return None to indicate account doesn't exist
+                // This allows the Database implementation to handle account creation properly
+                Ok(None)
             },
         }
     }
@@ -523,8 +514,26 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
 
         // Load from storage
         let result = self.storage.get_account(&address)?;
-        self.account_cache.insert(address, result.clone());
-        Ok(result)
+        
+        // If account doesn't exist, create a default account for Tron compatibility
+        // This ensures that REVM can proceed with execution and account creation is tracked
+        let final_result = match result {
+            Some(account) => Some(account),
+            None => {
+                tracing::info!("Creating default account for non-existent address {:?}", address);
+                // Create a default account with zero balance
+                // This will be properly tracked when the transaction commits
+                Some(AccountInfo {
+                    balance: revm::primitives::U256::ZERO,
+                    nonce: 0,
+                    code_hash: revm::primitives::B256::ZERO,
+                    code: None,
+                })
+            }
+        };
+        
+        self.account_cache.insert(address, final_result.clone());
+        Ok(final_result)
     }
 
     fn code_by_hash(&mut self, _code_hash: B256) -> Result<revm::primitives::Bytecode, Self::Error> {
@@ -585,6 +594,7 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
 
             // Track account-level changes
             let new_account_info = account.info.clone();
+            let is_account_creation = old_account_info.is_none();
             let account_changed = match &old_account_info {
                 Some(old_info) => {
                     old_info.balance != new_account_info.balance ||
@@ -597,6 +607,16 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
 
             // Record account change if there was a change
             if account_changed {
+                if is_account_creation {
+                    tracing::info!("Recording account creation for address {:?} with balance: {}", 
+                                 address, new_account_info.balance);
+                } else {
+                    tracing::debug!("Recording account modification for address {:?} - old balance: {:?}, new balance: {}", 
+                                  address, 
+                                  old_account_info.as_ref().map(|info| info.balance),
+                                  new_account_info.balance);
+                }
+                
                 self.state_change_records.push(StateChangeRecord::AccountChange {
                     address,
                     old_account: old_account_info.clone(),

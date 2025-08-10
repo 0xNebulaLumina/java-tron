@@ -10,46 +10,38 @@ alwaysApply: true
 ✅ Extended protobuf with AccountChange message and oneof union type
 ✅ Successfully compiled and tested Rust backend
 
-## Current Task: Fix Gas Limit Issues in Remote Execution - IN PROGRESS 🔄
+## Current Task: Fix Java-Rust State Synchronization Issue - IN PROGRESS 🔄
 
 ### Problem Analysis:
-Rust backend is throwing `CallGasCostMoreThanGasLimit` errors during transaction execution in remote mode. The error indicates that the gas cost for a transaction is exceeding the configured gas limit.
+Java side shows `account [TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ] does not exist` error, while Rust side successfully executes transactions and logs show account access attempts. This indicates a state synchronization gap between Rust execution and Java database.
 
 ### Error Pattern:
 ```
-2025-07-31T11:08:26.491023Z ERROR tron_backend_core::service: Transaction execution failed: Transaction execution failed: Transaction(CallGasCostMoreThanGasLimit)
+ERROR [sync-handle-block] [DB](Manager.java:1367) account [TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ] does not exist
 ```
 
-### Key Findings:
-1. **Configuration**: Current energy_limit in config.toml is 100,000,000 (100M)
-2. **Error Source**: The error is coming from the Rust execution engine, likely from REVM's gas validation
-3. **Transaction Flow**: Java → gRPC → Rust backend → REVM execution
-4. **Gas Limit Mapping**: `tx.energy_limit` (Java) → `gas_limit` (Rust)
+### Root Cause Analysis:
+1. **Address Format Mismatch**: ✅ RESOLVED - Java uses TB16... (base58) while Rust uses 0x... (hex), but they represent the same addresses
+2. **State Persistence**: ✅ VERIFIED - Rust properly commits changes via DatabaseCommit::commit() in storage_adapter.rs
+3. **Account Creation Logic**: ✅ VERIFIED - Java has auto-creation logic in TransferActuator.java (lines 49-58)
+4. **State Synchronization**: 🔄 IN PROGRESS - Java has state sync logic in RuntimeSpiImpl.java but may have issues
 
-### Potential Issues:
-1. **Gas Limit Too Low**: Transactions requiring more gas than the configured limit
-2. **Gas Price vs Gas Limit**: Mismatch between gas price and limit calculations
-3. **Precompile Gas Costs**: TRC10/TRC20 precompiles may have high gas costs
-4. **Transaction Conversion**: Issues in converting Java transaction to Rust format
+### Key Findings:
+1. **Rust Execution**: Working correctly, logs show account lookups and successful execution
+2. **Database Persistence**: Rust commits changes to underlying storage via StorageModuleAdapter
+3. **Java State Sync**: RuntimeSpiImpl.applyStateChangesToLocalDatabase() should sync changes back to Java
+4. **Account Creation**: Missing accounts should be auto-created during transfers
 
 ### Investigation Tasks:
-[X] Check actual gas requirements of failing transactions
-[X] Verify gas limit conversion from Java to Rust
-[X] Review precompile gas costs (TRC10: 1000, TRC20: 2000)
-[X] Examine transaction data and gas price settings
-[X] Consider increasing energy_limit in configuration
+[X] Verify address format conversion between Java base58 and Rust hex
+[X] Check if Rust properly persists account changes to storage
+[X] Examine account creation logic in Java actuators
+[X] Review state synchronization mechanism in RuntimeSpiImpl
+[ ] Analyze why specific account TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ is missing
+[ ] Fix the state synchronization gap
 
-### Changes Made:
-1. **Increased Energy Limit**: Raised from 100M to 1B in config.toml
-2. **Added Gas Validation**: Pre-execution validation to catch gas limit issues early
-3. **Enhanced Logging**: Added debug logging for transaction and context conversion
-4. **Better Error Handling**: Specific detection and logging of gas-related errors
-5. **Gas Limit Checks**: Validate tx gas limit vs block gas limit and minimum requirements
-6. **Fixed Zero Gas Limits**: Handle energy_limit=0 from Java with reasonable defaults
-7. **Fixed Zero Block Gas Limits**: Handle context energy_limit=0 with 1B default
-
-### Current Status: ✅ RESOLVED
-The original `CallGasCostMoreThanGasLimit` error has been successfully resolved! 
+### Current Status: 🔄 ANALYZING
+The issue appears to be in the state synchronization between Rust execution results and Java database updates. 
 
 
 ## New Protobuf Structure
