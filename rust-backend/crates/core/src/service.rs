@@ -1355,7 +1355,26 @@ impl BackendService {
             return Err("Invalid value length".to_string());
         };
         
-        let gas_price = revm_primitives::U256::from(tx.energy_price as u64);
+        // Convert Tron energy_price (in SUN) to reasonable gas_price for REVM
+        // Tron energy_price is typically 420-1000 SUN per energy unit
+        // REVM expects gas_price in wei-like units, but Tron uses SUN (1 TRX = 1,000,000 SUN)
+        // We need to convert to avoid extremely high max_fee calculations (gas_limit * gas_price)
+        let energy_price_sun = tx.energy_price as u64;
+
+        // Use a fixed, reasonable gas price for REVM validation
+        // This doesn't affect actual Tron fee calculation, just REVM's balance validation
+        let gas_price = if energy_price_sun == 0 {
+            revm_primitives::U256::from(1u64) // Minimum gas price
+        } else {
+            // Convert SUN to a reasonable gas price range (1-1000)
+            // This ensures max_fee = gas_limit * gas_price stays reasonable
+            let converted_price = std::cmp::min(energy_price_sun / 1000, 1000);
+            let final_price = std::cmp::max(converted_price, 1); // Minimum 1
+            revm_primitives::U256::from(final_price)
+        };
+
+        debug!("Gas price conversion - original energy_price: {} SUN, converted gas_price: {}",
+               energy_price_sun, gas_price);
         
         // Handle zero energy_limit by using a reasonable default
         let gas_limit = if tx.energy_limit == 0 {
