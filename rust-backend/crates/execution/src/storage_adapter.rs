@@ -150,14 +150,61 @@ impl StorageModuleAdapter {
         composed_key
     }
 
-    /// Serialize AccountInfo to bytes
-    fn serialize_account(&self, account: &AccountInfo) -> Vec<u8> {
-        // Simple serialization: balance(32) + nonce(8) + code_hash(32)
-        let mut data = Vec::with_capacity(72);
-        data.extend_from_slice(&account.balance.to_be_bytes::<32>());
-        data.extend_from_slice(&account.nonce.to_be_bytes());
-        data.extend_from_slice(account.code_hash.as_slice());
+    /// Serialize AccountInfo to bytes in java-tron Account protobuf format
+    fn serialize_account(&self, address: &Address, account: &AccountInfo) -> Vec<u8> {
+        // Create a protobuf Account message compatible with java-tron
+        // The Account protobuf in java-tron has the following structure:
+        // message Account {
+        //   bytes address = 1;           // field 1, length-delimited
+        //   AccountType type = 2;        // field 2, varint (0 = Normal)
+        //   int64 balance = 4;           // field 4, varint
+        //   int64 create_time = 9;       // field 9, varint
+        //   // ... other fields
+        // }
+        
+        let mut data = Vec::new();
+        
+        // Field 1: address (length-delimited)
+        // Include the full 21-byte Tron address with 0x41 prefix
+        let tron_address = self.account_key(address); // This adds 0x41 prefix
+        data.push(0x0a); // field 1, length-delimited
+        self.write_varint(&mut data, tron_address.len() as u64);
+        data.extend_from_slice(&tron_address);
+        
+        // Field 2: type (AccountType.Normal = 0)
+        data.push(0x10); // field 2, varint
+        data.push(0x00); // value = 0 (Normal)
+        
+        // Field 4: balance (varint)
+        // Convert U256 balance to u64 (TRON uses long for balance)
+        let balance_u64 = account.balance.to::<u64>();
+        if balance_u64 > 0 {
+            data.push(0x20); // field 4, varint
+            self.write_varint(&mut data, balance_u64);
+        }
+        
+        // Field 9: create_time (use current timestamp)
+        // Use current time in milliseconds
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let create_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        if create_time > 0 {
+            data.push(0x48); // field 9, varint
+            self.write_varint(&mut data, create_time);
+        }
+        
         data
+    }
+    
+    /// Write a varint to the output buffer
+    fn write_varint(&self, output: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            output.push(((value & 0x7F) | 0x80) as u8);
+            value >>= 7;
+        }
+        output.push(value as u8);
     }
 
     /// Deserialize AccountInfo from protobuf bytes (java-tron Account message)
@@ -319,7 +366,7 @@ impl StorageAdapter for StorageModuleAdapter {
 
     fn set_account(&mut self, address: Address, account: AccountInfo) -> Result<()> {
         let key = self.account_key(&address);
-        let data = self.serialize_account(&account);
+        let data = self.serialize_account(&address, &account);
         self.storage_engine.put(self.account_database(), &key, &data)?;
         Ok(())
     }

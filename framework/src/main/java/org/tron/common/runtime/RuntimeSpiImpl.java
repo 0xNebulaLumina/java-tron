@@ -136,7 +136,7 @@ public class RuntimeSpiImpl implements Runtime {
       return;
     }
 
-    logger.debug("Applying {} state changes to local database for transaction: {}", 
+    logger.info("Applying {} state changes to local database for transaction: {}", 
         result.getStateChanges().size(), context.getTrxCap().getTransactionId());
 
     try {
@@ -147,7 +147,7 @@ public class RuntimeSpiImpl implements Runtime {
         applyStateChange(stateChange, chainBaseManager, context);
       }
       
-      logger.debug("Successfully applied {} state changes for transaction: {}", 
+      logger.info("Successfully applied {} state changes for transaction: {}", 
           result.getStateChanges().size(), context.getTrxCap().getTransactionId());
           
     } catch (Exception e) {
@@ -191,6 +191,10 @@ public class RuntimeSpiImpl implements Runtime {
                                  ChainBaseManager chainBaseManager,
                                  TransactionContext context) {
     try {
+      // Log the address format for debugging
+      logger.info("Updating account state for address (length: {}): {}", 
+          address.length, org.tron.common.utils.ByteArray.toHexString(address));
+      
       String addressStr = org.tron.common.utils.StringUtil.encode58Check(address);
       
       // Check for account deletion

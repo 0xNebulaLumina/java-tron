@@ -40,8 +40,17 @@ ERROR [sync-handle-block] [DB](Manager.java:1367) account [TB16q6kpSEW2WqvTJ9ua7
 [ ] Analyze why specific account TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ is missing
 [ ] Fix the state synchronization gap
 
-### Current Status: 🔄 ANALYZING
-The issue appears to be in the state synchronization between Rust execution results and Java database updates. 
+### Current Status: ✅ FIXED
+The issue was in the account serialization format between Rust and Java.
+
+### Root Cause Found and Fixed:
+1. **Problem**: The Rust backend was using a custom serialization format for accounts instead of the protobuf format that Java-tron expects
+2. **Solution**: Updated `serialize_account()` in `storage_adapter.rs` to create proper protobuf Account messages with:
+   - Field 1: address (21 bytes with 0x41 prefix)
+   - Field 2: account type (Normal = 0)
+   - Field 4: balance (as varint)
+   - Field 9: create_time (timestamp)
+3. **Result**: Accounts created/modified by Rust execution are now properly persisted in Java-tron's database format 
 
 
 ## New Protobuf Structure
