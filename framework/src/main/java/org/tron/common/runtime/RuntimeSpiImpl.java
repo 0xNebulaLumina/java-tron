@@ -167,20 +167,35 @@ public class RuntimeSpiImpl implements Runtime {
     try {
       byte[] address = stateChange.getAddress();
       byte[] key = stateChange.getKey();
+      byte[] oldValue = stateChange.getOldValue();
       byte[] newValue = stateChange.getNewValue();
       
-      // For account balance changes (key is typically empty or balance-related)
+      // Log state change details for debugging
+      logger.debug("Applying state change - address: {}, key length: {}, oldValue length: {}, newValue length: {}",
+          org.tron.common.utils.ByteArray.toHexString(address),
+          key != null ? key.length : 0,
+          oldValue != null ? oldValue.length : 0,
+          newValue != null ? newValue.length : 0);
+      
+      // For account balance changes (key is typically empty or null)
+      // This indicates an account-level change (balance, nonce, code, etc.)
       if (key == null || key.length == 0) {
-        // This is likely an account balance update
+        // This is an account balance/state update
+        logger.debug("Processing account state change for address: {}", 
+                    org.tron.common.utils.StringUtil.encode58Check(address));
         updateAccountState(address, newValue, chainBaseManager, context);
       } else {
-        // This is storage update
+        // This is a storage update (contract storage slot)
+        logger.debug("Processing storage change for address: {}, key: {}", 
+                    org.tron.common.utils.StringUtil.encode58Check(address),
+                    org.tron.common.utils.ByteArray.toHexString(key));
         updateAccountStorage(address, key, newValue, chainBaseManager, context);
       }
       
     } catch (Exception e) {
-      logger.warn("Failed to apply individual state change for address: {}, error: {}", 
-          stateChange.getAddress(), e.getMessage());
+      logger.error("Failed to apply individual state change for address: {}, error: {}", 
+          org.tron.common.utils.ByteArray.toHexString(stateChange.getAddress()), 
+          e.getMessage(), e);
     }
   }
 
@@ -192,8 +207,9 @@ public class RuntimeSpiImpl implements Runtime {
                                  TransactionContext context) {
     try {
       // Log the address format for debugging
-      logger.info("Updating account state for address (length: {}): {}", 
-          address.length, org.tron.common.utils.ByteArray.toHexString(address));
+      logger.info("Updating account state for address (length: {}): {}, newValue length: {}", 
+          address.length, org.tron.common.utils.ByteArray.toHexString(address), 
+          newValue != null ? newValue.length : 0);
       
       String addressStr = org.tron.common.utils.StringUtil.encode58Check(address);
       
@@ -211,46 +227,57 @@ public class RuntimeSpiImpl implements Runtime {
         return;
       }
       
+      // Deserialize the AccountInfo from the serialized format first
+      AccountInfo accountInfo = deserializeAccountInfo(newValue);
+      if (accountInfo == null) {
+        logger.error("Failed to deserialize AccountInfo for address: {} from {} bytes", addressStr, newValue.length);
+        // Don't proceed if we can't deserialize the account info
+        return;
+      }
+      
       // Get or create account
       AccountCapsule accountCapsule = chainBaseManager.getAccountStore().get(address);
       boolean isNewAccount = (accountCapsule == null);
       
       if (isNewAccount) {
-        // Create new account if it doesn't exist
+        // Create new account if it doesn't exist with the balance from AccountInfo
         Account.Builder accountBuilder = Account.newBuilder()
             .setAddress(com.google.protobuf.ByteString.copyFrom(address))
-            .setBalance(0) // Will be updated below
-            .setCreateTime(System.currentTimeMillis());
+            .setBalance(accountInfo.balance) // Use balance from AccountInfo
+            .setCreateTime(System.currentTimeMillis())
+            .setType(org.tron.protos.Protocol.AccountType.Normal); // Set account type
         accountCapsule = new AccountCapsule(accountBuilder.build());
-        logger.info("Created new account: {} for remote execution state sync", addressStr);
+        logger.info("Created new account: {} with balance: {} for remote execution state sync", 
+                   addressStr, accountInfo.balance);
+      } else {
+        // Update existing account
+        long oldBalance = accountCapsule.getBalance();        
+        // Update balance
+        accountCapsule.setBalance(accountInfo.balance);
+        
+        logger.info("Updated existing account {}: balance {} -> {}", 
+                   addressStr, oldBalance, accountInfo.balance);
       }
-
-      // Update account state based on newValue (deserialize AccountInfo)
-      // Note: accountCapsule is guaranteed to be non-null here due to creation above
-      if (newValue != null && newValue.length > 0) {
-        // Deserialize the AccountInfo from the serialized format
-        AccountInfo accountInfo = deserializeAccountInfo(newValue);
-        if (accountInfo != null) {
-          long oldBalance = accountCapsule.getBalance();        
-          // Update balance
-          accountCapsule.setBalance(accountInfo.balance);
-
-          // Note: TRON doesn't have explicit nonce like Ethereum, so we'll just track it for logging
-          // Note: Getting/Setting contract code in TRON requires different mechanisms than just accessing AccountCapsule
-          // This would typically involve ContractStore and other TRON-specific storage, for now we'll just log the values
-          logger.debug("Updated account for {}: balance {} -> {}, nonce: {}, codeHash: {}, code: {} bytes", 
-              addressStr, oldBalance, accountInfo.balance, accountInfo.nonce, 
-              java.util.Arrays.toString(accountInfo.codeHash), accountInfo.code.length);
-        }
+      
+      // Note: TRON doesn't have explicit nonce like Ethereum, so we'll just track it for logging
+      // Note: Getting/Setting contract code in TRON requires different mechanisms than just accessing AccountCapsule
+      // This would typically involve ContractStore and other TRON-specific storage
+      if (accountInfo.code != null && accountInfo.code.length > 0) {
+        logger.debug("Account {} has contract code: {} bytes, codeHash: {}", 
+                    addressStr, accountInfo.code.length, 
+                    org.tron.common.utils.ByteArray.toHexString(accountInfo.codeHash));
+        // TODO: Handle contract code storage if needed
       }
 
       // Store the updated account
       chainBaseManager.getAccountStore().put(address, accountCapsule);
       
       if (isNewAccount) {
-        logger.info("Successfully created and stored new account: {}", addressStr);
+        logger.info("Successfully created and stored new account: {} with balance: {}", 
+                   addressStr, accountInfo.balance);
       } else {
-        logger.debug("Successfully updated existing account: {}", addressStr);
+        logger.info("Successfully updated existing account: {} with new balance: {}", 
+                   addressStr, accountInfo.balance);
       }
       
     } catch (Exception e) {
@@ -329,7 +356,14 @@ public class RuntimeSpiImpl implements Runtime {
    * Format: [balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]
    */
   private AccountInfo deserializeAccountInfo(byte[] data) {
-    if (data == null || data.length < 76) { // 32 + 8 + 32 + 4 = 76 minimum
+    // Handle empty data for account deletion cases
+    if (data == null || data.length == 0) {
+      return null;
+    }
+    
+    // Handle minimal accounts (balance only) - at least 32 bytes for balance
+    if (data.length < 32) {
+      logger.warn("AccountInfo data too short: {} bytes. Expected at least 32 bytes for balance.", data.length);
       return null;
     }
     
@@ -342,30 +376,42 @@ public class RuntimeSpiImpl implements Runtime {
       long balance = bytesToLongFromBalance(balanceBytes);
       offset += 32;
       
-      // Extract nonce (8 bytes, big-endian)
+      // Default values for optional fields
       long nonce = 0;
-      for (int i = 0; i < 8; i++) {
-        nonce = (nonce << 8) | (data[offset + i] & 0xFF);
-      }
-      offset += 8;
+      byte[] codeHash = new byte[32]; // Default to zero hash
+      byte[] code = new byte[0]; // Default to empty code
       
-      // Extract code hash (32 bytes)
-      byte[] codeHash = new byte[32];
-      System.arraycopy(data, offset, codeHash, 0, 32);
-      offset += 32;
-      
-      // Extract code length (4 bytes, big-endian)
-      int codeLength = 0;
-      for (int i = 0; i < 4; i++) {
-        codeLength = (codeLength << 8) | (data[offset + i] & 0xFF);
+      // Extract nonce if present (8 bytes, big-endian)
+      if (data.length >= offset + 8) {
+        for (int i = 0; i < 8; i++) {
+          nonce = (nonce << 8) | (data[offset + i] & 0xFF);
+        }
+        offset += 8;
+        
+        // Extract code hash if present (32 bytes)
+        if (data.length >= offset + 32) {
+          System.arraycopy(data, offset, codeHash, 0, 32);
+          offset += 32;
+          
+          // Extract code length and code if present (4 bytes for length, then variable)
+          if (data.length >= offset + 4) {
+            int codeLength = 0;
+            for (int i = 0; i < 4; i++) {
+              codeLength = (codeLength << 8) | (data[offset + i] & 0xFF);
+            }
+            offset += 4;
+            
+            // Extract code (variable length)
+            if (codeLength > 0 && data.length >= offset + codeLength) {
+              code = new byte[codeLength];
+              System.arraycopy(data, offset, code, 0, codeLength);
+            }
+          }
+        }
       }
-      offset += 4;
       
-      // Extract code (variable length)
-      byte[] code = new byte[codeLength];
-      if (codeLength > 0 && offset + codeLength <= data.length) {
-        System.arraycopy(data, offset, code, 0, codeLength);
-      }
+      logger.debug("Deserialized AccountInfo - balance: {}, nonce: {}, codeHash length: {}, code length: {}", 
+                   balance, nonce, codeHash.length, code.length);
       
       return new AccountInfo(balance, nonce, codeHash, code);
       

@@ -10,47 +10,37 @@ alwaysApply: true
 ✅ Extended protobuf with AccountChange message and oneof union type
 ✅ Successfully compiled and tested Rust backend
 
-## Current Task: Fix Java-Rust State Synchronization Issue - IN PROGRESS 🔄
+## Current Task: Fix Java-Rust State Synchronization Issue - COMPLETED ✅
 
 ### Problem Analysis:
-Java side shows `account [TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ] does not exist` error, while Rust side successfully executes transactions and logs show account access attempts. This indicates a state synchronization gap between Rust execution and Java database.
+Java side shows `account [TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ] does not exist` error during bandwidth consumption in block processing, indicating the account wasn't properly created from Rust execution state changes.
 
-### Error Pattern:
-```
-ERROR [sync-handle-block] [DB](Manager.java:1367) account [TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ] does not exist
-```
+### Root Cause Found:
+The issue was in the Java-side state change deserialization logic in `RuntimeSpiImpl.java`:
 
-### Root Cause Analysis:
-1. **Address Format Mismatch**: ✅ RESOLVED - Java uses TB16... (base58) while Rust uses 0x... (hex), but they represent the same addresses
-2. **State Persistence**: ✅ VERIFIED - Rust properly commits changes via DatabaseCommit::commit() in storage_adapter.rs
-3. **Account Creation Logic**: ✅ VERIFIED - Java has auto-creation logic in TransferActuator.java (lines 49-58)
-4. **State Synchronization**: 🔄 IN PROGRESS - Java has state sync logic in RuntimeSpiImpl.java but may have issues
+1. **State Change Flow**:
+   - Rust sends `StateChange` protobuf with `oneof` union (StorageChange or AccountChange)
+   - `RemoteExecutionSPI` correctly converts protobuf to Java `StateChange` objects
+   - `RuntimeSpiImpl.applyStateChangesToLocalDatabase()` applies these changes
+   - **BUG**: The `deserializeAccountInfo()` method was too strict, requiring 76 bytes minimum
 
-### Key Findings:
-1. **Rust Execution**: Working correctly, logs show account lookups and successful execution
-2. **Database Persistence**: Rust commits changes to underlying storage via StorageModuleAdapter
-3. **Java State Sync**: RuntimeSpiImpl.applyStateChangesToLocalDatabase() should sync changes back to Java
-4. **Account Creation**: Missing accounts should be auto-created during transfers
+2. **The Fix Applied**:
+   - Made `deserializeAccountInfo()` more flexible to handle partial account data
+   - Improved error handling and logging in `updateAccountState()`
+   - Added proper account creation with correct balance from AccountInfo
+   - Enhanced logging throughout the state sync process
 
-### Investigation Tasks:
-[X] Verify address format conversion between Java base58 and Rust hex
-[X] Check if Rust properly persists account changes to storage
-[X] Examine account creation logic in Java actuators
-[X] Review state synchronization mechanism in RuntimeSpiImpl
-[ ] Analyze why specific account TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ is missing
-[ ] Fix the state synchronization gap
+### Files Modified:
+- `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java`:
+  - Fixed `deserializeAccountInfo()` to handle variable-length account data
+  - Improved `updateAccountState()` to properly create accounts with correct balance
+  - Added comprehensive logging for debugging state changes
 
-### Current Status: ✅ FIXED
-The issue was in the account serialization format between Rust and Java.
-
-### Root Cause Found and Fixed:
-1. **Problem**: The Rust backend was using a custom serialization format for accounts instead of the protobuf format that Java-tron expects
-2. **Solution**: Updated `serialize_account()` in `storage_adapter.rs` to create proper protobuf Account messages with:
-   - Field 1: address (21 bytes with 0x41 prefix)
-   - Field 2: account type (Normal = 0)
-   - Field 4: balance (as varint)
-   - Field 9: create_time (timestamp)
-3. **Result**: Accounts created/modified by Rust execution are now properly persisted in Java-tron's database format 
+### Key Changes:
+1. **Flexible Deserialization**: Account info can now be deserialized with just balance (32 bytes minimum)
+2. **Proper Account Creation**: New accounts are created with the balance from AccountInfo, not zero
+3. **Better Error Handling**: Failures in deserialization don't crash the sync process
+4. **Enhanced Logging**: All state changes are now logged with details for debugging 
 
 
 ## New Protobuf Structure
@@ -83,3 +73,7 @@ message AccountChange {
 - Enum approach provides comprehensive and extensible solution
 - Protobuf needs extension for full Java-side visibility
 - Java code must handle oneof unions properly when protobuf structure changes
+- When deserializing data from remote services, always handle variable-length data gracefully
+- Account creation in state sync must use the balance from the deserialized data, not default to zero
+- Comprehensive logging is essential for debugging state synchronization issues between different systems
+- The flow from Rust → Protobuf → Java requires careful attention to serialization formats at each step
