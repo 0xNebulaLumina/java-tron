@@ -150,157 +150,98 @@ impl StorageModuleAdapter {
         composed_key
     }
 
-    /// Serialize AccountInfo to bytes in java-tron Account protobuf format
+    /// Serialize AccountInfo to bytes in java-tron custom format
     fn serialize_account(&self, address: &Address, account: &AccountInfo) -> Vec<u8> {
-        // Create a protobuf Account message compatible with java-tron
-        // The Account protobuf in java-tron has the following structure:
-        // message Account {
-        //   bytes address = 1;           // field 1, length-delimited
-        //   AccountType type = 2;        // field 2, varint (0 = Normal)
-        //   int64 balance = 4;           // field 4, varint
-        //   int64 create_time = 9;       // field 9, varint
-        //   // ... other fields
-        // }
-        
         let mut data = Vec::new();
         
-        // Field 1: address (length-delimited)
-        // Include the full 21-byte Tron address with 0x41 prefix
-        let tron_address = self.account_key(address); // This adds 0x41 prefix
-        data.push(0x0a); // field 1, length-delimited
-        self.write_varint(&mut data, tron_address.len() as u64);
-        data.extend_from_slice(&tron_address);
-        
-        // Field 2: type (AccountType.Normal = 0)
-        data.push(0x10); // field 2, varint
-        data.push(0x00); // value = 0 (Normal)
-        
-        // Field 4: balance (varint)
-        // Convert U256 balance to u64 (TRON uses long for balance)
+        // Field 1: balance (32 bytes, big-endian)
         let balance_u64 = account.balance.to::<u64>();
-        if balance_u64 > 0 {
-            data.push(0x20); // field 4, varint
-            self.write_varint(&mut data, balance_u64);
+        let mut balance_bytes = [0u8; 32];
+        // Convert u64 to big-endian bytes in the last 8 bytes of the 32-byte array
+        let balance_be_bytes = balance_u64.to_be_bytes();
+        balance_bytes[24..32].copy_from_slice(&balance_be_bytes);
+        data.extend_from_slice(&balance_bytes);
+        
+        // Field 2: nonce (8 bytes, big-endian) - TRON doesn't use nonce, so use 0
+        let nonce_bytes = 0u64.to_be_bytes();
+        data.extend_from_slice(&nonce_bytes);
+        
+        if account.code_hash != revm::primitives::B256::ZERO {
+            data.extend_from_slice(account.code_hash.as_slice());
+        } else {
+            data.extend_from_slice(&[0u8; 32]); // Zero hash for non-contract accounts
         }
         
-        // Field 9: create_time (use current timestamp)
-        // Use current time in milliseconds
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let create_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        if create_time > 0 {
-            data.push(0x48); // field 9, varint
-            self.write_varint(&mut data, create_time);
+        // Field 4: code_length (4 bytes, big-endian) + code (variable)
+        let code = account.code.as_ref().map(|c| c.bytes()).unwrap_or_default();
+        let code_length = code.len() as u32;
+        data.extend_from_slice(&code_length.to_be_bytes());
+        if code_length > 0 {
+            data.extend_from_slice(&code);
         }
         
+        tracing::debug!("Serialized account - balance: {}, total size: {} bytes", balance_u64, data.len());
         data
     }
     
-    /// Write a varint to the output buffer
-    fn write_varint(&self, output: &mut Vec<u8>, mut value: u64) {
-        while value >= 0x80 {
-            output.push(((value & 0x7F) | 0x80) as u8);
-            value >>= 7;
-        }
-        output.push(value as u8);
-    }
 
-    /// Deserialize AccountInfo from protobuf bytes (java-tron Account message)
+    /// Deserialize AccountInfo from custom binary format
     fn deserialize_account(&self, data: &[u8]) -> Result<AccountInfo> {
-        // Parse protobuf Account message
-        // For now, we'll implement a simple parser for the balance field
-        // TODO: Use proper protobuf parsing library for full compatibility
-
-        // This is a simplified parser that extracts the balance field from the protobuf
-        // The Account protobuf has balance as field 4 (varint)
-        let balance = self.extract_balance_from_protobuf(data)?;
-
-        // For now, use default values for other fields
-        // In a full implementation, we'd parse all fields from the protobuf
+        if data.len() < 32 {
+            return Err(anyhow::anyhow!("Account data too short: {} bytes, expected at least 32", data.len()));
+        }
+        
+        let mut offset = 0;
+        
+        let mut balance_bytes = [0u8; 8];
+        balance_bytes.copy_from_slice(&data[24..32]); // Last 8 bytes of the 32-byte balance field
+        let balance = u64::from_be_bytes(balance_bytes);
+        offset += 32;
+        
+        let nonce = if data.len() >= offset + 8 {
+            let mut nonce_bytes = [0u8; 8];
+            nonce_bytes.copy_from_slice(&data[offset..offset + 8]);
+            offset += 8;
+            u64::from_be_bytes(nonce_bytes)
+        } else {
+            0
+        };
+        
+        let code_hash = if data.len() >= offset + 32 {
+            let mut hash_bytes = [0u8; 32];
+            hash_bytes.copy_from_slice(&data[offset..offset + 32]);
+            offset += 32;
+            revm::primitives::B256::from(hash_bytes)
+        } else {
+            revm::primitives::B256::ZERO
+        };
+        
+        let code = if data.len() >= offset + 4 {
+            let mut length_bytes = [0u8; 4];
+            length_bytes.copy_from_slice(&data[offset..offset + 4]);
+            let code_length = u32::from_be_bytes(length_bytes) as usize;
+            offset += 4;
+            
+            if code_length > 0 && data.len() >= offset + code_length {
+                Some(revm::primitives::Bytecode::new_raw(data[offset..offset + code_length].to_vec().into()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        tracing::debug!("Deserialized account - balance: {}, nonce: {}, has_code: {}", 
+                       balance, nonce, code.is_some());
+        
         Ok(AccountInfo {
-            balance: U256::from(balance),
-            nonce: 0, // TRON doesn't use nonce, so we can use 0
-            code_hash: revm::primitives::B256::ZERO, // TODO: Extract from protobuf if needed
-            code: None,
+            balance: revm::primitives::U256::from(balance),
+            nonce,
+            code_hash,
+            code,
         })
     }
 
-    /// Extract balance field from Account protobuf message
-    /// This is a simplified parser for the balance field (field number 4)
-    fn extract_balance_from_protobuf(&self, data: &[u8]) -> Result<u64> {
-        let mut pos = 0;
-
-        while pos < data.len() {
-            if pos >= data.len() {
-                break;
-            }
-
-            // Read field header (varint)
-            let (field_header, new_pos) = self.read_varint(data, pos)?;
-            pos = new_pos;
-
-            let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
-
-            if field_number == 4 && wire_type == 0 { // balance field (varint)
-                let (balance, _) = self.read_varint(data, pos)?;
-                return Ok(balance);
-            } else {
-                // Skip this field
-                pos = self.skip_field(data, pos, wire_type)?;
-            }
-        }
-
-        // If balance field not found, return 0
-        Ok(0)
-    }
-
-    /// Read a varint from protobuf data
-    fn read_varint(&self, data: &[u8], mut pos: usize) -> Result<(u64, usize)> {
-        let mut result = 0u64;
-        let mut shift = 0;
-
-        while pos < data.len() {
-            let byte = data[pos];
-            pos += 1;
-
-            result |= ((byte & 0x7F) as u64) << shift;
-
-            if (byte & 0x80) == 0 {
-                return Ok((result, pos));
-            }
-
-            shift += 7;
-            if shift >= 64 {
-                return Err(anyhow::anyhow!("Varint too long"));
-            }
-        }
-
-        Err(anyhow::anyhow!("Unexpected end of data while reading varint"))
-    }
-
-    /// Skip a field in protobuf data
-    fn skip_field(&self, data: &[u8], pos: usize, wire_type: u64) -> Result<usize> {
-        match wire_type {
-            0 => { // Varint
-                let (_, new_pos) = self.read_varint(data, pos)?;
-                Ok(new_pos)
-            },
-            1 => { // 64-bit
-                Ok(pos + 8)
-            },
-            2 => { // Length-delimited
-                let (length, new_pos) = self.read_varint(data, pos)?;
-                Ok(new_pos + length as usize)
-            },
-            5 => { // 32-bit
-                Ok(pos + 4)
-            },
-            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type))
-        }
-    }
 }
 
 impl StorageAdapter for StorageModuleAdapter {

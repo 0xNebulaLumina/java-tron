@@ -143,7 +143,10 @@ public class RuntimeSpiImpl implements Runtime {
       // Get the chain base manager from context
       ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
       
-      for (ExecutionSPI.StateChange stateChange : result.getStateChanges()) {
+      for (int i = 0; i < result.getStateChanges().size(); i++) {
+        ExecutionSPI.StateChange stateChange = result.getStateChanges().get(i);
+        logger.debug("Processing state change {}/{}: address={}", i + 1, result.getStateChanges().size(),
+                    org.tron.common.utils.ByteArray.toHexString(stateChange.getAddress()));
         applyStateChange(stateChange, chainBaseManager, context);
       }
       
@@ -206,19 +209,15 @@ public class RuntimeSpiImpl implements Runtime {
                                  ChainBaseManager chainBaseManager,
                                  TransactionContext context) {
     try {
-      // Log the address format for debugging
-      logger.info("Updating account state for address (length: {}): {}, newValue length: {}", 
-          address.length, org.tron.common.utils.ByteArray.toHexString(address), 
-          newValue != null ? newValue.length : 0);
-      
       String addressStr = org.tron.common.utils.StringUtil.encode58Check(address);
+      logger.debug("Processing account state change for address: {}, newValue length: {}", 
+                  addressStr, newValue != null ? newValue.length : 0);
       
       // Check for account deletion
       if (newValue == null || newValue.length == 0) {
         // Handle account deletion
         AccountCapsule existingAccount = chainBaseManager.getAccountStore().get(address);
         if (existingAccount != null) {
-          // Delete the account from the store
           chainBaseManager.getAccountStore().delete(address);
           logger.info("Deleted account: {} due to remote execution state sync", addressStr);
         } else {
@@ -227,11 +226,10 @@ public class RuntimeSpiImpl implements Runtime {
         return;
       }
       
-      // Deserialize the AccountInfo from the serialized format first
+      // Deserialize the AccountInfo from the serialized format
       AccountInfo accountInfo = deserializeAccountInfo(newValue);
       if (accountInfo == null) {
         logger.error("Failed to deserialize AccountInfo for address: {} from {} bytes", addressStr, newValue.length);
-        // Don't proceed if we can't deserialize the account info
         return;
       }
       
@@ -240,45 +238,32 @@ public class RuntimeSpiImpl implements Runtime {
       boolean isNewAccount = (accountCapsule == null);
       
       if (isNewAccount) {
-        // Create new account if it doesn't exist with the balance from AccountInfo
+        // Create new account with balance from AccountInfo
         Account.Builder accountBuilder = Account.newBuilder()
             .setAddress(com.google.protobuf.ByteString.copyFrom(address))
-            .setBalance(accountInfo.balance) // Use balance from AccountInfo
+            .setBalance(accountInfo.balance)
             .setCreateTime(System.currentTimeMillis())
-            .setType(org.tron.protos.Protocol.AccountType.Normal); // Set account type
+            .setType(org.tron.protos.Protocol.AccountType.Normal);
         accountCapsule = new AccountCapsule(accountBuilder.build());
         logger.info("Created new account: {} with balance: {} for remote execution state sync", 
                    addressStr, accountInfo.balance);
       } else {
-        // Update existing account
-        long oldBalance = accountCapsule.getBalance();        
-        // Update balance
+        // Update existing account balance
+        long oldBalance = accountCapsule.getBalance();
         accountCapsule.setBalance(accountInfo.balance);
-        
-        logger.info("Updated existing account {}: balance {} -> {}", 
-                   addressStr, oldBalance, accountInfo.balance);
+        logger.debug("Updated existing account {}: balance {} -> {}", 
+                    addressStr, oldBalance, accountInfo.balance);
       }
       
-      // Note: TRON doesn't have explicit nonce like Ethereum, so we'll just track it for logging
-      // Note: Getting/Setting contract code in TRON requires different mechanisms than just accessing AccountCapsule
-      // This would typically involve ContractStore and other TRON-specific storage
       if (accountInfo.code != null && accountInfo.code.length > 0) {
         logger.debug("Account {} has contract code: {} bytes, codeHash: {}", 
                     addressStr, accountInfo.code.length, 
                     org.tron.common.utils.ByteArray.toHexString(accountInfo.codeHash));
-        // TODO: Handle contract code storage if needed
       }
 
       // Store the updated account
       chainBaseManager.getAccountStore().put(address, accountCapsule);
-      
-      if (isNewAccount) {
-        logger.info("Successfully created and stored new account: {} with balance: {}", 
-                   addressStr, accountInfo.balance);
-      } else {
-        logger.info("Successfully updated existing account: {} with new balance: {}", 
-                   addressStr, accountInfo.balance);
-      }
+      logger.debug("Successfully stored account: {}", addressStr);
       
     } catch (Exception e) {
       logger.error("Failed to update account state for address: {}, error: {}", 
