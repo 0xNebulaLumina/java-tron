@@ -154,12 +154,13 @@ impl StorageModuleAdapter {
     fn serialize_account(&self, address: &Address, account: &AccountInfo) -> Vec<u8> {
         let mut data = Vec::new();
         
-        // Field 1: balance (32 bytes, big-endian)
+        // Field 1: balance (32 bytes, big-endian) - match Java RemoteExecutionSPI format
         let balance_u64 = account.balance.to::<u64>();
-        let mut balance_bytes = [0u8; 32];
-        // Convert u64 to big-endian bytes in the last 8 bytes of the 32-byte array
         let balance_be_bytes = balance_u64.to_be_bytes();
-        balance_bytes[24..32].copy_from_slice(&balance_be_bytes);
+        let mut balance_bytes = [0u8; 32];
+        let copy_len = std::cmp::min(balance_be_bytes.len(), 32);
+        let start_pos = std::cmp::max(0, 32 - balance_be_bytes.len());
+        balance_bytes[start_pos..start_pos + copy_len].copy_from_slice(&balance_be_bytes[..copy_len]);
         data.extend_from_slice(&balance_bytes);
         
         // Field 2: nonce (8 bytes, big-endian) - TRON doesn't use nonce, so use 0
@@ -193,9 +194,19 @@ impl StorageModuleAdapter {
         
         let mut offset = 0;
         
-        let mut balance_bytes = [0u8; 8];
-        balance_bytes.copy_from_slice(&data[24..32]); // Last 8 bytes of the 32-byte balance field
-        let balance = u64::from_be_bytes(balance_bytes);
+        // Extract balance (32 bytes, big-endian) - match Java RemoteExecutionSPI format
+        let mut balance = 0u64;
+        for i in (0..32).rev() {
+            if data[i] != 0 {
+                let start = std::cmp::max(0, i as i32 - 7) as usize;
+                let end = i + 1;
+                let len = end - start;
+                let mut balance_bytes = [0u8; 8];
+                balance_bytes[8-len..].copy_from_slice(&data[start..end]);
+                balance = u64::from_be_bytes(balance_bytes);
+                break;
+            }
+        }
         offset += 32;
         
         let nonce = if data.len() >= offset + 8 {
