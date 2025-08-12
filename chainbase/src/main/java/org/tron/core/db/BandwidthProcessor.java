@@ -131,11 +131,19 @@ public class BandwidthProcessor extends ResourceProcessor {
       trace.setNetBill(bytesSize, 0);
       byte[] address = TransactionCapsule.getOwner(contract);
       AccountCapsule accountCapsule = chainBaseManager.getAccountStore().get(address);
-      if (accountCapsule == null) {
-        throw new ContractValidateException(String.format("account [%s] does not exist",
-            StringUtil.encode58Check(address)));
-      }
       long now = chainBaseManager.getHeadSlot();
+      
+      if (contractCreateNewAccount(contract)) {
+        logger.debug("Transaction {} creates new account, owner account: {}", 
+                    trx.getTransactionId(), 
+                    accountCapsule != null ? "exists" : "null");
+      } else {
+        if (accountCapsule == null) {
+          throw new ContractValidateException(String.format("account [%s] does not exist",
+              StringUtil.encode58Check(address)));
+        }
+      }
+      
       if (contractCreateNewAccount(contract)) {
         if (optimizeTxs) {
           long maxCreateAccountTxSize = dynamicPropertiesStore.getMaxCreateAccountTxSize();
