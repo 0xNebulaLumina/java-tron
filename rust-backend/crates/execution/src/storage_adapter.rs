@@ -308,13 +308,13 @@ impl StorageAdapter for StorageModuleAdapter {
         let key = self.account_key(address);
         // Convert to Tron format address for debugging consistency with Java logs
         let address_tron = to_tron_address(address);
-        tracing::info!("Getting account for address {:?} (tron: {}), key: {:02x?}", 
-                      address, address_tron, key);
+        tracing::info!("Getting account for address {:?} (tron: {}), key: {}", 
+                      address, address_tron, hex::encode(&key));
 
         match self.storage_engine.get(self.account_database(), &key)? {
             Some(data) => {
-                tracing::debug!("Found account data, length: {}, first 32 bytes: {:02x?}",
-                               data.len(), &data[..std::cmp::min(32, data.len())]);
+                tracing::debug!("Found account data, length: {}, first 32 bytes: {}",
+                               data.len(), hex::encode(&data[..std::cmp::min(32, data.len())]));
                 match self.deserialize_account(&data) {
                     Ok(account) => {
                         tracing::info!("Successfully deserialized account - balance: {}, nonce: {}",
@@ -337,7 +337,7 @@ impl StorageAdapter for StorageModuleAdapter {
                 }
             },
             None => {
-                tracing::info!("No account data found for address {:?} with key {:02x?} - account does not exist", address, key);
+                tracing::info!("No account data found for address {:?} with key {} - account does not exist", address, hex::encode(&key));
                 // Return None to indicate account doesn't exist
                 // This allows the Database implementation to handle account creation properly
                 Ok(None)
@@ -371,8 +371,8 @@ impl StorageAdapter for StorageModuleAdapter {
         let key = self.account_key(&address);
         let data = self.serialize_account(&address, &account);
         let address_tron = to_tron_address(&address);
-        tracing::info!("Setting account for address {:?} (tron: {}), balance: {}, key: {:02x?}", 
-                       address, address_tron, account.balance, key);
+        tracing::info!("Setting account for address {:?} (tron: {}), balance: {}, key: {}", 
+                       address, address_tron, account.balance, hex::encode(&key));
         self.storage_engine.put(self.account_database(), &key, &data)?;
         Ok(())
     }
