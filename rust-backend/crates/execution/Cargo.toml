@@ -25,6 +25,7 @@ primitive-types = "0.12"
 ruint = "1.10"
 secp256k1 = "0.28"
 sha3 = "0.10"
+sha2 = "0.10"
 bs58 = "0.5"
 
 # Storage adapter dependencies

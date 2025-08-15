@@ -3127,6 +3127,7 @@ dependencies = [
  "ruint",
  "secp256k1 0.28.2",
  "serde",
+ "sha2",
  "sha3",
  "tokio",
  "tracing",

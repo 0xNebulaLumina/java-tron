@@ -306,15 +306,10 @@ impl StorageModuleAdapter {
 impl StorageAdapter for StorageModuleAdapter {
     fn get_account(&self, address: &Address) -> Result<Option<AccountInfo>> {
         let key = self.account_key(address);
-        // Convert to base58 for debugging consistency with Java logs
-        let address_base58 = {
-            let mut tron_addr = Vec::with_capacity(21);
-            tron_addr.push(0x41);
-            tron_addr.extend_from_slice(address.as_slice());
-            bs58::encode(&tron_addr).into_string()
-        };
-        tracing::info!("Getting account for address {:?} (base58: {}), key: {:02x?}", 
-                      address, address_base58, key);
+        // Convert to Tron format address for debugging consistency with Java logs
+        let address_tron = to_tron_address(address);
+        tracing::info!("Getting account for address {:?} (tron: {}), key: {:02x?}", 
+                      address, address_tron, key);
 
         match self.storage_engine.get(self.account_database(), &key)? {
             Some(data) => {
@@ -375,14 +370,9 @@ impl StorageAdapter for StorageModuleAdapter {
     fn set_account(&mut self, address: Address, account: AccountInfo) -> Result<()> {
         let key = self.account_key(&address);
         let data = self.serialize_account(&address, &account);
-        let address_base58 = {
-            let mut tron_addr = Vec::with_capacity(21);
-            tron_addr.push(0x41);
-            tron_addr.extend_from_slice(address.as_slice());
-            bs58::encode(&tron_addr).into_string()
-        };
-        tracing::debug!("Setting account for address {:?} (base58: {}), balance: {}, key: {:02x?}", 
-                       address, address_base58, account.balance, key);
+        let address_tron = to_tron_address(&address);
+        tracing::info!("Setting account for address {:?} (tron: {}), balance: {}, key: {:02x?}", 
+                       address, address_tron, account.balance, key);
         self.storage_engine.put(self.account_database(), &key, &data)?;
         Ok(())
     }
@@ -583,13 +573,8 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
         let final_result = match result {
             Some(account) => Some(account),
             None => {
-                let address_base58 = {
-                    let mut tron_addr = Vec::with_capacity(21);
-                    tron_addr.push(0x41);
-                    tron_addr.extend_from_slice(address.as_slice());
-                    bs58::encode(&tron_addr).into_string()
-                };
-                tracing::info!("Creating default account for non-existent address {:?} (base58: {})", address, address_base58);
+                let address_tron = to_tron_address(&address);
+                tracing::info!("Creating default account for non-existent address {:?} (tron: {})", address, address_tron);
                 // Create a default account with zero balance
                 let default_account = AccountInfo {
                     balance: revm::primitives::U256::ZERO,
@@ -608,7 +593,7 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
                 if let Err(e) = self.storage.set_account(address, default_account.clone()) {
                     tracing::error!("Failed to persist default account for {:?}: {}", address, e);
                 } else {
-                    tracing::info!("Successfully persisted default account for {:?} (base58: {})", address, address_base58);
+                    tracing::info!("Successfully persisted default account for {:?} (tron: {})", address, address_tron);
                 }
                 
                 Some(default_account)
@@ -701,14 +686,9 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
             // Record account change if there was a change or if we're forcing account creation tracking
             if account_changed || force_track_creation {
                 if is_account_creation || force_track_creation {
-                    let address_base58 = {
-                        let mut tron_addr = Vec::with_capacity(21);
-                        tron_addr.push(0x41);
-                        tron_addr.extend_from_slice(address.as_slice());
-                        bs58::encode(&tron_addr).into_string()
-                    };
-                    tracing::info!("Recording account creation for address {:?} (base58: {}) with balance: {} (forced: {})", 
-                                 address, address_base58, new_account_info.balance, force_track_creation);
+                    let address_tron = to_tron_address(&address);
+                    tracing::info!("Recording account creation for address {:?} (tron: {}) with balance: {} (forced: {})", 
+                                 address, address_tron, new_account_info.balance, force_track_creation);
                 } else {
                     tracing::debug!("Recording account modification for address {:?} - old balance: {:?}, new balance: {}", 
                                   address, 
@@ -728,18 +708,13 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
                 if let Err(e) = self.storage.set_account(address, new_account_info.clone()) {
                     tracing::error!("Failed to persist account changes for {:?}: {}", address, e);
                 } else {
-                    let address_base58 = {
-                        let mut tron_addr = Vec::with_capacity(21);
-                        tron_addr.push(0x41);
-                        tron_addr.extend_from_slice(address.as_slice());
-                        bs58::encode(&tron_addr).into_string()
-                    };
+                    let address_tron = to_tron_address(&address);
                     if is_account_creation || force_track_creation {
-                        tracing::info!("Successfully persisted account creation for {:?} (base58: {}) - balance: {}",
-                                     address, address_base58, new_account_info.balance);
+                        tracing::info!("Successfully persisted account creation for {:?} (tron: {}) - balance: {}",
+                                     address, address_tron, new_account_info.balance);
                     } else {
-                        tracing::debug!("Successfully persisted account changes for {:?} (base58: {}) - balance: {}",
-                                       address, address_base58, new_account_info.balance);
+                        tracing::info!("Successfully persisted account changes for {:?} (tron: {}) - balance: {}",
+                                       address, address_tron, new_account_info.balance);
                     }
                 }
             }
@@ -834,6 +809,72 @@ pub fn keccak256(data: &[u8]) -> B256 {
     B256::from_slice(&hasher.finalize())
 }
 
+/// Convert an EVM address to a proper Tron format address (base58 with checksum)
+fn to_tron_address(address: &Address) -> String {
+    use sha2::{Digest, Sha256};
+    
+    // Create 21-byte address with 0x41 prefix
+    let mut tron_addr = Vec::with_capacity(21);
+    tron_addr.push(0x41);
+    tron_addr.extend_from_slice(address.as_slice());
+    
+    // Calculate double SHA256 for checksum
+    let mut hasher1 = Sha256::new();
+    hasher1.update(&tron_addr);
+    let hash1 = hasher1.finalize();
+    
+    let mut hasher2 = Sha256::new();
+    hasher2.update(&hash1);
+    let hash2 = hasher2.finalize();
+    
+    // Take first 4 bytes as checksum
+    let mut addr_with_checksum = tron_addr;
+    addr_with_checksum.extend_from_slice(&hash2[..4]);
+    
+    // Encode with base58
+    bs58::encode(&addr_with_checksum).into_string()
+}
+
+/// Convert a Tron format address (base58 with checksum) back to EVM address for testing
+#[cfg(test)]
+fn from_tron_address(tron_address: &str) -> Result<Address, anyhow::Error> {
+    use sha2::{Digest, Sha256};
+    
+    // Decode base58
+    let decoded = bs58::decode(tron_address).into_vec()
+        .map_err(|e| anyhow::anyhow!("Invalid base58: {}", e))?;
+    
+    if decoded.len() != 25 {
+        return Err(anyhow::anyhow!("Invalid Tron address length: expected 25 bytes, got {}", decoded.len()));
+    }
+    
+    // Split address and checksum
+    let (addr_bytes, checksum) = decoded.split_at(21);
+    
+    // Verify checksum
+    let mut hasher1 = Sha256::new();
+    hasher1.update(addr_bytes);
+    let hash1 = hasher1.finalize();
+    
+    let mut hasher2 = Sha256::new();
+    hasher2.update(&hash1);
+    let hash2 = hasher2.finalize();
+    
+    if &hash2[..4] != checksum {
+        return Err(anyhow::anyhow!("Invalid checksum"));
+    }
+    
+    // Check 0x41 prefix
+    if addr_bytes[0] != 0x41 {
+        return Err(anyhow::anyhow!("Invalid Tron address prefix: expected 0x41, got 0x{:02x}", addr_bytes[0]));
+    }
+    
+    // Return the 20-byte EVM address (without the 0x41 prefix)
+    let mut evm_addr = [0u8; 20];
+    evm_addr.copy_from_slice(&addr_bytes[1..]);
+    Ok(Address::from(evm_addr))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -924,5 +965,51 @@ mod tests {
 
         // Verify modified accounts were cleared
         assert_eq!(db.get_modified_accounts().len(), 0);
+    }
+
+    #[test]
+    fn test_tron_address_conversion() {
+        // Test the specific example provided
+        let tron_address = "TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ";
+        let expected_evm_hex = "0x0B53CE4AA6F0C2F3C849F11F682702EC99622E2E";
+        
+        // Convert Tron address to EVM address
+        let evm_address = from_tron_address(tron_address).expect("Failed to parse Tron address");
+        let actual_evm_hex = format!("0x{}", hex::encode(evm_address.as_slice()).to_uppercase());
+        
+        assert_eq!(actual_evm_hex, expected_evm_hex, 
+                   "EVM address mismatch: expected {}, got {}", expected_evm_hex, actual_evm_hex);
+        
+        // Convert EVM address back to Tron address
+        let converted_tron_address = to_tron_address(&evm_address);
+        
+        assert_eq!(converted_tron_address, tron_address,
+                   "Tron address mismatch: expected {}, got {}", tron_address, converted_tron_address);
+    }
+
+    #[test]
+    fn test_tron_address_roundtrip() {
+        // Test multiple addresses for round-trip conversion
+        let test_cases = vec![
+            // Add the specific example
+            ("TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ", "0x0B53CE4AA6F0C2F3C849F11F682702EC99622E2E"),
+        ];
+        
+        for (tron_addr, evm_hex) in test_cases {
+            // Parse expected EVM address
+            let expected_evm = Address::from_slice(&hex::decode(&evm_hex[2..]).expect("Invalid hex"));
+            
+            // Test Tron -> EVM conversion
+            let parsed_evm = from_tron_address(tron_addr).expect("Failed to parse Tron address");
+            assert_eq!(parsed_evm, expected_evm, "Tron->EVM conversion failed");
+            
+            // Test EVM -> Tron conversion
+            let converted_tron = to_tron_address(&expected_evm);
+            assert_eq!(converted_tron, tron_addr, "EVM->Tron conversion failed");
+            
+            // Test full round-trip
+            let roundtrip_evm = from_tron_address(&converted_tron).expect("Round-trip failed");
+            assert_eq!(roundtrip_evm, expected_evm, "Round-trip conversion failed");
+        }
     }
 }
