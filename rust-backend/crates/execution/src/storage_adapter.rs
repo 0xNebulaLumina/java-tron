@@ -306,7 +306,15 @@ impl StorageModuleAdapter {
 impl StorageAdapter for StorageModuleAdapter {
     fn get_account(&self, address: &Address) -> Result<Option<AccountInfo>> {
         let key = self.account_key(address);
-        tracing::info!("Getting account for address {:?}, key: {:02x?}", address, key);
+        // Convert to base58 for debugging consistency with Java logs
+        let address_base58 = {
+            let mut tron_addr = Vec::with_capacity(21);
+            tron_addr.push(0x41);
+            tron_addr.extend_from_slice(address.as_slice());
+            bs58::encode(&tron_addr).into_string()
+        };
+        tracing::info!("Getting account for address {:?} (base58: {}), key: {:02x?}", 
+                      address, address_base58, key);
 
         match self.storage_engine.get(self.account_database(), &key)? {
             Some(data) => {
@@ -367,6 +375,14 @@ impl StorageAdapter for StorageModuleAdapter {
     fn set_account(&mut self, address: Address, account: AccountInfo) -> Result<()> {
         let key = self.account_key(&address);
         let data = self.serialize_account(&address, &account);
+        let address_base58 = {
+            let mut tron_addr = Vec::with_capacity(21);
+            tron_addr.push(0x41);
+            tron_addr.extend_from_slice(address.as_slice());
+            bs58::encode(&tron_addr).into_string()
+        };
+        tracing::debug!("Setting account for address {:?} (base58: {}), balance: {}, key: {:02x?}", 
+                       address, address_base58, account.balance, key);
         self.storage_engine.put(self.account_database(), &key, &data)?;
         Ok(())
     }
@@ -567,7 +583,13 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
         let final_result = match result {
             Some(account) => Some(account),
             None => {
-                tracing::info!("Creating default account for non-existent address {:?}", address);
+                let address_base58 = {
+                    let mut tron_addr = Vec::with_capacity(21);
+                    tron_addr.push(0x41);
+                    tron_addr.extend_from_slice(address.as_slice());
+                    bs58::encode(&tron_addr).into_string()
+                };
+                tracing::info!("Creating default account for non-existent address {:?} (base58: {})", address, address_base58);
                 // Create a default account with zero balance
                 let default_account = AccountInfo {
                     balance: revm::primitives::U256::ZERO,
@@ -580,6 +602,14 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
                 // This ensures that when REVM commits changes, it will detect this as account creation
                 // even if the balance remains zero
                 self.account_snapshots.insert(address, None); // Mark as "was non-existent"
+                
+                // **ADDITIONAL FIX: Immediately persist the default account to ensure it's available**
+                // This ensures the account exists in storage for bandwidth processing
+                if let Err(e) = self.storage.set_account(address, default_account.clone()) {
+                    tracing::error!("Failed to persist default account for {:?}: {}", address, e);
+                } else {
+                    tracing::info!("Successfully persisted default account for {:?} (base58: {})", address, address_base58);
+                }
                 
                 Some(default_account)
             }
@@ -658,12 +688,27 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
                 },
                 None => true, // New account
             } || was_nonexistent_in_snapshots; // Force account creation tracking
+            
+            // **ENHANCED FIX: Always track account creation, even with zero balance**
+            // This ensures that bandwidth processing in Java can find the account
+            let force_track_creation = is_account_creation && (
+                new_account_info.balance > revm::primitives::U256::ZERO ||
+                new_account_info.nonce > 0 ||
+                new_account_info.code.is_some() ||
+                was_nonexistent_in_snapshots
+            );
 
-            // Record account change if there was a change
-            if account_changed {
-                if is_account_creation {
-                    tracing::info!("Recording account creation for address {:?} with balance: {}", 
-                                 address, new_account_info.balance);
+            // Record account change if there was a change or if we're forcing account creation tracking
+            if account_changed || force_track_creation {
+                if is_account_creation || force_track_creation {
+                    let address_base58 = {
+                        let mut tron_addr = Vec::with_capacity(21);
+                        tron_addr.push(0x41);
+                        tron_addr.extend_from_slice(address.as_slice());
+                        bs58::encode(&tron_addr).into_string()
+                    };
+                    tracing::info!("Recording account creation for address {:?} (base58: {}) with balance: {} (forced: {})", 
+                                 address, address_base58, new_account_info.balance, force_track_creation);
                 } else {
                     tracing::debug!("Recording account modification for address {:?} - old balance: {:?}, new balance: {}", 
                                   address, 
@@ -679,12 +724,23 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
             }
 
             // **CRITICAL FIX: Persist account changes to underlying storage**
-            if account_changed {
+            if account_changed || force_track_creation {
                 if let Err(e) = self.storage.set_account(address, new_account_info.clone()) {
                     tracing::error!("Failed to persist account changes for {:?}: {}", address, e);
                 } else {
-                    tracing::debug!("Successfully persisted account changes for {:?} - balance: {}",
-                                   address, new_account_info.balance);
+                    let address_base58 = {
+                        let mut tron_addr = Vec::with_capacity(21);
+                        tron_addr.push(0x41);
+                        tron_addr.extend_from_slice(address.as_slice());
+                        bs58::encode(&tron_addr).into_string()
+                    };
+                    if is_account_creation || force_track_creation {
+                        tracing::info!("Successfully persisted account creation for {:?} (base58: {}) - balance: {}",
+                                     address, address_base58, new_account_info.balance);
+                    } else {
+                        tracing::debug!("Successfully persisted account changes for {:?} (base58: {}) - balance: {}",
+                                       address, address_base58, new_account_info.balance);
+                    }
                 }
             }
 
