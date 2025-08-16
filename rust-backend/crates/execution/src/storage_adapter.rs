@@ -600,6 +600,18 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
                 // even if the balance remains zero
                 self.account_snapshots.insert(address, None); // Mark as "was non-existent"
                 
+                // **IMPORTANT: Record this account creation as a state change immediately**
+                // This ensures it's included in state changes sent back to Java
+                self.state_change_records.push(StateChangeRecord::AccountChange {
+                    address,
+                    old_account: None, // Account didn't exist before
+                    new_account: Some(default_account.clone()), // New account created
+                });
+                
+                let address_tron = to_tron_address(&address);
+                tracing::info!("Recorded account creation state change for {:?} (tron: {}) in basic() method", 
+                             address, address_tron);
+                
                 // **ADDITIONAL FIX: Immediately persist the default account to ensure it's available**
                 // This ensures the account exists in storage for bandwidth processing
                 if let Err(e) = self.storage.set_account(address, default_account.clone()) {
