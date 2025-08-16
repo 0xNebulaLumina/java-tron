@@ -27,6 +27,12 @@
 - **REVM 14.0 API Changes**: REVM 14.0 has significant API changes from earlier versions. Key fixes: `Output::Create(data, _)` where `data` is `Bytes` not `Option<Bytes>`, environment access through `evm.context.evm.inner.env`, and precompile API changes to struct-based implementations.
 - **Rust Module Function Signatures**: When implementing Module trait, `ExecutionModule::new()` takes config by value and returns `Self` (not `Result`), while `StorageModule::new()` takes config by reference and returns `Result<Self>`. Always check function signatures before calling.
 - **Database Name Resolution Issue**: RemoteExecutionSPI hardcoded database name as "default" but Rust backend manages multiple named databases (account, block, contract-state, code, etc.). Solution: Remove database parameter from execution operations and let Rust backend route data to appropriate databases automatically based on data type. This maintains java-tron's database separation while providing unified execution interface.
+- Protobuf needs extension for full Java-side visibility
+- Java code must handle oneof unions properly when protobuf structure changes
+- When deserializing data from remote services, always handle variable-length data gracefully
+- Account creation in state sync must use the balance from the deserialized data, not default to zero
+- Comprehensive logging is essential for debugging state synchronization issues between different systems
+- The flow from Rust → Protobuf → Java requires careful attention to serialization formats at each step
 
 # High-level Task: Unified Rust Backend Implementation
 
