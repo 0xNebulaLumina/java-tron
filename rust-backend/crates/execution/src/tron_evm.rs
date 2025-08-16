@@ -275,6 +275,8 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
         let db = &mut self.evm.context.evm.db;
         let state_records = db.get_state_change_records();
         
+        tracing::info!("Extracting {} state change records from database", state_records.len());
+        
         let state_changes: Vec<TronStateChange> = state_records.iter().map(|record| {
             match record {
                 crate::storage_adapter::StateChangeRecord::StorageChange { 
@@ -297,6 +299,21 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
         
         // Clear the records after extracting them
         db.clear_state_change_records();
+        
+        tracing::info!("Extracted {} state changes for return", state_changes.len());
+        for (i, change) in state_changes.iter().enumerate() {
+            match change {
+                TronStateChange::StorageChange { address, key, .. } => {
+                    tracing::debug!("  State change {}: StorageChange for address {:?}, key {:?}", i, address, key);
+                },
+                TronStateChange::AccountChange { address, old_account, new_account } => {
+                    let old_exists = old_account.is_some();
+                    let new_exists = new_account.is_some();
+                    tracing::info!("  State change {}: AccountChange for address {:?}, old_exists: {}, new_exists: {}", 
+                                  i, address, old_exists, new_exists);
+                },
+            }
+        }
         
         state_changes
     }
