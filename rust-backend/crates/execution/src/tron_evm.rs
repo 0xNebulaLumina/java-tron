@@ -304,7 +304,7 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
         for (i, change) in state_changes.iter().enumerate() {
             match change {
                 TronStateChange::StorageChange { address, key, .. } => {
-                    tracing::debug!("  State change {}: StorageChange for address {:?}, key {:?}", i, address, key);
+                    tracing::info!("  State change {}: StorageChange for address {:?}, key {:?}", i, address, key);
                 },
                 TronStateChange::AccountChange { address, old_account, new_account } => {
                     let old_exists = old_account.is_some();
