@@ -177,11 +177,10 @@ impl StorageModuleAdapter {
         
         // Field 4: balance (varint)
         // Convert U256 balance to u64 (TRON uses long for balance)
+        // ALWAYS include balance field, even if 0, for Java compatibility
         let balance_u64 = account.balance.to::<u64>();
-        if balance_u64 > 0 {
-            data.push(0x20); // field 4, varint
-            self.write_varint(&mut data, balance_u64);
-        }
+        data.push(0x20); // field 4, varint
+        self.write_varint(&mut data, balance_u64);
         
         // Field 9: create_time (use current timestamp)
         // Use current time in milliseconds
@@ -371,9 +370,22 @@ impl StorageAdapter for StorageModuleAdapter {
         let key = self.account_key(&address);
         let data = self.serialize_account(&address, &account);
         let address_tron = to_tron_address(&address);
-        tracing::info!("Setting account for address {:?} (tron: {}), balance: {}, key: {}", 
-                       address, address_tron, account.balance, hex::encode(&key));
+        tracing::info!("Setting account for address {:?} (tron: {}), balance: {}, key: {}, data_len: {}, data_hex: {}", 
+                       address, address_tron, account.balance, hex::encode(&key), 
+                       data.len(), hex::encode(&data));
         self.storage_engine.put(self.account_database(), &key, &data)?;
+        
+        // Immediately verify the write by reading it back
+        if let Ok(Some(read_data)) = self.storage_engine.get(self.account_database(), &key) {
+            if read_data == data {
+                tracing::info!("Verified account write for {} - data matches", address_tron);
+            } else {
+                tracing::error!("Account write verification failed for {} - data mismatch!", address_tron);
+            }
+        } else {
+            tracing::error!("Account write verification failed for {} - could not read back!", address_tron);
+        }
+        
         Ok(())
     }
 
