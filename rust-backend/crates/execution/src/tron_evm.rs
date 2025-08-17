@@ -275,6 +275,8 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
         let db = &mut self.evm.context.evm.db;
         let state_records = db.get_state_change_records();
         
+        tracing::info!("Extracting {} state change records from database", state_records.len());
+        
         let state_changes: Vec<TronStateChange> = state_records.iter().map(|record| {
             match record {
                 crate::storage_adapter::StateChangeRecord::StorageChange { 
@@ -298,6 +300,21 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
         // Clear the records after extracting them
         db.clear_state_change_records();
         
+        tracing::info!("Extracted {} state changes for return", state_changes.len());
+        for (i, change) in state_changes.iter().enumerate() {
+            match change {
+                TronStateChange::StorageChange { address, key, .. } => {
+                    tracing::info!("  State change {}: StorageChange for address {:?}, key {:?}", i, address, key);
+                },
+                TronStateChange::AccountChange { address, old_account, new_account } => {
+                    let old_exists = old_account.is_some();
+                    let new_exists = new_account.is_some();
+                    tracing::info!("  State change {}: AccountChange for address {:?}, old_exists: {}, new_exists: {}", 
+                                  i, address, old_exists, new_exists);
+                },
+            }
+        }
+        
         state_changes
     }
 
@@ -310,10 +327,22 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
         // Clear previous state changes
         self.state_changes.clear();
         
+        // Validate gas limits before execution
+        if tx.gas_limit > context.block_gas_limit {
+            return Err(anyhow!("Transaction gas limit ({}) exceeds block gas limit ({})", 
+                              tx.gas_limit, context.block_gas_limit));
+        }
+        
+        // Check if gas limit is reasonable (not zero or too small)
+        if tx.gas_limit < 21000 {
+            return Err(anyhow!("Transaction gas limit ({}) is too low (minimum 21000)", tx.gas_limit));
+        }
+        
         self.setup_environment(tx, context);
 
-        let result = self.evm.transact().map_err(|e| anyhow!("Transaction execution failed: {:?}", e))?;
-        let mut execution_result = self.process_execution_result(result.result, tx, context)?;
+        // Use transact_commit() to execute and commit changes to the database
+        let result = self.evm.transact_commit().map_err(|e| anyhow!("Transaction execution failed: {:?}", e))?;
+        let mut execution_result = self.process_execution_result(result, tx, context)?;
         
         // Extract real state changes from the database
         execution_result.state_changes = self.extract_state_changes_from_db();

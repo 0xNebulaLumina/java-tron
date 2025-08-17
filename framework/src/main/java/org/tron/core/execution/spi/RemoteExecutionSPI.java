@@ -509,8 +509,17 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       }
     }
     
-    logger.debug("Remote execution returned {} state changes and {} logs",
+    logger.info("Remote execution returned {} state changes and {} logs",
         stateChanges.size(), logs.size());
+    for (int i = 0; i < stateChanges.size(); i++) {
+      StateChange change = stateChanges.get(i);
+      logger.info("  State change {}: address={}, key_len={}, oldValue_len={}, newValue_len={}", 
+          i, 
+          change.getAddress() != null ? change.getAddress().length : 0,
+          change.getKey() != null ? change.getKey().length : 0,
+          change.getOldValue() != null ? change.getOldValue().length : 0,
+          change.getNewValue() != null ? change.getNewValue().length : 0);
+    }
 
     // Convert protobuf logs to ExecutionSPI logs
     for (tron.backend.BackendOuterClass.LogEntry protoLog : protoResult.getLogsList()) {
