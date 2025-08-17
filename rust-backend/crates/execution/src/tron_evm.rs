@@ -340,8 +340,9 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
         
         self.setup_environment(tx, context);
 
-        let result = self.evm.transact().map_err(|e| anyhow!("Transaction execution failed: {:?}", e))?;
-        let mut execution_result = self.process_execution_result(result.result, tx, context)?;
+        // Use transact_commit() to execute and commit changes to the database
+        let result = self.evm.transact_commit().map_err(|e| anyhow!("Transaction execution failed: {:?}", e))?;
+        let mut execution_result = self.process_execution_result(result, tx, context)?;
         
         // Extract real state changes from the database
         execution_result.state_changes = self.extract_state_changes_from_db();
