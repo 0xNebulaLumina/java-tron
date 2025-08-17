@@ -598,28 +598,14 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
                 // **CRITICAL FIX: Pre-register this as a new account in snapshots**
                 // This ensures that when REVM commits changes, it will detect this as account creation
                 // even if the balance remains zero
-                self.account_snapshots.insert(address, None); // Mark as "was non-existent"
+                // Mark as "was non-existent" but don't persist yet - let commit() handle it with final balance
+                self.account_snapshots.insert(address, None);
                 
-                // **IMPORTANT: Record this account creation as a state change immediately**
-                // This ensures it's included in state changes sent back to Java
-                self.state_change_records.push(StateChangeRecord::AccountChange {
-                    address,
-                    old_account: None, // Account didn't exist before
-                    new_account: Some(default_account.clone()), // New account created
-                });
-                
-                let address_tron = to_tron_address(&address);
-                tracing::info!("Recorded account creation state change for {:?} (tron: {}) in basic() method", 
-                             address, address_tron);
-                
-                // **ADDITIONAL FIX: Immediately persist the default account to ensure it's available**
-                // This ensures the account exists in storage for bandwidth processing
-                if let Err(e) = self.storage.set_account(address, default_account.clone()) {
-                    tracing::error!("Failed to persist default account for {:?}: {}", address, e);
-                } else {
-                    tracing::info!("Successfully persisted default account for {:?} (tron: {})", address, address_tron);
-                }
-                
+                // **IMPORTANT: Don't record state change or persist here**
+                // The account creation will be tracked in commit() with the final balance
+                // This way Java sees the account created with its actual balance, not 0
+                tracing::info!("Marked {:?} (tron: {}) as non-existent for tracking, will persist in commit() with final balance", address, address_tron);
+
                 Some(default_account)
             }
         };
