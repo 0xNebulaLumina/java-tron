@@ -138,13 +138,11 @@ public class ExecutionGrpcClientTest {
         .build();
 
     ExecuteTransactionRequest request = ExecuteTransactionRequest.newBuilder()
-        .setDatabase("test")
         .setTransaction(transaction)
         .setContext(context)
         .build();
 
     Assert.assertNotNull(request);
-    Assert.assertEquals("test", request.getDatabase());
     Assert.assertEquals(1000000, request.getTransaction().getEnergyLimit());
   }
 
@@ -152,7 +150,6 @@ public class ExecutionGrpcClientTest {
   public void testCallContractRequestCreation() {
     // Test that we can create call contract requests
     CallContractRequest request = CallContractRequest.newBuilder()
-        .setDatabase("test")
         .setFrom(com.google.protobuf.ByteString.copyFrom(new byte[20]))
         .setTo(com.google.protobuf.ByteString.copyFrom(new byte[20]))
         .setData(com.google.protobuf.ByteString.copyFrom(new byte[0]))
@@ -163,7 +160,6 @@ public class ExecutionGrpcClientTest {
         .build();
 
     Assert.assertNotNull(request);
-    Assert.assertEquals("test", request.getDatabase());
   }
 
   @Test
@@ -176,7 +172,6 @@ public class ExecutionGrpcClientTest {
         .build();
 
     EstimateEnergyRequest request = EstimateEnergyRequest.newBuilder()
-        .setDatabase("test")
         .setTransaction(transaction)
         .setContext(ExecutionContext.newBuilder()
             .setBlockNumber(1)
@@ -184,7 +179,6 @@ public class ExecutionGrpcClientTest {
         .build();
 
     Assert.assertNotNull(request);
-    Assert.assertEquals("test", request.getDatabase());
   }
 
   // Note: Integration tests that actually call the gRPC methods would require

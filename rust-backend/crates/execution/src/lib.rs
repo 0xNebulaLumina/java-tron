@@ -10,7 +10,7 @@ use tron_backend_common::{Module, ModuleHealth, ExecutionConfig};
 // Re-export key types for external use
 pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange};
 pub use precompiles::TronPrecompiles;
-pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageAdapterDatabase, StateChangeRecord};
+pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageModuleAdapter, StorageAdapterDatabase, StateChangeRecord};
 
 mod tron_evm;
 mod precompiles;
