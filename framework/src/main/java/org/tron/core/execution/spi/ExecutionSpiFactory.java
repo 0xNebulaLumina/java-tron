@@ -24,6 +24,13 @@ import org.tron.common.parameter.CommonParameter;
  *   <li>Config file: execution.mode = EMBEDDED|REMOTE|SHADOW
  *   <li>Default: EMBEDDED
  * </ol>
+ * 
+ * <p>Execution tracking configuration:
+ * <ul>
+ *   <li>Enable tracking: execution.tracking.enabled = true|false
+ *   <li>Output directory: execution.tracking.output.dir = ./execution-metrics
+ *   <li>State digest computation: execution.tracking.state.digest = true|false
+ * </ul>
  */
 public class ExecutionSpiFactory {
   private static final Logger logger = LoggerFactory.getLogger(ExecutionSpiFactory.class);
@@ -45,6 +52,22 @@ public class ExecutionSpiFactory {
   private static final String REMOTE_PORT_ENV_VAR = "EXECUTION_REMOTE_PORT";
   private static final String REMOTE_PORT_CONFIG = "execution.remote.port";
   private static final int DEFAULT_REMOTE_PORT = 50011;
+
+  // Tracking configuration
+  private static final String TRACKING_ENABLED_SYSTEM_PROPERTY = "execution.tracking.enabled";
+  private static final String TRACKING_ENABLED_ENV_VAR = "EXECUTION_TRACKING_ENABLED";
+  private static final String TRACKING_ENABLED_CONFIG = "execution.tracking.enabled";
+  private static final boolean DEFAULT_TRACKING_ENABLED = false;
+
+  private static final String TRACKING_OUTPUT_DIR_SYSTEM_PROPERTY = "execution.tracking.output.dir";
+  private static final String TRACKING_OUTPUT_DIR_ENV_VAR = "EXECUTION_TRACKING_OUTPUT_DIR";
+  private static final String TRACKING_OUTPUT_DIR_CONFIG = "execution.tracking.output.dir";
+  private static final String DEFAULT_TRACKING_OUTPUT_DIR = "./execution-metrics";
+
+  private static final String TRACKING_STATE_DIGEST_SYSTEM_PROPERTY = "execution.tracking.state.digest";
+  private static final String TRACKING_STATE_DIGEST_ENV_VAR = "EXECUTION_TRACKING_STATE_DIGEST";
+  private static final String TRACKING_STATE_DIGEST_CONFIG = "execution.tracking.state.digest";
+  private static final boolean DEFAULT_TRACKING_STATE_DIGEST = true;
 
   /**
    * Initialize the ExecutionSPI factory and create the global instance. This should be called
@@ -81,16 +104,37 @@ public class ExecutionSpiFactory {
     logger.info("Creating execution implementation: {}", mode);
 
     try {
+      ExecutionSPI executionSPI;
       switch (mode) {
         case EMBEDDED:
-          return createEmbeddedExecution();
+          executionSPI = createEmbeddedExecution();
+          break;
         case REMOTE:
-          return createRemoteExecution();
+          executionSPI = createRemoteExecution();
+          break;
         case SHADOW:
-          return createShadowExecution();
+          executionSPI = createShadowExecution();
+          break;
         default:
           throw new IllegalStateException("Unsupported execution mode: " + mode);
       }
+
+      // Wrap with tracking if enabled
+      if (isTrackingEnabled()) {
+        logger.info("Execution tracking is enabled, wrapping with TrackedExecutionSPI");
+        try {
+          String outputDir = getTrackingOutputDir();
+          boolean computeStateDigest = isTrackingStateDigestEnabled();
+          ExecutionMetricsLogger metricsLogger = new ExecutionMetricsLogger(outputDir);
+          executionSPI = new TrackedExecutionSPI(
+              executionSPI, metricsLogger, mode.toString().toUpperCase(), computeStateDigest);
+        } catch (Exception e) {
+          logger.error("Failed to enable execution tracking, continuing without tracking", e);
+          // Continue with unwrapped implementation
+        }
+      }
+
+      return executionSPI;
     } catch (Exception e) {
       logger.error("Failed to create execution implementation for mode: {}", mode, e);
       throw new RuntimeException("Execution initialization failed", e);
@@ -425,5 +469,91 @@ public class ExecutionSpiFactory {
     ExecutionSPI embedded = createEmbeddedExecution();
     ExecutionSPI remote = createRemoteExecution();
     return new ShadowExecutionSPI(embedded, remote);
+  }
+
+  // Tracking configuration methods
+
+  /**
+   * Check if execution tracking is enabled.
+   *
+   * @return true if tracking is enabled
+   */
+  public static boolean isTrackingEnabled() {
+    // 1. Check system property
+    String enabled = System.getProperty(TRACKING_ENABLED_SYSTEM_PROPERTY);
+    if (enabled != null && !enabled.trim().isEmpty()) {
+      return Boolean.parseBoolean(enabled);
+    }
+
+    // 2. Check environment variable
+    enabled = System.getenv(TRACKING_ENABLED_ENV_VAR);
+    if (enabled != null && !enabled.trim().isEmpty()) {
+      return Boolean.parseBoolean(enabled);
+    }
+
+    // 3. Check config file
+    Config config = getConfig();
+    if (config != null && config.hasPath(TRACKING_ENABLED_CONFIG)) {
+      return config.getBoolean(TRACKING_ENABLED_CONFIG);
+    }
+
+    // 4. Return default
+    return DEFAULT_TRACKING_ENABLED;
+  }
+
+  /**
+   * Get tracking output directory.
+   *
+   * @return Output directory path
+   */
+  public static String getTrackingOutputDir() {
+    // 1. Check system property
+    String dir = System.getProperty(TRACKING_OUTPUT_DIR_SYSTEM_PROPERTY);
+    if (dir != null && !dir.trim().isEmpty()) {
+      return dir;
+    }
+
+    // 2. Check environment variable
+    dir = System.getenv(TRACKING_OUTPUT_DIR_ENV_VAR);
+    if (dir != null && !dir.trim().isEmpty()) {
+      return dir;
+    }
+
+    // 3. Check config file
+    Config config = getConfig();
+    if (config != null && config.hasPath(TRACKING_OUTPUT_DIR_CONFIG)) {
+      return config.getString(TRACKING_OUTPUT_DIR_CONFIG);
+    }
+
+    // 4. Return default
+    return DEFAULT_TRACKING_OUTPUT_DIR;
+  }
+
+  /**
+   * Check if state digest computation is enabled for tracking.
+   *
+   * @return true if state digest should be computed
+   */
+  public static boolean isTrackingStateDigestEnabled() {
+    // 1. Check system property
+    String enabled = System.getProperty(TRACKING_STATE_DIGEST_SYSTEM_PROPERTY);
+    if (enabled != null && !enabled.trim().isEmpty()) {
+      return Boolean.parseBoolean(enabled);
+    }
+
+    // 2. Check environment variable
+    enabled = System.getenv(TRACKING_STATE_DIGEST_ENV_VAR);
+    if (enabled != null && !enabled.trim().isEmpty()) {
+      return Boolean.parseBoolean(enabled);
+    }
+
+    // 3. Check config file
+    Config config = getConfig();
+    if (config != null && config.hasPath(TRACKING_STATE_DIGEST_CONFIG)) {
+      return config.getBoolean(TRACKING_STATE_DIGEST_CONFIG);
+    }
+
+    // 4. Return default
+    return DEFAULT_TRACKING_STATE_DIGEST;
   }
 }

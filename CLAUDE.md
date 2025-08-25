@@ -192,6 +192,63 @@ Format: `<type>(<scope>): <subject>`
 - **Event Server**: Separate service for event processing
 - **Plugins**: Event plugin system for custom processing
 
+# Current Task: Execution Mode Behavior Tracking
+
+## Task Description
+Implement a comprehensive tracking system to compare execution behavior between remote mode (Rust) and embedded mode (Java) execution. The system should log detailed execution metrics to CSV files for analysis, including ExecutionProgramResult, TransactionContext details, and state digests.
+
+## Implementation Plan
+
+### Architecture Overview
+Using a **decorator pattern** to wrap ExecutionSPI implementations with tracking functionality:
+- **Non-invasive**: No modifications to existing execution logic
+- **Flexible**: Works with all execution modes (EMBEDDED, REMOTE, SHADOW) 
+- **Centralized**: Single point of data collection
+- **Configurable**: Can be enabled/disabled via configuration
+
+### Implementation Tasks
+
+#### Phase 1: Core Infrastructure
+[X] Create ExecutionMetrics data model class
+[X] Implement ExecutionMetricsLogger for CSV output
+[X] Create TrackedExecutionSPI decorator wrapper
+[X] Add configuration support for tracking
+
+#### Phase 2: Integration 
+[X] Update ExecutionSpiFactory to support tracking wrapper
+[ ] Add tracking configuration to main config files
+[X] Test with embedded mode execution
+[ ] Test with remote mode execution
+
+#### Phase 3: Testing & Validation
+[X] Create test cases for tracking functionality
+[ ] Validate CSV output format and data accuracy
+[ ] Test state digest computation integration
+[ ] Performance impact assessment
+
+#### Phase 4: Documentation & Tools
+[ ] Document configuration options
+[ ] Create analysis scripts for CSV comparison
+[ ] Add usage examples and troubleshooting guide
+
+### Technical Details
+
+#### CSV Output Schema
+```
+timestamp,tx_id,execution_mode,is_success,energy_used,return_data_hex,runtime_error,state_changes_count,block_number,block_timestamp,tx_type,state_digest
+```
+
+#### Key Components
+1. **TrackedExecutionSPI** - Decorator wrapping any ExecutionSPI implementation
+2. **ExecutionMetricsLogger** - Thread-safe CSV writer with file rotation  
+3. **ExecutionMetrics** - Data model for tracked execution information
+4. **Configuration integration** - Add to ExecutionSpiFactory and config files
+
+#### Integration Points
+- RuntimeSpiImpl (already uses ExecutionSPI)
+- RuntimeImpl (optional tracking calls)
+- ShadowExecutionSPI (can track both modes separately)
+
 ## Lessons learnt
 
 - **gRPC Parameter Validation**: The RemoteStorageSPI constructor fails with NullPointerException when host parameter is null. System.getProperty() can return null, so we need defensive validation in constructors. Always validate critical parameters before using them in external library calls.
