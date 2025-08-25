@@ -51,11 +51,11 @@ WORKDIR /app
 USER tron-backend
 
 # Expose port
-EXPOSE 50012
+EXPOSE 50011
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD grpc_health_probe -addr=localhost:50012 || exit 1
+    CMD grpc_health_probe -addr=localhost:50011 || exit 1
 
 # Run the application
 CMD ["tron-backend"] 

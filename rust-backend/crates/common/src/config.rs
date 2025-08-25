@@ -62,7 +62,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
-            port: 50012, // Different from storage service (50011)
+            port: 50011,
             max_connections: 1000,
             keepalive_timeout: 60,
         }
@@ -107,7 +107,7 @@ impl Config {
 
         // Add default values
         builder = builder.set_default("server.host", "127.0.0.1")?;
-        builder = builder.set_default("server.port", 50012)?;
+        builder = builder.set_default("server.port", 50011)?;
         builder = builder.set_default("server.max_connections", 1000)?;
         builder = builder.set_default("server.keepalive_timeout", 60)?;
 

@@ -29,10 +29,12 @@ public class PendingManager implements AutoCloseable {
       TransactionCapsule tx = iterator.next();
       if (now - tx.getTime() > timeout) {
         iterator.remove();
-        Metrics.gaugeInc(MetricKeys.Gauge.MANAGER_QUEUE, -1,
-            MetricLabels.Gauge.QUEUE_REPUSH);
-        Metrics.counterInc(MetricKeys.Counter.TXS, 1,
-            MetricLabels.Counter.TXS_FAIL, MetricLabels.Counter.TXS_FAIL_TIMEOUT);
+        Metrics.gaugeInc(MetricKeys.Gauge.MANAGER_QUEUE, -1, MetricLabels.Gauge.QUEUE_REPUSH);
+        Metrics.counterInc(
+            MetricKeys.Counter.TXS,
+            1,
+            MetricLabels.Counter.TXS_FAIL,
+            MetricLabels.Counter.TXS_FAIL_TIMEOUT);
         if (Args.getInstance().isOpenPrintLog()) {
           logger.warn("Timeout remove tx from repush, txId: {}.", tx.getTransactionId());
         }
@@ -44,30 +46,29 @@ public class PendingManager implements AutoCloseable {
     }
 
     dbManager.getPendingTransactions().clear();
-    Metrics.gaugeSet(MetricKeys.Gauge.MANAGER_QUEUE, 0,
-        MetricLabels.Gauge.QUEUE_PENDING);
+    Metrics.gaugeSet(MetricKeys.Gauge.MANAGER_QUEUE, 0, MetricLabels.Gauge.QUEUE_PENDING);
     for (TransactionCapsule tx : dbManager.getPoppedTransactions()) {
       tx.setTime(System.currentTimeMillis());
       txIteration(tx);
     }
     dbManager.getPoppedTransactions().clear();
-    Metrics.gaugeSet(MetricKeys.Gauge.MANAGER_QUEUE, 0,
-        MetricLabels.Gauge.QUEUE_POPPED);
+    Metrics.gaugeSet(MetricKeys.Gauge.MANAGER_QUEUE, 0, MetricLabels.Gauge.QUEUE_POPPED);
     if (Args.getInstance().isOpenPrintLog()) {
       logger.info("Pending tx size: {}.", dbManager.getRePushTransactions().size());
     }
-
   }
 
   private void txIteration(TransactionCapsule tx) {
     try {
       if (System.currentTimeMillis() - tx.getTime() < timeout) {
         dbManager.getRePushTransactions().put(tx);
-        Metrics.gaugeInc(MetricKeys.Gauge.MANAGER_QUEUE, 1,
-            MetricLabels.Gauge.QUEUE_REPUSH);
+        Metrics.gaugeInc(MetricKeys.Gauge.MANAGER_QUEUE, 1, MetricLabels.Gauge.QUEUE_REPUSH);
       } else {
-        Metrics.counterInc(MetricKeys.Counter.TXS, 1,
-            MetricLabels.Counter.TXS_FAIL, MetricLabels.Counter.TXS_FAIL_TIMEOUT);
+        Metrics.counterInc(
+            MetricKeys.Counter.TXS,
+            1,
+            MetricLabels.Counter.TXS_FAIL,
+            MetricLabels.Counter.TXS_FAIL_TIMEOUT);
         if (Args.getInstance().isOpenPrintLog()) {
           logger.warn("Timeout remove tx from pending, txId: {}.", tx.getTransactionId());
         }

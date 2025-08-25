@@ -1,6 +1,6 @@
 [server]
 host = "127.0.0.1"
-port = 50012
+port = 50011
 max_connections = 1000
 keepalive_timeout = 60
 
@@ -20,7 +20,7 @@ enable_london_fork = true
 enable_berlin_fork = true
 enable_istanbul_fork = true
 # Tron-specific
-energy_limit = 100000000
+energy_limit = 1000000000  # Increased from 100M to 1B to handle complex transactions
 bandwidth_limit = 5000
 max_cpu_time_of_one_tx = 80
 
