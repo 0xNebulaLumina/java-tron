@@ -40,6 +40,10 @@ public class ShadowExecutionSPI implements ExecutionSPI {
   private final StorageSPI embeddedStorage;
   private final StorageSPI remoteStorage;
   
+  // Separate StoreFactory instances for each storage mode
+  private final org.tron.core.store.StoreFactory embeddedStoreFactory;
+  private final org.tron.core.store.StoreFactory remoteStoreFactory;
+  
   // Context management
   private final ContextCloner contextCloner;
   
@@ -76,6 +80,10 @@ public class ShadowExecutionSPI implements ExecutionSPI {
         org.tron.core.storage.spi.StorageMode.EMBEDDED);
     this.remoteStorage = StorageSpiFactory.createStorage(
         org.tron.core.storage.spi.StorageMode.REMOTE);
+    
+    // Create separate StoreFactory instances for embedded and remote storage
+    this.embeddedStoreFactory = createEmbeddedStoreFactory();
+    this.remoteStoreFactory = createRemoteStoreFactory();
     
     // Initialize context cloner for parallel execution isolation
     this.contextCloner = new ContextCloner();
@@ -786,29 +794,26 @@ public class ShadowExecutionSPI implements ExecutionSPI {
 
   /**
    * Creates a TransactionContext configured for embedded storage execution.
-   * This ensures EmbeddedExecutionSPI uses EmbeddedStorageSPI.
+   * This ensures EmbeddedExecutionSPI uses the dedicated embedded storage system.
    */
   private TransactionContext createEmbeddedStorageContext(TransactionContext original) {
     // Clone the context first
     TransactionContext embeddedContext = contextCloner.deepClone(original);
     
-    // Configure the cloned context to use embedded storage
-    // The embedded storage is already connected through embeddedStorage field
-    // We need to ensure the context's StoreFactory points to embedded storage systems
-    
     try {
-      // Get the ChainBaseManager that should be configured for embedded storage
-      // In a full implementation, we would configure a specific ChainBaseManager instance
-      // that uses the embeddedStorage backend
-      org.tron.core.store.StoreFactory embeddedStoreFactory = 
-          org.tron.core.store.StoreFactory.getInstance();
+      // Replace the storeFactory field with our dedicated embedded storage factory
+      // This is the critical fix - each execution path gets its own storage factory
+      embeddedContext.setStoreFactory(this.embeddedStoreFactory);
       
-      if (embeddedStoreFactory != null && embeddedStoreFactory.getChainBaseManager() != null) {
-        // The context already has the correct StoreFactory from the original context
-        // For embedded storage, we use the existing production embedded storage system
-        logger.debug("Embedded storage context configured with ChainBaseManager");
+      logger.debug("Embedded storage context configured with dedicated StoreFactory for transaction: {}", 
+          original.getTrxCap().getTransactionId());
+      
+      // Verify the configuration
+      if (embeddedContext.getStoreFactory() != null && 
+          embeddedContext.getStoreFactory().getChainBaseManager() != null) {
+        logger.debug("Embedded context successfully configured with ChainBaseManager");
       } else {
-        logger.warn("Embedded storage StoreFactory not properly initialized");
+        logger.warn("Embedded context configuration may be incomplete");
       }
       
     } catch (Exception e) {
@@ -830,24 +835,32 @@ public class ShadowExecutionSPI implements ExecutionSPI {
     // Clone the context first  
     TransactionContext remoteContext = contextCloner.deepClone(original);
     
-    // For remote execution, the storage is handled by the Rust backend via gRPC.
-    // The RemoteExecutionSPI doesn't need local storage configuration as it
-    // communicates with the Rust service which has its own storage.
-    
     try {
+      // Replace the storeFactory field with our dedicated remote storage factory
+      // This ensures the remote execution path uses its own storage configuration
+      remoteContext.setStoreFactory(this.remoteStoreFactory);
+      
+      logger.debug("Remote storage context configured with dedicated StoreFactory for transaction: {}", 
+          original.getTrxCap().getTransactionId());
+      
       // Verify remote storage connection and genesis consistency
       if (remoteStorage != null) {
-        // The remote storage is connected and should have been initialized with genesis
-        logger.debug("Remote storage context using Rust backend via gRPC");
+        logger.debug("Remote storage connected via gRPC to Rust backend");
         
         // Add genesis state synchronization validation
-        // This ensures the Rust backend has the same genesis state as embedded
         if (!verifyRemoteGenesisState()) {
           logger.warn("Remote storage genesis state may not match embedded storage");
         }
       } else {
         logger.error("Remote storage not available for context creation");
         throw new RuntimeException("Remote storage connection failed");
+      }
+      
+      // Verify the configuration
+      if (remoteContext.getStoreFactory() != null) {
+        logger.debug("Remote context successfully configured with dedicated StoreFactory");
+      } else {
+        logger.warn("Remote context configuration may be incomplete");
       }
       
     } catch (Exception e) {
@@ -1083,6 +1096,70 @@ public class ShadowExecutionSPI implements ExecutionSPI {
     } catch (Exception e) {
       logger.error("Failed to verify remote genesis state", e);
       return false;
+    }
+  }
+
+  /**
+   * Creates a StoreFactory instance configured for embedded storage.
+   * This factory will be used by embedded execution contexts to access local storage.
+   */
+  private org.tron.core.store.StoreFactory createEmbeddedStoreFactory() {
+    try {
+      // Use reflection to create a new StoreFactory instance (constructor is private)
+      java.lang.reflect.Constructor<org.tron.core.store.StoreFactory> constructor = 
+          org.tron.core.store.StoreFactory.class.getDeclaredConstructor();
+      constructor.setAccessible(true);
+      org.tron.core.store.StoreFactory embeddedFactory = constructor.newInstance();
+      
+      // Configure it with a ChainBaseManager that uses embedded storage
+      org.tron.core.store.StoreFactory globalFactory = org.tron.core.store.StoreFactory.getInstance();
+      if (globalFactory != null && globalFactory.getChainBaseManager() != null) {
+        // Use the existing ChainBaseManager for embedded storage
+        // In the current architecture, this ChainBaseManager should be configured for embedded storage
+        embeddedFactory.setChainBaseManager(globalFactory.getChainBaseManager());
+        logger.info("Created embedded StoreFactory with ChainBaseManager via reflection");
+      } else {
+        logger.error("Could not configure embedded StoreFactory - ChainBaseManager not available");
+        throw new RuntimeException("Embedded StoreFactory configuration failed");
+      }
+      
+      return embeddedFactory;
+      
+    } catch (Exception e) {
+      logger.error("Failed to create embedded StoreFactory via reflection", e);
+      throw new RuntimeException("Embedded StoreFactory creation failed", e);
+    }
+  }
+
+  /**
+   * Creates a StoreFactory instance configured for remote storage.
+   * This factory will be used by remote execution contexts, though the actual
+   * storage operations will be handled by the Rust backend via gRPC.
+   */
+  private org.tron.core.store.StoreFactory createRemoteStoreFactory() {
+    try {
+      // Use reflection to create a new StoreFactory instance (constructor is private)
+      java.lang.reflect.Constructor<org.tron.core.store.StoreFactory> constructor = 
+          org.tron.core.store.StoreFactory.class.getDeclaredConstructor();
+      constructor.setAccessible(true);
+      org.tron.core.store.StoreFactory remoteFactory = constructor.newInstance();
+      
+      // For remote storage, we can use the same ChainBaseManager for metadata access
+      // The actual storage operations will go through the remoteStorage (Rust backend)
+      org.tron.core.store.StoreFactory globalFactory = org.tron.core.store.StoreFactory.getInstance();
+      if (globalFactory != null && globalFactory.getChainBaseManager() != null) {
+        remoteFactory.setChainBaseManager(globalFactory.getChainBaseManager());
+        logger.info("Created remote StoreFactory with shared ChainBaseManager via reflection");
+      } else {
+        logger.warn("Could not configure remote StoreFactory - using null ChainBaseManager");
+        // For remote storage, this might be acceptable since storage is handled remotely
+      }
+      
+      return remoteFactory;
+      
+    } catch (Exception e) {
+      logger.error("Failed to create remote StoreFactory via reflection", e);
+      throw new RuntimeException("Remote StoreFactory creation failed", e);
     }
   }
 }
