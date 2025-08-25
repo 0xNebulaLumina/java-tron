@@ -16,53 +16,53 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import storage.Storage.BatchGetRequest;
-import storage.Storage.BatchGetResponse;
-import storage.Storage.BatchOperation;
-import storage.Storage.BatchWriteRequest;
-import storage.Storage.BeginTransactionRequest;
-import storage.Storage.BeginTransactionResponse;
-import storage.Storage.CloseDBRequest;
-import storage.Storage.CommitTransactionRequest;
-import storage.Storage.CreateSnapshotRequest;
-import storage.Storage.CreateSnapshotResponse;
-import storage.Storage.DeleteRequest;
-import storage.Storage.DeleteSnapshotRequest;
-import storage.Storage.GetFromSnapshotRequest;
-import storage.Storage.GetFromSnapshotResponse;
-import storage.Storage.GetKeysNextRequest;
-import storage.Storage.GetKeysNextResponse;
-import storage.Storage.GetNextRequest;
-import storage.Storage.GetNextResponse;
-import storage.Storage.GetRequest;
-import storage.Storage.GetResponse;
-import storage.Storage.GetStatsRequest;
-import storage.Storage.GetStatsResponse;
-import storage.Storage.GetValuesNextRequest;
-import storage.Storage.GetValuesNextResponse;
-import storage.Storage.HasRequest;
-import storage.Storage.HasResponse;
-import storage.Storage.HealthCheckRequest;
-import storage.Storage.HealthCheckResponse;
-import storage.Storage.InitDBRequest;
-import storage.Storage.IsAliveRequest;
-import storage.Storage.IsAliveResponse;
-import storage.Storage.IsEmptyRequest;
-import storage.Storage.IsEmptyResponse;
-import storage.Storage.KeyValue;
-import storage.Storage.ListDatabasesRequest;
-import storage.Storage.ListDatabasesResponse;
-import storage.Storage.PrefixQueryRequest;
-import storage.Storage.PrefixQueryResponse;
-import storage.Storage.PutRequest;
-import storage.Storage.ResetDBRequest;
-import storage.Storage.RollbackTransactionRequest;
-import storage.Storage.SizeRequest;
-import storage.Storage.SizeResponse;
-import storage.StorageServiceGrpc;
+import tron.backend.BackendGrpc;
+import tron.backend.BackendOuterClass.BatchGetRequest;
+import tron.backend.BackendOuterClass.BatchGetResponse;
+import tron.backend.BackendOuterClass.BatchWriteRequest;
+import tron.backend.BackendOuterClass.BeginTransactionRequest;
+import tron.backend.BackendOuterClass.BeginTransactionResponse;
+import tron.backend.BackendOuterClass.CloseDBRequest;
+import tron.backend.BackendOuterClass.CommitTransactionRequest;
+import tron.backend.BackendOuterClass.CreateSnapshotRequest;
+import tron.backend.BackendOuterClass.CreateSnapshotResponse;
+import tron.backend.BackendOuterClass.DeleteRequest;
+import tron.backend.BackendOuterClass.DeleteSnapshotRequest;
+import tron.backend.BackendOuterClass.GetFromSnapshotRequest;
+import tron.backend.BackendOuterClass.GetFromSnapshotResponse;
+import tron.backend.BackendOuterClass.GetKeysNextRequest;
+import tron.backend.BackendOuterClass.GetKeysNextResponse;
+import tron.backend.BackendOuterClass.GetNextRequest;
+import tron.backend.BackendOuterClass.GetNextResponse;
+import tron.backend.BackendOuterClass.GetRequest;
+import tron.backend.BackendOuterClass.GetResponse;
+import tron.backend.BackendOuterClass.GetStatsRequest;
+import tron.backend.BackendOuterClass.GetStatsResponse;
+import tron.backend.BackendOuterClass.GetValuesNextRequest;
+import tron.backend.BackendOuterClass.GetValuesNextResponse;
+import tron.backend.BackendOuterClass.HasRequest;
+import tron.backend.BackendOuterClass.HasResponse;
+import tron.backend.BackendOuterClass.HealthRequest;
+import tron.backend.BackendOuterClass.HealthResponse;
+import tron.backend.BackendOuterClass.InitDBRequest;
+import tron.backend.BackendOuterClass.IsAliveRequest;
+import tron.backend.BackendOuterClass.IsAliveResponse;
+import tron.backend.BackendOuterClass.IsEmptyRequest;
+import tron.backend.BackendOuterClass.IsEmptyResponse;
+import tron.backend.BackendOuterClass.KeyValue;
+import tron.backend.BackendOuterClass.ListDatabasesRequest;
+import tron.backend.BackendOuterClass.ListDatabasesResponse;
+import tron.backend.BackendOuterClass.PrefixQueryRequest;
+import tron.backend.BackendOuterClass.PrefixQueryResponse;
+import tron.backend.BackendOuterClass.PutRequest;
+import tron.backend.BackendOuterClass.ResetDBRequest;
+import tron.backend.BackendOuterClass.RollbackTransactionRequest;
+import tron.backend.BackendOuterClass.SizeRequest;
+import tron.backend.BackendOuterClass.SizeResponse;
+import tron.backend.BackendOuterClass.WriteOperation;
 
 /**
- * gRPC-based implementation of StorageSPI that communicates with Rust storage service. This
+ * gRPC-based implementation of StorageSPI that communicates with Rust backend service. This
  * implementation replaces placeholder calls with actual gRPC communication.
  */
 public class RemoteStorageSPI implements StorageSPI {
@@ -74,8 +74,8 @@ public class RemoteStorageSPI implements StorageSPI {
   }
 
   private final ManagedChannel channel;
-  private final StorageServiceGrpc.StorageServiceBlockingStub blockingStub;
-  private final StorageServiceGrpc.StorageServiceFutureStub futureStub;
+  private final BackendGrpc.BackendBlockingStub blockingStub;
+  private final BackendGrpc.BackendFutureStub futureStub;
   private final String host;
   private final int port;
   private volatile boolean closed = false;
@@ -88,18 +88,19 @@ public class RemoteStorageSPI implements StorageSPI {
     if (port <= 0 || port > 65535) {
       throw new IllegalArgumentException("Port must be between 1 and 65535, got: " + port);
     }
-    
+
     this.host = host.trim();
     this.port = port;
-    
+
     try {
       this.channel = ManagedChannelBuilder.forAddress(this.host, this.port).usePlaintext().build();
     } catch (Exception e) {
-      throw new RuntimeException("Failed to create gRPC channel for " + this.host + ":" + this.port, e);
+      throw new RuntimeException(
+          "Failed to create gRPC channel for " + this.host + ":" + this.port, e);
     }
 
-    this.blockingStub = StorageServiceGrpc.newBlockingStub(channel);
-    this.futureStub = StorageServiceGrpc.newFutureStub(channel);
+    this.blockingStub = BackendGrpc.newBlockingStub(channel);
+    this.futureStub = BackendGrpc.newFutureStub(channel);
 
     logger.info("Initialized gRPC storage client for {}:{}", this.host, this.port);
   }
@@ -110,7 +111,10 @@ public class RemoteStorageSPI implements StorageSPI {
         () -> {
           try {
             GetRequest request =
-                GetRequest.newBuilder().setDbName(dbName).setKey(ByteString.copyFrom(key)).build();
+                GetRequest.newBuilder()
+                    .setDatabase(dbName)
+                    .setKey(ByteString.copyFrom(key))
+                    .build();
 
             GetResponse response = blockingStub.get(request);
             logger.debug(
@@ -134,7 +138,7 @@ public class RemoteStorageSPI implements StorageSPI {
           try {
             PutRequest request =
                 PutRequest.newBuilder()
-                    .setDbName(dbName)
+                    .setDatabase(dbName)
                     .setKey(ByteString.copyFrom(key))
                     .setValue(ByteString.copyFrom(value))
                     .build();
@@ -159,7 +163,7 @@ public class RemoteStorageSPI implements StorageSPI {
           try {
             DeleteRequest request =
                 DeleteRequest.newBuilder()
-                    .setDbName(dbName)
+                    .setDatabase(dbName)
                     .setKey(ByteString.copyFrom(key))
                     .build();
 
@@ -178,7 +182,10 @@ public class RemoteStorageSPI implements StorageSPI {
         () -> {
           try {
             HasRequest request =
-                HasRequest.newBuilder().setDbName(dbName).setKey(ByteString.copyFrom(key)).build();
+                HasRequest.newBuilder()
+                    .setDatabase(dbName)
+                    .setKey(ByteString.copyFrom(key))
+                    .build();
 
             HasResponse response = blockingStub.has(request);
             logger.debug(
@@ -201,18 +208,18 @@ public class RemoteStorageSPI implements StorageSPI {
         () -> {
           try {
             BatchWriteRequest.Builder requestBuilder =
-                BatchWriteRequest.newBuilder().setDbName(dbName);
+                BatchWriteRequest.newBuilder().setDatabase(dbName);
 
             for (Map.Entry<byte[], byte[]> entry : operations.entrySet()) {
-              BatchOperation.Builder opBuilder =
-                  BatchOperation.newBuilder().setKey(ByteString.copyFrom(entry.getKey()));
+              WriteOperation.Builder opBuilder =
+                  WriteOperation.newBuilder().setKey(ByteString.copyFrom(entry.getKey()));
 
               // Handle null values as delete operations
               if (entry.getValue() == null) {
-                opBuilder.setType(BatchOperation.Type.DELETE);
+                opBuilder.setType(WriteOperation.Type.DELETE);
               } else {
                 opBuilder
-                    .setType(BatchOperation.Type.PUT)
+                    .setType(WriteOperation.Type.PUT)
                     .setValue(ByteString.copyFrom(entry.getValue()));
               }
 
@@ -234,7 +241,8 @@ public class RemoteStorageSPI implements StorageSPI {
     return CompletableFuture.supplyAsync(
         () -> {
           try {
-            BatchGetRequest.Builder requestBuilder = BatchGetRequest.newBuilder().setDbName(dbName);
+            BatchGetRequest.Builder requestBuilder =
+                BatchGetRequest.newBuilder().setDatabase(dbName);
 
             for (byte[] key : keys) {
               requestBuilder.addKeys(ByteString.copyFrom(key));
@@ -285,7 +293,7 @@ public class RemoteStorageSPI implements StorageSPI {
           try {
             GetKeysNextRequest request =
                 GetKeysNextRequest.newBuilder()
-                    .setDbName(dbName)
+                    .setDatabase(dbName)
                     .setStartKey(ByteString.copyFrom(startKey))
                     .setLimit(limit)
                     .build();
@@ -317,7 +325,7 @@ public class RemoteStorageSPI implements StorageSPI {
           try {
             GetValuesNextRequest request =
                 GetValuesNextRequest.newBuilder()
-                    .setDbName(dbName)
+                    .setDatabase(dbName)
                     .setStartKey(ByteString.copyFrom(startKey))
                     .setLimit(limit)
                     .build();
@@ -349,7 +357,7 @@ public class RemoteStorageSPI implements StorageSPI {
           try {
             GetNextRequest request =
                 GetNextRequest.newBuilder()
-                    .setDbName(dbName)
+                    .setDatabase(dbName)
                     .setStartKey(ByteString.copyFrom(startKey))
                     .setLimit(limit)
                     .build();
@@ -381,7 +389,7 @@ public class RemoteStorageSPI implements StorageSPI {
           try {
             PrefixQueryRequest request =
                 PrefixQueryRequest.newBuilder()
-                    .setDbName(dbName)
+                    .setDatabase(dbName)
                     .setPrefix(ByteString.copyFrom(prefix))
                     .build();
 
@@ -409,8 +417,8 @@ public class RemoteStorageSPI implements StorageSPI {
     return CompletableFuture.runAsync(
         () -> {
           try {
-            storage.Storage.StorageConfig.Builder configBuilder =
-                storage.Storage.StorageConfig.newBuilder()
+            tron.backend.BackendOuterClass.StorageConfig.Builder configBuilder =
+                tron.backend.BackendOuterClass.StorageConfig.newBuilder()
                     .setEngine(config.getEngine())
                     .setEnableStatistics(config.isEnableStatistics())
                     .setMaxOpenFiles(config.getMaxOpenFiles())
@@ -426,7 +434,7 @@ public class RemoteStorageSPI implements StorageSPI {
 
             InitDBRequest request =
                 InitDBRequest.newBuilder()
-                    .setDbName(dbName)
+                    .setDatabase(dbName)
                     .setConfig(configBuilder.build())
                     .build();
 
@@ -444,7 +452,7 @@ public class RemoteStorageSPI implements StorageSPI {
     return CompletableFuture.runAsync(
         () -> {
           try {
-            CloseDBRequest request = CloseDBRequest.newBuilder().setDbName(dbName).build();
+            CloseDBRequest request = CloseDBRequest.newBuilder().setDatabase(dbName).build();
 
             blockingStub.closeDB(request);
             logger.info("Close DB operation: db={}", dbName);
@@ -460,7 +468,7 @@ public class RemoteStorageSPI implements StorageSPI {
     return CompletableFuture.runAsync(
         () -> {
           try {
-            ResetDBRequest request = ResetDBRequest.newBuilder().setDbName(dbName).build();
+            ResetDBRequest request = ResetDBRequest.newBuilder().setDatabase(dbName).build();
 
             blockingStub.resetDB(request);
             logger.info("Reset DB operation: db={}", dbName);
@@ -480,7 +488,7 @@ public class RemoteStorageSPI implements StorageSPI {
           }
 
           try {
-            IsAliveRequest request = IsAliveRequest.newBuilder().setDbName(dbName).build();
+            IsAliveRequest request = IsAliveRequest.newBuilder().setDatabase(dbName).build();
 
             IsAliveResponse response = blockingStub.isAlive(request);
             logger.debug("Is alive operation: db={}, alive={}", dbName, response.getAlive());
@@ -498,7 +506,7 @@ public class RemoteStorageSPI implements StorageSPI {
     return CompletableFuture.supplyAsync(
         () -> {
           try {
-            SizeRequest request = SizeRequest.newBuilder().setDbName(dbName).build();
+            SizeRequest request = SizeRequest.newBuilder().setDatabase(dbName).build();
 
             SizeResponse response = blockingStub.size(request);
             logger.debug("Size operation: db={}, size={}", dbName, response.getSize());
@@ -516,7 +524,7 @@ public class RemoteStorageSPI implements StorageSPI {
     return CompletableFuture.supplyAsync(
         () -> {
           try {
-            IsEmptyRequest request = IsEmptyRequest.newBuilder().setDbName(dbName).build();
+            IsEmptyRequest request = IsEmptyRequest.newBuilder().setDatabase(dbName).build();
 
             IsEmptyResponse response = blockingStub.isEmpty(request);
             logger.debug("Is empty operation: db={}, empty={}", dbName, response.getEmpty());
@@ -535,7 +543,7 @@ public class RemoteStorageSPI implements StorageSPI {
         () -> {
           try {
             BeginTransactionRequest request =
-                BeginTransactionRequest.newBuilder().setDbName(dbName).build();
+                BeginTransactionRequest.newBuilder().setDatabase(dbName).build();
 
             BeginTransactionResponse response = blockingStub.beginTransaction(request);
             logger.debug(
@@ -593,7 +601,7 @@ public class RemoteStorageSPI implements StorageSPI {
         () -> {
           try {
             CreateSnapshotRequest request =
-                CreateSnapshotRequest.newBuilder().setDbName(dbName).build();
+                CreateSnapshotRequest.newBuilder().setDatabase(dbName).build();
 
             CreateSnapshotResponse response = blockingStub.createSnapshot(request);
             logger.debug(
@@ -657,10 +665,10 @@ public class RemoteStorageSPI implements StorageSPI {
     return CompletableFuture.supplyAsync(
         () -> {
           try {
-            GetStatsRequest request = GetStatsRequest.newBuilder().setDbName(dbName).build();
+            GetStatsRequest request = GetStatsRequest.newBuilder().setDatabase(dbName).build();
 
             GetStatsResponse response = blockingStub.getStats(request);
-            storage.Storage.StorageStats protoStats = response.getStats();
+            tron.backend.BackendOuterClass.StorageStats protoStats = response.getStats();
 
             org.tron.core.storage.spi.StorageStats stats =
                 new org.tron.core.storage.spi.StorageStats(
@@ -686,7 +694,7 @@ public class RemoteStorageSPI implements StorageSPI {
             ListDatabasesRequest request = ListDatabasesRequest.newBuilder().build();
             ListDatabasesResponse response = blockingStub.listDatabases(request);
 
-            List<String> databases = new ArrayList<>(response.getDbNamesList());
+            List<String> databases = new ArrayList<>(response.getDatabasesList());
             logger.debug("List databases operation: count={}", databases.size());
 
             return databases;
@@ -706,8 +714,8 @@ public class RemoteStorageSPI implements StorageSPI {
           }
 
           try {
-            HealthCheckRequest request = HealthCheckRequest.newBuilder().build();
-            HealthCheckResponse response = blockingStub.healthCheck(request);
+            HealthRequest request = HealthRequest.newBuilder().build();
+            HealthResponse response = blockingStub.health(request);
 
             HealthStatus status;
             switch (response.getStatus()) {

@@ -1,0 +1,416 @@
+{
+  "version": "1.0",
+  "description": "Golden Vector Test Suite for Tron Shadow Execution Verification",
+  "metadata": {
+    "created": "2024-01-01",
+    "author": "Tron Shadow Execution Team",
+    "total_vectors": 25
+  },
+  "test_addresses": {
+    "owner": "41548794500882809695a8a687866e76d4271a1abc",
+    "receiver": "41abd4b9367799eaa3197fecb144eb71de1e049150",
+    "contract": "4112345678901234567890123456789012345678",
+    "multisig": "41987654321098765432109876543210987654321"
+  },
+  "vectors": [
+    {
+      "name": "basic_transfer_normal",
+      "category": "TRANSFER",
+      "description": "Normal TRX transfer between two accounts",
+      "transaction_type": "TransferContract",
+      "parameters": {
+        "from": "owner",
+        "to": "receiver",
+        "amount": 1000000
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 268,
+        "bandwidth_used": 268,
+        "state_changes": 2,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "basic_transfer_zero_amount",
+      "category": "TRANSFER",
+      "description": "Transfer with zero amount (should succeed)",
+      "transaction_type": "TransferContract",
+      "parameters": {
+        "from": "owner",
+        "to": "receiver",
+        "amount": 0
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 268,
+        "bandwidth_used": 268,
+        "state_changes": 0,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "basic_transfer_self",
+      "category": "TRANSFER",
+      "description": "Transfer to self (should succeed with no state change)",
+      "transaction_type": "TransferContract",
+      "parameters": {
+        "from": "owner",
+        "to": "owner",
+        "amount": 1000000
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 268,
+        "bandwidth_used": 268,
+        "state_changes": 0,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "basic_transfer_insufficient_balance",
+      "category": "EDGE_CASE",
+      "description": "Transfer with insufficient balance (should fail)",
+      "transaction_type": "TransferContract",
+      "parameters": {
+        "from": "owner",
+        "to": "receiver",
+        "amount": 999999999999999999
+      },
+      "expected": {
+        "success": false,
+        "energy_used": 0,
+        "bandwidth_used": 268,
+        "state_changes": 0,
+        "return_data": null,
+        "error_message": "insufficient balance"
+      }
+    },
+    {
+      "name": "contract_call_simple_view",
+      "category": "SMART_CONTRACT",
+      "description": "Simple view function call that returns a value",
+      "transaction_type": "TriggerSmartContract",
+      "parameters": {
+        "from": "owner",
+        "contract": "contract",
+        "method": "getValue()",
+        "params": [],
+        "call_value": 0
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 1000,
+        "bandwidth_used": 345,
+        "state_changes": 0,
+        "return_data": "0x0000000000000000000000000000000000000000000000000000000000000042",
+        "error_message": null
+      }
+    },
+    {
+      "name": "contract_call_state_change",
+      "category": "SMART_CONTRACT",
+      "description": "Contract call that modifies state",
+      "transaction_type": "TriggerSmartContract",
+      "parameters": {
+        "from": "owner",
+        "contract": "contract",
+        "method": "setValue(uint256)",
+        "params": ["42"],
+        "call_value": 0
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 20000,
+        "bandwidth_used": 345,
+        "state_changes": 1,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "contract_call_revert",
+      "category": "SMART_CONTRACT",
+      "description": "Contract call that reverts with error message",
+      "transaction_type": "TriggerSmartContract",
+      "parameters": {
+        "from": "owner",
+        "contract": "contract",
+        "method": "revertFunction()",
+        "params": [],
+        "call_value": 0
+      },
+      "expected": {
+        "success": false,
+        "energy_used": 1500,
+        "bandwidth_used": 345,
+        "state_changes": 0,
+        "return_data": null,
+        "error_message": "execution reverted"
+      }
+    },
+    {
+      "name": "contract_call_out_of_energy",
+      "category": "EDGE_CASE",
+      "description": "Contract call that runs out of energy",
+      "transaction_type": "TriggerSmartContract",
+      "parameters": {
+        "from": "owner",
+        "contract": "contract",
+        "method": "expensiveOperation()",
+        "params": [],
+        "call_value": 0,
+        "fee_limit": 1000
+      },
+      "expected": {
+        "success": false,
+        "energy_used": 1000,
+        "bandwidth_used": 345,
+        "state_changes": 0,
+        "return_data": null,
+        "error_message": "OUT_OF_ENERGY"
+      }
+    },
+    {
+      "name": "contract_creation_simple",
+      "category": "SMART_CONTRACT",
+      "description": "Simple contract creation",
+      "transaction_type": "CreateSmartContract",
+      "parameters": {
+        "from": "owner",
+        "bytecode": "608060405234801561001057600080fd5b50600436106100365760003560e01c8063209652551461003b578063c298557814610059575b600080fd5b610043610075565b6040516100509190610096565b60405180910390f35b61007360048036038101906100709190610082565b61007e565b005b60008054905090565b8060008190555050565b60008135905061009781610103565b92915050565b6100a6816100f9565b82525050565b60006020820190506100c1600083018461009d565b92915050565b60006020820190506100dc600083018461009d565b92915050565b600081359050919050565b6100f6816100ec565b8114610101576000fd5b50565b61010c816100ec565b811461011757600080fd5b5056fea2646970667358221220",
+        "call_value": 0
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 50000,
+        "bandwidth_used": 500,
+        "state_changes": 1,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "asset_transfer_trc10",
+      "category": "ASSET_MANAGEMENT",
+      "description": "TRC-10 asset transfer",
+      "transaction_type": "TransferAssetContract",
+      "parameters": {
+        "from": "owner",
+        "to": "receiver",
+        "asset_name": "TestToken",
+        "amount": 1000
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 268,
+        "bandwidth_used": 268,
+        "state_changes": 2,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "freeze_balance_v2",
+      "category": "RESOURCE_MANAGEMENT",
+      "description": "Freeze balance for energy (Stake 2.0)",
+      "transaction_type": "FreezeBalanceV2Contract",
+      "parameters": {
+        "from": "owner",
+        "frozen_balance": 1000000000,
+        "resource": "ENERGY"
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 1000,
+        "bandwidth_used": 268,
+        "state_changes": 1,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "unfreeze_balance_v2",
+      "category": "RESOURCE_MANAGEMENT",
+      "description": "Unfreeze balance (Stake 2.0)",
+      "transaction_type": "UnfreezeBalanceV2Contract",
+      "parameters": {
+        "from": "owner",
+        "unfreeze_balance": 1000000000,
+        "resource": "ENERGY"
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 1000,
+        "bandwidth_used": 268,
+        "state_changes": 1,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "delegate_resource",
+      "category": "RESOURCE_MANAGEMENT",
+      "description": "Delegate energy resource to another account",
+      "transaction_type": "DelegateResourceContract",
+      "parameters": {
+        "from": "owner",
+        "to": "receiver",
+        "balance": 1000000000,
+        "resource": "ENERGY"
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 1000,
+        "bandwidth_used": 268,
+        "state_changes": 2,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "vote_witness",
+      "category": "GOVERNANCE",
+      "description": "Vote for witness (Super Representative)",
+      "transaction_type": "VoteWitnessContract",
+      "parameters": {
+        "from": "owner",
+        "votes": [
+          {"address": "receiver", "vote_count": 1000000}
+        ]
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 1000,
+        "bandwidth_used": 268,
+        "state_changes": 1,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "expired_transaction",
+      "category": "EDGE_CASE",
+      "description": "Transaction with expired timestamp",
+      "transaction_type": "TransferContract",
+      "parameters": {
+        "from": "owner",
+        "to": "receiver",
+        "amount": 1000000,
+        "expiration": -1000
+      },
+      "expected": {
+        "success": false,
+        "energy_used": 0,
+        "bandwidth_used": 0,
+        "state_changes": 0,
+        "return_data": null,
+        "error_message": "TRANSACTION_EXPIRATION_ERROR"
+      }
+    },
+    {
+      "name": "invalid_signature",
+      "category": "EDGE_CASE",
+      "description": "Transaction with invalid signature",
+      "transaction_type": "TransferContract",
+      "parameters": {
+        "from": "owner",
+        "to": "receiver",
+        "amount": 1000000,
+        "invalid_signature": true
+      },
+      "expected": {
+        "success": false,
+        "energy_used": 0,
+        "bandwidth_used": 0,
+        "state_changes": 0,
+        "return_data": null,
+        "error_message": "SIGNATURE_FORMAT_ERROR"
+      }
+    },
+    {
+      "name": "large_data_transaction",
+      "category": "EDGE_CASE",
+      "description": "Transaction with large data payload",
+      "transaction_type": "TransferContract",
+      "parameters": {
+        "from": "owner",
+        "to": "receiver",
+        "amount": 1000000,
+        "data_size": 10000
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 268,
+        "bandwidth_used": 10268,
+        "state_changes": 2,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "multisig_transaction",
+      "category": "MULTI_SIGNATURE",
+      "description": "Multi-signature transaction requiring multiple signatures",
+      "transaction_type": "TransferContract",
+      "parameters": {
+        "from": "multisig",
+        "to": "receiver",
+        "amount": 1000000,
+        "required_signatures": 2
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 268,
+        "bandwidth_used": 400,
+        "state_changes": 2,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "shielded_transfer",
+      "category": "EDGE_CASE",
+      "description": "Shielded (private) transaction",
+      "transaction_type": "ShieldedTransferContract",
+      "parameters": {
+        "from_amount": 1000000,
+        "to_amount": 1000000,
+        "transparent_from": "owner",
+        "transparent_to": "receiver"
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 10000,
+        "bandwidth_used": 1000,
+        "state_changes": 2,
+        "return_data": null,
+        "error_message": null
+      }
+    },
+    {
+      "name": "market_sell_asset",
+      "category": "ASSET_MANAGEMENT",
+      "description": "Market order to sell TRC-10 asset",
+      "transaction_type": "MarketSellAssetContract",
+      "parameters": {
+        "from": "owner",
+        "sell_token_id": "TestToken",
+        "sell_token_quantity": 1000,
+        "buy_token_id": "TRX",
+        "buy_token_quantity": 1000000
+      },
+      "expected": {
+        "success": true,
+        "energy_used": 2000,
+        "bandwidth_used": 300,
+        "state_changes": 3,
+        "return_data": null,
+        "error_message": null
+      }
+    }
+  ]
+}

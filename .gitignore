@@ -59,3 +59,11 @@ Wallet
 .cache
 
 .env
+
+*.so
+*.dylib
+*.dll
+
+bin/
+
+data/

@@ -30,7 +30,7 @@ public class StorageSPIIntegrationTest {
     // Read configuration properties at runtime
     String remoteHost = System.getProperty("storage.remote.host", "localhost");
     String remotePortStr = System.getProperty("storage.remote.port", "50011");
-    
+
     int remotePort;
     try {
       remotePort = Integer.parseInt(remotePortStr);
@@ -38,11 +38,11 @@ public class StorageSPIIntegrationTest {
       System.err.println("Invalid port value: " + remotePortStr + ", using default: 50011");
       remotePort = 50011;
     }
-    
+
     System.out.println("Remote storage configuration:");
     System.out.println("  Host: " + remoteHost);
     System.out.println("  Port: " + remotePort);
-    
+
     // Check if gRPC server is available
     storage = new RemoteStorageSPI(remoteHost, remotePort);
     testDbName = "test-db-" + System.currentTimeMillis();

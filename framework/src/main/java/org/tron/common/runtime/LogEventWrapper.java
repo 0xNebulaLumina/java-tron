@@ -11,27 +11,15 @@ import org.tron.protos.contract.SmartContractOuterClass.SmartContract.ABI.Entry.
 
 public class LogEventWrapper extends ContractTrigger {
 
-  @Getter
-  @Setter
-  private List<byte[]> topicList;
+  @Getter @Setter private List<byte[]> topicList;
 
-  @Getter
-  @Setter
-  private byte[] data;
+  @Getter @Setter private byte[] data;
 
-  /**
-   * decode from sha3($EventSignature) with the ABI of this contract.
-   */
-  @Getter
-  @Setter
-  private String eventSignature;
+  /** decode from sha3($EventSignature) with the ABI of this contract. */
+  @Getter @Setter private String eventSignature;
 
-  /**
-   * ABI Entry of this event.
-   */
-  @Getter
-  @Setter
-  private SmartContract.ABI.Entry abiEntry;
+  /** ABI Entry of this event. */
+  @Getter @Setter private SmartContract.ABI.Entry abiEntry;
 
   public LogEventWrapper() {
     super();

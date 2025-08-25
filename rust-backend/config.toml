@@ -1,0 +1,33 @@
+[server]
+host = "127.0.0.1"
+port = 50011
+max_connections = 1000
+keepalive_timeout = 60
+
+[storage]
+data_dir = "./data"
+max_open_files = 1000
+cache_size = 134217728  # 128MB
+write_buffer_size = 67108864  # 64MB
+max_write_buffer_number = 3
+compression = "lz4"
+
+[execution]
+max_call_depth = 1024
+max_code_size = 24576
+max_init_code_size = 49152
+enable_london_fork = true
+enable_berlin_fork = true
+enable_istanbul_fork = true
+# Tron-specific
+energy_limit = 1000000000  # Increased from 100M to 1B to handle complex transactions
+bandwidth_limit = 5000
+max_cpu_time_of_one_tx = 80
+
+[modules.storage]
+enabled = true
+settings = {}
+
+[modules.execution]
+enabled = true
+settings = {} 
