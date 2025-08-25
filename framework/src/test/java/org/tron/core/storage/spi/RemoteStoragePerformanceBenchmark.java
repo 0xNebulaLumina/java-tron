@@ -24,7 +24,7 @@ public class RemoteStoragePerformanceBenchmark extends BasePerformanceBenchmark 
     // Read configuration properties at runtime to ensure they're available
     String remoteHost = System.getProperty("storage.remote.host", "localhost");
     String remotePortStr = System.getProperty("storage.remote.port", "50011");
-    
+
     int remotePort;
     try {
       remotePort = Integer.parseInt(remotePortStr);
@@ -32,11 +32,11 @@ public class RemoteStoragePerformanceBenchmark extends BasePerformanceBenchmark 
       System.err.println("Invalid port value: " + remotePortStr + ", using default: 50011");
       remotePort = 50011;
     }
-    
+
     System.out.println("Remote storage configuration:");
     System.out.println("  Host: " + remoteHost);
     System.out.println("  Port: " + remotePort);
-    
+
     return new RemoteStorageSPI(remoteHost, remotePort);
   }
 

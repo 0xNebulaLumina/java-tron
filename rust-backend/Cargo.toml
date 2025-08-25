@@ -1,0 +1,64 @@
+[package]
+name = "tron-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Unified Rust backend for Tron blockchain - combines storage and execution modules"
+authors = ["Tron Team"]
+license = "MIT"
+
+[workspace]
+members = [
+    "crates/core",
+    "crates/storage", 
+    "crates/execution",
+    "crates/common"
+]
+
+[dependencies]
+# Workspace crates
+tron-backend-core = { path = "crates/core" }
+tron-backend-storage = { path = "crates/storage", optional = true }
+tron-backend-execution = { path = "crates/execution", optional = true }
+tron-backend-common = { path = "crates/common" }
+
+# gRPC and Protocol Buffers
+tonic = "0.10"
+prost = "0.12"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal"] }
+tokio-stream = "0.1"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Configuration
+config = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4"] }
+bytes = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Metrics and health
+prometheus = "0.13"
+
+
+
+[[bin]]
+name = "tron-backend"
+path = "src/main.rs"
+
+[features]
+default = ["storage", "execution"]
+storage = ["tron-backend-storage"]
+execution = ["tron-backend-execution"]
+
+[dev-dependencies]
+tempfile = "3.20.0"
+tokio-test = "0.4" 
