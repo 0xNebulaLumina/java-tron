@@ -1,6 +1,8 @@
 package org.tron.core.vm.program;
 
 import org.apache.commons.lang3.tuple.Pair;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
@@ -23,8 +25,11 @@ import org.tron.core.vm.repository.Key;
 import org.tron.core.vm.repository.Repository;
 import org.tron.core.vm.repository.Value;
 import org.tron.protos.Protocol.AccountType;
+import org.tron.core.db.StateChangeRecorderContext;
 
 public class ContractState implements Repository, ProgramListenerAware {
+
+  private static final Logger logger = LoggerFactory.getLogger(ContractState.class);
 
   // contract address
   private final DataWord address;
@@ -141,6 +146,23 @@ public class ContractState implements Repository, ProgramListenerAware {
     if (canListenTrace(addr)) {
       programListener.onStoragePut(key, value);
     }
+    
+    // Capture state change for CSV logging (if enabled)
+    if (StateChangeRecorderContext.isEnabled()) {
+      try {
+        DataWord oldValue = repository.getStorageValue(addr, key);
+        StateChangeRecorderContext.recordStorageChange(
+            addr,
+            key.getData(),
+            oldValue != null ? oldValue.getData() : null,
+            value != null ? value.getData() : null
+        );
+      } catch (Exception e) {
+        // Log error but don't fail the transaction
+        logger.warn("Failed to record storage change for state tracking", e);
+      }
+    }
+    
     repository.putStorageValue(addr, key, value);
   }
 

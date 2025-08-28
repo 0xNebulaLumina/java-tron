@@ -52,6 +52,9 @@ import org.tron.api.GrpcAPI.TransactionInfoList;
 import org.tron.core.execution.reporting.ExecutionCsvLogger;
 import org.tron.core.execution.reporting.ExecutionCsvRecord;
 import org.tron.core.execution.reporting.ExecutionCsvRecordBuilder;
+import org.tron.core.execution.reporting.StateChangeJournalRegistry;
+import org.tron.core.execution.reporting.StateChangeRecorderBridge;
+import org.tron.core.db.StateChangeRecorderContext;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.bloom.Bloom;
 import org.tron.common.cron.CronExpression;
@@ -1538,6 +1541,8 @@ public class Manager {
     consumeMemoFee(trxCap, trace);
 
     trace.init(blockCap, eventPluginLoaded);
+    StateChangeJournalRegistry.initializeForCurrentTransaction();
+    StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
     trace.checkIsConstant();
     trace.exec();
 
@@ -1545,6 +1550,9 @@ public class Manager {
       trace.setResult();
       if (trace.checkNeedRetry()) {
         trace.init(blockCap, eventPluginLoaded);
+        StateChangeJournalRegistry.clearForCurrentTransaction();
+        StateChangeJournalRegistry.initializeForCurrentTransaction();
+        StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
         trace.checkIsConstant();
         trace.exec();
         trace.setResult();
@@ -1566,6 +1574,10 @@ public class Manager {
     
     // Log execution details to CSV for remote vs embedded comparison
     logExecutionToCsv(trxCap, blockCap, trace);
+    
+    // Clean up journal after CSV logging is complete
+    StateChangeJournalRegistry.clearForCurrentTransaction();
+    StateChangeRecorderContext.clear();
     chainBaseManager.getTransactionStore().put(trxCap.getTransactionId().getBytes(), trxCap);
 
     Optional.ofNullable(transactionCache)
