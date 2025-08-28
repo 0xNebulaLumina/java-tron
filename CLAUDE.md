@@ -433,32 +433,81 @@ All tests pass successfully, ensuring correctness of the implementation.
 
 ---
 
-### Phase 2 – Embedded `stateChanges` and Digest Parity
+### Phase 2 – Embedded `stateChanges` and Digest Parity (Storage + Account)
 
-Goal: capture accurate `stateChanges` for the embedded `RuntimeImpl` and align digest computation across both modes.
+Goal: capture a complete set of state changes for the embedded `RuntimeImpl` covering BOTH:
+- Storage changes (contract storage slots SSTORE), and
+- Account-level changes (balance changes, account creation/deletion, code/codeHash changes).
 
-Preferred approach (VM instrumentation):
-- Add hooks in the Java VM execution path (SSTORE/storage writes) to record storage changes into the transaction-scoped result object.
-- Extend `ProgramResult` data path so `ExecutionProgramResult.fromProgramResult` can transfer `stateChanges` as needed.
+Why this update:
+- Remote `ExecutionResult` includes a union of StorageChange and AccountChange. To achieve apples-to-apples comparison, the embedded path must emit both categories, not only storage.
 
-Alternate approach (DB observation – lower priority):
-- Observe batched DB updates during tx to infer the set of modified storage keys per contract. Higher risk, less precise.
+StateChange model alignment:
+- Continue using `ExecutionSPI.StateChange` for both types:
+  - StorageChange: `address=contract_addr`, `key=slot_key`, `oldValue`, `newValue` (32-byte values).
+  - AccountChange: `address=account_addr`, `key=empty byte[]`, `oldValue`, `newValue` as a serialized AccountInfo blob (see below), matching the remote encoding.
 
-Digest:
-- Keep SHA-256 canonicalization in Phase 2.
-- Optional follow-up: add `StateDigestJni`/keccak parity behind a flag.
+Canonical AccountInfo encoding (embedded parity with remote):
+- Byte layout: `[balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]`
+  - balance: 32-byte big-endian (truncate/left-pad as needed)
+  - nonce: TRON has no nonce; use 0
+  - code_hash: 32-byte; retrieve from `ContractCapsule.getCodeHash()` if the address hosts a contract; zero otherwise
+  - code: actual bytecode for the address (use `Repository.getCode(address)` or `CodeStore.findCodeByHash(code_hash)`)
+  - For creations: oldValue = empty (0 bytes), newValue = full AccountInfo; for deletions: oldValue = full, newValue = empty
 
-Phase 2 TODOs:
-- [ ] Identify precise SSTORE/storage write points in embedded VM (code path in `framework/common runtime/vm`)
-- [ ] Add a per-tx collector to capture (address, key, oldValue, newValue)
-- [ ] Extend `ProgramResult` or enrich during `fromProgramResult` to include captured `stateChanges`
-- [ ] Verify `state_change_count`, `state_changes_json`, and `state_digest_sha256` populate for embedded
-- [ ] Add property flag to toggle embedded `stateChanges` collection (for safe rollout)
-- [ ] Validate parity on a curated tx set (local smoke tests)
+Instrumentation strategy (low-risk and precise):
+
+1) Storage changes (SSTORE):
+- Preferred hook: `ContractState.putStorageValue(addr, key, value)`.
+  - Has both `address` and `Repository` context; currently triggers `ProgramListener.onStoragePut` before delegating to repository.
+  - For each call:
+    - Compute oldValue via `repository.getStorageValue(addr, key)` (before write)
+    - Record `StateChange(address, key, oldValueBytes, newValueBytes)` in a per-tx journal
+  - Deduplicate multiple writes to the same (address,key) within a tx (keep last oldValue from first write, last newValue from last write)
+- Alternative (reinforcement): also reconcile from `Storage.commit()` rowCache if needed to ensure completeness.
+
+2) Account changes (balance/code/create/delete):
+- Hook at the Repository layer where account/code/contract mutations are centralized:
+  - `RepositoryImpl.updateAccount(address, accountCapsule)` (updates, including balance changes)
+  - `RepositoryImpl.putAccountValue(address, accountCapsule)` (creation)
+  - `RepositoryImpl.saveCode(address, code)` (code creation/association, codeHash updates)
+  - `RepositoryImpl.updateContract(address, contractCapsule)` (codeHash updates post-saveCode)
+  - `RepositoryImpl.deleteContract(address)` (self-destruct: deletes code, account, contract)
+- For each of the above, record a single AccountChange per affected address for the transaction:
+  - Before first mutation: read old AccountInfo (derive codeHash/code via ContractStore/CodeStore or `getCode`)
+  - After all mutations: compute new AccountInfo (post-change data)
+  - Store as a consolidated `StateChange(addr, emptyKey, oldBlob, newBlob)`
+- Use a per-tx journal to merge multiple mutations to the same address into one Old/New pair.
+- For self-destruct, leverage ProgramResult.deleteAccounts as a signal, but source-of-truth remains `deleteContract` hook to capture the final deletion.
+
+3) Per-tx StateChange journal (ThreadLocal or context-bound):
+- `StateChangeJournal` (per tx) with methods:
+  - `recordStorageWrite(addr, key, old, now)`
+  - `recordAccountBefore(address, oldInfo)` (idempotent)
+  - `recordAccountAfter(address, newInfo)`
+- Lifecycle:
+  - Created at tx start (TransactionTrace.init)
+  - Populated by hooks
+  - Finalized after VM execution, materialized into `ExecutionProgramResult.stateChanges`
+
+Digest and CSV:
+- SHA-256 digest covers BOTH storage and account changes via the same canonical tuple `hex(address)|hex(key)|hex(old)|hex(new)`, where account changes use `key=""` (empty bytes) to align with remote convention.
+- CSV `state_changes_json` will include both types, indistinguishable by type but recognizable by empty key in account changes (consistent with remote run).
+
+Phase 2 TODOs (updated):
+- [ ] Add `StateChangeJournal` per tx with storage+account APIs and merge/dedup logic
+- [ ] Wire journal lifecycle at tx boundaries (create in `TransactionTrace.init`, finalize after VM execution)
+- [ ] Storage hooks: instrument `ContractState.putStorageValue` to capture old/new; reconcile duplicates
+- [ ] Account hooks: instrument RepositoryImpl methods (`updateAccount`, `putAccountValue`, `saveCode`, `updateContract`, `deleteContract`) to set old/new AccountInfo in the journal
+- [ ] Implement embedded AccountInfo serialization aligned with remote (balance32, nonce=0, code_hash32, code_len, code)
+- [ ] Enrich embedded `ProgramResult` via `ExecutionProgramResult.fromProgramResult` (or set directly if using it end-to-end) to include journaled `stateChanges`
+- [ ] Property flag to enable/disable embedded `stateChanges` collection for safe rollout
+- [ ] Validate with curated tx sets: balance transfer, contract CREATE, TRC-20 calls (SSTORE), SELFDESTRUCT
 
 Acceptance criteria (Phase 2):
-- [ ] Embedded runs include non-empty `state_changes_json`/digest for state-modifying txs
-- [ ] Digest stability across repeated runs (deterministic ordering/encoding)
+- [ ] Embedded runs produce both storage and account changes with correct counts
+- [ ] Self-destruct and contract creation emit expected account changes (deletion/creation semantics)
+- [ ] Digest equality across repeated embedded runs; remote vs embedded parity improves materially
 
 ---
 
