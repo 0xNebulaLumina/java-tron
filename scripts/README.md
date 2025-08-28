@@ -154,16 +154,17 @@ The tool is designed to handle large CSV files efficiently:
 #### Complete Workflow
 ```bash
 # Generate embedded execution CSV
-java -jar FullNode.jar -c config.conf \
-  -Dexec.csv.enabled=true \
-  -Dstorage.mode=EMBEDDED \
-  -Dexecution.mode=EMBEDDED
+## Important: JVM -D system properties must come BEFORE -jar
+java -Dexec.csv.enabled=true \
+     -Dstorage.mode=EMBEDDED \
+     -Dexecution.mode=EMBEDDED \
+     -jar FullNode.jar -c config.conf
 
 # Generate remote execution CSV  
-java -jar FullNode.jar -c config.conf \
-  -Dexec.csv.enabled=true \
-  -Dstorage.mode=REMOTE \
-  -Dexecution.mode=REMOTE
+java -Dexec.csv.enabled=true \
+     -Dstorage.mode=REMOTE \
+     -Dexecution.mode=REMOTE \
+     -jar FullNode.jar -c config.conf
 
 # Compare results
 python3 scripts/execution_csv_compare.py \

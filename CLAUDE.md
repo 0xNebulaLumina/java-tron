@@ -397,12 +397,15 @@ The system is controlled via system properties:
 
 ### Usage
 
+Note: JVM system properties (e.g., `-Dexec.csv.enabled=true`) must be specified before `-jar`. If placed after, they are treated as application args and may be parsed as seed nodes, causing errors like: `Invalid inetSocketAddress: "-Dexec.csv.enabled=true"`.
+
 1. **Embedded Run**:
    ```bash
-   java -jar FullNode.jar -c config.conf \
-     -Dexec.csv.enabled=true \
-     -Dstorage.mode=EMBEDDED \
-     -Dexecution.mode=EMBEDDED
+   # Note: JVM -D system properties must come BEFORE -jar
+   java -Dexec.csv.enabled=true \
+        -Dstorage.mode=EMBEDDED \
+        -Dexecution.mode=EMBEDDED \
+        -jar FullNode.jar -c config.conf
    ```
 
 2. **Remote Run**:
@@ -411,10 +414,11 @@ The system is controlled via system properties:
    cd rust-backend && cargo run --release
    
    # Run Java node with remote modes
-   java -jar FullNode.jar -c config.conf \
-     -Dexec.csv.enabled=true \
-     -Dstorage.mode=REMOTE \
-     -Dexecution.mode=REMOTE
+   # Note: JVM -D system properties must come BEFORE -jar
+   java -Dexec.csv.enabled=true \
+        -Dstorage.mode=REMOTE \
+        -Dexecution.mode=REMOTE \
+        -jar FullNode.jar -c config.conf
    ```
 
 ### Output
