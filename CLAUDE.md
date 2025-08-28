@@ -227,3 +227,212 @@ Format: `<type>(<scope>): <subject>`
 - Account creation in state sync must use the balance from the deserialized data, not default to zero
 - Comprehensive logging is essential for debugging state synchronization issues between different systems
 - The flow from Rust → Protobuf → Java requires careful attention to serialization formats at each step
+
+## Task Plan: Execution Consistency CSV (Remote vs Embedded)
+
+Goal: Track and compare per-transaction execution results between
+- Remote execution + remote storage, and
+- Embedded execution (RuntimeImpl) + embedded storage,
+by writing detailed CSV records after each transaction, then diffing two runs offline with a comparator script.
+
+Non-goals (for this task):
+- Do not use or modify ShadowExecutionSPI.
+- Do not implement shadow mode or in-process dual-execute.
+- Do not change consensus or commit logic.
+
+High-level approach (Option 1 – two-run, offline compare):
+- Phase 1: Add a production-safe CSV logger invoked post-execution (end of `Manager.processTransaction`).
+- Phase 2: Add embedded `stateChanges` capture for RuntimeImpl and align digest parity.
+- Phase 3: Provide a standalone comparator tool to diff two CSVs.
+
+Run procedure:
+1) Run node with embedded exec+storage, capture CSV A.
+2) Run node with remote exec+storage, capture CSV B.
+3) Use comparator to report mismatches (by tx id).
+
+---
+
+### CSV Schema (no truncation of return data)
+- run_id: unique per process (timestamp + UUID)
+- exec_mode: `EMBEDDED|REMOTE` (from `ExecutionSpiFactory.determineExecutionMode()`)
+- storage_mode: `EMBEDDED|REMOTE` (from `StorageSpiFactory.determineStorageMode()`)
+- block_num: long
+- block_id_hex: hex string
+- is_witness_signed: boolean
+- block_timestamp: long (ms)
+- tx_index_in_block: int
+- tx_id_hex: hex string
+- owner_address_hex: hex string
+- contract_type: enum name
+- is_constant: boolean
+- fee_limit: long
+- is_success: boolean (derived from Program/ExecutionProgramResult)
+- result_code: enum name (contractResult)
+- energy_used: long
+- return_data_hex: hex string (full, no cap)
+- return_data_len: int
+- runtime_error: string (may be empty)
+- state_change_count: int
+- state_changes_json: JSON array of {address, key, oldValue, newValue} as hex (remote Phase 1 full; embedded Phase 1 empty)
+- state_digest_sha256: SHA-256 of canonical, sorted tuples (address|key|old|new) (remote Phase 1; embedded Phase 1 = hash of empty list)
+- ts_ms: logger write timestamp
+
+Canonicalization rules for digest:
+- Build tuples as lowercase hex for each component, concatenate with a fixed delimiter `|`.
+- Sort tuples lexicographically, concatenate with `\n`, compute SHA-256, output lowercase hex.
+
+CSV locations:
+- Directory: `output-directory/execution-csv/`
+- Filenames: `<run_id>-<execMode>-<storageMode>.csv`
+
+Comparator tool:
+- Location: `scripts/execution_csv_compare.py`
+- Join key: primary `tx_id_hex`; fallback `(block_num, tx_index_in_block)`
+- Compare fields: success, result_code, energy_used, return_data_hex, runtime_error, state_digest_sha256
+- Outputs: summary + `mismatches.csv` with side-by-side diffs
+
+---
+
+### Phase 1 – CSV Logging (Production-safe)
+
+Design:
+- Introduce a lightweight logger with a bounded queue and a background writer thread to avoid blocking execution.
+- Invoke once per tx at the end of `Manager.processTransaction` after `trace.finalization()` and `trxCap.setResult(trace.getTransactionContext())`.
+- Extract fields from `TransactionContext`, `ProgramResult`/`ExecutionProgramResult`, `trxCap`, and `blockCap`.
+- If `ProgramResult` is an instance of `ExecutionProgramResult`, read `stateChanges`; otherwise, leave state changes empty and compute digest over an empty list.
+
+Config flags (system properties):
+- `-Dexec.csv.enabled=true|false` (default false)
+- `-Dexec.csv.dir=output-directory/execution-csv`
+- `-Dexec.csv.sampleRate=1` (log every tx; N to sample every Nth)
+- `-Dexec.csv.rotateMb=256` (optional rotation size)
+
+Planned package structure:
+- `framework/src/main/java/org/tron/core/execution/reporting/`
+  - `ExecutionCsvLogger` – lifecycle, queue, writer, CSV formatting
+  - `ExecutionCsvRecord` – model holder for one row
+  - `StateChangeCanonicalizer` – canonical JSON building + SHA-256 digest
+
+Hook location:
+- `framework/src/main/java/org/tron/core/db/Manager.java` in `processTransaction` after state/result are finalized, guarded by `exec.csv.enabled` and sampling.
+
+Metrics/robustness:
+- Count enqueue attempts, dropped records (queue full), write failures.
+- RFC 4180 compliant CSV escaping; binary → hex; JSON properly escaped.
+- File rotation by size; roll to next file with incremented suffix.
+
+Security & safety:
+- No consensus-affecting changes; logging failure must not affect execution path.
+- Ensure no secrets are logged.
+
+Phase 1 TODOs:
+- [ ] Create `ExecutionCsvRecord` with schema fields and builder helpers
+- [ ] Implement `StateChangeCanonicalizer` (JSON, SHA-256 digest, canonicalization)
+- [ ] Implement `ExecutionCsvLogger` (init dir, run_id, queue, background writer, rotation)
+- [ ] Add config parsing for `exec.csv.*` system properties
+- [ ] Wire logger call in `Manager.processTransaction` post-finalization (guarded by flag and sample)
+- [ ] Add minimal unit tests for canonicalizer and basic CSV formatting (no-heavy integration)
+- [ ] Document usage in README/CLAUDE.md (this section) and quick runbook
+
+Acceptance criteria (Phase 1):
+- [ ] Embedded run produces CSV with core fields and empty `state_changes_json`, digest of empty list
+- [ ] Remote run produces CSV with full state changes + digest
+- [ ] No noticeable performance degradation under typical load (queue not dropping under normal ops)
+
+---
+
+### Phase 2 – Embedded `stateChanges` and Digest Parity
+
+Goal: capture accurate `stateChanges` for the embedded `RuntimeImpl` and align digest computation across both modes.
+
+Preferred approach (VM instrumentation):
+- Add hooks in the Java VM execution path (SSTORE/storage writes) to record storage changes into the transaction-scoped result object.
+- Extend `ProgramResult` data path so `ExecutionProgramResult.fromProgramResult` can transfer `stateChanges` as needed.
+
+Alternate approach (DB observation – lower priority):
+- Observe batched DB updates during tx to infer the set of modified storage keys per contract. Higher risk, less precise.
+
+Digest:
+- Keep SHA-256 canonicalization in Phase 2.
+- Optional follow-up: add `StateDigestJni`/keccak parity behind a flag.
+
+Phase 2 TODOs:
+- [ ] Identify precise SSTORE/storage write points in embedded VM (code path in `framework/common runtime/vm`)
+- [ ] Add a per-tx collector to capture (address, key, oldValue, newValue)
+- [ ] Extend `ProgramResult` or enrich during `fromProgramResult` to include captured `stateChanges`
+- [ ] Verify `state_change_count`, `state_changes_json`, and `state_digest_sha256` populate for embedded
+- [ ] Add property flag to toggle embedded `stateChanges` collection (for safe rollout)
+- [ ] Validate parity on a curated tx set (local smoke tests)
+
+Acceptance criteria (Phase 2):
+- [ ] Embedded runs include non-empty `state_changes_json`/digest for state-modifying txs
+- [ ] Digest stability across repeated runs (deterministic ordering/encoding)
+
+---
+
+### Phase 3 – Offline Comparator Tool
+
+Design:
+- Python script `scripts/execution_csv_compare.py` to compare two CSVs.
+- Join rows by `tx_id_hex` (fallback to `(block_num, tx_index_in_block)`).
+- Field-level comparisons with a simple diff report and a `mismatches.csv` output.
+
+Comparator CLI:
+- `--left` path to CSV A, `--right` path to CSV B
+- `--fields` selectable list (default all primary fields)
+- `--ignore-return-data` optional flag to skip return payload comparison
+- `--output` directory for reports
+
+Phase 3 TODOs:
+- [ ] Implement CSV loader (streaming-friendly for large files)
+- [ ] Implement join by tx_id, fallback join strategy
+- [ ] Implement per-field comparison and diff aggregation
+- [ ] Emit summary (counts, mismatch rates by field) and `mismatches.csv`
+- [ ] Add usage doc + examples
+
+Acceptance criteria (Phase 3):
+- [ ] Comparator outputs clear summary and actionable diffs
+- [ ] Works efficiently on multi-GB CSVs (if needed)
+
+---
+
+### Runbook – How to Use
+
+1) Build and configure
+- Build Java: `./gradlew clean build -x test --dependency-verification=off`
+- Ensure Rust backend is up for remote runs (default port 50011)
+
+2) Embedded run (A)
+- Env/config: `execution.mode=EMBEDDED`, `STORAGE_MODE=embedded`
+- Enable CSV: `-Dexec.csv.enabled=true`
+- Output CSV: `output-directory/execution-csv/<run_id>-EMBEDDED-EMBEDDED.csv`
+
+3) Remote run (B)
+- Env/config: `execution.mode=REMOTE`, `STORAGE_MODE=remote`
+- Remote host/port via existing Execution SPI config
+- Enable CSV: `-Dexec.csv.enabled=true`
+- Output CSV: `output-directory/execution-csv/<run_id>-REMOTE-REMOTE.csv`
+
+4) Compare
+- `python3 scripts/execution_csv_compare.py --left A.csv --right B.csv --output reports/`
+
+Notes:
+- Use separate data directories/configs for each run to avoid cross-contamination.
+- Consider `exec.csv.sampleRate` > 1 only if performance becomes an issue.
+
+---
+
+### Risks & Mitigations
+- Large CSV size (no truncation of return data):
+  - Mitigate with file rotation and disk monitoring.
+- Embedded `stateChanges` accuracy:
+  - Land Phase 2 only after careful VM instrumentation; gate with a property.
+- Runtime overhead:
+  - Async logging with bounded queue; monitor drop counters.
+
+### Ownership & Timeline
+- Phase 1: CSV logger + hook + docs
+- Phase 2: VM instrumentation for embedded `stateChanges` + digest parity
+- Phase 3: Comparator script + docs
+
+Document owners should keep this section updated as phases land and TODOs are completed. 
