@@ -305,3 +305,52 @@ Timeline Snapshot
 - Phase 1: Add logger, hook in Manager, config flags, docs.
 - Phase 2: VM instrumentation for embedded stateChanges; enable full parity + digest.
 - Phase 3: Comparator script + usage instructions; CI-friendly outputs.
+
+---
+
+I have already completed Phase 1 according to your suggestion. But now I have a concern regarding your Phase II plan. It will only track storage change? What
+about the account change? For example, account balance, account code, and account creation, account self-destruct, etc. Think harder and then explain to me and
+update the plan if needed.
+
+---
+
+You’re right to be concerned: Phase 2 must capture more than storage writes. Remote mode’s ExecutionResult covers both storage changes and account-level changes
+(balance, code/codeHash, create/delete). I’ve revised the plan to include full account change tracking for embedded execution, matching remote semantics.
+
+What changes and why
+
+- Add account changes: balance changes, account creation, code/codeHash updates, and deletion (self-destruct).
+- Keep storage changes: SSTORE slot updates with old/new values.
+- Unify representation: both types map to ExecutionSPI.StateChange. For account changes, use empty key [] and serialize AccountInfo to old/new (same layout as
+remote).
+
+How to collect in embedded path (no code yet; plan only)
+
+- Storage changes: hook ContractState.putStorageValue(addr,key,val). Before writing, read old via repository.getStorageValue(addr,key) and record (addr, key, old,
+new). Deduplicate multiple writes within a tx.
+- Account changes:
+    - updateAccount(address, accountCapsule): capture before/after AccountInfo (balance, codeHash, code).
+    - putAccountValue(address, accountCapsule): capture as creation (old empty, new full).
+    - saveCode(address, code) + updateContract(address, contract): capture code/codeHash change in AccountInfo.
+    - deleteContract(address): capture deletion (old full, new empty). ProgramResult.deleteAccounts can supplement detection; deletion hook is canonical.
+- Serialization parity: AccountInfo bytes = [balance(32)] + [nonce(8=0)] + [code_hash(32)] + [code_length(4)] + [code]. Fetch code via Repository.getCode(address)
+or CodeStore by hash; codeHash via ContractCapsule.getCodeHash().
+
+Lifecycle and plumbing
+
+- Per-tx StateChangeJournal (thread-local or context-bound) with:
+    - recordStorageWrite(addr, key, old, now)
+    - recordAccountBefore(address, oldInfo); recordAccountAfter(address, newInfo)
+    - Merge/dedup semantics so each (address,key) or address appears once with final old/new.
+- Create journal at tx start; finalize after VM execution; inject list into ExecutionProgramResult.stateChanges and CSV logger.
+- Digest: continue SHA-256 over canonical tuples hex(address)|hex(key)|hex(old)|hex(new) with empty key for account changes (matches remote).
+
+Plan updates added to CLAUDE.md
+
+- Expanded Phase 2 to cover account changes and detailed hooks.
+- Defined AccountInfo encoding for embedded to match remote.
+- Updated TODOs: add journal, wire hooks (storage + account), enrich ProgramResult, rollout flag, validation steps.
+- CSV and comparator remain compatible (account changes appear with empty key, same as remote).
+
+If you want, I can also add acceptance tests you can run locally for four cases: TRX transfer (balance), contract CREATE (code/codeHash), TRC-20 transfer
+(storage), and SELFDESTRUCT (deletion) to validate the end-to-end parity signal once you’re ready to implement.
