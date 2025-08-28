@@ -8,6 +8,7 @@ import lombok.Setter;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.runtime.vm.LogInfo;
+import org.tron.core.execution.reporting.StateChangeJournalRegistry;
 import org.tron.core.execution.spi.ExecutionSPI.ExecutionResult;
 import org.tron.core.execution.spi.ExecutionSPI.LogEntry;
 import org.tron.core.execution.spi.ExecutionSPI.StateChange;
@@ -67,8 +68,16 @@ public class ExecutionProgramResult extends ProgramResult {
     result.getCallCreateList().addAll(programResult.getCallCreateList());
 
     // Initialize ExecutionSPI-specific fields with defaults
-    result.stateChanges = new ArrayList<>();
     result.bandwidthUsed = 0; // TODO: Calculate from ProgramResult if possible
+    
+    // Try to get state changes from the current transaction's journal
+    try {
+      List<StateChange> journaledStateChanges = StateChangeJournalRegistry.getCurrentTransactionStateChanges();
+      result.stateChanges = journaledStateChanges != null ? new ArrayList<>(journaledStateChanges) : new ArrayList<>();
+    } catch (Exception e) {
+      // If journal access fails, use empty list (maintains backwards compatibility)
+      result.stateChanges = new ArrayList<>();
+    }
 
     return result;
   }

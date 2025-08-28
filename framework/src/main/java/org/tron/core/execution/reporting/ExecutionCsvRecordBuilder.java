@@ -127,10 +127,18 @@ public class ExecutionCsvRecordBuilder {
                .stateDigestSha256(StateChangeCanonicalizer.computeEmptyStateDigest());
       }
     } else {
-      // For embedded execution, state changes are not available yet (Phase 1)
-      builder.stateChangeCount(0)
-             .stateChanges(new ArrayList<>())
-             .stateDigestSha256(StateChangeCanonicalizer.computeEmptyStateDigest());
+      // For embedded execution, get state changes from journal (Phase 2)
+      List<StateChange> journaledChanges = StateChangeJournalRegistry.finalizeForCurrentTransaction();
+      
+      if (journaledChanges != null && !journaledChanges.isEmpty()) {
+        builder.stateChangeCount(journaledChanges.size())
+               .stateChanges(journaledChanges)
+               .stateDigestSha256(StateChangeCanonicalizer.computeStateDigest(journaledChanges));
+      } else {
+        builder.stateChangeCount(0)
+               .stateChanges(new ArrayList<>())
+               .stateDigestSha256(StateChangeCanonicalizer.computeEmptyStateDigest());
+      }
     }
   }
   
