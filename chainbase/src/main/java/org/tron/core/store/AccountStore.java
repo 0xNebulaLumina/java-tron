@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.common.utils.Commons;
 import org.tron.core.capsule.AccountCapsule;
+import org.tron.core.db.StateChangeRecorderContext;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.db.TronStoreWithRevoking;
 import org.tron.core.db.accountstate.AccountStateCallBackUtils;
@@ -60,8 +61,18 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
 
   @Override
   public void put(byte[] key, AccountCapsule item) {
+    AccountCapsule old = super.getUnchecked(key);
+
+    // Record account change for state-change journaling (if enabled)
+    if (StateChangeRecorderContext.isEnabled()) {
+      try {
+        StateChangeRecorderContext.recordAccountChange(key, old, item);
+      } catch (Exception e) {
+        // Swallow to avoid impacting execution
+      }
+    }
+
     if (CommonParameter.getInstance().isHistoryBalanceLookup()) {
-      AccountCapsule old = super.getUnchecked(key);
       if (old == null) {
         if (item.getBalance() != 0) {
           recordBalance(item, item.getBalance());
@@ -84,6 +95,17 @@ public class AccountStore extends TronStoreWithRevoking<AccountCapsule> {
 
   @Override
   public void delete(byte[] key) {
+    // Record deletion as an account change (old -> null)
+    if (StateChangeRecorderContext.isEnabled()) {
+      try {
+        AccountCapsule old = super.getUnchecked(key);
+        if (old != null) {
+          StateChangeRecorderContext.recordAccountChange(key, old, null);
+        }
+      } catch (Exception e) {
+        // Swallow to avoid impacting execution
+      }
+    }
     if (CommonParameter.getInstance().isHistoryBalanceLookup()) {
       AccountCapsule old = super.getUnchecked(key);
       if (old != null) {
