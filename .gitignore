@@ -67,3 +67,6 @@ Wallet
 bin/
 
 data/
+
+gc.log
+start.log
