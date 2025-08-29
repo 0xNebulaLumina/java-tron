@@ -30,6 +30,10 @@ public class StateChangeRecorderBridge implements StateChangeRecorder {
   
   @Override
   public boolean isEnabled() {
-    return StateChangeJournalRegistry.hasActiveJournal();
+    // return StateChangeJournalRegistry.hasActiveJournal();
+
+    // Use the global feature flag to decide if recording should be attempted.
+    // The actual recording methods are no-ops when no journal is active.
+    return StateChangeJournal.isEnabled();
   }
 }
