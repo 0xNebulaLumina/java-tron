@@ -23,6 +23,9 @@ enable_istanbul_fork = true
 energy_limit = 1000000000  # Increased from 100M to 1B to handle complex transactions
 bandwidth_limit = 5000
 max_cpu_time_of_one_tx = 80
+# TRON Parity: Suppress EVM-style coinbase/miner payouts (default: false for parity)
+# Set to true to restore old Ethereum-compatible behavior if needed during rollout
+evm_eth_coinbase_compat = false
 
 [modules.storage]
 enabled = true

@@ -148,6 +148,12 @@ where
         self.evm.context.evm.inner.env.block.coinbase = context.block_coinbase;
         self.evm.context.evm.inner.env.block.difficulty = context.block_difficulty;
         self.evm.context.evm.inner.env.block.gas_limit = revm::primitives::U256::from(context.block_gas_limit);
+        
+        // TRON Parity Fix: Set basefee = 0 to prevent EIP-1559 base fee burns
+        // Keep coinbase set for COINBASE opcode correctness, but ensure no fee distribution
+        self.evm.context.evm.inner.env.block.basefee = revm::primitives::U256::ZERO;
+        
+        tracing::debug!("TRON environment setup - gas_price: {}, basefee: 0 (TRON mode)", tx.gas_price);
 
         // Set Tron-specific configurations
         self.energy_accounting.reset();
@@ -277,7 +283,7 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
         
         tracing::info!("Extracting {} state change records from database", state_records.len());
         
-        let state_changes: Vec<TronStateChange> = state_records.iter().map(|record| {
+        let mut state_changes: Vec<TronStateChange> = state_records.iter().map(|record| {
             match record {
                 crate::storage_adapter::StateChangeRecord::StorageChange { 
                     address, key, old_value, new_value 
@@ -297,10 +303,50 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
             }
         }).collect();
         
+        // TRON Parity Fix: Sort state changes deterministically for consistent digest calculation
+        state_changes.sort_by(|a, b| {
+            match (a, b) {
+                // AccountChange comes before StorageChange for same address
+                (TronStateChange::AccountChange { address: addr_a, .. }, 
+                 TronStateChange::StorageChange { address: addr_b, .. }) => {
+                    let cmp = addr_a.cmp(addr_b);
+                    if cmp == std::cmp::Ordering::Equal {
+                        std::cmp::Ordering::Less // AccountChange before StorageChange
+                    } else {
+                        cmp
+                    }
+                },
+                (TronStateChange::StorageChange { address: addr_a, .. }, 
+                 TronStateChange::AccountChange { address: addr_b, .. }) => {
+                    let cmp = addr_a.cmp(addr_b);
+                    if cmp == std::cmp::Ordering::Equal {
+                        std::cmp::Ordering::Greater // StorageChange after AccountChange
+                    } else {
+                        cmp
+                    }
+                },
+                // AccountChange: sort by address
+                (TronStateChange::AccountChange { address: addr_a, .. }, 
+                 TronStateChange::AccountChange { address: addr_b, .. }) => {
+                    addr_a.cmp(addr_b)
+                },
+                // StorageChange: sort by (address, key)
+                (TronStateChange::StorageChange { address: addr_a, key: key_a, .. }, 
+                 TronStateChange::StorageChange { address: addr_b, key: key_b, .. }) => {
+                    let addr_cmp = addr_a.cmp(addr_b);
+                    if addr_cmp == std::cmp::Ordering::Equal {
+                        key_a.cmp(key_b)
+                    } else {
+                        addr_cmp
+                    }
+                },
+            }
+        });
+        
         // Clear the records after extracting them
         db.clear_state_change_records();
         
-        tracing::info!("Extracted {} state changes for return", state_changes.len());
+        tracing::info!("Extracted and sorted {} state changes for return", state_changes.len());
         for (i, change) in state_changes.iter().enumerate() {
             match change {
                 TronStateChange::StorageChange { address, key, .. } => {
@@ -333,9 +379,10 @@ impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S
                               tx.gas_limit, context.block_gas_limit));
         }
         
-        // Check if gas limit is reasonable (not zero or too small)
-        if tx.gas_limit < 21000 {
-            return Err(anyhow!("Transaction gas limit ({}) is too low (minimum 21000)", tx.gas_limit));
+        // TRON Parity Fix: Remove Ethereum 21000 gas minimum requirement
+        // Only warn for unusually low gas limits to help with debugging
+        if tx.gas_limit > 0 && tx.gas_limit < 21000 {
+            tracing::warn!("Transaction has unusually low gas limit ({}), may be non-VM transaction", tx.gas_limit);
         }
         
         self.setup_environment(tx, context);
