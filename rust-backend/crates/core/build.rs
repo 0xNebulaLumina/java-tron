@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap()
         .to_path_buf();
     
-    let proto_dir = workspace_root.join("proto");
+    let proto_dir = workspace_root.join("framework/src/main/proto");
     let proto_file = proto_dir.join("backend.proto");
     
     // Compile the unified backend proto

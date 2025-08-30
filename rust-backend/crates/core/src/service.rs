@@ -175,6 +175,359 @@ impl BackendService {
         
         Ok(())
     }
+    
+    /// Execute a non-VM transaction natively without EVM
+    /// Handles TRON value transfer with proper fee accounting
+    fn execute_non_vm_transaction(
+        &self,
+        storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        debug!("Executing non-VM transaction: from={:?}, to={:?}, value={}", 
+               transaction.from, transaction.to, transaction.value);
+        
+        let execution_config = self.get_execution_config()?;
+        let fee_config = &execution_config.fees;
+        
+        // For non-VM transactions, we need the 'to' address
+        let to_address = transaction.to.ok_or("Non-VM transaction must have 'to' address")?;
+        
+        // Calculate bandwidth used based on transaction payload size
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+        
+        // Start with empty state changes
+        let mut state_changes = Vec::new();
+        
+        // Load sender account
+        let sender_account = storage_adapter.get_account(&transaction.from)
+            .map_err(|e| format!("Failed to load sender account: {}", e))?
+            .unwrap_or_default();
+        
+        // Load recipient account  
+        let recipient_account = storage_adapter.get_account(&to_address)
+            .map_err(|e| format!("Failed to load recipient account: {}", e))?
+            .unwrap_or_default();
+        
+        // Calculate fees (simplified - in full implementation this would read from dynamic properties)
+        let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
+            Some(flat_fee) => flat_fee,
+            None => {
+                // Default flat fee calculation based on bandwidth
+                bandwidth_used * context.bandwidth_price
+            }
+        };
+        
+        // Validate sender has enough balance for value + fee
+        let total_cost = transaction.value.checked_add(revm_primitives::U256::from(fee_amount))
+            .ok_or("Value + fee overflow")?;
+        
+        if sender_account.balance < total_cost {
+            return Err(format!("Insufficient balance: need {}, have {}", total_cost, sender_account.balance));
+        }
+        
+        // Update sender account: balance -= (value + fee)
+        let new_sender_balance = sender_account.balance - total_cost;
+        let new_sender_account = revm_primitives::AccountInfo {
+            balance: new_sender_balance,
+            nonce: sender_account.nonce + 1, // Increment nonce
+            code_hash: sender_account.code_hash,
+            code: sender_account.code.clone(),
+        };
+        
+        // Add sender account change
+        state_changes.push(TronStateChange::AccountChange {
+            address: transaction.from,
+            old_account: Some(sender_account),
+            new_account: Some(new_sender_account),
+        });
+        
+        // Update recipient account: balance += value
+        let new_recipient_balance = recipient_account.balance + transaction.value;
+        let new_recipient_account = revm_primitives::AccountInfo {
+            balance: new_recipient_balance,
+            nonce: recipient_account.nonce,
+            code_hash: recipient_account.code_hash,
+            code: recipient_account.code.clone(),
+        };
+        
+        // Add recipient account change
+        let old_recipient_account = if recipient_account.balance.is_zero() && recipient_account.nonce == 0 {
+            None // Account creation
+        } else {
+            Some(recipient_account)
+        };
+        
+        state_changes.push(TronStateChange::AccountChange {
+            address: to_address,
+            old_account: old_recipient_account,
+            new_account: Some(new_recipient_account),
+        });
+        
+        // Handle fee based on configuration
+        match fee_config.mode.as_str() {
+            "burn" => {
+                debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
+                // No additional state change - fee is burned (supply reduction)
+            },
+            "blackhole" => {
+                if !fee_config.blackhole_address_base58.is_empty() {
+                    // Parse blackhole address and credit it
+                    match tron_backend_common::from_tron_address(&fee_config.blackhole_address_base58) {
+                        Ok(blackhole_bytes) => {
+                            let blackhole_address = revm_primitives::Address::from_slice(&blackhole_bytes);
+                            
+                            // Load blackhole account
+                            let blackhole_account = storage_adapter.get_account(&blackhole_address)
+                                .map_err(|e| format!("Failed to load blackhole account: {}", e))?
+                                .unwrap_or_default();
+                            
+                            // Credit blackhole account with fee
+                            let new_blackhole_balance = blackhole_account.balance + revm_primitives::U256::from(fee_amount);
+                            let new_blackhole_account = revm_primitives::AccountInfo {
+                                balance: new_blackhole_balance,
+                                nonce: blackhole_account.nonce,
+                                code_hash: blackhole_account.code_hash,
+                                code: blackhole_account.code.clone(),
+                            };
+                            
+                            // Add blackhole account change
+                            let old_blackhole_account = if blackhole_account.balance.is_zero() && blackhole_account.nonce == 0 {
+                                None // Account creation if needed
+                            } else {
+                                Some(blackhole_account)
+                            };
+                            
+                            state_changes.push(TronStateChange::AccountChange {
+                                address: blackhole_address,
+                                old_account: old_blackhole_account,
+                                new_account: Some(new_blackhole_account),
+                            });
+                            
+                            debug!("Credited fee {} SUN to blackhole address {}", fee_amount, fee_config.blackhole_address_base58);
+                        },
+                        Err(e) => {
+                            warn!("Invalid blackhole address '{}': {}, falling back to burn mode", 
+                                  fee_config.blackhole_address_base58, e);
+                        }
+                    }
+                }
+            },
+            _ => {
+                debug!("Unknown fee mode '{}', defaulting to burn", fee_config.mode);
+            }
+        }
+        
+        // Sort state changes deterministically for digest parity
+        state_changes.sort_by(|a, b| {
+            match (a, b) {
+                (TronStateChange::AccountChange { address: addr_a, .. }, 
+                 TronStateChange::AccountChange { address: addr_b, .. }) => {
+                    addr_a.cmp(addr_b)
+                },
+                (TronStateChange::StorageChange { address: addr_a, key: key_a, .. },
+                 TronStateChange::StorageChange { address: addr_b, key: key_b, .. }) => {
+                    addr_a.cmp(addr_b).then(key_a.cmp(key_b))
+                },
+                // Account changes before storage changes for same address
+                (TronStateChange::AccountChange { address: addr_a, .. },
+                 TronStateChange::StorageChange { address: addr_b, .. }) => {
+                    addr_a.cmp(addr_b).then(std::cmp::Ordering::Less)
+                },
+                (TronStateChange::StorageChange { address: addr_a, .. },
+                 TronStateChange::AccountChange { address: addr_b, .. }) => {
+                    addr_a.cmp(addr_b).then(std::cmp::Ordering::Greater)
+                },
+            }
+        });
+        
+        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, fee: {} SUN, state_changes: {}", 
+               bandwidth_used, fee_amount, state_changes.len());
+        
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(), // No return data for value transfers
+            energy_used: 0, // Non-VM transactions use 0 energy
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(), // No logs for value transfers
+            error: None,
+        })
+    }
+    
+    /// Calculate bandwidth usage for a transaction based on its serialized size
+    fn calculate_bandwidth_usage(transaction: &TronTransaction) -> u64 {
+        // Approximate bandwidth calculation based on transaction fields
+        // This is a simplified version - full implementation would consider exact protobuf serialization
+        
+        let base_size = 60; // Base transaction overhead (addresses, nonce, etc.)
+        let data_size = transaction.data.len() as u64;
+        let signature_size = 65; // ECDSA signature size
+        
+        base_size + data_size + signature_size
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tron_backend_execution::{TronTransaction, TronExecutionContext};
+    use tron_backend_common::{ExecutionConfig, ExecutionFeeConfig};
+    use revm_primitives::{Address, U256, Bytes};
+    
+    #[test]
+    fn test_calculate_bandwidth_usage() {
+        // Test basic transaction
+        let tx = TronTransaction {
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            value: U256::from(100),
+            data: Bytes::new(),
+            gas_limit: 21000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+        };
+        
+        let bandwidth = BackendService::calculate_bandwidth_usage(&tx);
+        assert_eq!(bandwidth, 60 + 0 + 65); // base_size + data_size + signature_size
+        
+        // Test transaction with data
+        let tx_with_data = TronTransaction {
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            value: U256::from(100),
+            data: Bytes::from(vec![0x60, 0x60, 0x60, 0x40]), // 4 bytes of data
+            gas_limit: 21000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+        };
+        
+        let bandwidth_with_data = BackendService::calculate_bandwidth_usage(&tx_with_data);
+        assert_eq!(bandwidth_with_data, 60 + 4 + 65); // base_size + data_size + signature_size
+    }
+    
+    #[test]
+    fn test_tx_kind_conversion() {
+        // Test that TxKind enum values can be converted
+        assert_eq!(crate::backend::TxKind::NonVm as i32, 0);
+        assert_eq!(crate::backend::TxKind::Vm as i32, 1);
+        
+        // Test conversion from i32
+        assert_eq!(crate::backend::TxKind::try_from(0).unwrap(), crate::backend::TxKind::NonVm);
+        assert_eq!(crate::backend::TxKind::try_from(1).unwrap(), crate::backend::TxKind::Vm);
+    }
+    
+    #[test] 
+    fn test_address_conversion_helpers() {
+        // Test Tron address prefix stripping
+        let tron_address_with_prefix = vec![0x41, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78];
+        let stripped = BackendService::strip_tron_address_prefix(&tron_address_with_prefix).unwrap();
+        assert_eq!(stripped.len(), 20);
+        assert_eq!(stripped[0], 0x12);
+        
+        let evm_address_no_prefix = vec![0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78];
+        let already_stripped = BackendService::strip_tron_address_prefix(&evm_address_no_prefix).unwrap();
+        assert_eq!(already_stripped.len(), 20);
+        assert_eq!(already_stripped, &evm_address_no_prefix);
+        
+        // Test adding Tron address prefix
+        let address = Address::from_slice(&[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78]);
+        let with_prefix = BackendService::add_tron_address_prefix(&address);
+        assert_eq!(with_prefix.len(), 21);
+        assert_eq!(with_prefix[0], 0x41);
+        assert_eq!(&with_prefix[1..], address.as_slice());
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use revm_primitives::{Address, U256, Bytes};
+    
+    // Mock storage adapter for testing
+    struct MockStorageAdapter {
+        accounts: Arc<RwLock<HashMap<Address, revm_primitives::AccountInfo>>>,
+    }
+    
+    impl MockStorageAdapter {
+        fn new() -> Self {
+            Self {
+                accounts: Arc::new(RwLock::new(HashMap::new())),
+            }
+        }
+        
+        async fn set_account(&self, address: Address, account: revm_primitives::AccountInfo) {
+            self.accounts.write().await.insert(address, account);
+        }
+        
+        async fn get_account(&self, address: &Address) -> Option<revm_primitives::AccountInfo> {
+            self.accounts.read().await.get(address).cloned()
+        }
+    }
+    
+    // Note: These tests would require more setup to actually run, including mock storage adapters
+    // They serve as examples of what could be tested in a full integration test suite
+    
+    #[tokio::test]
+    #[ignore] // Ignored because it requires full system setup
+    async fn test_non_vm_transaction_execution() {
+        // This test would set up a full BackendService with mock storage
+        // and test the complete non-VM transaction execution flow
+        
+        // Setup mock accounts
+        let sender_address = Address::from_slice(&[0x01; 20]);
+        let recipient_address = Address::from_slice(&[0x02; 20]);
+        
+        let sender_account = revm_primitives::AccountInfo {
+            balance: U256::from(1000000u64), // 1M SUN
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+        
+        let recipient_account = revm_primitives::AccountInfo::default();
+        
+        // Create transaction
+        let transaction = TronTransaction {
+            from: sender_address,
+            to: Some(recipient_address),
+            value: U256::from(100000u64), // 100K SUN transfer
+            data: Bytes::new(), // No data = non-VM transaction
+            gas_limit: 0, // Non-VM transactions don't use gas
+            gas_price: U256::ZERO,
+            nonce: 0,
+        };
+        
+        let context = TronExecutionContext {
+            block_number: 1000,
+            block_timestamp: 1640000000,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::from(1),
+            block_gas_limit: 1000000,
+            chain_id: 0x2b6653dc,
+            energy_price: 420,
+            bandwidth_price: 1000,
+        };
+        
+        // Expected results:
+        // - sender balance: 1000000 - 100000 - fee = 1000000 - 100000 - 125*1000 = 775000
+        // - recipient balance: 0 + 100000 = 100000
+        // - bandwidth_used: 60 + 0 + 65 = 125 bytes
+        // - energy_used: 0 (non-VM)
+        // - state_changes: 2 (sender + recipient) or 3 (if blackhole fee)
+    }
+    
+    #[tokio::test] 
+    #[ignore] // Ignored because it requires full system setup
+    async fn test_fee_handling_modes() {
+        // This test would verify different fee handling modes:
+        // 1. "burn" mode - no additional state changes for fees
+        // 2. "blackhole" mode - additional state change crediting blackhole account
+        // 3. Invalid blackhole address handling
+    }
 }
 
 #[tonic::async_trait]
@@ -1128,11 +1481,11 @@ impl crate::backend::backend_server::Backend for BackendService {
             .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
         
         // Convert protobuf types to execution types
-        let transaction = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
-            Ok(tx) => {
-                debug!("Converted transaction - gas_limit: {}, gas_price: {}, data_len: {}", 
-                       tx.gas_limit, tx.gas_price, tx.data.len());
-                tx
+        let (transaction, tx_kind) = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+            Ok((tx, kind)) => {
+                debug!("Converted transaction - gas_limit: {}, gas_price: {}, data_len: {}, kind: {:?}", 
+                       tx.gas_limit, tx.gas_price, tx.data.len(), kind);
+                (tx, kind)
             },
             Err(e) => {
                 error!("Failed to convert transaction: {}", e);
@@ -1186,29 +1539,60 @@ impl crate::backend::backend_server::Backend for BackendService {
             storage_engine.clone(),
         );
 
-        // TRON Parity Fix: Check if this is likely a non-VM transaction before execution
-        let is_non_vm = self.is_likely_non_vm_transaction(&transaction, &storage_adapter);
-        
-        // Execute the transaction using the database-specific storage adapter
-        match execution_module.execute_transaction_with_storage(storage_adapter, &transaction, &context) {
-            Ok(mut result) => {
-                // TRON Parity Fix: Apply non-VM heuristic to set energy_used = 0 for non-VM transactions
-                if is_non_vm {
-                    debug!("Detected likely non-VM transaction (empty data, no code at 'to' address) - setting energy_used = 0");
-                    debug!("Original energy_used: {}, from: {:?}, to: {:?}, value: {}", 
-                           result.energy_used, transaction.from, transaction.to, transaction.value);
-                    result.energy_used = 0;
-                } else {
-                    debug!("Detected VM transaction - keeping original energy_used: {}", result.energy_used);
+        // Phase 3: Branch execution based on transaction kind
+        let execution_result = match tx_kind {
+            crate::backend::TxKind::NonVm => {
+                info!("Executing NON_VM transaction natively (bypassing EVM)");
+                // Execute non-VM transaction natively without EVM
+                match self.execute_non_vm_transaction(&storage_adapter, &transaction, &context) {
+                    Ok(result) => {
+                        info!("Non-VM transaction executed successfully - energy_used: {}, bandwidth_used: {}, state_changes: {}",
+                              result.energy_used, result.bandwidth_used, result.state_changes.len());
+                        Ok(result)
+                    },
+                    Err(e) => {
+                        error!("Non-VM transaction execution failed: {}", e);
+                        Err(anyhow::anyhow!("Non-VM execution error: {}", e))
+                    }
                 }
+            },
+            crate::backend::TxKind::Vm => {
+                info!("Executing VM transaction via EVM");
                 
-                // TRON Phase 2: Apply fee post-processing based on configuration
-                if let Err(e) = self.apply_fee_post_processing(&mut result, &transaction, &context, is_non_vm) {
-                    warn!("Fee post-processing failed: {}, continuing with original result", e);
-                    // Continue with original result
+                // TRON Parity Fix: Check if this is likely a non-VM transaction before execution (fallback heuristic)
+                let is_non_vm = self.is_likely_non_vm_transaction(&transaction, &storage_adapter);
+                
+                // Execute the transaction using the database-specific storage adapter
+                match execution_module.execute_transaction_with_storage(storage_adapter, &transaction, &context) {
+                    Ok(mut result) => {
+                        // TRON Parity Fix: Apply non-VM heuristic to set energy_used = 0 for non-VM transactions
+                        if is_non_vm {
+                            debug!("Detected likely non-VM transaction (empty data, no code at 'to' address) - setting energy_used = 0");
+                            debug!("Original energy_used: {}, from: {:?}, to: {:?}, value: {}", 
+                                   result.energy_used, transaction.from, transaction.to, transaction.value);
+                            result.energy_used = 0;
+                        } else {
+                            debug!("Detected VM transaction - keeping original energy_used: {}", result.energy_used);
+                        }
+                        
+                        // TRON Phase 2: Apply fee post-processing based on configuration
+                        if let Err(e) = self.apply_fee_post_processing(&mut result, &transaction, &context, is_non_vm) {
+                            warn!("Fee post-processing failed: {}, continuing with original result", e);
+                            // Continue with original result
+                        }
+                        
+                        Ok(result)
+                    },
+                    Err(e) => Err(e)
                 }
-                
-                info!("Transaction executed successfully - final energy_used: {}", result.energy_used); // TODO: change to debug in the future
+            }
+        };
+
+        // Handle execution result
+        match execution_result {
+            Ok(result) => {
+                info!("Transaction executed successfully - energy_used: {}, bandwidth_used: {}", 
+                      result.energy_used, result.bandwidth_used);
                 let response = self.convert_execution_result_to_protobuf(result);
                 Ok(Response::new(response))
             }
@@ -1357,7 +1741,20 @@ impl crate::backend::backend_server::Backend for BackendService {
         );
 
         // Estimate energy using the database-specific storage adapter
-        match execution_module.estimate_energy_with_storage(storage_adapter, &transaction, &context) {
+        // Convert protobuf types to execution types (for estimate_energy, we don't need tx_kind)
+        let (transaction_only, _) = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+            Ok((tx, _kind)) => (tx, _kind),
+            Err(e) => {
+                error!("Failed to convert transaction: {}", e);
+                return Ok(Response::new(EstimateEnergyResponse {
+                    energy_estimate: 21000, // Default estimate on error
+                    success: false,
+                    error_message: format!("Transaction conversion error: {}", e),
+                }));
+            }
+        };
+        
+        match execution_module.estimate_energy_with_storage(storage_adapter, &transaction_only, &context) {
             Ok(estimate) => {
                 let response = EstimateEnergyResponse {
                     energy_estimate: estimate as i64,
@@ -1479,7 +1876,7 @@ impl BackendService {
     }
     
     // Helper functions for converting between protobuf and execution types
-    fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>) -> Result<TronTransaction, String> {
+    fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>) -> Result<(TronTransaction, crate::backend::TxKind), String> {
         let tx = tx.ok_or("Transaction is required")?;
         
         // Log the raw transaction data from Java
@@ -1540,7 +1937,7 @@ impl BackendService {
             tx.energy_limit as u64
         };
         
-        Ok(TronTransaction {
+        let transaction = TronTransaction {
             from,
             to,
             value,
@@ -1548,7 +1945,13 @@ impl BackendService {
             gas_limit,
             gas_price,
             nonce: tx.nonce as u64,
-        })
+        };
+        
+        // Extract tx_kind from protobuf, default to VM for backward compatibility
+        let tx_kind = crate::backend::TxKind::try_from(tx.tx_kind).unwrap_or(crate::backend::TxKind::Vm);
+        debug!("Transaction kind: {:?}", tx_kind);
+        
+        Ok((transaction, tx_kind))
     }
     
     fn convert_protobuf_context(&self, ctx: Option<&crate::backend::ExecutionContext>) -> Result<TronExecutionContext, String> {
