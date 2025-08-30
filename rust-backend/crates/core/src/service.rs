@@ -6,7 +6,7 @@ use tracing::{info, error, debug, warn};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
 
-use tron_backend_common::{ModuleManager, HealthStatus};
+use tron_backend_common::{ModuleManager, HealthStatus, from_tron_address};
 use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, StorageAdapter};
 use crate::backend::*;
 
@@ -94,6 +94,86 @@ impl BackendService {
                 false
             }
         }
+    }
+    
+    /// Apply TRON fee policy post-processing to execution results
+    fn apply_fee_post_processing(&self, 
+                                result: &mut TronExecutionResult, 
+                                tx: &TronTransaction, 
+                                context: &TronExecutionContext, 
+                                is_non_vm: bool) -> Result<(), String> {
+        let execution_config = self.get_execution_config()?;
+        let fee_config = &execution_config.fees;
+        
+        // Only apply fee post-processing in blackhole mode
+        if fee_config.mode != "blackhole" {
+            debug!("Fee mode is '{}', skipping fee post-processing", fee_config.mode);
+            return Ok(());
+        }
+        
+        // Validate blackhole address if required
+        if fee_config.blackhole_address_base58.is_empty() {
+            warn!("Fee mode is 'blackhole' but no blackhole address configured, skipping fee emission");
+            return Ok(());
+        }
+        
+        // Parse blackhole address
+        let blackhole_evm_address = match from_tron_address(&fee_config.blackhole_address_base58) {
+            Ok(addr) => revm_primitives::Address::from_slice(&addr),
+            Err(e) => {
+                warn!("Invalid blackhole address '{}': {}, skipping fee emission", 
+                      fee_config.blackhole_address_base58, e);
+                return Ok(());
+            }
+        };
+        
+        let mut fee_amount = 0u64;
+        let mut should_emit = false;
+        
+        if is_non_vm {
+            // Non-VM transaction fee handling
+            if let Some(flat_fee) = fee_config.non_vm_blackhole_credit_flat {
+                fee_amount = flat_fee;
+                should_emit = true;
+                debug!("Non-VM transaction: will emit flat fee {} SUN to blackhole", flat_fee);
+            } else {
+                debug!("Non-VM transaction: no flat fee configured, skipping fee emission");
+            }
+        } else {
+            // VM transaction fee handling
+            if fee_config.experimental_vm_blackhole_credit {
+                // Approximate fee calculation: energy_used * energy_price
+                fee_amount = result.energy_used * context.energy_price;
+                should_emit = true;
+                debug!("VM transaction: will emit estimated fee {} SUN ({}*{}) to blackhole", 
+                       fee_amount, result.energy_used, context.energy_price);
+            } else {
+                debug!("VM transaction: experimental_vm_blackhole_credit disabled, skipping fee emission");
+            }
+        }
+        
+        if should_emit && fee_amount > 0 {
+            // Create synthetic AccountChange for blackhole credit
+            let blackhole_change = TronStateChange::AccountChange {
+                address: blackhole_evm_address,
+                old_account: None, // We don't know the old state, this is a synthetic credit
+                new_account: Some(revm_primitives::AccountInfo {
+                    balance: revm_primitives::U256::from(fee_amount), // This would be added to existing balance
+                    nonce: 0,
+                    code_hash: revm_primitives::B256::ZERO,
+                    code: None,
+                }),
+            };
+            
+            result.state_changes.push(blackhole_change);
+            debug!("Added synthetic blackhole fee credit: {} SUN to address {:?}", 
+                   fee_amount, blackhole_evm_address);
+            
+            // Log warning about approximation
+            warn!("Emitted synthetic fee credit to blackhole (approximation until Phase 3)");
+        }
+        
+        Ok(())
     }
 }
 
@@ -1120,6 +1200,12 @@ impl crate::backend::backend_server::Backend for BackendService {
                     result.energy_used = 0;
                 } else {
                     debug!("Detected VM transaction - keeping original energy_used: {}", result.energy_used);
+                }
+                
+                // TRON Phase 2: Apply fee post-processing based on configuration
+                if let Err(e) = self.apply_fee_post_processing(&mut result, &transaction, &context, is_non_vm) {
+                    warn!("Fee post-processing failed: {}, continuing with original result", e);
+                    // Continue with original result
                 }
                 
                 info!("Transaction executed successfully - final energy_used: {}", result.energy_used); // TODO: change to debug in the future

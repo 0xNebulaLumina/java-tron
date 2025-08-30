@@ -41,6 +41,32 @@ pub struct ExecutionConfig {
     pub max_cpu_time_of_one_tx: u64,
     /// For TRON parity: suppress EVM-style coinbase/miner payouts (default: false for parity)
     pub evm_eth_coinbase_compat: bool,
+    /// TRON fee handling configuration
+    pub fees: ExecutionFeeConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionFeeConfig {
+    /// Fee handling mode: "burn", "blackhole", or "none"
+    /// - "burn": No state delta for fees (supply reduction handled elsewhere)
+    /// - "blackhole": Credit fees to designated blackhole address
+    /// - "none": No fee handling (useful for testing)
+    pub mode: String,
+    
+    /// Whether black hole optimization is supported (matches java-tron's supportBlackHoleOptimization)
+    pub support_black_hole_optimization: bool,
+    
+    /// Base58-encoded TRON address for blackhole (required if mode = "blackhole")
+    pub blackhole_address_base58: String,
+    
+    /// Experimental: emit synthetic VM blackhole credits (default: false)
+    /// When enabled, VM transactions will emit estimated fee credits to blackhole
+    /// This is an approximation and should remain off by default
+    pub experimental_vm_blackhole_credit: bool,
+    
+    /// Optional flat fee for non-VM transactions in SUN (when not reading from dynamic properties)
+    /// If None, no fee deltas are emitted for non-VM transactions
+    pub non_vm_blackhole_credit_flat: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +124,19 @@ impl Default for ExecutionConfig {
             bandwidth_limit: 5000,
             max_cpu_time_of_one_tx: 80,
             evm_eth_coinbase_compat: false, // Default off for TRON parity
+            fees: ExecutionFeeConfig::default(),
+        }
+    }
+}
+
+impl Default for ExecutionFeeConfig {
+    fn default() -> Self {
+        Self {
+            mode: "burn".to_string(), // Default to burn mode for TRON parity
+            support_black_hole_optimization: true, // Match java-tron default
+            blackhole_address_base58: String::new(), // Empty by default, required if mode = "blackhole"
+            experimental_vm_blackhole_credit: false, // Default off to avoid double-counting
+            non_vm_blackhole_credit_flat: None, // No flat fee emission by default
         }
     }
 }
@@ -131,6 +170,13 @@ impl Config {
         builder = builder.set_default("execution.bandwidth_limit", 5000u64)?;
         builder = builder.set_default("execution.max_cpu_time_of_one_tx", 80u64)?;
         builder = builder.set_default("execution.evm_eth_coinbase_compat", false)?;
+        
+        // Fee configuration defaults
+        builder = builder.set_default("execution.fees.mode", "burn")?;
+        builder = builder.set_default("execution.fees.support_black_hole_optimization", true)?;
+        builder = builder.set_default("execution.fees.blackhole_address_base58", "")?;
+        builder = builder.set_default("execution.fees.experimental_vm_blackhole_credit", false)?;
+        // non_vm_blackhole_credit_flat is Option<u64>, leave unset for None default
 
         let config = builder.build()?;
         config.try_deserialize()

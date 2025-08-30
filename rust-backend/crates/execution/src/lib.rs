@@ -287,4 +287,55 @@ mod tests {
         assert!(!transaction.data.is_empty(), "VM transaction should have data");
         assert_eq!(transaction.gas_price, U256::ZERO, "TRON mode should use gas_price = 0 even for VM");
     }
+
+    #[test]
+    fn test_fee_config_defaults() {
+        use tron_backend_common::ExecutionFeeConfig;
+        
+        // Test default fee configuration
+        let fee_config = ExecutionFeeConfig::default();
+        assert_eq!(fee_config.mode, "burn", "Default fee mode should be 'burn' for TRON parity");
+        assert_eq!(fee_config.support_black_hole_optimization, true, "Should support blackhole optimization by default");
+        assert_eq!(fee_config.blackhole_address_base58, "", "Blackhole address should be empty by default");
+        assert_eq!(fee_config.experimental_vm_blackhole_credit, false, "VM blackhole credit should be disabled by default");
+        assert_eq!(fee_config.non_vm_blackhole_credit_flat, None, "Non-VM flat fee should be None by default");
+    }
+
+    #[test]
+    fn test_execution_config_with_fees() {
+        let config = ExecutionConfig::default();
+        
+        // Verify that ExecutionConfig includes fee configuration
+        assert_eq!(config.fees.mode, "burn");
+        assert_eq!(config.evm_eth_coinbase_compat, false, "Coinbase compat should be off by default");
+        
+        // Test that both Phase 1 and Phase 2 configurations work together
+        assert_eq!(config.fees.experimental_vm_blackhole_credit, false, "Phase 2 experimental features should be off");
+    }
+
+    #[test] 
+    fn test_fee_mode_variants() {
+        use tron_backend_common::ExecutionFeeConfig;
+        
+        // Test creating fee configs with different modes
+        let burn_config = ExecutionFeeConfig {
+            mode: "burn".to_string(),
+            ..ExecutionFeeConfig::default()
+        };
+        assert_eq!(burn_config.mode, "burn");
+        
+        let blackhole_config = ExecutionFeeConfig {
+            mode: "blackhole".to_string(),
+            blackhole_address_base58: "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy".to_string(),
+            ..ExecutionFeeConfig::default()
+        };
+        assert_eq!(blackhole_config.mode, "blackhole");
+        assert!(!blackhole_config.blackhole_address_base58.is_empty());
+        
+        let none_config = ExecutionFeeConfig {
+            mode: "none".to_string(),
+            ..ExecutionFeeConfig::default()
+        };
+        assert_eq!(none_config.mode, "none");
+    }
 } 

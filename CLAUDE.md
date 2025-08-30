@@ -301,28 +301,28 @@ Phase 1 — Parity Fix (no proto changes)
 - [ ] Manually spot‑check transactions previously showing a third account delta (coinbase) — confirm absence.
 
 Phase 2 — Configurable Fee Policy (no proto change)
-[ ] Configuration and plumbing
-- [ ] Extend `ExecutionConfig` with nested `ExecutionFeeConfig`:
+[X] Configuration and plumbing
+- [X] Extend `ExecutionConfig` with nested `ExecutionFeeConfig`:
   - `mode: "burn" | "blackhole" | "none"` (default: `"burn"`).
   - `support_black_hole_optimization: bool` (default: true).
   - `blackhole_address_base58: String` (default empty; required if `mode=blackhole`).
   - `experimental_vm_blackhole_credit: bool` (default: false; disabled by default to avoid double‑counting).
   - `non_vm_blackhole_credit_flat: Option<u64>` (SUN), optional flat fee for non‑VM when not deriving from dynamic props.
-- [ ] Add TOML examples under `[execution.fees]` and env overrides, e.g. `TRON_BACKEND__EXECUTION__FEES__MODE`.
+- [X] Add TOML examples under `[execution.fees]` and env overrides, e.g. `TRON_BACKEND__EXECUTION__FEES__MODE`.
 
-[ ] Address utilities
-- [ ] Promote `from_tron_address(...)` from `#[cfg(test)]` to production (new `common::addr` module or public in `storage_adapter.rs`).
-- [ ] Validate checksum and 0x41 prefix; unit test round‑trip with known addresses.
+[X] Address utilities
+- [X] Promote `from_tron_address(...)` from `#[cfg(test)]` to production (new `common::address` module with full Base58Check implementation).
+- [X] Validate checksum and 0x41 prefix; unit test round‑trip with known addresses.
 
-[ ] Optional blackhole credit emission (careful defaults)
-- [ ] After extracting and sorting state changes, if `fees.mode = "blackhole"` AND `experimental_vm_blackhole_credit = true`, append a synthetic `AccountChange` crediting blackhole by `estimated_fee = energy_used * context.energy_price` (approximation). Default OFF.
-- [ ] For likely non‑VM (heuristic), if `fees.mode = "blackhole"` AND `non_vm_blackhole_credit_flat` is set, append a synthetic `AccountChange` to blackhole for that flat value. Default NONE.
-- [ ] Do NOT emit anything in burn mode (no state deltas for fee sinks).
-- [ ] Add guard logs indicating this is an approximation until Phase 3.
+[X] Optional blackhole credit emission (careful defaults)
+- [X] After extracting and sorting state changes, if `fees.mode = "blackhole"` AND `experimental_vm_blackhole_credit = true`, append a synthetic `AccountChange` crediting blackhole by `estimated_fee = energy_used * context.energy_price` (approximation). Default OFF.
+- [X] For likely non‑VM (heuristic), if `fees.mode = "blackhole"` AND `non_vm_blackhole_credit_flat` is set, append a synthetic `AccountChange` to blackhole for that flat value. Default NONE.
+- [X] Do NOT emit anything in burn mode (no state deltas for fee sinks).
+- [X] Add guard logs indicating this is an approximation until Phase 3.
 
-[ ] Tests and validation
-- [ ] Unit test: blackhole credit emission only when enabled; amount matches calculation; address decoding works.
-- [ ] CSV compare again: ensure no regressions to `state_change_count` parity in default config (`mode=burn`).
+[X] Tests and validation
+- [X] Unit test: blackhole credit emission only when enabled; amount matches calculation; address decoding works.
+- [X] CSV compare again: ensure no regressions to `state_change_count` parity in default config (`mode=burn`).
 
 Phase 3 — Full Non‑VM Handling (proto + Java update)
 [ ] Protobuf
