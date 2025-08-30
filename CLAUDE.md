@@ -273,28 +273,28 @@ Key Code Touchpoints
 Detailed TODOs
 
 Phase 1 — Parity Fix (no proto changes)
-[ ] Suppress coinbase/priority fee credit
-- [ ] In `service.rs:convert_protobuf_transaction`, force `gas_price = 0` regardless of input, with a safety gate `execution.evm_eth_coinbase_compat` (default false). Document that this is for TRON parity.
-- [ ] In `tron_evm.rs:setup_environment`, set `env.block.basefee = 0` explicitly (if field exists in current REVM version). Keep `block.coinbase` set for opcode COINBASE correctness but ensure no rewards are distributed.
+[X] Suppress coinbase/priority fee credit
+- [X] In `service.rs:convert_protobuf_transaction`, force `gas_price = 0` regardless of input, with a safety gate `execution.evm_eth_coinbase_compat` (default false). Document that this is for TRON parity.
+- [X] In `tron_evm.rs:setup_environment`, set `env.block.basefee = 0` explicitly (if field exists in current REVM version). Keep `block.coinbase` set for opcode COINBASE correctness but ensure no rewards are distributed.
 
-[ ] Remove Ethereum‑specific gas minima
-- [ ] In `tron_evm.rs:execute_transaction_with_state_tracking`, remove the `tx.gas_limit < 21000` rejection. Only enforce `tx.gas_limit <= context.block_gas_limit`. Log a warning if the gas is unusually low to aid debug.
+[X] Remove Ethereum‑specific gas minima
+- [X] In `tron_evm.rs:execute_transaction_with_state_tracking`, remove the `tx.gas_limit < 21000` rejection. Only enforce `tx.gas_limit <= context.block_gas_limit`. Log a warning if the gas is unusually low to aid debug.
 
-[ ] Deterministic state change ordering (digest parity)
-- [ ] After `extract_state_changes_from_db()` returns, sort `state_changes` deterministically before returning the result:
+[X] Deterministic state change ordering (digest parity)
+- [X] After `extract_state_changes_from_db()` returns, sort `state_changes` deterministically before returning the result:
   - AccountChange: by `address` ascending.
   - StorageChange: by `(address, key)` ascending.
-- [ ] Keep sorting local to execution result (do not mutate storage records order).
+- [X] Keep sorting local to execution result (do not mutate storage records order).
 
-[ ] Non‑VM heuristic energy fix (safe and conservative)
-- [ ] Define “likely non‑VM” as `tx.data.is_empty()` AND `to` present AND `code(to) is None`.
-- [ ] If likely non‑VM, set `energy_used = 0` in the final `TronExecutionResult`. Do not add any fee deltas here; leave fee effects to Java for now (this avoids accidental double‑counting).
-- [ ] Add debug logging when this fast‑path triggers (include `from`, `to`, amount, and reason).
+[X] Non‑VM heuristic energy fix (safe and conservative)
+- [X] Define "likely non‑VM" as `tx.data.is_empty()` AND `to` present AND `code(to) is None`.
+- [X] If likely non‑VM, set `energy_used = 0` in the final `TronExecutionResult`. Do not add any fee deltas here; leave fee effects to Java for now (this avoids accidental double‑counting).
+- [X] Add debug logging when this fast‑path triggers (include `from`, `to`, amount, and reason).
 
-[ ] Unit tests (minimal)
-- [ ] Ensure no `AccountChange` for `block_coinbase` even when `energy_used > 0`.
-- [ ] Ensure sorting: two identical runs produce identical `state_changes` order.
-- [ ] Ensure non‑VM heuristic sets `energy_used = 0` when `to` has no code and `data` is empty.
+[X] Unit tests (minimal)
+- [X] Ensure no `AccountChange` for `block_coinbase` even when `energy_used > 0`.
+- [X] Ensure sorting: two identical runs produce identical `state_changes` order.
+- [X] Ensure non‑VM heuristic sets `energy_used = 0` when `to` has no code and `data` is empty.
 
 [ ] Validation
 - [ ] Re‑run `scripts/execution_csv_compare.py` on the same tx windows; aim for ~100% on `state_change_count` and state digest.

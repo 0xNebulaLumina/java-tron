@@ -39,6 +39,8 @@ pub struct ExecutionConfig {
     pub energy_limit: u64,
     pub bandwidth_limit: u64,
     pub max_cpu_time_of_one_tx: u64,
+    /// For TRON parity: suppress EVM-style coinbase/miner payouts (default: false for parity)
+    pub evm_eth_coinbase_compat: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +97,7 @@ impl Default for ExecutionConfig {
             energy_limit: 100_000_000,
             bandwidth_limit: 5000,
             max_cpu_time_of_one_tx: 80,
+            evm_eth_coinbase_compat: false, // Default off for TRON parity
         }
     }
 }
@@ -127,6 +130,7 @@ impl Config {
         builder = builder.set_default("execution.energy_limit", 100_000_000u64)?;
         builder = builder.set_default("execution.bandwidth_limit", 5000u64)?;
         builder = builder.set_default("execution.max_cpu_time_of_one_tx", 80u64)?;
+        builder = builder.set_default("execution.evm_eth_coinbase_compat", false)?;
 
         let config = builder.build()?;
         config.try_deserialize()

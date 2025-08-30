@@ -7,7 +7,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
 
 use tron_backend_common::{ModuleManager, HealthStatus};
-use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule};
+use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, StorageAdapter};
 use crate::backend::*;
 
 pub struct BackendService {
@@ -44,6 +44,56 @@ impl BackendService {
             
         storage_module.engine()
             .map_err(|e| Status::internal(format!("Storage engine not available: {}", e)))
+    }
+    
+    fn get_execution_config(&self) -> Result<&tron_backend_common::ExecutionConfig, String> {
+        let execution_module = self.get_execution_module()
+            .map_err(|e| format!("Failed to get execution module: {}", e))?;
+        
+        // Downcast to the concrete execution module type
+        let execution_module = execution_module
+            .as_any()
+            .downcast_ref::<ExecutionModule>()
+            .ok_or_else(|| "Failed to downcast execution module".to_string())?;
+        
+        // Access the config field (we need to add a getter method)
+        execution_module.get_config()
+    }
+    
+    /// Detect if a transaction is likely a non-VM transaction based on heuristics
+    fn is_likely_non_vm_transaction(&self, tx: &TronTransaction, storage_adapter: &tron_backend_execution::StorageModuleAdapter) -> bool {
+        // Non-VM heuristic: empty data AND to address has no code
+        if !tx.data.is_empty() {
+            return false; // Has data, likely VM transaction
+        }
+        
+        if tx.to.is_none() {
+            return false; // Contract creation, definitely VM transaction
+        }
+        
+        let to_address = tx.to.unwrap();
+        
+        // Check if the 'to' address has code (making it a contract)
+        // We'll query the 'code' database to see if there's code at this address
+        match storage_adapter.get_code(&to_address) {
+            Ok(Some(code)) => {
+                if code.is_empty() {
+                    // No code = EOA (Externally Owned Account), likely non-VM transaction
+                    true
+                } else {
+                    // Has code = Contract, VM transaction
+                    false
+                }
+            },
+            Ok(None) => {
+                // No code entry = new or EOA account, likely non-VM transaction
+                true
+            },
+            Err(_) => {
+                // Error accessing code, be conservative and assume VM transaction
+                false
+            }
+        }
     }
 }
 
@@ -1056,10 +1106,23 @@ impl crate::backend::backend_server::Backend for BackendService {
             storage_engine.clone(),
         );
 
+        // TRON Parity Fix: Check if this is likely a non-VM transaction before execution
+        let is_non_vm = self.is_likely_non_vm_transaction(&transaction, &storage_adapter);
+        
         // Execute the transaction using the database-specific storage adapter
         match execution_module.execute_transaction_with_storage(storage_adapter, &transaction, &context) {
-            Ok(result) => {
-                info!("Transaction executed successfully - energy_used: {}", result.energy_used); // TODO: change to debug in the future
+            Ok(mut result) => {
+                // TRON Parity Fix: Apply non-VM heuristic to set energy_used = 0 for non-VM transactions
+                if is_non_vm {
+                    debug!("Detected likely non-VM transaction (empty data, no code at 'to' address) - setting energy_used = 0");
+                    debug!("Original energy_used: {}, from: {:?}, to: {:?}, value: {}", 
+                           result.energy_used, transaction.from, transaction.to, transaction.value);
+                    result.energy_used = 0;
+                } else {
+                    debug!("Detected VM transaction - keeping original energy_used: {}", result.energy_used);
+                }
+                
+                info!("Transaction executed successfully - final energy_used: {}", result.energy_used); // TODO: change to debug in the future
                 let response = self.convert_execution_result_to_protobuf(result);
                 Ok(Response::new(response))
             }
@@ -1355,27 +1418,29 @@ impl BackendService {
             return Err("Invalid value length".to_string());
         };
         
-        // Convert Tron energy_price (in SUN) to reasonable gas_price for REVM
-        // Tron energy_price is typically 420-1000 SUN per energy unit
-        // REVM expects gas_price in wei-like units, but Tron uses SUN (1 TRX = 1,000,000 SUN)
-        // We need to convert to avoid extremely high max_fee calculations (gas_limit * gas_price)
-        let energy_price_sun = tx.energy_price as u64;
-
-        // Use a fixed, reasonable gas price for REVM validation
-        // This doesn't affect actual Tron fee calculation, just REVM's balance validation
-        let gas_price = if energy_price_sun == 0 {
-            revm_primitives::U256::from(1u64) // Minimum gas price
+        // Get execution config to check coinbase compatibility
+        let execution_config = self.get_execution_config()?;
+        
+        // TRON Parity Fix: Force gas_price = 0 unless coinbase compat is explicitly enabled
+        let gas_price = if execution_config.evm_eth_coinbase_compat {
+            // Legacy behavior: convert energy_price to gas_price
+            let energy_price_sun = tx.energy_price as u64;
+            if energy_price_sun == 0 {
+                revm_primitives::U256::from(1u64) // Minimum gas price
+            } else {
+                // Convert SUN to a reasonable gas price range (1-1000)
+                let converted_price = std::cmp::min(energy_price_sun / 1000, 1000);
+                let final_price = std::cmp::max(converted_price, 1); // Minimum 1
+                revm_primitives::U256::from(final_price)
+            }
         } else {
-            // Convert SUN to a reasonable gas price range (1-1000)
-            // This ensures max_fee = gas_limit * gas_price stays reasonable
-            // TODO: fix me in the future
-            let converted_price = std::cmp::min(energy_price_sun / 1000, 1000);
-            let final_price = std::cmp::max(converted_price, 1); // Minimum 1
-            revm_primitives::U256::from(final_price)
+            // TRON mode: Always use gas_price = 0 to prevent coinbase/miner rewards
+            debug!("Using gas_price = 0 for TRON parity (suppresses coinbase rewards)");
+            revm_primitives::U256::ZERO
         };
 
-        debug!("Gas price conversion - original energy_price: {} SUN, converted gas_price: {}",
-               energy_price_sun, gas_price);
+        debug!("Gas price conversion - original energy_price: {} SUN, final gas_price: {}, coinbase_compat: {}",
+               tx.energy_price, gas_price, execution_config.evm_eth_coinbase_compat);
         
         // Handle zero energy_limit by using a reasonable default
         let gas_limit = if tx.energy_limit == 0 {
