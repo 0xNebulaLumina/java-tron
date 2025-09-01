@@ -210,66 +210,84 @@ impl BackendService {
             .unwrap_or_default();
         
         // Calculate fees (simplified - in full implementation this would read from dynamic properties)
+        // IMPORTANT: For parity with Java embedded execution by default we DO NOT charge TRX for
+        // non-VM transactions unless a flat fee is explicitly configured. Bandwidth is still
+        // reported in the result for upstream accounting, but we avoid forcing a TRX deduction
+        // here which can cause spurious Insufficient balance errors for system txs.
         let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
             Some(flat_fee) => flat_fee,
-            None => {
-                // Default flat fee calculation based on bandwidth
-                bandwidth_used * context.bandwidth_price
+            None => 0, // Default to zero-fee unless configured otherwise
+        };
+        
+        // Only perform TRX value transfer accounting when the transaction actually transfers TRX
+        // (value > 0). Many NON_VM system transactions have value == 0 and should not touch TRX
+        // balances here.
+        if !transaction.value.is_zero() {
+            // Validate sender has enough balance for value + fee (fee may be zero by default)
+            let total_cost = transaction
+                .value
+                .checked_add(revm_primitives::U256::from(fee_amount))
+                .ok_or("Value + fee overflow")?;
+
+            if sender_account.balance < total_cost {
+                return Err(format!(
+                    "Insufficient balance: need {}, have {}",
+                    total_cost, sender_account.balance
+                ));
             }
-        };
-        
-        // Validate sender has enough balance for value + fee
-        let total_cost = transaction.value.checked_add(revm_primitives::U256::from(fee_amount))
-            .ok_or("Value + fee overflow")?;
-        
-        if sender_account.balance < total_cost {
-            return Err(format!("Insufficient balance: need {}, have {}", total_cost, sender_account.balance));
-        }
-        
-        // Update sender account: balance -= (value + fee)
-        let new_sender_balance = sender_account.balance - total_cost;
-        let new_sender_account = revm_primitives::AccountInfo {
-            balance: new_sender_balance,
-            nonce: sender_account.nonce + 1, // Increment nonce
-            code_hash: sender_account.code_hash,
-            code: sender_account.code.clone(),
-        };
-        
-        // Add sender account change
-        state_changes.push(TronStateChange::AccountChange {
-            address: transaction.from,
-            old_account: Some(sender_account),
-            new_account: Some(new_sender_account),
-        });
-        
-        // Update recipient account: balance += value
-        let new_recipient_balance = recipient_account.balance + transaction.value;
-        let new_recipient_account = revm_primitives::AccountInfo {
-            balance: new_recipient_balance,
-            nonce: recipient_account.nonce,
-            code_hash: recipient_account.code_hash,
-            code: recipient_account.code.clone(),
-        };
-        
-        // Add recipient account change
-        let old_recipient_account = if recipient_account.balance.is_zero() && recipient_account.nonce == 0 {
-            None // Account creation
+
+            // Update sender account: balance -= (value + fee)
+            let new_sender_balance = sender_account.balance - total_cost;
+            let new_sender_account = revm_primitives::AccountInfo {
+                balance: new_sender_balance,
+                nonce: sender_account.nonce + 1, // Increment nonce
+                code_hash: sender_account.code_hash,
+                code: sender_account.code.clone(),
+            };
+
+            // Add sender account change
+            state_changes.push(TronStateChange::AccountChange {
+                address: transaction.from,
+                old_account: Some(sender_account.clone()),
+                new_account: Some(new_sender_account),
+            });
+
+            // Update recipient account: balance += value
+            let new_recipient_balance = recipient_account.balance + transaction.value;
+            let new_recipient_account = revm_primitives::AccountInfo {
+                balance: new_recipient_balance,
+                nonce: recipient_account.nonce,
+                code_hash: recipient_account.code_hash,
+                code: recipient_account.code.clone(),
+            };
+
+            // Add recipient account change
+            let old_recipient_account = if recipient_account.balance.is_zero() && recipient_account.nonce == 0 {
+                None // Account creation
+            } else {
+                Some(recipient_account)
+            };
+
+            state_changes.push(TronStateChange::AccountChange {
+                address: to_address,
+                old_account: old_recipient_account,
+                new_account: Some(new_recipient_account),
+            });
         } else {
-            Some(recipient_account)
-        };
-        
-        state_changes.push(TronStateChange::AccountChange {
-            address: to_address,
-            old_account: old_recipient_account,
-            new_account: Some(new_recipient_account),
-        });
+            debug!(
+                "Non-VM system tx with zero TRX value detected; skipping TRX balance updates"
+            );
+        }
         
         // Handle fee based on configuration
         match fee_config.mode.as_str() {
             "burn" => {
-                debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
-                // No additional state change - fee is burned (supply reduction)
-            },
+                if fee_amount > 0 {
+                    debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
+                } else {
+                    debug!("No fee charged for non-VM tx (burn mode, default)");
+                }
+                },
             "blackhole" => {
                 if !fee_config.blackhole_address_base58.is_empty() {
                     // Parse blackhole address and credit it
