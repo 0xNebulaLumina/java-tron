@@ -280,10 +280,13 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case TransferAssetContract:
+          // TRC-10 asset transfer: this is a NON-VM system transaction that transfers
+          // TRC-10 tokens, not TRX. Do NOT map the token amount to TRX value.
+          // Keep TRX value = 0 to prevent erroneous TRX balance deductions on the backend.
           TransferAssetContract transferAssetContract =
               contractParameter.unpack(TransferAssetContract.class);
           toAddress = transferAssetContract.getToAddress().toByteArray();
-          value = transferAssetContract.getAmount();
+          // value remains 0 for TRC-10 transfer
           txKind = TxKind.NON_VM; // TRC-10 asset transfer
           break;
 
