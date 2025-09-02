@@ -209,16 +209,21 @@ impl BackendService {
             .map_err(|e| format!("Failed to load recipient account: {}", e))?
             .unwrap_or_default();
         
-        // Calculate fees (simplified - in full implementation this would read from dynamic properties)
+        // Phase 3 Fix: Only calculate fee if explicitly configured for non-VM transactions
         let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
-            Some(flat_fee) => flat_fee,
+            Some(flat_fee) => {
+                debug!("Using configured flat fee for non-VM: {} SUN", flat_fee);
+                flat_fee
+            },
             None => {
-                // Default flat fee calculation based on bandwidth
-                bandwidth_used * context.bandwidth_price
+                // Phase 3 Fix: Default to no forced TRX fee for non-VM transactions
+                // TRON uses free bandwidth first; only charge TRX when free bandwidth is insufficient
+                debug!("No flat fee configured for non-VM, using 0 (TRON free bandwidth semantics)");
+                0
             }
         };
         
-        // Validate sender has enough balance for value + fee
+        // Validate sender has enough balance for value + fee (only if fee > 0)
         let total_cost = transaction.value.checked_add(revm_primitives::U256::from(fee_amount))
             .ok_or("Value + fee overflow")?;
         
@@ -230,7 +235,7 @@ impl BackendService {
         let new_sender_balance = sender_account.balance - total_cost;
         let new_sender_account = revm_primitives::AccountInfo {
             balance: new_sender_balance,
-            nonce: sender_account.nonce + 1, // Increment nonce
+            nonce: sender_account.nonce, // Phase 3 Fix: Do NOT increment nonce for non-VM TRX transfers
             code_hash: sender_account.code_hash,
             code: sender_account.code.clone(),
         };
@@ -264,58 +269,62 @@ impl BackendService {
             new_account: Some(new_recipient_account),
         });
         
-        // Handle fee based on configuration
-        match fee_config.mode.as_str() {
-            "burn" => {
-                debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
-                // No additional state change - fee is burned (supply reduction)
-            },
-            "blackhole" => {
-                if !fee_config.blackhole_address_base58.is_empty() {
-                    // Parse blackhole address and credit it
-                    match tron_backend_common::from_tron_address(&fee_config.blackhole_address_base58) {
-                        Ok(blackhole_bytes) => {
-                            let blackhole_address = revm_primitives::Address::from_slice(&blackhole_bytes);
-                            
-                            // Load blackhole account
-                            let blackhole_account = storage_adapter.get_account(&blackhole_address)
-                                .map_err(|e| format!("Failed to load blackhole account: {}", e))?
-                                .unwrap_or_default();
-                            
-                            // Credit blackhole account with fee
-                            let new_blackhole_balance = blackhole_account.balance + revm_primitives::U256::from(fee_amount);
-                            let new_blackhole_account = revm_primitives::AccountInfo {
-                                balance: new_blackhole_balance,
-                                nonce: blackhole_account.nonce,
-                                code_hash: blackhole_account.code_hash,
-                                code: blackhole_account.code.clone(),
-                            };
-                            
-                            // Add blackhole account change
-                            let old_blackhole_account = if blackhole_account.balance.is_zero() && blackhole_account.nonce == 0 {
-                                None // Account creation if needed
-                            } else {
-                                Some(blackhole_account)
-                            };
-                            
-                            state_changes.push(TronStateChange::AccountChange {
-                                address: blackhole_address,
-                                old_account: old_blackhole_account,
-                                new_account: Some(new_blackhole_account),
-                            });
-                            
-                            debug!("Credited fee {} SUN to blackhole address {}", fee_amount, fee_config.blackhole_address_base58);
-                        },
-                        Err(e) => {
-                            warn!("Invalid blackhole address '{}': {}, falling back to burn mode", 
-                                  fee_config.blackhole_address_base58, e);
+        // Handle fee based on configuration (only if fee_amount > 0)
+        if fee_amount > 0 {
+            match fee_config.mode.as_str() {
+                "burn" => {
+                    debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
+                    // No additional state change - fee is burned (supply reduction)
+                },
+                "blackhole" => {
+                    if !fee_config.blackhole_address_base58.is_empty() {
+                        // Parse blackhole address and credit it
+                        match tron_backend_common::from_tron_address(&fee_config.blackhole_address_base58) {
+                            Ok(blackhole_bytes) => {
+                                let blackhole_address = revm_primitives::Address::from_slice(&blackhole_bytes);
+                                
+                                // Load blackhole account
+                                let blackhole_account = storage_adapter.get_account(&blackhole_address)
+                                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
+                                    .unwrap_or_default();
+                                
+                                // Credit blackhole account with fee
+                                let new_blackhole_balance = blackhole_account.balance + revm_primitives::U256::from(fee_amount);
+                                let new_blackhole_account = revm_primitives::AccountInfo {
+                                    balance: new_blackhole_balance,
+                                    nonce: blackhole_account.nonce,
+                                    code_hash: blackhole_account.code_hash,
+                                    code: blackhole_account.code.clone(),
+                                };
+                                
+                                // Add blackhole account change
+                                let old_blackhole_account = if blackhole_account.balance.is_zero() && blackhole_account.nonce == 0 {
+                                    None // Account creation if needed
+                                } else {
+                                    Some(blackhole_account)
+                                };
+                                
+                                state_changes.push(TronStateChange::AccountChange {
+                                    address: blackhole_address,
+                                    old_account: old_blackhole_account,
+                                    new_account: Some(new_blackhole_account),
+                                });
+                                
+                                debug!("Credited fee {} SUN to blackhole address {}", fee_amount, fee_config.blackhole_address_base58);
+                            },
+                            Err(e) => {
+                                warn!("Invalid blackhole address '{}': {}, falling back to burn mode", 
+                                      fee_config.blackhole_address_base58, e);
+                            }
                         }
                     }
+                },
+                _ => {
+                    debug!("Unknown fee mode '{}', defaulting to burn", fee_config.mode);
                 }
-            },
-            _ => {
-                debug!("Unknown fee mode '{}', defaulting to burn", fee_config.mode);
             }
+        } else {
+            debug!("No fee to process (fee_amount = 0), skipping fee handling");
         }
         
         // Sort state changes deterministically for digest parity
