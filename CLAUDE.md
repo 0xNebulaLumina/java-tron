@@ -159,6 +159,97 @@ Format: `<type>(<scope>): <subject>`
 - **Private Keys**: Use localwitness configuration for witnesses
 - **Network Security**: Proper port configuration for P2P networking
 
+## Plan: Parity for Bandwidth Semantics and CSV Encoding
+
+Context: We observed mismatches between (embedded execution + embedded storage) and (remote execution + remote storage) runs starting from the first TransferContract. The deltas point to Java applying bandwidth/TRX adjustments locally that the Rust backend did not see. We will: (1) move TRON bandwidth/TRX fee semantics into the Rust backend so it emits authoritative state changes; (2) normalize the embedded CSV account-change encoding to match the remote format for digest parity.
+
+### Goals
+- Rust becomes the source of truth for non-VM TRX transfer resource/fee accounting and emits complete state deltas.
+- Embedded CSV export serializes account changes in the same layout as RemoteExecutionSPI to align digests.
+- Preserve existing RocksDB storage layouts in Java (only CSV/digest serialization changes on the embedded path).
+
+### Phase 1 — Rust: Implement TRON Bandwidth/TRX Fee Semantics
+
+Owner: rust-backend
+
+Scope: Non-VM value transfers (no data, to EOA). VM paths remain unchanged for now.
+
+Key Design Points
+- Read dynamic properties and resource usage from RocksDB via StorageEngine (no hardcoded constants).
+- Apply consumption order: free bandwidth → staked/delegated net → TRX fee (burn or blackhole), matching Java semantics.
+- Return all resulting state changes (sender account, recipient account, resource usage updates, optional blackhole credit) in `ExecutionResult` for Java to persist.
+- Deterministic state change ordering (address asc; account changes before storage for same addr).
+
+Detailed TODOs
+[ ] Config: Introduce flag `execution.fees.use_dynamic_properties=true` to enable Rust-side fee semantics (default off until rollout).
+[ ] Resource store: Implement readers/writers for resource-related keys (freeNet usage, latest op time, staked net, delegations) mirroring Java DB namespaces (e.g., `properties`, `DelegatedResource`, `DelegatedResourceAccountIndex`).
+[ ] Calculator: Compute `bandwidth_used` from tx payload; determine available free bandwidth (windowed), staked/delegated bandwidth, remainder requiring TRX fee using `bandwidth_price` from dynamic properties.
+[ ] Applier: Produce state deltas:
+    - Sender: balance -= (value + fee), update `latest_op_time`, update usage records.
+    - Recipient: balance += value, create if needed.
+    - Fee mode = burn: no account delta; mode = blackhole: credit blackhole account (create if needed).
+[ ] Core service: Replace current non-VM path post-processing with the new resource manager when the flag is enabled; ensure the gRPC `ExecutionResult` carries all state changes already sorted.
+[ ] Logging/metrics: Emit structured debug for `bandwidth_used`, `free_applied`, `staked_applied`, `fee_applied`, `fee_mode`, `blackhole_credit`. Add counters: `resource.free.bytes`, `resource.staked.bytes`, `resource.fee.sun`.
+[ ] Edge cases: Window reset on expiry; insufficient funds (value + fee); invalid blackhole address fallback to burn; idempotency guarantee (execution is stateless; Java persists once).
+[ ] Tests (unit): free-only, staked-only, fee-required, window rollover, blackhole credit creation.
+[ ] Tests (integration, mock engine): seed minimal props/accounts; validate emitted state deltas for representative scenarios.
+
+Out of Scope (Phase 1)
+- VM fee semantics (remain disabled: `experimental_vm_blackhole_credit=false`).
+- Changing Java storage layouts.
+
+### Phase 2 — Java: Normalize Account-Change Encoding for CSV/Digests
+
+Owner: framework (Java)
+
+Scope: CSV/digest export only. Storage encoding stays as-is.
+
+Target Encoding (to match RemoteExecutionSPI)
+- Account value bytes in state change: `[balance(32)][nonce(8)][codeHash(32)][codeLen(4)][code]`.
+- For EOAs: `nonce=0`, `codeHash=keccak256("") = c5d246...`, `codeLen=0`, `code=empty`.
+- Account change key remains empty (`key_len=0`) to indicate account-level mutation.
+
+Detailed TODOs
+[ ] Add a `csv.normalizedAccountEncoding=true` config toggle (default ON for parity workflows).
+[ ] In the CSV/logger path (ExecutionCsvLogger and friends), detect account-level state changes and serialize values with the normalized layout above instead of legacy `[balance][latestOpTime][flag]` layout when the flag is set.
+[ ] Ensure deterministic ordering of state changes in CSV mirrors Rust’s comparator (address asc; account changes before storage for same address).
+[ ] Keep legacy path available behind the toggle for A/B debugging.
+[ ] Tests: Golden CSV rows for a few account-change cases (EOA transfer, contract account with code), verifying `state_changes_json` formatting and `state_digest_sha256` stability.
+
+### Phase 3 — Rollout, Validation, and Observability
+
+Rollout Plan
+[ ] Dev: Enable `csv.normalizedAccountEncoding=true`; keep Rust fee flag OFF. Verify CSV parity shape.
+[ ] Staging: Enable Rust fee flag `execution.fees.use_dynamic_properties=true`. Validate deltas and CSV parity on sampled ranges (e.g., blocks 300–1800).
+[ ] Production-like: Gradual enablement; monitor metrics and mismatch alerts.
+
+Cross-Run Validation
+[ ] Compare embedded-embedded vs remote-remote for early blocks; confirm the first previously mismatched tx now matches balances and `state_digest_sha256`.
+[ ] Spot-check contract account changes (if any) to ensure code hash/length are consistent across both.
+
+Observability & Safeguards
+[ ] Java safeguard: before applying remote deltas, if local-old differs from remote-old beyond 0 (expected to be equal post-migration), log a warning with address and both values for investigation.
+[ ] Kill switch: both flags (`use_dynamic_properties`, `csv.normalizedAccountEncoding`) must be revertible at runtime/config restart.
+
+### Phase 4 — Parity Hardening (Post-MVP)
+[ ] Extend parity to VM paths when ready; move VM fee semantics into Rust with the same authoritative pattern.
+[ ] Digest canonicalization (optional): define a semantic hash over fields (balance/nonce/codeHash/codeLen/code) to future-proof against representation drift.
+[ ] Broaden test coverage to include delegated resource edge cases and blackhole optimization interactions.
+
+### Acceptance Criteria
+- The first mismatched transaction (block 342) shows identical sender/recipient balances across runs and identical `state_changes_json`/`state_digest_sha256`.
+- Subsequent sampled transactions maintain parity; any residual mismatches are investigated via the logging/metrics added above.
+
+### Notes & Assumptions
+- Java remains the committer of state to local RocksDB; Rust returns authoritative deltas. No double application of fees post migration.
+- Dynamic properties and resource usage locations must match Java’s DB schema; we will mirror the key strategy to avoid schema drift.
+
+### Task Tracking (High-Level)
+[ ] Phase 1: Rust resource manager (config, store, calculator, applier, service integration, tests)
+[ ] Phase 2: Java CSV normalization (toggle, serializer, ordering, tests)
+[ ] Phase 3: Rollout + validation (env toggles, comparisons, metrics)
+[ ] Phase 4: Hardening (VM parity, canonical digests, extended tests)
+
 ### Deployment Modes
 - **Full Node**: Standard blockchain node with complete data
 - **Super Representative**: Witness node for block production (requires --witness flag)
@@ -228,144 +319,3 @@ Format: `<type>(<scope>): <subject>`
 - Comprehensive logging is essential for debugging state synchronization issues between different systems
  - The flow from Rust → Protobuf → Java requires careful attention to serialization formats at each step
 
-## Current Task: TRON‑Accurate Fee Handling (Remote Execution)
-
-Context
-- We compared embedded (execution+storage) vs remote (execution+storage) CSVs and observed systematic mismatches in `state_change_count` and state digest for many transactions. Remote execution appears to emit an EVM-style coinbase credit (miner tip) that should not exist on TRON.
-- TRON fee semantics: no per‑tx miner/coinbase payout. Non‑VM txs pay flat bandwidth fees (burn or credit blackhole depending on `supportBlackHoleOptimization`). Witness rewards occur at block finalization, not per tx. VM txs consume energy and still do not credit coinbase.
-
-Objective
-- Modify the Rust backend execution path so it never emits Ethereum coinbase payouts and handles non‑VM fees accurately (burn vs. blackhole credit), bringing CSV parity with embedded: correct `state_change_count`, `energy_used` (0 for non‑VM), and matching state digests.
-
-Non‑Goals (for this iteration)
-- Implement full TRON fee accounting (stake/energy/bandwidth deduction, fee pool dynamics) identical to Java actuators.
-- Change Java caller behavior unless gated behind explicit feature flags in a later phase.
-
-Acceptance Criteria
-- No `AccountChange` attributed to block coinbase/miner in remote results for any tx.
-- Non‑VM value transfers: `energy_used = 0`; only two account deltas (sender minus amount+fee, recipient plus amount) plus optional blackhole credit if configured. If burn mode is on, no third-party credit delta is emitted.
-- Execution CSV compare shows near‑100% accuracy for `state_change_count` and `state_digest_sha256` on the same tx set; `energy_used` aligns (0 for non‑VM).
-
-High‑Level Plan (Phased)
-1) Phase 1 – Parity Fix (no proto change):
-   - Suppress EVM coinbase/priority fee at the source and stop enforcing Ethereum gas minima.
-   - Post‑process to stabilize state change ordering for digest parity.
-   - Simple non‑VM heuristic for 0 energy without adding fee deltas.
-2) Phase 2 – Configurable TRON Fee Policy (no proto change):
-   - Introduce `execution.fees` config (burn vs blackhole) and optional blackhole credit emission for VM path (default off) and non‑VM (conservative).
-3) Phase 3 – Full Non‑VM Handling (proto + Java update):
-   - Add tx kind to proto; process non‑VM fully in Rust without EVM; apply accurate fee semantics including blackhole credit or burn based on dynamic properties/config.
-
-Key Code Touchpoints
-- `rust-backend/crates/core/src/service.rs`
-  - `convert_protobuf_transaction(...)`
-  - `convert_protobuf_context(...)`
-  - `convert_execution_result_to_protobuf(...)`
-- `rust-backend/crates/execution/src/tron_evm.rs`
-  - `setup_environment(...)`
-  - `execute_transaction_with_state_tracking(...)`
-  - `extract_state_changes_from_db(...)`
-- `rust-backend/crates/execution/src/storage_adapter.rs`
-  - Address utils (promote Base58 Tron → EVM address decoder from test to prod)
-- `rust-backend/crates/common/src/config.rs` and `rust-backend/config.toml`
-  - Add `execution.fees.*` configuration
-
-Detailed TODOs
-
-Phase 1 — Parity Fix (no proto changes)
-[X] Suppress coinbase/priority fee credit
-- [X] In `service.rs:convert_protobuf_transaction`, force `gas_price = 0` regardless of input, with a safety gate `execution.evm_eth_coinbase_compat` (default false). Document that this is for TRON parity.
-- [X] In `tron_evm.rs:setup_environment`, set `env.block.basefee = 0` explicitly (if field exists in current REVM version). Keep `block.coinbase` set for opcode COINBASE correctness but ensure no rewards are distributed.
-
-[X] Remove Ethereum‑specific gas minima
-- [X] In `tron_evm.rs:execute_transaction_with_state_tracking`, remove the `tx.gas_limit < 21000` rejection. Only enforce `tx.gas_limit <= context.block_gas_limit`. Log a warning if the gas is unusually low to aid debug.
-
-[X] Deterministic state change ordering (digest parity)
-- [X] After `extract_state_changes_from_db()` returns, sort `state_changes` deterministically before returning the result:
-  - AccountChange: by `address` ascending.
-  - StorageChange: by `(address, key)` ascending.
-- [X] Keep sorting local to execution result (do not mutate storage records order).
-
-[X] Non‑VM heuristic energy fix (safe and conservative)
-- [X] Define "likely non‑VM" as `tx.data.is_empty()` AND `to` present AND `code(to) is None`.
-- [X] If likely non‑VM, set `energy_used = 0` in the final `TronExecutionResult`. Do not add any fee deltas here; leave fee effects to Java for now (this avoids accidental double‑counting).
-- [X] Add debug logging when this fast‑path triggers (include `from`, `to`, amount, and reason).
-
-[X] Unit tests (minimal)
-- [X] Ensure no `AccountChange` for `block_coinbase` even when `energy_used > 0`.
-- [X] Ensure sorting: two identical runs produce identical `state_changes` order.
-- [X] Ensure non‑VM heuristic sets `energy_used = 0` when `to` has no code and `data` is empty.
-
-[ ] Validation
-- [ ] Re‑run `scripts/execution_csv_compare.py` on the same tx windows; aim for ~100% on `state_change_count` and state digest.
-- [ ] Manually spot‑check transactions previously showing a third account delta (coinbase) — confirm absence.
-
-Phase 2 — Configurable Fee Policy (no proto change)
-[X] Configuration and plumbing
-- [X] Extend `ExecutionConfig` with nested `ExecutionFeeConfig`:
-  - `mode: "burn" | "blackhole" | "none"` (default: `"burn"`).
-  - `support_black_hole_optimization: bool` (default: true).
-  - `blackhole_address_base58: String` (default empty; required if `mode=blackhole`).
-  - `experimental_vm_blackhole_credit: bool` (default: false; disabled by default to avoid double‑counting).
-  - `non_vm_blackhole_credit_flat: Option<u64>` (SUN), optional flat fee for non‑VM when not deriving from dynamic props.
-- [X] Add TOML examples under `[execution.fees]` and env overrides, e.g. `TRON_BACKEND__EXECUTION__FEES__MODE`.
-
-[X] Address utilities
-- [X] Promote `from_tron_address(...)` from `#[cfg(test)]` to production (new `common::address` module with full Base58Check implementation).
-- [X] Validate checksum and 0x41 prefix; unit test round‑trip with known addresses.
-
-[X] Optional blackhole credit emission (careful defaults)
-- [X] After extracting and sorting state changes, if `fees.mode = "blackhole"` AND `experimental_vm_blackhole_credit = true`, append a synthetic `AccountChange` crediting blackhole by `estimated_fee = energy_used * context.energy_price` (approximation). Default OFF.
-- [X] For likely non‑VM (heuristic), if `fees.mode = "blackhole"` AND `non_vm_blackhole_credit_flat` is set, append a synthetic `AccountChange` to blackhole for that flat value. Default NONE.
-- [X] Do NOT emit anything in burn mode (no state deltas for fee sinks).
-- [X] Add guard logs indicating this is an approximation until Phase 3.
-
-[X] Tests and validation
-- [X] Unit test: blackhole credit emission only when enabled; amount matches calculation; address decoding works.
-- [X] CSV compare again: ensure no regressions to `state_change_count` parity in default config (`mode=burn`).
-
-Phase 3 — Full Non‑VM Handling (proto + Java update)
-[X] Protobuf
-- [X] Add `enum TxKind { NON_VM = 0; VM = 1; }` and `tx_kind` in `TronTransaction`.
-- [X] Regenerate protobuf files after schema changes.
-- [X] Update Java caller to populate `tx_kind`.
-
-[X] Execution path
-- [X] In core service, branch on `tx_kind`:
-  - For `NON_VM`: bypass EVM entirely. Use `StorageModuleAdapter` to load sender/recipient and apply TRON value transfer and fee semantics.
-  - `energy_used = 0`; compute `bandwidth_used` based on payload size per TRON rules; update `resource_usage` if needed.
-  - Fee handling:
-    - If `fees.mode="burn"`: no state delta (supply accounting is elsewhere).
-    - If `fees.mode="blackhole"`: credit blackhole account by the fee.
-- [X] For `VM`: continue REVM execution; still no per‑tx miner/coinbase credit (with fallback heuristics).
-
-[ ] Dynamic properties integration (optional)
-- [ ] Read `supportBlackHoleOptimization` and fee parameters from dynamic properties DB (via `StorageModuleAdapter`) to auto‑select fee mode and amounts; config acts as fallback.
-
-[X] Tests and validation
-- [X] Unit tests for non‑VM path: bandwidth calculation, address conversions, TxKind enum handling.
-- [X] Integration test framework setup (mocked, ready for full system testing).
-- [ ] End‑to‑end CSV compare in both modes (burn and blackhole) across a block window with mixed tx types.
-
-Risk Mitigation & Compatibility
-- Default behavior remains parity‑safe: coinbase suppressed, `fees.mode = burn`, experimental emissions OFF.
-- Introduce a temporary `execution.evm_eth_coinbase_compat` flag (default false) to restore old behavior if needed during rollout.
-- Sorting only affects return payload ordering, not persisted DB order.
-
-Open Questions / Follow‑ups
-- What exact fee values should be emitted for non‑VM remote path to match Java actuators? If dynamic properties are required, Phase 3 should include reading them to compute accurate fees.
-- Should remote execution ever emit fee‑related deltas for VM txs, or should all fee effects remain Java‑side until full parity is proven? Current proposal keeps VM fees non‑emitting by default.
-- If state digest mismatch persists after coinbase suppression and sorting, audit REVM vs Java EVM differences (e.g., refunds, precompile side‑effects, account creation edge cases) on the mismatching tx set.
-
-Owner Map (by file)
-- `crates/core/src/service.rs`: tx/context conversion, result conversion, optional non‑VM heuristic and fee post‑processing gates.
-- `crates/execution/src/tron_evm.rs`: env setup, gas/basefee handling, state change extraction and sorting, removal of Ethereum gas minima.
-- `crates/execution/src/storage_adapter.rs`: address utilities (Base58 decode), optional account/code queries for heuristics.
-- `crates/common/src/config.rs` + `rust-backend/config.toml`: config struct and defaults for `execution.fees.*`, rollout flags.
-
-Verification Checklist (before merge)
-[ ] Unit tests added/updated for coinbase suppression, sorting, heuristics, address utils.
-[ ] Default config produces no coinbase deltas; CSV compare shows improved parity on provided sample files.
-[ ] Docs: `config.toml` and README updated with `execution.fees` and rollout flags.
-[ ] Logging at debug level for new branches; no excessive info-level noise.
-[ ] Backout plan documented (`execution.evm_eth_coinbase_compat=true`).
