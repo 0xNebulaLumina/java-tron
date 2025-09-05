@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.bouncycastle.crypto.digests.KeccakDigest;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.execution.spi.ExecutionSPI.StateChange;
 import org.tron.common.utils.ByteArray;
@@ -250,8 +251,11 @@ public class StateChangeJournal {
   
   /**
    * Serialize AccountCapsule to byte array aligned with remote format.
-   * Format: [balance(32)] + [create_time(8)] + [code_length(4)] + [code(variable)]
-   * Note: TRON accounts don't have nonce or code hash, using create_time instead
+   * Format: [balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]
+   *
+   * Notes:
+   * - TRON accounts don't use Ethereum nonce; we emit 0.
+   * - code_hash is Keccak-256 of the contract code bytes (empty code => KECCAK_EMPTY).
    */
   private byte[] serializeAccountInfo(AccountCapsule account) {
     if (account == null) {
@@ -261,11 +265,14 @@ public class StateChangeJournal {
     try {
       // Get account data
       long balance = account.getBalance();
-      long createTime = account.getInstance().getCreateTime();
+      // TRON does not use Ethereum-style nonces for accounts; emit 0
+      long nonce = 0L;
       byte[] code = account.getInstance().getCode().toByteArray();
-      
-      // Calculate total size
-      int totalSize = 32 + 8 + 4 + (code != null ? code.length : 0);
+      byte[] codeHash = keccak256(code != null ? code : new byte[0]);
+
+      // Calculate total size: balance(32) + nonce(8) + code_hash(32) + code_len(4) + code
+      int codeLength = (code != null ? code.length : 0);
+      int totalSize = 32 + 8 + 32 + 4 + codeLength;
       byte[] result = new byte[totalSize];
       int offset = 0;
       
@@ -274,13 +281,16 @@ public class StateChangeJournal {
       System.arraycopy(balanceBytes, 0, result, offset, 32);
       offset += 32;
       
-      // Create time (8 bytes, big-endian)
-      byte[] createTimeBytes = longToBytes8(createTime);
-      System.arraycopy(createTimeBytes, 0, result, offset, 8);
+      // Nonce (8 bytes, big-endian)
+      byte[] nonceBytes = longToBytes8(nonce);
+      System.arraycopy(nonceBytes, 0, result, offset, 8);
       offset += 8;
       
+      // Code hash (32 bytes)
+      System.arraycopy(codeHash, 0, result, offset, 32);
+      offset += 32;
+
       // Code length (4 bytes, big-endian)
-      int codeLength = code != null ? code.length : 0;
       result[offset++] = (byte) (codeLength >>> 24);
       result[offset++] = (byte) (codeLength >>> 16);
       result[offset++] = (byte) (codeLength >>> 8);
@@ -296,6 +306,16 @@ public class StateChangeJournal {
       logger.warn("Failed to serialize account info", e);
       return new byte[0];
     }
+  }
+
+  private byte[] keccak256(byte[] data) {
+    KeccakDigest digest = new KeccakDigest(256);
+    if (data != null && data.length > 0) {
+      digest.update(data, 0, data.length);
+    }
+    byte[] out = new byte[32];
+    digest.doFinal(out, 0);
+    return out;
   }
   
   private byte[] longToBytes32(long value) {
