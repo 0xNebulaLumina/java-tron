@@ -2047,12 +2047,26 @@ impl BackendService {
                 TronStateChange::AccountChange { address, old_account, new_account } => {
                     // Helper function to convert AccountInfo to protobuf
                     let convert_account_info = |addr: &revm::primitives::Address, acc_info: &revm::primitives::AccountInfo| {
+                        // Ensure EOAs (no code) serialize with empty code bytes.
+                        let code_bytes: Vec<u8> = match acc_info.code.as_ref() {
+                            None => Vec::new(),
+                            Some(c) => {
+                                let b = c.bytes();
+                                // Treat zero-length or single 0x00 as empty for EOAs
+                                if b.len() == 0 || (b.len() == 1 && b[0] == 0) {
+                                    Vec::new()
+                                } else {
+                                    b.to_vec()
+                                }
+                            }
+                        };
+
                         crate::backend::AccountInfo {
                             address: Self::add_tron_address_prefix(addr),
                             balance: acc_info.balance.to_be_bytes::<32>().to_vec(),
                             nonce: acc_info.nonce,
                             code_hash: acc_info.code_hash.as_slice().to_vec(),
-                            code: acc_info.code.as_ref().map_or(Vec::new(), |c| c.bytes().to_vec()),
+                            code: code_bytes,
                         }
                     };
 
