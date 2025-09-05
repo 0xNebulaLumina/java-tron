@@ -11,10 +11,12 @@ use tron_backend_common::{Module, ModuleHealth, ExecutionConfig};
 pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange};
 pub use precompiles::TronPrecompiles;
 pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageModuleAdapter, StorageAdapterDatabase, StateChangeRecord};
+pub use resource::{ResourceManager, ResourceConfig, ResourceStateStore, ResourceUsageRecord, DynamicProperties, ResourceCalculator, ResourceApplier};
 
 mod tron_evm;
 mod precompiles;
 mod storage_adapter;
+pub mod resource;
 
 pub struct ExecutionModule {
     config: ExecutionConfig,

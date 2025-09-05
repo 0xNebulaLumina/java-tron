@@ -7,7 +7,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
 
 use tron_backend_common::{ModuleManager, HealthStatus, from_tron_address};
-use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, StorageAdapter};
+use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, StorageAdapter, ResourceManager, StorageModuleAdapter};
 use crate::backend::*;
 
 pub struct BackendService {
@@ -196,6 +196,14 @@ impl BackendService {
         // Calculate bandwidth used based on transaction payload size
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
         
+        // Check if we should use the new resource management system
+        if fee_config.use_dynamic_properties {
+            info!("Using Rust-authoritative bandwidth/fee semantics for non-VM transaction");
+            return self.execute_non_vm_with_resource_manager(storage_adapter, transaction, context);
+        }
+        
+        info!("Using legacy non-VM transaction processing (Java-compatible flat fee mode)");
+        
         // Start with empty state changes
         let mut state_changes = Vec::new();
         
@@ -360,6 +368,50 @@ impl BackendService {
             bandwidth_used,
             state_changes,
             logs: Vec::new(), // No logs for value transfers
+            error: None,
+        })
+    }
+
+    /// Execute non-VM transaction using the new resource management system
+    fn execute_non_vm_with_resource_manager(
+        &self,
+        storage_adapter: &StorageModuleAdapter,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        debug!("Executing non-VM transaction with resource manager: from={:?}, to={:?}, value={}", 
+               transaction.from, transaction.to, transaction.value);
+
+        let execution_config = self.get_execution_config()?;
+        let to_address = transaction.to.ok_or("Non-VM transaction must have 'to' address")?;
+        
+        // Calculate bandwidth used based on transaction payload size
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // Create resource manager with the storage adapter (clone to get owned value)
+        let cloned_storage = storage_adapter.clone();
+        let mut resource_manager = ResourceManager::new(cloned_storage, execution_config)
+            .map_err(|e| format!("Failed to create resource manager: {}", e))?;
+
+        // Process the transfer with bandwidth and fee calculations
+        let state_changes = resource_manager.process_transfer(
+            transaction.from,
+            to_address,
+            transaction.value,
+            bandwidth_used,
+            context.block_timestamp,
+        ).map_err(|e| format!("Resource manager processing failed: {}", e))?;
+
+        info!("Non-VM transaction processed with resource manager - bandwidth_used: {}, state_changes: {}", 
+              bandwidth_used, state_changes.len());
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0, // Non-VM transactions use 0 energy
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
             error: None,
         })
     }

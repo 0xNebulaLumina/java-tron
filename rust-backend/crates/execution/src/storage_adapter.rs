@@ -91,6 +91,7 @@ impl StorageAdapter for InMemoryStorageAdapter {
 
 /// Multi-database unified storage adapter that routes data to appropriate databases
 /// This matches java-tron's database organization while providing a unified interface for EVM execution
+#[derive(Clone)]
 pub struct StorageModuleAdapter {
     storage_engine: StorageEngine,
 }

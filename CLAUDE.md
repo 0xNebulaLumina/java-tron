@@ -181,15 +181,15 @@ Key Design Points
 - Deterministic state change ordering (address asc; account changes before storage for same addr).
 
 Detailed TODOs
-[ ] Config: Introduce flag `execution.fees.use_dynamic_properties=true` to enable Rust-side fee semantics (default off until rollout).
-[ ] Resource store: Implement readers/writers for resource-related keys (freeNet usage, latest op time, staked net, delegations) mirroring Java DB namespaces (e.g., `properties`, `DelegatedResource`, `DelegatedResourceAccountIndex`).
-[ ] Calculator: Compute `bandwidth_used` from tx payload; determine available free bandwidth (windowed), staked/delegated bandwidth, remainder requiring TRX fee using `bandwidth_price` from dynamic properties.
-[ ] Applier: Produce state deltas:
+[X] Config: Introduce flag `execution.fees.use_dynamic_properties=true` to enable Rust-side fee semantics (default off until rollout).
+[X] Resource store: Implement readers/writers for resource-related keys (freeNet usage, latest op time, staked net, delegations) mirroring Java DB namespaces (e.g., `properties`, `DelegatedResource`, `DelegatedResourceAccountIndex`).
+[X] Calculator: Compute `bandwidth_used` from tx payload; determine available free bandwidth (windowed), staked/delegated bandwidth, remainder requiring TRX fee using `bandwidth_price` from dynamic properties.
+[X] Applier: Produce state deltas:
     - Sender: balance -= (value + fee), update `latest_op_time`, update usage records.
     - Recipient: balance += value, create if needed.
     - Fee mode = burn: no account delta; mode = blackhole: credit blackhole account (create if needed).
-[ ] Core service: Replace current non-VM path post-processing with the new resource manager when the flag is enabled; ensure the gRPC `ExecutionResult` carries all state changes already sorted.
-[ ] Logging/metrics: Emit structured debug for `bandwidth_used`, `free_applied`, `staked_applied`, `fee_applied`, `fee_mode`, `blackhole_credit`. Add counters: `resource.free.bytes`, `resource.staked.bytes`, `resource.fee.sun`.
+[X] Core service: Replace current non-VM path post-processing with the new resource manager when the flag is enabled; ensure the gRPC `ExecutionResult` carries all state changes already sorted.
+[X] Logging/metrics: Emit structured debug for `bandwidth_used`, `free_applied`, `staked_applied`, `fee_applied`, `fee_mode`, `blackhole_credit`. Add counters: `resource.free.bytes`, `resource.staked.bytes`, `resource.fee.sun`.
 [ ] Edge cases: Window reset on expiry; insufficient funds (value + fee); invalid blackhole address fallback to burn; idempotency guarantee (execution is stateless; Java persists once).
 [ ] Tests (unit): free-only, staked-only, fee-required, window rollover, blackhole credit creation.
 [ ] Tests (integration, mock engine): seed minimal props/accounts; validate emitted state deltas for representative scenarios.

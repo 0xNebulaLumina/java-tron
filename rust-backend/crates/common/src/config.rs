@@ -67,6 +67,11 @@ pub struct ExecutionFeeConfig {
     /// Optional flat fee for non-VM transactions in SUN (when not reading from dynamic properties)
     /// If None, no fee deltas are emitted for non-VM transactions
     pub non_vm_blackhole_credit_flat: Option<u64>,
+    
+    /// Whether to enable Rust-side bandwidth/fee semantics reading from dynamic properties
+    /// When true, Rust becomes authoritative for non-VM TRX transfer fees
+    /// Default: false (Java handles fees until Phase 1 rollout)
+    pub use_dynamic_properties: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +142,7 @@ impl Default for ExecutionFeeConfig {
             blackhole_address_base58: String::new(), // Empty by default, required if mode = "blackhole"
             experimental_vm_blackhole_credit: false, // Default off to avoid double-counting
             non_vm_blackhole_credit_flat: None, // No flat fee emission by default
+            use_dynamic_properties: false, // Default off until Phase 1 rollout
         }
     }
 }
@@ -176,6 +182,7 @@ impl Config {
         builder = builder.set_default("execution.fees.support_black_hole_optimization", true)?;
         builder = builder.set_default("execution.fees.blackhole_address_base58", "")?;
         builder = builder.set_default("execution.fees.experimental_vm_blackhole_credit", false)?;
+        builder = builder.set_default("execution.fees.use_dynamic_properties", false)?;
         // non_vm_blackhole_credit_flat is Option<u64>, leave unset for None default
 
         let config = builder.build()?;
