@@ -102,7 +102,7 @@ else
     RUST_LOG_PATH="rust.log (not found)"
 fi
 
-cp ../archive/1.embedded-java.log ./
+cp ../archive/4.embedded-java.log ./
 
 # Step 10: Find newest CSV file
 echo "Step 10: Finding newest CSV file..."
