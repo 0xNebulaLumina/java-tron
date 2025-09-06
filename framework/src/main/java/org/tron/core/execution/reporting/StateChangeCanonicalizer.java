@@ -78,15 +78,19 @@ public class StateChangeCanonicalizer {
    * @return Sorted list of canonical tuple strings
    */
   private static List<String> buildCanonicalTuples(List<StateChange> stateChanges) {
-    List<String> tuples = new ArrayList<>();
+    // First sort state changes by address for deterministic ordering
+    List<StateChange> sortedChanges = new ArrayList<>(stateChanges);
+    sortedChanges.sort((a, b) -> {
+      String addrA = a.getAddress() != null ? ByteArray.toHexString(a.getAddress()).toLowerCase() : "";
+      String addrB = b.getAddress() != null ? ByteArray.toHexString(b.getAddress()).toLowerCase() : "";
+      return addrA.compareTo(addrB);
+    });
     
-    for (StateChange change : stateChanges) {
+    List<String> tuples = new ArrayList<>();
+    for (StateChange change : sortedChanges) {
       String tuple = buildCanonicalTuple(change);
       tuples.add(tuple);
     }
-    
-    // Sort lexicographically for deterministic ordering
-    Collections.sort(tuples);
     
     return tuples;
   }
@@ -104,14 +108,55 @@ public class StateChangeCanonicalizer {
     String key = change.getKey() != null 
         ? ByteArray.toHexString(change.getKey()).toLowerCase() 
         : "";
-    String oldValue = change.getOldValue() != null 
-        ? ByteArray.toHexString(change.getOldValue()).toLowerCase() 
-        : "";
+    
+    // Handle oldValue: treat null/empty as all-zero for account-level changes (empty key)
+    String oldValue;
+    if (change.getOldValue() != null && change.getOldValue().length > 0) {
+      oldValue = ByteArray.toHexString(change.getOldValue()).toLowerCase();
+    } else {
+      // For account-level changes (key is empty), use normalized zero account format
+      if (key.isEmpty()) {
+        oldValue = normalizeAccountValue(null);
+      } else {
+        oldValue = "";
+      }
+    }
+    
     String newValue = change.getNewValue() != null 
         ? ByteArray.toHexString(change.getNewValue()).toLowerCase() 
         : "";
     
     return address + "|" + key + "|" + oldValue + "|" + newValue;
+  }
+  
+  /**
+   * Normalize account value for comparison - treats null/empty as zero account.
+   * Format: [balance(32)][nonce(8)][codeHash(32)][codeLen(4)][code]
+   * 
+   * @param accountData Raw account data or null
+   * @return Normalized hex string for account data
+   */
+  private static String normalizeAccountValue(byte[] accountData) {
+    if (accountData == null || accountData.length == 0) {
+      // Return zero account: 32 bytes balance (0) + 8 bytes nonce (0) + 32 bytes empty code hash + 4 bytes code length (0)
+      StringBuilder zeroAccount = new StringBuilder();
+      // Balance: 32 bytes of zero (64 hex chars)
+      for (int i = 0; i < 64; i++) {
+        zeroAccount.append("0");
+      }
+      // Nonce: 8 bytes of zero (16 hex chars)
+      for (int i = 0; i < 16; i++) {
+        zeroAccount.append("0");
+      }
+      // Code hash: keccak256("") = c5d246... (empty code hash)
+      zeroAccount.append("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
+      // Code length: 4 bytes of zero
+      zeroAccount.append("00000000");
+      // No code bytes
+      return zeroAccount.toString().toLowerCase();
+    } else {
+      return ByteArray.toHexString(accountData).toLowerCase();
+    }
   }
   
   /**
@@ -144,14 +189,22 @@ public class StateChangeCanonicalizer {
       return "[]";
     }
     
+    // Sort by address for deterministic ordering
+    List<StateChange> sortedChanges = new ArrayList<>(stateChanges);
+    sortedChanges.sort((a, b) -> {
+      String addrA = toHexOrEmpty(a.getAddress()).toLowerCase();
+      String addrB = toHexOrEmpty(b.getAddress()).toLowerCase();
+      return addrA.compareTo(addrB);
+    });
+    
     StringBuilder sb = new StringBuilder("[");
     
-    for (int i = 0; i < stateChanges.size(); i++) {
+    for (int i = 0; i < sortedChanges.size(); i++) {
       if (i > 0) {
         sb.append(",");
       }
       
-      StateChange change = stateChanges.get(i);
+      StateChange change = sortedChanges.get(i);
       sb.append("{");
       sb.append("\"address\":\"").append(toHexOrEmpty(change.getAddress())).append("\",");
       sb.append("\"key\":\"").append(toHexOrEmpty(change.getKey())).append("\",");
