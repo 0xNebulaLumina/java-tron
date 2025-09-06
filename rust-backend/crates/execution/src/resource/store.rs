@@ -158,27 +158,30 @@ where
     }
 
     /// Load resource usage for an account
-    /// Maps to Java's account resource usage tracking
+    /// Uses a dedicated auxiliary DB and avoids emitting EVM storage changes
     pub fn load_resource_usage(&self, address: &Address) -> Result<ResourceUsageRecord> {
-        let usage_key_hash = sha3::Keccak256::digest(format!("account_net_usage:{}", hex::encode(address.as_slice())));
-        let usage_key = U256::from_be_slice(&usage_key_hash);
-        
-        let usage_value = self.storage.get_storage(address, &usage_key)?;
-        if usage_value != U256::ZERO {
-            return self.deserialize_resource_usage_from_u256(usage_value);
+        let db = "resource-usage";
+        let key = Self::resource_usage_db_key(address);
+
+        if let Some(bytes) = self.storage.get_aux_kv(db, &key)? {
+            return self.deserialize_resource_usage(&bytes);
         }
 
         // Return default if not found
         Ok(ResourceUsageRecord::default())
     }
 
-    /// Save resource usage for an account
+    /// Save resource usage for an account in a dedicated auxiliary DB
     pub fn save_resource_usage(&mut self, address: &Address, usage: &ResourceUsageRecord) -> Result<()> {
-        let usage_key_hash = sha3::Keccak256::digest(format!("account_net_usage:{}", hex::encode(address.as_slice())));
-        let usage_key = U256::from_be_slice(&usage_key_hash);
-        let usage_value = self.serialize_resource_usage_as_u256(usage)?;
-        self.storage.set_storage(*address, usage_key, usage_value)?;
+        let db = "resource-usage";
+        let key = Self::resource_usage_db_key(address);
+        let bytes = self.serialize_resource_usage(usage)?;
+        self.storage.put_aux_kv(db, &key, &bytes)?;
         Ok(())
+    }
+
+    fn resource_usage_db_key(address: &Address) -> Vec<u8> {
+        format!("account_net_usage:{}", hex::encode(address.as_slice())).into_bytes()
     }
 
     fn deserialize_resource_usage(&self, bytes: &[u8]) -> Result<ResourceUsageRecord> {

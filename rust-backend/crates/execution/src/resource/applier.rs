@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use revm_primitives::{Address, U256, Bytes, AccountInfo};
-use sha2::Digest;
+use sha3::Digest;
 use tracing::{debug, info};
 
 use super::config::ResourceConfig;
@@ -22,14 +22,14 @@ impl ResourceApplier {
         }
     }
 
-    /// Apply sender account changes (balance reduction, resource usage updates)
-    /// Returns state changes for sender account and resource usage records
+    /// Apply sender account changes (balance reduction)
+    /// Returns state changes for sender account
     pub fn apply_sender_changes(
         &self,
         address: Address,
         old_balance: U256,
         total_cost: U256,
-        usage: &ResourceUsageRecord,
+        _usage: &ResourceUsageRecord,
     ) -> Result<Vec<crate::TronStateChange>> {
         let mut state_changes = Vec::new();
 
@@ -61,18 +61,8 @@ impl ResourceApplier {
         };
         state_changes.push(balance_change);
 
-        // Create resource usage update (stored separately as storage change)
-        let usage_key_hash = sha2::Sha256::digest(format!("account_net_usage:{}", hex::encode(address.as_slice())));
-        let usage_key = U256::from_be_slice(&usage_key_hash);
-        
-        let usage_change = crate::TronStateChange::StorageChange {
-            address,
-            key: usage_key,
-            old_value: U256::ZERO, // Would need to load old usage for proper old_value
-            new_value: self.encode_resource_usage_as_u256(usage)?,
-        };
-        state_changes.push(usage_change);
-
+        // Resource usage tracking is persisted in a dedicated DB and should not be
+        // emitted as a storage change in state deltas returned to Java.
         info!("Generated {} state changes for sender {:?}", state_changes.len(), address);
         Ok(state_changes)
     }
@@ -347,16 +337,10 @@ mod tests {
         };
 
         let changes = applier.apply_sender_changes(address, old_balance, total_cost, &usage).unwrap();
-        
-        assert_eq!(changes.len(), 2); // Balance change + resource usage change
-        
-        // First change should be balance update
+        // Only balance/account change should be emitted
+        assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].address, address.0.into());
-        assert!(changes[0].key.is_empty()); // Account-level change
-        
-        // Second change should be resource usage update
-        assert_eq!(changes[1].address, address.0.into());
-        assert!(!changes[1].key.is_empty()); // Storage-level change
+        assert!(changes[0].key.is_empty()); // Account-level change only
     }
 
     #[test]

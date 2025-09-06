@@ -26,6 +26,20 @@ pub trait StorageAdapter: Send + Sync {
     
     /// Remove account
     fn remove_account(&mut self, address: &Address) -> Result<()>;
+
+    /// Get a value from an auxiliary key-value database by name
+    /// Used for non-EVM state like resource usage tracking.
+    fn get_aux_kv(&self, _db: &str, _key: &[u8]) -> Result<Option<Vec<u8>>> {
+        // Default no-op for adapters that don't support auxiliary DBs
+        Ok(None)
+    }
+
+    /// Put a value into an auxiliary key-value database by name
+    /// Used for non-EVM state like resource usage tracking.
+    fn put_aux_kv(&mut self, _db: &str, _key: &[u8], _value: &[u8]) -> Result<()> {
+        // Default no-op for adapters that don't support auxiliary DBs
+        Ok(())
+    }
 }
 
 /// In-memory storage adapter for testing
@@ -34,6 +48,7 @@ pub struct InMemoryStorageAdapter {
     accounts: HashMap<Address, AccountInfo>,
     codes: HashMap<Address, Bytecode>,
     storage: HashMap<(Address, U256), U256>,
+    aux: HashMap<(String, Vec<u8>), Vec<u8>>, // auxiliary named databases
 }
 
 impl InMemoryStorageAdapter {
@@ -42,6 +57,7 @@ impl InMemoryStorageAdapter {
             accounts: HashMap::new(),
             codes: HashMap::new(),
             storage: HashMap::new(),
+            aux: HashMap::new(),
         }
     }
 }
@@ -85,6 +101,15 @@ impl StorageAdapter for InMemoryStorageAdapter {
         // Remove all storage for this address
         self.storage.retain(|(addr, _), _| addr != address);
         
+        Ok(())
+    }
+
+    fn get_aux_kv(&self, db: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        Ok(self.aux.get(&(db.to_string(), key.to_vec())).cloned())
+    }
+
+    fn put_aux_kv(&mut self, db: &str, key: &[u8], value: &[u8]) -> Result<()> {
+        self.aux.insert((db.to_string(), key.to_vec()), value.to_vec());
         Ok(())
     }
 }
@@ -418,7 +443,28 @@ impl StorageAdapter for StorageModuleAdapter {
 
         Ok(())
     }
+
+    fn get_aux_kv(&self, db: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.aux_get(db, key)
+    }
+
+    fn put_aux_kv(&mut self, db: &str, key: &[u8], value: &[u8]) -> Result<()> {
+        self.aux_put(db, key, value)
+    }
 }
+
+impl StorageModuleAdapter {
+    fn aux_get(&self, db: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.storage_engine.get(db, key)
+    }
+
+    fn aux_put(&self, db: &str, key: &[u8], value: &[u8]) -> Result<()> {
+        self.storage_engine.put(db, key, value)
+    }
+}
+
+// Note: get_aux_kv/put_aux_kv are provided via default methods on the trait,
+// and can be accessed on StorageModuleAdapter via the helper methods above
 
 /// Snapshot hook callback for capturing modified accounts
 pub type SnapshotHook = Box<dyn Fn(&HashSet<Address>) + Send + Sync>;
