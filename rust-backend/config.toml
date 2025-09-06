@@ -54,7 +54,7 @@ experimental_vm_blackhole_credit = false
 # Whether to enable Rust-side bandwidth/fee semantics reading from dynamic properties
 # When true, Rust becomes authoritative for non-VM TRX transfer fees (Phase 1)
 # Default: false (Java handles fees until rollout)
-use_dynamic_properties = false
+use_dynamic_properties = true
 
 [modules.storage]
 enabled = true
