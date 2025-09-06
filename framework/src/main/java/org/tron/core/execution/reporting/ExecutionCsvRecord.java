@@ -254,13 +254,23 @@ public class ExecutionCsvRecord {
           entry.newValue = change.getNewValue() != null ? ByteArray.toHexString(change.getNewValue()) : "";
           entries.add(entry);
         }
+        // Sort state changes by address for deterministic ordering
+        entries.sort((a, b) -> a.address.compareToIgnoreCase(b.address));
+        
         return objectMapper.writeValueAsString(entries);
       } catch (JsonProcessingException e) {
-        // Fallback to simple string representation
+        // Fallback to simple string representation with sorting
+        List<StateChange> sortedChanges = new ArrayList<>(stateChanges);
+        sortedChanges.sort((a, b) -> {
+          String addrA = a.getAddress() != null ? ByteArray.toHexString(a.getAddress()) : "";
+          String addrB = b.getAddress() != null ? ByteArray.toHexString(b.getAddress()) : "";
+          return addrA.compareToIgnoreCase(addrB);
+        });
+        
         StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < stateChanges.size(); i++) {
+        for (int i = 0; i < sortedChanges.size(); i++) {
           if (i > 0) sb.append(",");
-          StateChange change = stateChanges.get(i);
+          StateChange change = sortedChanges.get(i);
           sb.append("{\"address\":\"")
               .append(change.getAddress() != null ? ByteArray.toHexString(change.getAddress()) : "")
               .append("\",\"key\":\"")
