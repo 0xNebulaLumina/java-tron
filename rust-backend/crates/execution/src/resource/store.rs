@@ -13,7 +13,8 @@ use tracing::{debug, warn};
 pub struct DynamicProperties {
     /// Free bandwidth limit per account per day (in bytes)
     pub free_net_limit: u64,
-    /// Window size for free bandwidth (in milliseconds) 
+    /// Window size for bandwidth accounting (in milliseconds)
+    /// Used for both free and staked (net) windows in this implementation.
     pub free_net_window_size: u64,
     /// Price of bandwidth in SUN per byte (maps to Java TRANSACTION_FEE)
     pub bandwidth_price: U256,
@@ -27,7 +28,12 @@ pub struct DynamicProperties {
     pub public_net_time: u64,
     /// Whether to burn fees instead of crediting blackhole (ALLOW_BLACKHOLE_OPTIMIZATION)
     pub allow_blackhole_optimization: bool,
-    // Other dynamic properties can be added as needed
+    /// Total net limit and weight for calculating per-account net limits (optional, Java-compatible)
+    pub total_net_limit: u64,
+    pub total_net_weight: u64,
+    /// Create-new-account parameters
+    pub create_new_account_bandwidth_rate: u64,
+    pub create_new_account_fee_in_system_contract: u64,
 }
 
 impl Default for DynamicProperties {
@@ -41,6 +47,10 @@ impl Default for DynamicProperties {
             public_net_usage: 0,
             public_net_time: 0,
             allow_blackhole_optimization: true,
+            total_net_limit: 0,
+            total_net_weight: 0,
+            create_new_account_bandwidth_rate: 1,
+            create_new_account_fee_in_system_contract: 1_000_000, // 1 TRX default
         }
     }
 }
@@ -50,10 +60,12 @@ impl Default for DynamicProperties {
 pub struct ResourceUsageRecord {
     /// Free bandwidth used within current window
     pub free_net_used: u64,
-    /// Timestamp of latest operation (for window calculation)
-    pub latest_op_time: u64,
-    /// Net bandwidth from staking (for this calculation window)
+    /// Timestamp of latest free bandwidth operation
+    pub latest_consume_free_time: u64,
+    /// Net bandwidth (staked) used within current window
     pub net_used: u64,
+    /// Timestamp of latest net (staked) bandwidth operation
+    pub latest_consume_time: u64,
     /// Energy used within current window
     pub energy_used: u64,
 }
@@ -62,8 +74,9 @@ impl Default for ResourceUsageRecord {
     fn default() -> Self {
         Self {
             free_net_used: 0,
-            latest_op_time: 0,
+            latest_consume_free_time: 0,
             net_used: 0,
+            latest_consume_time: 0,
             energy_used: 0,
         }
     }
@@ -151,12 +164,15 @@ where
             .unwrap_or(DynamicProperties::default().free_net_limit);
 
         // TRANSACTION_FEE (price per byte in SUN)
-        let transaction_fee = read_long("TRANSACTION_FEE")?
-            .unwrap_or(1000);
+        let transaction_fee = read_long("TRANSACTION_FEE")?.unwrap_or(1000);
 
         // TOTAL_ENERGY_LIMIT (optional; keep default if missing)
         let total_energy_limit = read_long("TOTAL_ENERGY_LIMIT")?
             .unwrap_or(DynamicProperties::default().total_energy_limit);
+
+        // TOTAL_NET_LIMIT / TOTAL_NET_WEIGHT (optional; used for net limit calculations)
+        let total_net_limit = read_long("TOTAL_NET_LIMIT")?.unwrap_or(0);
+        let total_net_weight = read_long("TOTAL_NET_WEIGHT")?.unwrap_or(0);
 
         // PUBLIC_NET_* (global free bandwidth caps)
         let public_net_limit = read_long("PUBLIC_NET_LIMIT")?.unwrap_or(0);
@@ -166,15 +182,23 @@ where
         // ALLOW_BLACKHOLE_OPTIMIZATION (1 = burn, 0 = credit)
         let allow_blackhole_optimization = read_long("ALLOW_BLACKHOLE_OPTIMIZATION")?.unwrap_or(1) == 1;
 
+        // CREATE_NEW_ACCOUNT_* parameters
+        let create_new_account_bandwidth_rate = read_long("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE")?.unwrap_or(1);
+        let create_new_account_fee_in_system_contract = read_long("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT")?.unwrap_or(1_000_000);
+
         Ok(DynamicProperties {
             free_net_limit,
             free_net_window_size: 86400000, // 24h fixed
             bandwidth_price: U256::from(transaction_fee),
             total_energy_limit,
+            total_net_limit,
+            total_net_weight,
             public_net_limit,
             public_net_usage,
             public_net_time,
             allow_blackhole_optimization,
+            create_new_account_bandwidth_rate,
+            create_new_account_fee_in_system_contract,
         })
     }
 
@@ -230,6 +254,11 @@ where
         Ok(())
     }
 
+    /// Check whether an account exists in storage (Java-compatible account DB)
+    pub fn account_exists(&self, address: &Address) -> Result<bool> {
+        Ok(self.storage.get_account(address)?.is_some())
+    }
+
     /// Extract resource usage counters from a java-tron Account protobuf
     /// Fields of interest:
     /// - net_usage (field 8, varint)
@@ -283,8 +312,9 @@ where
 
         Ok(ResourceUsageRecord {
             free_net_used: free_net_usage,
-            latest_op_time: latest_consume_free_time.max(latest_consume_time),
+            latest_consume_free_time,
             net_used: net_usage,
+            latest_consume_time,
             energy_used: 0,
         })
     }
@@ -305,57 +335,74 @@ where
     }
 
     fn deserialize_resource_usage(&self, bytes: &[u8]) -> Result<ResourceUsageRecord> {
-        // Simple serialization format: [free_net_used(8)][latest_op_time(8)][net_used(8)][energy_used(8)]
-        if bytes.len() < 32 {
-            return Err(anyhow::anyhow!("Invalid resource usage data length"));
+        // New serialization format: [free_net_used(8)][latest_consume_free_time(8)][net_used(8)][latest_consume_time(8)][energy_used(8)]
+        // Backward-compatible with old 32-byte format.
+        match bytes.len() {
+            40..=usize::MAX => {
+                let free_net_used = u64::from_be_bytes(bytes[0..8].try_into()?);
+                let latest_consume_free_time = u64::from_be_bytes(bytes[8..16].try_into()?);
+                let net_used = u64::from_be_bytes(bytes[16..24].try_into()?);
+                let latest_consume_time = u64::from_be_bytes(bytes[24..32].try_into()?);
+                let energy_used = u64::from_be_bytes(bytes[32..40].try_into()?);
+                Ok(ResourceUsageRecord {
+                    free_net_used,
+                    latest_consume_free_time,
+                    net_used,
+                    latest_consume_time,
+                    energy_used,
+                })
+            }
+            32 => {
+                // Old format: [free_net_used][latest_op_time][net_used][energy_used]
+                let free_net_used = u64::from_be_bytes(bytes[0..8].try_into()?);
+                let latest_op_time = u64::from_be_bytes(bytes[8..16].try_into()?);
+                let net_used = u64::from_be_bytes(bytes[16..24].try_into()?);
+                let energy_used = u64::from_be_bytes(bytes[24..32].try_into()?);
+                Ok(ResourceUsageRecord {
+                    free_net_used,
+                    latest_consume_free_time: latest_op_time,
+                    net_used,
+                    latest_consume_time: latest_op_time,
+                    energy_used,
+                })
+            }
+            _ => Err(anyhow::anyhow!("Invalid resource usage data length")),
         }
-
-        let free_net_used = u64::from_be_bytes(bytes[0..8].try_into()?);
-        let latest_op_time = u64::from_be_bytes(bytes[8..16].try_into()?);
-        let net_used = u64::from_be_bytes(bytes[16..24].try_into()?);
-        let energy_used = u64::from_be_bytes(bytes[24..32].try_into()?);
-
-        Ok(ResourceUsageRecord {
-            free_net_used,
-            latest_op_time,
-            net_used,
-            energy_used,
-        })
     }
 
     fn serialize_resource_usage(&self, usage: &ResourceUsageRecord) -> Result<Vec<u8>> {
-        let mut bytes = Vec::with_capacity(32);
+        let mut bytes = Vec::with_capacity(40);
         bytes.extend_from_slice(&usage.free_net_used.to_be_bytes());
-        bytes.extend_from_slice(&usage.latest_op_time.to_be_bytes());
+        bytes.extend_from_slice(&usage.latest_consume_free_time.to_be_bytes());
         bytes.extend_from_slice(&usage.net_used.to_be_bytes());
+        bytes.extend_from_slice(&usage.latest_consume_time.to_be_bytes());
         bytes.extend_from_slice(&usage.energy_used.to_be_bytes());
         Ok(bytes)
     }
 
     fn deserialize_resource_usage_from_u256(&self, value: U256) -> Result<ResourceUsageRecord> {
-        // Unpack 4 u64 values from U256
+        // Unpack 4 u64 values from U256 (legacy compatibility): treat single timestamp as both
         let bytes = value.to_be_bytes::<32>();
-        
         let free_net_used = u64::from_be_bytes(bytes[0..8].try_into()?);
         let latest_op_time = u64::from_be_bytes(bytes[8..16].try_into()?);
         let net_used = u64::from_be_bytes(bytes[16..24].try_into()?);
         let energy_used = u64::from_be_bytes(bytes[24..32].try_into()?);
-
         Ok(ResourceUsageRecord {
             free_net_used,
-            latest_op_time,
+            latest_consume_free_time: latest_op_time,
             net_used,
+            latest_consume_time: latest_op_time,
             energy_used,
         })
     }
 
     fn serialize_resource_usage_as_u256(&self, usage: &ResourceUsageRecord) -> Result<U256> {
+        // Legacy-compatible packing: drop one timestamp (use net timestamp)
         let mut bytes = [0u8; 32];
         bytes[0..8].copy_from_slice(&usage.free_net_used.to_be_bytes());
-        bytes[8..16].copy_from_slice(&usage.latest_op_time.to_be_bytes());
+        bytes[8..16].copy_from_slice(&usage.latest_consume_time.to_be_bytes());
         bytes[16..24].copy_from_slice(&usage.net_used.to_be_bytes());
         bytes[24..32].copy_from_slice(&usage.energy_used.to_be_bytes());
-        
         Ok(U256::from_be_slice(&bytes))
     }
 
@@ -447,8 +494,9 @@ mod tests {
         let store = create_test_store();
         let usage = ResourceUsageRecord {
             free_net_used: 1000,
-            latest_op_time: 1234567890,
+            latest_consume_free_time: 1234567890,
             net_used: 2000,
+            latest_consume_time: 1234567891,
             energy_used: 3000,
         };
 
@@ -456,7 +504,8 @@ mod tests {
         let deserialized = store.deserialize_resource_usage(&serialized).unwrap();
 
         assert_eq!(deserialized.free_net_used, usage.free_net_used);
-        assert_eq!(deserialized.latest_op_time, usage.latest_op_time);
+        assert_eq!(deserialized.latest_consume_free_time, usage.latest_consume_free_time);
+        assert_eq!(deserialized.latest_consume_time, usage.latest_consume_time);
         assert_eq!(deserialized.net_used, usage.net_used);
         assert_eq!(deserialized.energy_used, usage.energy_used);
     }
@@ -479,6 +528,7 @@ mod tests {
 
         let usage = store.load_resource_usage(&address).unwrap();
         assert_eq!(usage.free_net_used, 0);
-        assert_eq!(usage.latest_op_time, 0);
+        assert_eq!(usage.latest_consume_free_time, 0);
+        assert_eq!(usage.latest_consume_time, 0);
     }
 }

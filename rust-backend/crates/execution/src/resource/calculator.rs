@@ -38,7 +38,7 @@ impl ResourceCalculator {
         // Check if the window has expired
         let window_start = current_timestamp.saturating_sub(dynamic_props.free_net_window_size);
         
-        if usage.latest_op_time < window_start {
+        if usage.latest_consume_free_time < window_start {
             // Window expired, full limit available
             debug!("Free bandwidth window expired, full limit available: {}", dynamic_props.free_net_limit);
             return dynamic_props.free_net_limit;
@@ -51,11 +51,13 @@ impl ResourceCalculator {
     }
 
     /// Calculate staked bandwidth available to an account
-    /// Includes own staking plus incoming delegations minus outgoing delegations
+    /// Includes own staking plus incoming delegations minus outgoing delegations,
+    /// subtracting current-window net usage.
     pub fn calculate_staked_bandwidth_available<S>(
         &self,
         address: &Address,
         store: &mut ResourceStateStore<S>,
+        usage: &ResourceUsageRecord,
         dynamic_props: &DynamicProperties,
         current_timestamp: u64,
     ) -> Result<u64>
@@ -88,9 +90,7 @@ impl ResourceCalculator {
             }
         }
 
-        // Convert TRX to bandwidth
-        // This is a simplified calculation - actual TRON uses more complex formulas
-        // involving total network bandwidth and total staked TRX
+        // Convert TRX to bandwidth (simplified mapping)
         let bandwidth_from_stake = if total_staked_trx > U256::ZERO {
             // Example: 1 TRX = 1000 bandwidth units (this needs to match Java's calculation)
             let bandwidth_per_trx = U256::from(1000);
@@ -106,10 +106,17 @@ impl ResourceCalculator {
             0
         };
 
-        debug!("Staked bandwidth available: {} (from {} TRX staked)", 
-               bandwidth_from_stake, total_staked_trx);
-        
-        Ok(bandwidth_from_stake)
+        // Subtract current-window usage (approximation of Java's moving window)
+        let window_start = current_timestamp.saturating_sub(dynamic_props.free_net_window_size);
+        let used_in_window = if usage.latest_consume_time < window_start { 0 } else { usage.net_used };
+        let available = bandwidth_from_stake.saturating_sub(used_in_window);
+
+        debug!(
+            "Staked bandwidth available: {} (from {} TRX staked, used_in_window={})",
+            available, total_staked_trx, used_in_window
+        );
+
+        Ok(available)
     }
 
     /// Calculate resource consumption and required TRX fee
@@ -123,13 +130,13 @@ impl ResourceCalculator {
     ) -> (u64, u64, U256) {
         let mut remaining_needed = bandwidth_needed;
         
-        // First, consume free bandwidth
-        let free_used = min(remaining_needed, free_available);
-        remaining_needed = remaining_needed.saturating_sub(free_used);
-        
-        // Then, consume staked bandwidth
+        // First, consume staked bandwidth (Java order)
         let staked_used = min(remaining_needed, staked_available);
         remaining_needed = remaining_needed.saturating_sub(staked_used);
+
+        // Then, consume free bandwidth
+        let free_used = min(remaining_needed, free_available);
+        remaining_needed = remaining_needed.saturating_sub(free_used);
         
         // Finally, calculate TRX fee for remaining bandwidth
         let fee_required = if remaining_needed > 0 {
@@ -153,16 +160,21 @@ impl ResourceCalculator {
         current_timestamp: u64,
     ) {
         // Update free bandwidth usage (cumulative within window)
-        usage.free_net_used += free_used;
-        
-        // Update net bandwidth usage
-        usage.net_used += staked_used;
-        
-        // Update latest operation timestamp
-        usage.latest_op_time = current_timestamp;
+        if free_used > 0 {
+            usage.free_net_used = usage.free_net_used.saturating_add(free_used);
+            usage.latest_consume_free_time = current_timestamp;
+        }
 
-        debug!("Updated resource usage: free_net_used={}, net_used={}, latest_op_time={}", 
-               usage.free_net_used, usage.net_used, usage.latest_op_time);
+        // Update net bandwidth usage
+        if staked_used > 0 {
+            usage.net_used = usage.net_used.saturating_add(staked_used);
+            usage.latest_consume_time = current_timestamp;
+        }
+
+        debug!(
+            "Updated resource usage: free_net_used={}, net_used={}, latest_consume_free_time={}, latest_consume_time={}",
+            usage.free_net_used, usage.net_used, usage.latest_consume_free_time, usage.latest_consume_time
+        );
     }
 
     /// Check if a window has expired and should be reset
@@ -173,7 +185,7 @@ impl ResourceCalculator {
         current_timestamp: u64,
     ) -> bool {
         let window_start = current_timestamp.saturating_sub(dynamic_props.free_net_window_size);
-        usage.latest_op_time < window_start
+        usage.latest_consume_free_time < window_start && usage.latest_consume_time < window_start
     }
 
     /// Reset resource usage for a new window
@@ -187,7 +199,8 @@ impl ResourceCalculator {
         usage.free_net_used = 0;
         usage.net_used = 0;
         usage.energy_used = 0;
-        usage.latest_op_time = current_timestamp;
+        usage.latest_consume_free_time = current_timestamp;
+        usage.latest_consume_time = current_timestamp;
     }
 }
 
@@ -207,11 +220,12 @@ mod tests {
     }
 
     fn create_test_dynamic_props() -> DynamicProperties {
-        DynamicProperties {
+        DynamicProperties { 
             free_net_limit: 5000,
             free_net_window_size: 86400000, // 24 hours
             bandwidth_price: U256::from(1000), // 1000 SUN per byte
             total_energy_limit: 100_000_000,
+            ..DynamicProperties::default()
         }
     }
 
@@ -241,8 +255,9 @@ mod tests {
         let dynamic_props = create_test_dynamic_props();
         let usage = ResourceUsageRecord {
             free_net_used: 2000,
-            latest_op_time: 999000000, // Recent timestamp
+            latest_consume_free_time: 999000000, // Recent timestamp
             net_used: 0,
+            latest_consume_time: 0,
             energy_used: 0,
         };
         let current_timestamp = 1000000000;
@@ -257,8 +272,9 @@ mod tests {
         let dynamic_props = create_test_dynamic_props();
         let usage = ResourceUsageRecord {
             free_net_used: 5000,
-            latest_op_time: 1000, // Very old timestamp
+            latest_consume_free_time: 1000, // Very old timestamp
             net_used: 0,
+            latest_consume_time: 0,
             energy_used: 0,
         };
         let current_timestamp = 1000000000;
@@ -311,7 +327,8 @@ mod tests {
         
         assert_eq!(usage.free_net_used, 1000);
         assert_eq!(usage.net_used, 500);
-        assert_eq!(usage.latest_op_time, current_timestamp);
+        assert_eq!(usage.latest_consume_free_time, current_timestamp);
+        assert_eq!(usage.latest_consume_time, current_timestamp);
     }
 
     #[test]
@@ -321,16 +338,18 @@ mod tests {
         let current_timestamp = 1000000000;
         
         // Usage within window
-        let recent_usage = ResourceUsageRecord {
-            latest_op_time: current_timestamp - 1000, // 1 second ago
-            ..ResourceUsageRecord::default()
+        let recent_usage = ResourceUsageRecord { 
+            latest_consume_free_time: current_timestamp - 1000, // 1 second ago
+            latest_consume_time: current_timestamp - 1000,
+            ..ResourceUsageRecord::default() 
         };
         assert!(!calculator.should_reset_window(&recent_usage, &dynamic_props, current_timestamp));
         
         // Usage outside window
-        let old_usage = ResourceUsageRecord {
-            latest_op_time: current_timestamp - 90000000, // More than 24 hours ago
-            ..ResourceUsageRecord::default()
+        let old_usage = ResourceUsageRecord { 
+            latest_consume_free_time: current_timestamp - 90000000, // More than 24 hours ago
+            latest_consume_time: current_timestamp - 90000000,
+            ..ResourceUsageRecord::default() 
         };
         assert!(calculator.should_reset_window(&old_usage, &dynamic_props, current_timestamp));
     }

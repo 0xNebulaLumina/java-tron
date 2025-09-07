@@ -253,28 +253,26 @@ impl ResourceApplier {
         Bytes::from(encoded.to_vec())
     }
 
-    /// Encode resource usage for state change
+    /// Encode resource usage for state change (diagnostic only)
     fn encode_resource_usage(&self, usage: &ResourceUsageRecord) -> Result<Bytes> {
-        // Format: [free_net_used(8)][latest_op_time(8)][net_used(8)][energy_used(8)]
-        let mut encoded = Vec::with_capacity(32);
+        // Format: [free_net_used(8)][latest_consume_free_time(8)][net_used(8)][latest_consume_time(8)][energy_used(8)]
+        let mut encoded = Vec::with_capacity(40);
         encoded.extend_from_slice(&usage.free_net_used.to_be_bytes());
-        encoded.extend_from_slice(&usage.latest_op_time.to_be_bytes());
+        encoded.extend_from_slice(&usage.latest_consume_free_time.to_be_bytes());
         encoded.extend_from_slice(&usage.net_used.to_be_bytes());
+        encoded.extend_from_slice(&usage.latest_consume_time.to_be_bytes());
         encoded.extend_from_slice(&usage.energy_used.to_be_bytes());
-        
         Ok(Bytes::from(encoded))
     }
 
     /// Encode resource usage as U256 for storage change
     fn encode_resource_usage_as_u256(&self, usage: &ResourceUsageRecord) -> Result<U256> {
-        // Pack the 4 u64 values into a U256
-        // This is a simplified encoding - in production we'd use a more sophisticated approach
+        // Legacy-compatible packing into U256: drop one timestamp (net timestamp)
         let mut bytes = [0u8; 32];
         bytes[0..8].copy_from_slice(&usage.free_net_used.to_be_bytes());
-        bytes[8..16].copy_from_slice(&usage.latest_op_time.to_be_bytes());
+        bytes[8..16].copy_from_slice(&usage.latest_consume_time.to_be_bytes());
         bytes[16..24].copy_from_slice(&usage.net_used.to_be_bytes());
         bytes[24..32].copy_from_slice(&usage.energy_used.to_be_bytes());
-        
         Ok(U256::from_be_slice(&bytes))
     }
 
@@ -361,8 +359,9 @@ mod tests {
         let total_cost = U256::from(100_000);
         let usage = ResourceUsageRecord {
             free_net_used: 1000,
-            latest_op_time: 1234567890,
+            latest_consume_free_time: 1234567890,
             net_used: 0,
+            latest_consume_time: 1234567890,
             energy_used: 0,
         };
 
@@ -466,18 +465,20 @@ mod tests {
         let applier = create_test_applier();
         let usage = ResourceUsageRecord {
             free_net_used: 1000,
-            latest_op_time: 1234567890,
+            latest_consume_free_time: 1234567890,
             net_used: 500,
+            latest_consume_time: 1234567890,
             energy_used: 750,
         };
 
         let encoded = applier.encode_resource_usage(&usage).unwrap();
-        assert_eq!(encoded.len(), 32); // 4 * 8 bytes
+        assert_eq!(encoded.len(), 40); // 5 * 8 bytes
         
         // Verify the encoding can be read back
         assert_eq!(u64::from_be_bytes(encoded[0..8].try_into().unwrap()), usage.free_net_used);
-        assert_eq!(u64::from_be_bytes(encoded[8..16].try_into().unwrap()), usage.latest_op_time);
+        assert_eq!(u64::from_be_bytes(encoded[8..16].try_into().unwrap()), usage.latest_consume_free_time);
         assert_eq!(u64::from_be_bytes(encoded[16..24].try_into().unwrap()), usage.net_used);
-        assert_eq!(u64::from_be_bytes(encoded[24..32].try_into().unwrap()), usage.energy_used);
+        assert_eq!(u64::from_be_bytes(encoded[24..32].try_into().unwrap()), usage.latest_consume_time);
+        assert_eq!(u64::from_be_bytes(encoded[32..40].try_into().unwrap()), usage.energy_used);
     }
 }
