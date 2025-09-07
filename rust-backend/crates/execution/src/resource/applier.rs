@@ -148,6 +148,36 @@ impl ResourceApplier {
         Ok(state_changes)
     }
 
+    /// Apply fee handling with an explicit mode override ("burn" | "blackhole" | "none")
+    pub fn apply_fee_changes_with_mode(
+        &self,
+        fee_amount: U256,
+        mode: &str,
+    ) -> Result<Vec<crate::TronStateChange>> {
+        if fee_amount == U256::ZERO {
+            return Ok(Vec::new());
+        }
+
+        match mode {
+            "burn" => {
+                tracing::debug!("Fee burned (override): {} SUN", fee_amount);
+                Ok(Vec::new())
+            }
+            "blackhole" => {
+                // Use configured blackhole address if present
+                if let Ok(blackhole_addr) = self.parse_blackhole_address() {
+                    let change = self.create_blackhole_credit(blackhole_addr, fee_amount)?;
+                    Ok(vec![change])
+                } else {
+                    tracing::debug!("No valid blackhole address; falling back to burn (override)");
+                    Ok(Vec::new())
+                }
+            }
+            "none" => Ok(Vec::new()),
+            other => Err(anyhow::anyhow!("Invalid fee mode override: {}", other)),
+        }
+    }
+
     /// Parse blackhole address from base58 format
     fn parse_blackhole_address(&self) -> Result<Address> {
         if self.config.blackhole_address_base58.is_empty() {

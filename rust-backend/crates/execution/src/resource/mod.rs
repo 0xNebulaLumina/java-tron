@@ -73,12 +73,28 @@ where
 
         // Calculate bandwidth requirements and available resources
         let bandwidth_needed = self.calculator.calculate_bandwidth_used(tx_bytes, &dynamic_props);
-        let free_available = self.calculator.calculate_free_bandwidth_available(
+        let free_available_account = self.calculator.calculate_free_bandwidth_available(
             &sender_usage, &dynamic_props, block_timestamp
         );
         let staked_available = self.calculator.calculate_staked_bandwidth_available(
             &from, &mut self.store, &dynamic_props, block_timestamp
         )?;
+
+        // Compute public free bandwidth remaining (24h window simplified)
+        let public_remaining = if dynamic_props.public_net_limit == 0 {
+            u64::MAX // no global cap configured
+        } else {
+            let window_start = block_timestamp.saturating_sub(dynamic_props.free_net_window_size);
+            let refreshed_usage = if dynamic_props.public_net_time < window_start {
+                0
+            } else {
+                dynamic_props.public_net_usage
+            };
+            dynamic_props.public_net_limit.saturating_sub(refreshed_usage)
+        };
+
+        // Effective free bandwidth is constrained by both account and public caps
+        let free_available = std::cmp::min(free_available_account, public_remaining);
 
         debug!("Bandwidth calculation: needed={}, free_available={}, staked_available={}", 
                bandwidth_needed, free_available, staked_available);
@@ -99,10 +115,23 @@ where
             ));
         }
 
-        // Update resource usage records
+        // Update resource usage records (account-level)
         self.calculator.update_resource_usage(
             &mut sender_usage, free_used, staked_used, block_timestamp
         );
+
+        // Update public free bandwidth usage/time if used
+        if free_used > 0 && dynamic_props.public_net_limit > 0 {
+            // Refresh current usage per our simplified window model
+            let window_start = block_timestamp.saturating_sub(dynamic_props.free_net_window_size);
+            let current_public_usage = if dynamic_props.public_net_time < window_start {
+                0
+            } else {
+                dynamic_props.public_net_usage
+            };
+            let new_public_usage = current_public_usage.saturating_add(free_used);
+            self.store.save_public_net_usage_time(new_public_usage, block_timestamp)?;
+        }
 
         // Generate state changes
         let mut state_changes = Vec::new();
@@ -120,9 +149,12 @@ where
         )?;
         state_changes.extend(recipient_changes);
 
-        // Apply fee handling (burn or blackhole)
+        // Apply fee handling (burn or blackhole). Follow Java's supportBlackHoleOptimization:
+        // - true  => burn (no account delta)
+        // - false => credit blackhole address
         if fee_required > U256::ZERO {
-            let fee_changes = self.applier.apply_fee_changes(fee_required)?;
+            let effective_mode = if dynamic_props.allow_blackhole_optimization { "burn" } else { "blackhole" };
+            let fee_changes = self.applier.apply_fee_changes_with_mode(fee_required, effective_mode)?;
             state_changes.extend(fee_changes);
         }
 

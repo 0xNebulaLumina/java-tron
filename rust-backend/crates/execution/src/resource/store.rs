@@ -19,6 +19,14 @@ pub struct DynamicProperties {
     pub bandwidth_price: U256,
     /// Total energy limit
     pub total_energy_limit: u64,
+    /// Public net limit (global free bandwidth cap)
+    pub public_net_limit: u64,
+    /// Public net usage in the current window
+    pub public_net_usage: u64,
+    /// Public net time (timestamp of last update)
+    pub public_net_time: u64,
+    /// Whether to burn fees instead of crediting blackhole (ALLOW_BLACKHOLE_OPTIMIZATION)
+    pub allow_blackhole_optimization: bool,
     // Other dynamic properties can be added as needed
 }
 
@@ -29,6 +37,10 @@ impl Default for DynamicProperties {
             free_net_window_size: 86400000, // 24 hours in milliseconds  
             bandwidth_price: U256::from(1000), // 1000 SUN per byte (example)
             total_energy_limit: 100_000_000, // 100M energy limit
+            public_net_limit: 0,
+            public_net_usage: 0,
+            public_net_time: 0,
+            allow_blackhole_optimization: true,
         }
     }
 }
@@ -146,11 +158,23 @@ where
         let total_energy_limit = read_long("TOTAL_ENERGY_LIMIT")?
             .unwrap_or(DynamicProperties::default().total_energy_limit);
 
+        // PUBLIC_NET_* (global free bandwidth caps)
+        let public_net_limit = read_long("PUBLIC_NET_LIMIT")?.unwrap_or(0);
+        let public_net_usage = read_long("PUBLIC_NET_USAGE")?.unwrap_or(0);
+        let public_net_time = read_long("PUBLIC_NET_TIME")?.unwrap_or(0);
+
+        // ALLOW_BLACKHOLE_OPTIMIZATION (1 = burn, 0 = credit)
+        let allow_blackhole_optimization = read_long("ALLOW_BLACKHOLE_OPTIMIZATION")?.unwrap_or(1) == 1;
+
         Ok(DynamicProperties {
             free_net_limit,
             free_net_window_size: 86400000, // 24h fixed
             bandwidth_price: U256::from(transaction_fee),
             total_energy_limit,
+            public_net_limit,
+            public_net_usage,
+            public_net_time,
+            allow_blackhole_optimization,
         })
     }
 
@@ -196,6 +220,14 @@ where
         key.push(0x41);
         key.extend_from_slice(address.as_slice());
         key
+    }
+
+    /// Save public net usage and time back to the Java properties DB
+    pub fn save_public_net_usage_time(&mut self, usage: u64, time: u64) -> Result<()> {
+        let db = "properties";
+        self.storage.put_aux_kv(db, b"PUBLIC_NET_USAGE", &usage.to_be_bytes())?;
+        self.storage.put_aux_kv(db, b"PUBLIC_NET_TIME", &time.to_be_bytes())?;
+        Ok(())
     }
 
     /// Extract resource usage counters from a java-tron Account protobuf
