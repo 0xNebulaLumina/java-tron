@@ -15,7 +15,7 @@ pub struct DynamicProperties {
     pub free_net_limit: u64,
     /// Window size for free bandwidth (in milliseconds) 
     pub free_net_window_size: u64,
-    /// Price of bandwidth in SUN per byte
+    /// Price of bandwidth in SUN per byte (maps to Java TRANSACTION_FEE)
     pub bandwidth_price: U256,
     /// Total energy limit
     pub total_energy_limit: u64,
@@ -94,84 +94,90 @@ where
         Ok(Self { storage })
     }
 
-    /// Load dynamic properties from storage
-    /// Maps to Java's dynamic properties DB
+    /// Load dynamic properties from storage (Java-compatible)
+    /// Reads from the java-tron "properties" RocksDB using raw key names
     pub fn load_dynamic_properties(&self) -> Result<DynamicProperties> {
-        // Try to load from storage first
-        if let Ok(props) = self.load_dynamic_properties_from_storage() {
-            debug!("Loaded dynamic properties from storage");
-            return Ok(props);
+        match self.load_dynamic_properties_from_storage() {
+            Ok(props) => {
+                debug!("Loaded dynamic properties from 'properties' DB");
+                Ok(props)
+            }
+            Err(e) => {
+                warn!("Dynamic properties not found or error ({}), using defaults", e);
+                Ok(DynamicProperties::default())
+            }
         }
-
-        // Fallback to defaults if not found
-        warn!("Dynamic properties not found in storage, using defaults");
-        Ok(DynamicProperties::default())
     }
 
     fn load_dynamic_properties_from_storage(&self) -> Result<DynamicProperties> {
-        // Key format matches Java's properties DB
-        // These keys are examples - actual keys need to match Java implementation
-        let free_net_limit = self.load_property_u64("FREE_NET_LIMIT")?
-            .unwrap_or(DynamicProperties::default().free_net_limit);
-        
-        let bandwidth_price = self.load_property_u256("BANDWIDTH_PRICE")?
-            .unwrap_or(DynamicProperties::default().bandwidth_price);
+        // Java DB name for dynamic properties
+        let db = "properties";
 
-        let total_energy_limit = self.load_property_u64("TOTAL_ENERGY_LIMIT")?
+        // Helper to read a Java ByteArray.fromLong encoded value (big-endian i64)
+        let read_long = |key: &str| -> Result<Option<u64>> {
+            if let Some(bytes) = self.storage.get_aux_kv(db, key.as_bytes())? {
+                if bytes.len() == 8 {
+                    // BytesCapsule(ByteArray.fromLong) stores big-endian
+                    let v = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
+                    Ok(Some(v))
+                } else if bytes.is_empty() {
+                    Ok(Some(0))
+                } else {
+                    // Try to parse variable-length provided value (defensive)
+                    let mut padded = [0u8; 8];
+                    let n = bytes.len().min(8);
+                    padded[8 - n..8].copy_from_slice(&bytes[bytes.len() - n..]);
+                    Ok(Some(u64::from_be_bytes(padded)))
+                }
+            } else {
+                Ok(None)
+            }
+        };
+
+        // FREE_NET_LIMIT
+        let free_net_limit = read_long("FREE_NET_LIMIT")?
+            .unwrap_or(DynamicProperties::default().free_net_limit);
+
+        // TRANSACTION_FEE (price per byte in SUN)
+        let transaction_fee = read_long("TRANSACTION_FEE")?
+            .unwrap_or(1000);
+
+        // TOTAL_ENERGY_LIMIT (optional; keep default if missing)
+        let total_energy_limit = read_long("TOTAL_ENERGY_LIMIT")?
             .unwrap_or(DynamicProperties::default().total_energy_limit);
 
         Ok(DynamicProperties {
             free_net_limit,
             free_net_window_size: 86400000, // 24h fixed
-            bandwidth_price,
+            bandwidth_price: U256::from(transaction_fee),
             total_energy_limit,
         })
     }
 
-    fn load_property_u64(&self, key: &str) -> Result<Option<u64>> {
-        // Use a special system address for properties
-        let system_addr = Address::ZERO;
-        let prop_key_hash = sha3::Keccak256::digest(format!("properties:{}", key));
-        let prop_key = U256::from_be_slice(&prop_key_hash);
-        
-        let value = self.storage.get_storage(&system_addr, &prop_key)?;
-        if value != U256::ZERO {
-            // Extract u64 from the lower 64 bits
-            Ok(Some(value.as_limbs()[0]))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn load_property_u256(&self, key: &str) -> Result<Option<U256>> {
-        // Use a special system address for properties
-        let system_addr = Address::ZERO;
-        let prop_key_hash = sha3::Keccak256::digest(format!("properties:{}", key));
-        let prop_key = U256::from_be_slice(&prop_key_hash);
-        
-        let value = self.storage.get_storage(&system_addr, &prop_key)?;
-        if value != U256::ZERO {
-            Ok(Some(value))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Load resource usage for an account
-    /// Uses a dedicated auxiliary DB and avoids emitting EVM storage changes
+    /// Load resource usage for an account.
+    /// Prefer overlay (aux DB) if present; otherwise read from Java Account protobuf in "account" DB.
     pub fn load_resource_usage(&self, address: &Address) -> Result<ResourceUsageRecord> {
-        let db = "resource-usage";
-        let key = Self::resource_usage_db_key(address);
-
-        if let Some(bytes) = self.storage.get_aux_kv(db, &key)? {
+        // Check overlay first
+        let overlay_db = "resource-usage";
+        let overlay_key = Self::resource_usage_db_key(address);
+        if let Some(bytes) = self.storage.get_aux_kv(overlay_db, &overlay_key)? {
             return self.deserialize_resource_usage(&bytes);
         }
 
-        // Return default if not found
+        // Fall back to reading Java Account protobuf from "account" DB
+        let account_db = "account";
+        let acc_key = Self::account_db_key(address);
+        if let Some(account_bytes) = self.storage.get_aux_kv(account_db, &acc_key)? {
+            let usage = Self::extract_resource_usage_from_account_proto(&account_bytes)?;
+            return Ok(usage);
+        }
+
+        // Default if account not found
         Ok(ResourceUsageRecord::default())
     }
 
-    /// Save resource usage for an account in a dedicated auxiliary DB
+    /// Save resource usage overlay for an account in a dedicated auxiliary DB.
+    /// We intentionally do not mutate Java's Account protobuf here; Java will update its own counters.
     pub fn save_resource_usage(&mut self, address: &Address, usage: &ResourceUsageRecord) -> Result<()> {
         let db = "resource-usage";
         let key = Self::resource_usage_db_key(address);
@@ -182,6 +188,88 @@ where
 
     fn resource_usage_db_key(address: &Address) -> Vec<u8> {
         format!("account_net_usage:{}", hex::encode(address.as_slice())).into_bytes()
+    }
+
+    /// Compose java-tron account DB key: 0x41 prefix + 20-byte address
+    fn account_db_key(address: &Address) -> Vec<u8> {
+        let mut key = Vec::with_capacity(21);
+        key.push(0x41);
+        key.extend_from_slice(address.as_slice());
+        key
+    }
+
+    /// Extract resource usage counters from a java-tron Account protobuf
+    /// Fields of interest:
+    /// - net_usage (field 8, varint)
+    /// - free_net_usage (field 19, varint)
+    /// - latest_consume_time (field 21, varint)
+    /// - latest_consume_free_time (field 22, varint)
+    fn extract_resource_usage_from_account_proto(bytes: &[u8]) -> Result<ResourceUsageRecord> {
+        let mut pos = 0usize;
+        let mut net_usage: u64 = 0;
+        let mut free_net_usage: u64 = 0;
+        let mut latest_consume_time: u64 = 0;
+        let mut latest_consume_free_time: u64 = 0;
+
+        while pos < bytes.len() {
+            let (field_key, new_pos) = Self::read_varint(bytes, pos)?;
+            pos = new_pos;
+            let field_number = field_key >> 3;
+            let wire_type = field_key & 0x7;
+
+            match (field_number, wire_type) {
+                (8, 0) => {
+                    let (v, np) = Self::read_varint(bytes, pos)?;
+                    net_usage = v; pos = np;
+                }
+                (19, 0) => {
+                    let (v, np) = Self::read_varint(bytes, pos)?;
+                    free_net_usage = v; pos = np;
+                }
+                (21, 0) => {
+                    let (v, np) = Self::read_varint(bytes, pos)?;
+                    latest_consume_time = v; pos = np;
+                }
+                (22, 0) => {
+                    let (v, np) = Self::read_varint(bytes, pos)?;
+                    latest_consume_free_time = v; pos = np;
+                }
+                (_, 0) => {
+                    // Other varint fields: skip
+                    let (_v, np) = Self::read_varint(bytes, pos)?;
+                    pos = np;
+                }
+                (_, 1) => { pos += 8; }          // 64-bit
+                (_, 5) => { pos += 4; }          // 32-bit
+                (_, 2) => {                       // length-delimited
+                    let (len, np) = Self::read_varint(bytes, pos)?;
+                    pos = np + len as usize;
+                }
+                _ => break,
+            }
+        }
+
+        Ok(ResourceUsageRecord {
+            free_net_used: free_net_usage,
+            latest_op_time: latest_consume_free_time.max(latest_consume_time),
+            net_used: net_usage,
+            energy_used: 0,
+        })
+    }
+
+    /// Decode varint at position, return (value, next_pos)
+    fn read_varint(data: &[u8], mut pos: usize) -> Result<(u64, usize)> {
+        let mut result: u64 = 0;
+        let mut shift = 0u32;
+        while pos < data.len() {
+            let byte = data[pos];
+            pos += 1;
+            result |= ((byte & 0x7F) as u64) << shift;
+            if (byte & 0x80) == 0 { return Ok((result, pos)); }
+            shift += 7;
+            if shift >= 64 { return Err(anyhow::anyhow!("Varint too long")); }
+        }
+        Err(anyhow::anyhow!("Unexpected EOF while reading varint"))
     }
 
     fn deserialize_resource_usage(&self, bytes: &[u8]) -> Result<ResourceUsageRecord> {
