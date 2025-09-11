@@ -15,6 +15,9 @@ import org.tron.core.db.TransactionContext;
  * energy, fees) and need to be flushed to remote storage to ensure consistency
  * before any subsequent remote execution.
  * 
+ * <p>This implementation also acts as a delegate for the chainbase ResourceSyncContext,
+ * allowing chainbase processors to record dirty keys through delegation.
+ * 
  * <p>Usage pattern:
  * <pre>
  *   // At transaction start (before resource consumption)
