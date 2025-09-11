@@ -253,6 +253,7 @@ public class BandwidthProcessor extends ResourceProcessor {
     if (consumeFeeForNewAccount(accountCapsule, fee)) {
       trace.setNetBillForCreateNewAccount(0, fee);
       chainBaseManager.getDynamicPropertiesStore().addTotalCreateAccountCost(fee);
+      ResourceSyncContext.recordDynamicKeyDirty("TOTAL_CREATE_ACCOUNT_COST".getBytes());
       return true;
     } else {
       return false;
@@ -544,10 +545,10 @@ public class BandwidthProcessor extends ResourceProcessor {
     accountCapsule.setLatestOperationTime(latestOperationTime);
 
     chainBaseManager.getDynamicPropertiesStore().savePublicNetUsage(newPublicNetUsage);
-    ResourceSyncContext.recordDynamicKeyDirty("publicNetUsage".getBytes());
+    ResourceSyncContext.recordDynamicKeyDirty("PUBLIC_NET_USAGE".getBytes());
     
     chainBaseManager.getDynamicPropertiesStore().savePublicNetTime(publicNetTime);
-    ResourceSyncContext.recordDynamicKeyDirty("publicNetTime".getBytes());
+    ResourceSyncContext.recordDynamicKeyDirty("PUBLIC_NET_TIME".getBytes());
     
     chainBaseManager.getAccountStore().put(accountCapsule.createDbKey(), accountCapsule);
     ResourceSyncContext.recordAccountDirty(accountCapsule.createDbKey());
@@ -556,5 +557,3 @@ public class BandwidthProcessor extends ResourceProcessor {
   }
 
 }
-
-
