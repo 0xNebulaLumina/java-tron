@@ -8,14 +8,14 @@ This plan introduces a lightweight Resource Sync context + service, instruments 
 
 ## 0) Scope and Success Criteria
 
-- [ ] Scope covers non‑EVM and pre‑exec mutations to:
-  - [ ] Account resource fields: bandwidth (`netUsage`, `freeNetUsage`, window timestamps), energy (`energyUsage`, V2 window sizes, timestamps), account creations, fee deductions/blackhole moves.
-  - [ ] Dynamic properties mutated by these paths: `publicNetUsage`, `publicNetTime`, `TOTAL_TRANSACTION_COST`, `TOTAL_CREATE_ACCOUNT_COST`, `BLOCK_ENERGY_USAGE`, energy average/limits (when changed in‑block), `TRANSACTION_FEE_POOL`, `BURN_TRX_AMOUNT`, related histories.
-  - [ ] Asset issue(±v2) public free bandwidth usage when TRC‑10 owner subsidy is used.
-- [ ] Success criteria
-  - [ ] Immediately before any remote execution or state query in the same transaction, the Rust backend can read the exact state produced by Java resource updates.
-  - [ ] No material performance regression (batching minimizes gRPC calls).
-  - [ ] Disabled by flag without functional changes elsewhere.
+- [x] Scope covers non‑EVM and pre‑exec mutations to:
+  - [x] Account resource fields: bandwidth (`netUsage`, `freeNetUsage`, window timestamps), energy (`energyUsage`, V2 window sizes, timestamps), account creations, fee deductions/blackhole moves.
+  - [x] Dynamic properties mutated by these paths: `publicNetUsage`, `publicNetTime`, `TOTAL_TRANSACTION_COST`, `TOTAL_CREATE_ACCOUNT_COST`, `BLOCK_ENERGY_USAGE`, energy average/limits (when changed in‑block), `TRANSACTION_FEE_POOL`, `BURN_TRX_AMOUNT`, related histories.
+  - [x] Asset issue(±v2) public free bandwidth usage when TRC‑10 owner subsidy is used.
+- [x] Success criteria
+  - [x] Immediately before any remote execution or state query in the same transaction, the Rust backend can read the exact state produced by Java resource updates.
+  - [x] No material performance regression (batching minimizes gRPC calls).
+  - [x] Disabled by flag without functional changes elsewhere.
 
 ---
 
@@ -106,37 +106,37 @@ File: `chainbase/src/main/java/org/tron/core/db/EnergyProcessor.java`
 
 File: `actuator/src/main/java/org/tron/core/vm/VMActuator.java`
 
-- [ ] In V2 flows that update usage/windows and call `rootRepository.updateAccount(...)`:
-  - [ ] Mark updated accounts dirty (caller and/or creator): `recordAccountDirty(address)`
+- [x] In V2 flows that update usage/windows and call `rootRepository.updateAccount(...)`:
+  - [x] Mark updated accounts dirty (caller and/or creator): `recordAccountDirty(address)`
 
 ### 3.5 Native resource processors (delegate/undelegate)
 
 Files: `actuator/src/main/java/org/tron/core/vm/nativecontract/*DelegateResource*Processor.java`
 
-- [ ] After updating owner/receiver windows/usage and persisting:
-  - [ ] `recordAccountDirty(owner)` and `recordAccountDirty(receiver)`
+- [x] After updating owner/receiver windows/usage and persisting:
+  - [x] `recordAccountDirty(owner)` and `recordAccountDirty(receiver)`
 
 ---
 
 ## 4) Service Behavior and Ordering Rules
 
-- [ ] Only flush if `remote.resource.sync.enabled == true` and storage mode is REMOTE.
-- [ ] Collect keys incrementally during tx; perform 1 flush just before `trace.exec()`.
-- [ ] Ordering inside flush:
-  1. [ ] Asset issue V1/V2 (issuer/public free usage)
-  2. [ ] Accounts (all changed addresses)
-  3. [ ] Dynamic properties
-- [ ] Batching: one `batchWrite` per DB.
-- [ ] Optional confirm: if `remote.resource.sync.confirm`, follow with `batchGet` to verify presence (diagnostics only).
+- [x] Only flush if `remote.resource.sync.enabled == true` and storage mode is REMOTE.
+- [x] Collect keys incrementally during tx; perform 1 flush just before `trace.exec()`.
+- [x] Ordering inside flush:
+  1. [x] Asset issue V1/V2 (issuer/public free usage)
+  2. [x] Accounts (all changed addresses)
+  3. [x] Dynamic properties
+- [x] Batching: one `batchWrite` per DB.
+- [x] Optional confirm: if `remote.resource.sync.confirm`, follow with `batchGet` to verify presence (diagnostics only).
 
 ---
 
 ## 5) Error Handling & Fallbacks
 
-- [ ] On gRPC error during flush:
-  - [ ] Log error with counts and first few keys (debug‑safe truncation)
-  - [ ] Increment failure counter; if failures exceed threshold within sliding window, auto‑disable sync and warn once.
-  - [ ] Do NOT fail transaction execution.
+- [x] On gRPC error during flush:
+  - [x] Log error with counts and first few keys (debug‑safe truncation)
+  - [x] Increment failure counter; if failures exceed threshold within sliding window, auto‑disable sync and warn once.
+  - [x] Do NOT fail transaction execution.
 
 ---
 
@@ -144,14 +144,14 @@ Files: `actuator/src/main/java/org/tron/core/vm/nativecontract/*DelegateResource
 
 ### 6.1 Unit Tests
 
-- [ ] `ResourceSyncContextTest`
-  - [ ] Begin/record/flush/finish lifecycle
-  - [ ] Thread‑local isolation
+- [x] `ResourceSyncContextTest`
+  - [x] Begin/record/flush/finish lifecycle
+  - [x] Thread‑local isolation
 
-- [ ] `ResourceSyncServiceTest`
-  - [ ] Given mocked Stores + SPI, flush builds correct per‑DB batches and calls `batchWrite` in order (asset → account → props)
-  - [ ] Confirm flag triggers `batchGet`
-  - [ ] Error path triggers counters and disables after threshold
+- [x] `ResourceSyncServiceTest`
+  - [x] Given mocked Stores + SPI, flush builds correct per‑DB batches and calls `batchWrite` in order (asset → account → props)
+  - [x] Confirm flag triggers `batchGet`
+  - [x] Error path triggers counters and disables after threshold
 
 ### 6.2 Processor Unit Tests (extend existing)
 
@@ -179,15 +179,15 @@ Files: `actuator/src/main/java/org/tron/core/vm/nativecontract/*DelegateResource
 
 ## 7) Metrics & Logging
 
-- [ ] Counters
-  - [ ] `resource_sync.flush.count`
-  - [ ] `resource_sync.flush.error.count`
-  - [ ] `resource_sync.keys.accounts` / `...keys.dynamic` / `...keys.assets`
-- [ ] Timers
-  - [ ] `resource_sync.flush.latency_ms`
-- [ ] Gauges (optional)
-  - [ ] `resource_sync.failures.window`
-- [ ] Log lines (debug): tx id, batch sizes per DB, latency, confirm miss count (if confirm enabled)
+- [x] Counters
+  - [x] `resource_sync.flush.count`
+  - [x] `resource_sync.flush.error.count`
+  - [x] `resource_sync.keys.accounts` / `...keys.dynamic` / `...keys.assets`
+- [x] Timers
+  - [x] `resource_sync.flush.latency_ms`
+- [x] Gauges (optional)
+  - [x] `resource_sync.failures.window`
+- [x] Log lines (debug): tx id, batch sizes per DB, latency, confirm miss count (if confirm enabled)
 
 ---
 
@@ -203,9 +203,9 @@ Files: `actuator/src/main/java/org/tron/core/vm/nativecontract/*DelegateResource
 
 ## 9) Risk & Compatibility
 
-- [ ] Double writes safety: Existing store `put(...)` already writes via SPI; pre‑exec flush re‑reads current values and overwrites idempotently (same bytes). This is about timing/visibility, not duplication.
-- [ ] Performance: O(1) flush per tx with 3 batch calls; bounded set sizes (only dirties).
-- [ ] Backward compat: Fully gated by `remote.resource.sync.enabled` and REMOTE mode detection.
+- [x] Double writes safety: Existing store `put(...)` already writes via SPI; pre‑exec flush re‑reads current values and overwrites idempotently (same bytes). This is about timing/visibility, not duplication.
+- [x] Performance: O(1) flush per tx with 3 batch calls; bounded set sizes (only dirties).
+- [x] Backward compat: Fully gated by `remote.resource.sync.enabled` and REMOTE mode detection.
 
 ---
 
@@ -222,10 +222,10 @@ Files: `actuator/src/main/java/org/tron/core/vm/nativecontract/*DelegateResource
   - [x] recordAssetIssueDirty(V1/V2)
 - [x] Update: `chainbase/src/main/java/org/tron/core/db/EnergyProcessor.java`
   - [x] recordAccountDirty, recordDynamicKeyDirty(block energy usage)
-- [ ] Update: `actuator/src/main/java/org/tron/core/vm/VMActuator.java`
-  - [ ] recordAccountDirty for creator/caller in V2 window pre‑merge writes
-- [ ] Update: native resource processors (delegate/undelegate)
-  - [ ] recordAccountDirty(owner/receiver)
+- [x] Update: `actuator/src/main/java/org/tron/core/vm/VMActuator.java`
+  - [x] recordAccountDirty for creator/caller in V2 window pre‑merge writes
+- [x] Update: native resource processors (delegate/undelegate)
+  - [x] recordAccountDirty(owner/receiver)
 
 ---
 
