@@ -21,11 +21,11 @@ This plan introduces a lightweight Resource Sync context + service, instruments 
 
 ## 1) Configuration and Flags
 
-- [ ] Default enablement: turn ON automatically when `StorageSpiFactory.determineStorageMode() == REMOTE`.
-- [ ] System properties/env
-  - [ ] `-Dremote.resource.sync.enabled=true|false` (default true in REMOTE; false in EMBEDDED)
-  - [ ] `-Dremote.resource.sync.debug=false` (extra logs)
-  - [ ] `-Dremote.resource.sync.confirm=false` (optional read‑back diagnostics)
+- [x] Default enablement: turn ON automatically when `StorageSpiFactory.determineStorageMode() == REMOTE`.
+- [x] System properties/env
+  - [x] `-Dremote.resource.sync.enabled=true|false` (default true in REMOTE; false in EMBEDDED)
+  - [x] `-Dremote.resource.sync.debug=false` (extra logs)
+  - [x] `-Dremote.resource.sync.confirm=false` (optional read‑back diagnostics)
 
 ---
 
@@ -33,22 +33,22 @@ This plan introduces a lightweight Resource Sync context + service, instruments 
 
 Add new classes in `framework/src/main/java/org/tron/core/storage/sync/`:
 
-- [ ] `ResourceSyncContext`
-  - [ ] Thread‑local holder (similar to `StateChangeJournalRegistry`)
-  - [ ] API: `begin(TransactionContext ctx)`, `recordAccountDirty(byte[] addr)`, `recordDynamicKeyDirty(byte[] key)`, `recordAssetIssueDirtyV1(byte[] assetName)`, `recordAssetIssueDirtyV2(byte[] assetId)`, `flushPreExec()`, `finish()`
-  - [ ] Holds minimal sets: `{accounts, dynamicKeys, assetIssueV1Keys, assetIssueV2Keys}`
-  - [ ] No heavy serialization in hot path; only keys bookkeeping
+- [x] `ResourceSyncContext`
+  - [x] Thread‑local holder (similar to `StateChangeJournalRegistry`)
+  - [x] API: `begin(TransactionContext ctx)`, `recordAccountDirty(byte[] addr)`, `recordDynamicKeyDirty(byte[] key)`, `recordAssetIssueDirtyV1(byte[] assetName)`, `recordAssetIssueDirtyV2(byte[] assetId)`, `flushPreExec()`, `finish()`
+  - [x] Holds minimal sets: `{accounts, dynamicKeys, assetIssueV1Keys, assetIssueV2Keys}`
+  - [x] No heavy serialization in hot path; only keys bookkeeping
 
-- [ ] `ResourceSyncService`
-  - [ ] Resolve DB names: `account`, `properties`, `asset-issue`, `asset-issue-v2`
-  - [ ] Build batches on `flushPreExec()` by reading latest values from stores:
-    - [ ] Accounts: `AccountStore.getUnchecked(addr)` → put serialized capsule bytes
-    - [ ] Dynamic props: each dirty key → `DynamicPropertiesStore.getUnchecked(key)`
-    - [ ] Asset issue V1/V2: `AssetIssueStore.get(assetName)`, `AssetIssueV2Store.get(assetId)`
-  - [ ] Batch calls per DB: `StorageSPI.batchWrite(dbName, Map<byte[],byte[]>)`
-  - [ ] Ordering: asset issue → accounts → dynamic props (see §6)
-  - [ ] Error handling: log and continue; do not abort tx. Optional circuit‑breaker to auto‑disable after N failures.
-  - [ ] Metrics (see §8)
+- [x] `ResourceSyncService`
+  - [x] Resolve DB names: `account`, `properties`, `asset-issue`, `asset-issue-v2`
+  - [x] Build batches on `flushPreExec()` by reading latest values from stores:
+    - [x] Accounts: `AccountStore.getUnchecked(addr)` → put serialized capsule bytes
+    - [x] Dynamic props: each dirty key → `DynamicPropertiesStore.getUnchecked(key)`
+    - [x] Asset issue V1/V2: `AssetIssueStore.get(assetName)`, `AssetIssueV2Store.get(assetId)`
+  - [x] Batch calls per DB: `StorageSPI.batchWrite(dbName, Map<byte[],byte[]>)`
+  - [x] Ordering: asset issue → accounts → dynamic props (see §6)
+  - [x] Error handling: log and continue; do not abort tx. Optional circuit‑breaker to auto‑disable after N failures.
+  - [x] Metrics (see §8)
 
 ---
 
@@ -60,47 +60,47 @@ Minimal, focused hooks to mark dirties and to flush once per tx before remote ex
 
 Files: `framework/src/main/java/org/tron/core/db/Manager.java`
 
-- [ ] In `processTransaction(...)`:
-  - [ ] Call `ResourceSyncContext.begin(context)` right after `TransactionTrace trace = ...` and before any resource consumption.
-  - [ ] After `consumeBandwidth(trxCap, trace)` / `consumeMultiSignFee(...)` / `consumeMemoFee(...)`, and before `trace.exec()`:
-    - [ ] `ResourceSyncContext.flushPreExec()` to push all pre‑exec deltas to remote storage.
-  - [ ] After CSV logging / finalization: `ResourceSyncContext.finish()` to clear thread‑local.
+- [x] In `processTransaction(...)`:
+  - [x] Call `ResourceSyncContext.begin(context)` right after `TransactionTrace trace = ...` and before any resource consumption.
+  - [x] After `consumeBandwidth(trxCap, trace)` / `consumeMultiSignFee(...)` / `consumeMemoFee(...)`, and before `trace.exec()`:
+    - [x] `ResourceSyncContext.flushPreExec()` to push all pre‑exec deltas to remote storage.
+  - [x] After CSV logging / finalization: `ResourceSyncContext.finish()` to clear thread‑local.
 
-- [ ] In `consumeMultiSignFee(...)`:
-  - [ ] After balance deduction and burn/blackhole move, record:
-    - [ ] `recordAccountDirty(ownerAddress)`
-    - [ ] If burn: mark dynamic key dirty for `BURN_TRX_AMOUNT`
-    - [ ] If fee pool: mark dynamic key dirty for `TRANSACTION_FEE_POOL`
+- [x] In `consumeMultiSignFee(...)`:
+  - [x] After balance deduction and burn/blackhole move, record:
+    - [x] `recordAccountDirty(ownerAddress)`
+    - [x] If burn: mark dynamic key dirty for `BURN_TRX_AMOUNT`
+    - [x] If fee pool: mark dynamic key dirty for `TRANSACTION_FEE_POOL`
 
-- [ ] In `consumeMemoFee(...)`:
-  - [ ] Same as above for memo fee path.
+- [x] In `consumeMemoFee(...)`:
+  - [x] Same as above for memo fee path.
 
 ### 3.2 BandwidthProcessor (non‑VM net usage, fees, public usage)
 
 File: `chainbase/src/main/java/org/tron/core/db/BandwidthProcessor.java`
 
-- [ ] After `accountStore.put(accountCapsule.createDbKey(), accountCapsule)` (owner)
-  - [ ] `recordAccountDirty(owner)`
-- [ ] If issuer path (TRC‑10): after issuer `accountStore.put(...)`
-  - [ ] `recordAccountDirty(issuer)`
-- [ ] After `dynamicPropertiesStore.savePublicNetUsage(...)` and `savePublicNetTime(...)`
-  - [ ] `recordDynamicKeyDirty(PUBLIC_NET_USAGE)` and `recordDynamicKeyDirty(PUBLIC_NET_TIME)`
-- [ ] After `dynamicPropertiesStore.addTotalTransactionCost(fee)`
-  - [ ] `recordDynamicKeyDirty(TOTAL_TRANSACTION_COST)`
-- [ ] Asset owner subsidy path (TRC‑10): after public free‑asset usage updates
-  - [ ] For V1: `recordAssetIssueDirtyV1(assetName)`
-  - [ ] For V2: `recordAssetIssueDirtyV2(assetId)`
-- [ ] Fee fallback (`useTransactionFee` → `consumeFeeForBandwidth`) paths:
-  - [ ] Mark payer account dirty; mark burn/pool related dynamic keys dirty as applicable.
+- [x] After `accountStore.put(accountCapsule.createDbKey(), accountCapsule)` (owner)
+  - [x] `recordAccountDirty(owner)`
+- [x] If issuer path (TRC‑10): after issuer `accountStore.put(...)`
+  - [x] `recordAccountDirty(issuer)`
+- [x] After `dynamicPropertiesStore.savePublicNetUsage(...)` and `savePublicNetTime(...)`
+  - [x] `recordDynamicKeyDirty(PUBLIC_NET_USAGE)` and `recordDynamicKeyDirty(PUBLIC_NET_TIME)`
+- [x] After `dynamicPropertiesStore.addTotalTransactionCost(fee)`
+  - [x] `recordDynamicKeyDirty(TOTAL_TRANSACTION_COST)`
+- [x] Asset owner subsidy path (TRC‑10): after public free‑asset usage updates
+  - [x] For V1: `recordAssetIssueDirtyV1(assetName)`
+  - [x] For V2: `recordAssetIssueDirtyV2(assetId)`
+- [x] Fee fallback (`useTransactionFee` → `consumeFeeForBandwidth`) paths:
+  - [x] Mark payer account dirty; mark burn/pool related dynamic keys dirty as applicable.
 
 ### 3.3 EnergyProcessor (non‑VM energy usage & block counters)
 
 File: `chainbase/src/main/java/org/tron/core/db/EnergyProcessor.java`
 
-- [ ] After `accountStore.put(accountCapsule.createDbKey(), accountCapsule)`
-  - [ ] `recordAccountDirty(address)`
-- [ ] After `dynamicPropertiesStore.saveBlockEnergyUsage(...)`
-  - [ ] `recordDynamicKeyDirty(BLOCK_ENERGY_USAGE)`
+- [x] After `accountStore.put(accountCapsule.createDbKey(), accountCapsule)`
+  - [x] `recordAccountDirty(address)`
+- [x] After `dynamicPropertiesStore.saveBlockEnergyUsage(...)`
+  - [x] `recordDynamicKeyDirty(BLOCK_ENERGY_USAGE)`
 
 ### 3.4 VMActuator (freeze‑v2 pre‑merge windows)
 
@@ -211,17 +211,17 @@ Files: `actuator/src/main/java/org/tron/core/vm/nativecontract/*DelegateResource
 
 ## 10) Concrete Code Targets (Checklist by file)
 
-- [ ] Add: `framework/src/main/java/org/tron/core/storage/sync/ResourceSyncContext.java`
-- [ ] Add: `framework/src/main/java/org/tron/core/storage/sync/ResourceSyncService.java`
-- [ ] Update: `framework/src/main/java/org/tron/core/db/Manager.java`
-  - [ ] `processTransaction(...)`: begin → flushPreExec → finish
-  - [ ] `consumeMemoFee(...)`: record dirties
-  - [ ] `consumeMultiSignFee(...)`: record dirties
-- [ ] Update: `chainbase/src/main/java/org/tron/core/db/BandwidthProcessor.java`
-  - [ ] recordAccountDirty(owner/issuer), recordDynamicKeyDirty(public net usage/time, total tx cost)
-  - [ ] recordAssetIssueDirty(V1/V2)
-- [ ] Update: `chainbase/src/main/java/org/tron/core/db/EnergyProcessor.java`
-  - [ ] recordAccountDirty, recordDynamicKeyDirty(block energy usage)
+- [x] Add: `framework/src/main/java/org/tron/core/storage/sync/ResourceSyncContext.java`
+- [x] Add: `framework/src/main/java/org/tron/core/storage/sync/ResourceSyncService.java`
+- [x] Update: `framework/src/main/java/org/tron/core/db/Manager.java`
+  - [x] `processTransaction(...)`: begin → flushPreExec → finish
+  - [x] `consumeMemoFee(...)`: record dirties
+  - [x] `consumeMultiSignFee(...)`: record dirties
+- [x] Update: `chainbase/src/main/java/org/tron/core/db/BandwidthProcessor.java`
+  - [x] recordAccountDirty(owner/issuer), recordDynamicKeyDirty(public net usage/time, total tx cost)
+  - [x] recordAssetIssueDirty(V1/V2)
+- [x] Update: `chainbase/src/main/java/org/tron/core/db/EnergyProcessor.java`
+  - [x] recordAccountDirty, recordDynamicKeyDirty(block energy usage)
 - [ ] Update: `actuator/src/main/java/org/tron/core/vm/VMActuator.java`
   - [ ] recordAccountDirty for creator/caller in V2 window pre‑merge writes
 - [ ] Update: native resource processors (delegate/undelegate)

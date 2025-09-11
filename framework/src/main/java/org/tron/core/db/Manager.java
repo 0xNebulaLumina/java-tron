@@ -55,6 +55,7 @@ import org.tron.core.execution.reporting.ExecutionCsvRecordBuilder;
 import org.tron.core.execution.reporting.StateChangeJournalRegistry;
 import org.tron.core.execution.reporting.StateChangeRecorderBridge;
 import org.tron.core.db.StateChangeRecorderContext;
+import org.tron.core.storage.sync.ResourceSyncContext;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.bloom.Bloom;
 import org.tron.common.cron.CronExpression;
@@ -932,15 +933,18 @@ public class Manager {
         try {
           if (accountCapsule != null) {
             adjustBalance(getAccountStore(), accountCapsule, -fee, disableJavaLangMath);
+            ResourceSyncContext.recordAccountDirty(address);
 
             if (getDynamicPropertiesStore().supportBlackHoleOptimization()) {
               getDynamicPropertiesStore().burnTrx(fee);
+              ResourceSyncContext.recordDynamicKeyDirty("BURN_TRX_AMOUNT".getBytes());
             } else {
               adjustBalance(
                   getAccountStore(),
                   this.getAccountStore().getBlackhole(),
                   +fee,
                   disableJavaLangMath);
+              ResourceSyncContext.recordAccountDirty(this.getAccountStore().getBlackhole().getAddress().toByteArray());
             }
           }
         } catch (BalanceInsufficientException e) {
@@ -974,15 +978,18 @@ public class Manager {
       try {
         if (accountCapsule != null) {
           adjustBalance(getAccountStore(), accountCapsule, -fee, disableJavaLangMath);
+          ResourceSyncContext.recordAccountDirty(address);
 
           if (getDynamicPropertiesStore().supportBlackHoleOptimization()) {
             getDynamicPropertiesStore().burnTrx(fee);
+            ResourceSyncContext.recordDynamicKeyDirty("BURN_TRX_AMOUNT".getBytes());
           } else {
             adjustBalance(
                 getAccountStore(),
                 this.getAccountStore().getBlackhole(),
                 +fee,
                 disableJavaLangMath);
+            ResourceSyncContext.recordAccountDirty(this.getAccountStore().getBlackhole().getAddress().toByteArray());
           }
         }
       } catch (BalanceInsufficientException e) {
@@ -1536,9 +1543,16 @@ public class Manager {
         new TransactionTrace(trxCap, StoreFactory.getInstance(), createRuntime());
     trxCap.setTrxTrace(trace);
 
+    // Initialize resource sync context before consuming resources
+    TransactionContext txContext = new TransactionContext(blockCap, trxCap, StoreFactory.getInstance(), false, eventPluginLoaded);
+    ResourceSyncContext.begin(txContext);
+
     consumeBandwidth(trxCap, trace);
     consumeMultiSignFee(trxCap, trace);
     consumeMemoFee(trxCap, trace);
+
+    // Flush resource mutations to remote storage before execution
+    ResourceSyncContext.flushPreExec();
 
     trace.init(blockCap, eventPluginLoaded);
     StateChangeJournalRegistry.initializeForCurrentTransaction();
@@ -1578,6 +1592,9 @@ public class Manager {
     // Clean up journal after CSV logging is complete
     StateChangeJournalRegistry.clearForCurrentTransaction();
     StateChangeRecorderContext.clear();
+
+    // Finish resource sync context
+    ResourceSyncContext.finish();
     chainBaseManager.getTransactionStore().put(trxCap.getTransactionId().getBytes(), trxCap);
 
     Optional.ofNullable(transactionCache)
