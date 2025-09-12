@@ -327,7 +327,8 @@ impl StorageAdapter for StorageModuleAdapter {
                         let default_account = AccountInfo {
                             balance: default_balance,
                             nonce: 0,
-                            code_hash: revm::primitives::B256::ZERO,
+                            // Use canonical empty code hash keccak256("") for EOAs
+                            code_hash: keccak256(&[]),
                             code: None,
                         };
                         tracing::warn!("Providing default account due to deserialization error, balance: {}", default_balance);
@@ -591,7 +592,8 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
                 let default_account = AccountInfo {
                     balance: revm::primitives::U256::ZERO,
                     nonce: 0,
-                    code_hash: revm::primitives::B256::ZERO,
+                    // Use canonical empty code hash keccak256("") instead of ZERO for parity
+                    code_hash: keccak256(&[]),
                     code: None,
                 };
                 
@@ -706,9 +708,17 @@ impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
                                   new_account_info.balance);
                 }
                 
+                // If the account did not exist at the start (tracked in snapshots),
+                // do not emit a synthetic zeroed old_account; leave it as None to signal creation.
+                let old_account_to_record = if was_nonexistent_in_snapshots {
+                    None
+                } else {
+                    old_account_info.clone()
+                };
+
                 self.state_change_records.push(StateChangeRecord::AccountChange {
                     address,
-                    old_account: old_account_info.clone(),
+                    old_account: old_account_to_record,
                     new_account: Some(new_account_info.clone()),
                 });
             }
