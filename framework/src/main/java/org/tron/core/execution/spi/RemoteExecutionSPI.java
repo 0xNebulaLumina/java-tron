@@ -269,6 +269,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
       // Determine transaction kind based on contract type
       TxKind txKind = TxKind.NON_VM; // Default to non-VM
+      tron.backend.BackendOuterClass.ContractType contractType = tron.backend.BackendOuterClass.ContractType.TRANSFER_CONTRACT; // Default
+      byte[] assetId = new byte[0]; // Default empty for TRX transfers
 
       // Extract specific data based on contract type
       switch (contract.getType()) {
@@ -277,14 +279,24 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = transferContract.getToAddress().toByteArray();
           value = transferContract.getAmount();
           txKind = TxKind.NON_VM; // Simple TRX transfer
+          contractType = tron.backend.BackendOuterClass.ContractType.TRANSFER_CONTRACT;
           break;
 
         case TransferAssetContract:
+          // Phase 3 Fix: Keep TRC-10 on Java path until Rust storage can handle TRC-10 ledgers
+          boolean trc10RemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!trc10RemoteEnabled) {
+            logger.debug("TRC-10 remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("TRC-10 execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+          
           TransferAssetContract transferAssetContract =
               contractParameter.unpack(TransferAssetContract.class);
           toAddress = transferAssetContract.getToAddress().toByteArray();
           value = transferAssetContract.getAmount();
-          txKind = TxKind.NON_VM; // TRC-10 asset transfer
+          assetId = transferAssetContract.getAssetName().toByteArray(); // TRC-10 asset ID
+          txKind = TxKind.NON_VM; // TRC-10 asset transfer (when enabled)
+          contractType = tron.backend.BackendOuterClass.ContractType.TRANSFER_ASSET_CONTRACT;
           break;
 
         case CreateSmartContract:
@@ -295,6 +307,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             value = createContract.getNewContract().getCallValue();
           }
           txKind = TxKind.VM; // Smart contract creation requires VM
+          contractType = tron.backend.BackendOuterClass.ContractType.CREATE_SMART_CONTRACT;
           break;
 
         case TriggerSmartContract:
@@ -304,6 +317,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           data = triggerContract.getData().toByteArray();
           value = triggerContract.getCallValue();
           txKind = TxKind.VM; // Smart contract invocation requires VM
+          contractType = tron.backend.BackendOuterClass.ContractType.TRIGGER_SMART_CONTRACT;
           break;
 
         default:
@@ -311,6 +325,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // This includes system contracts, governance contracts, etc.
           logger.debug("Using default values for contract type: {}, classified as NON_VM", contract.getType());
           txKind = TxKind.NON_VM;
+          // Map other contract types - this is a simplified mapping
+          contractType = tron.backend.BackendOuterClass.ContractType.TRANSFER_CONTRACT; // Default fallback
           break;
       }
 
@@ -330,15 +346,21 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               .setEnergyLimit(energyLimit)
               .setEnergyPrice(energyPrice)
               .setNonce(nonce)
-              .setTxKind(txKind); // Set the transaction kind for proper processing
+              .setTxKind(txKind) // Set the transaction kind for proper processing
+              .setContractType(contractType) // Phase 3: Add detailed contract type
+              .setAssetId(ByteString.copyFrom(assetId)); // Phase 3: Add asset ID for TRC-10
 
-      // Build the execution context
+      // Build the execution context - Phase 3 Fix: Require BlockCapsule for deterministic context
       BlockCapsule blockCap = context.getBlockCap();
-      long blockNumber = blockCap != null ? blockCap.getNum() : 0;
-      long blockTimestamp = blockCap != null ? blockCap.getTimeStamp() : System.currentTimeMillis();
-      byte[] blockHash = blockCap != null ? blockCap.getBlockId().getBytes() : new byte[32];
-      byte[] coinbase =
-          blockCap != null ? blockCap.getWitnessAddress().toByteArray() : new byte[20];
+      if (blockCap == null) {
+        logger.warn("BlockCapsule is null - skipping transaction to avoid non-deterministic context");
+        throw new IllegalArgumentException("BlockCapsule is required for deterministic execution context");
+      }
+      
+      long blockNumber = blockCap.getNum();
+      long blockTimestamp = blockCap.getTimeStamp();
+      byte[] blockHash = blockCap.getBlockId().getBytes();
+      byte[] coinbase = blockCap.getWitnessAddress().toByteArray();
 
       ExecutionContext.Builder contextBuilder =
           ExecutionContext.newBuilder()
