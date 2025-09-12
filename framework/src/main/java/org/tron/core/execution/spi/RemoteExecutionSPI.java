@@ -29,6 +29,14 @@ import tron.backend.BackendOuterClass.*;
 public class RemoteExecutionSPI implements ExecutionSPI {
   private static final Logger logger = LoggerFactory.getLogger(RemoteExecutionSPI.class);
 
+  // Canonical keccak256("") for empty code hash parity with embedded
+  private static final byte[] KECCAK_EMPTY = new byte[] {
+      (byte)0xc5,(byte)0xd2,(byte)0x46,(byte)0x01,(byte)0x86,(byte)0xf7,(byte)0x23,(byte)0x3c,
+      (byte)0x92,(byte)0x7e,(byte)0x7d,(byte)0xb2,(byte)0xdc,(byte)0xc7,(byte)0x03,(byte)0xc0,
+      (byte)0xe5,(byte)0x00,(byte)0xb6,(byte)0x53,(byte)0xca,(byte)0x82,(byte)0x27,(byte)0x3b,
+      (byte)0x7b,(byte)0xfa,(byte)0xd8,(byte)0x04,(byte)0x5d,(byte)0x85,(byte)0xa4,(byte)0x70
+  };
+
   private final String host;
   private final int port;
   private MetricsCallback metricsCallback;
@@ -441,10 +449,21 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         nonceBytes[7 - i] = (byte) (nonce >>> (i * 8));
       }
       
-      // Ensure code hash is 32 bytes (pad with zeros if needed)
+      // Ensure code hash is 32 bytes and normalize empty-code hash to KECCAK_EMPTY
       byte[] paddedCodeHash = new byte[32];
+      boolean codeIsEmpty = (code == null || code.length == 0);
+      boolean codeHashAllZeroOrEmpty = true;
       if (codeHash.length > 0) {
+        // Check if codeHash is all zero bytes
+        codeHashAllZeroOrEmpty = true;
+        for (byte b : codeHash) {
+          if (b != 0) { codeHashAllZeroOrEmpty = false; break; }
+        }
         System.arraycopy(codeHash, 0, paddedCodeHash, Math.max(0, 32 - codeHash.length), Math.min(codeHash.length, 32));
+      }
+      if (codeIsEmpty && codeHashAllZeroOrEmpty) {
+        // Overwrite with canonical empty-code hash
+        System.arraycopy(KECCAK_EMPTY, 0, paddedCodeHash, 0, 32);
       }
       
       // Code length as 4 bytes (big-endian)
@@ -533,8 +552,13 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         // and serialize account info in the values
         byte[] address = accountChange.getAddress().toByteArray();
         byte[] emptyKey = new byte[0]; // Empty key indicates account change
-        byte[] oldValue = serializeAccountInfo(accountChange.getOldAccount());
-        byte[] newValue = serializeAccountInfo(accountChange.getNewAccount());
+        // Respect field presence: if old/new account is not set, keep value empty
+        byte[] oldValue = accountChange.hasOldAccount()
+            ? serializeAccountInfo(accountChange.getOldAccount())
+            : new byte[0];
+        byte[] newValue = accountChange.hasNewAccount()
+            ? serializeAccountInfo(accountChange.getNewAccount())
+            : new byte[0];
         
         StateChange stateChange = new StateChange(address, emptyKey, oldValue, newValue);
         stateChanges.add(stateChange);

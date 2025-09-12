@@ -2061,11 +2061,26 @@ impl BackendService {
                             }
                         };
 
+                        // Canonical empty code hash: keccak256("")
+                        const KECCAK_EMPTY: [u8; 32] = [
+                            0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c,
+                            0x92, 0x7e, 0x7d, 0xb2, 0xdc, 0xc7, 0x03, 0xc0,
+                            0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b,
+                            0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70,
+                        ];
+
+                        // Normalize code_hash for empty code to KECCAK_EMPTY for parity with embedded
+                        let code_hash_bytes: Vec<u8> = if code_bytes.is_empty() {
+                            KECCAK_EMPTY.to_vec()
+                        } else {
+                            acc_info.code_hash.as_slice().to_vec()
+                        };
+
                         crate::backend::AccountInfo {
                             address: Self::add_tron_address_prefix(addr),
                             balance: acc_info.balance.to_be_bytes::<32>().to_vec(),
                             nonce: acc_info.nonce,
-                            code_hash: acc_info.code_hash.as_slice().to_vec(),
+                            code_hash: code_hash_bytes,
                             code: code_bytes,
                         }
                     };
