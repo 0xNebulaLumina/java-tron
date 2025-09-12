@@ -26,6 +26,7 @@ import org.tron.core.exception.TooBigTransactionResultException;
 import org.tron.protos.Protocol.Transaction.Contract;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
+import org.tron.core.storage.sync.ResourceSyncContext;
 
 @Slf4j(topic = "DB")
 public class BandwidthProcessor extends ResourceProcessor {
@@ -183,6 +184,7 @@ public class BandwidthProcessor extends ResourceProcessor {
     if (consumeFeeForBandwidth(accountCapsule, fee)) {
       trace.setNetBill(0, fee);
       chainBaseManager.getDynamicPropertiesStore().addTotalTransactionCost(fee);
+      ResourceSyncContext.recordDynamicKeyDirty("TOTAL_TRANSACTION_COST".getBytes());
       return true;
     } else {
       return false;
@@ -238,6 +240,7 @@ public class BandwidthProcessor extends ResourceProcessor {
 
       trace.setNetBillForCreateNewAccount(netCost, 0);
       chainBaseManager.getAccountStore().put(accountCapsule.createDbKey(), accountCapsule);
+      ResourceSyncContext.recordAccountDirty(accountCapsule.createDbKey());
 
       return true;
     }
@@ -250,6 +253,7 @@ public class BandwidthProcessor extends ResourceProcessor {
     if (consumeFeeForNewAccount(accountCapsule, fee)) {
       trace.setNetBillForCreateNewAccount(0, fee);
       chainBaseManager.getDynamicPropertiesStore().addTotalCreateAccountCost(fee);
+      ResourceSyncContext.recordDynamicKeyDirty("TOTAL_CREATE_ACCOUNT_COST".getBytes());
       return true;
     } else {
       return false;
@@ -406,6 +410,7 @@ public class BandwidthProcessor extends ResourceProcessor {
       accountCapsule.putFreeAssetNetUsageV2(tokenID, newFreeAssetNetUsage);
 
       chainBaseManager.getAssetIssueStore().put(assetIssueCapsule.createDbKey(), assetIssueCapsule);
+      ResourceSyncContext.recordAssetIssueDirtyV1(assetIssueCapsule.createDbKey());
 
       assetIssueCapsuleV2 =
           chainBaseManager.getAssetIssueV2Store().get(assetIssueCapsule.createDbV2Key());
@@ -413,17 +418,22 @@ public class BandwidthProcessor extends ResourceProcessor {
       assetIssueCapsuleV2.setPublicLatestFreeNetTime(publicLatestFreeNetTime);
       chainBaseManager.getAssetIssueV2Store()
           .put(assetIssueCapsuleV2.createDbV2Key(), assetIssueCapsuleV2);
+      ResourceSyncContext.recordAssetIssueDirtyV2(assetIssueCapsuleV2.createDbV2Key());
     } else {
       accountCapsule.putLatestAssetOperationTimeMapV2(tokenID,
           latestAssetOperationTime);
       accountCapsule.putFreeAssetNetUsageV2(tokenID, newFreeAssetNetUsage);
       chainBaseManager.getAssetIssueV2Store()
           .put(assetIssueCapsule.createDbV2Key(), assetIssueCapsule);
+      ResourceSyncContext.recordAssetIssueDirtyV2(assetIssueCapsule.createDbV2Key());
     }
 
     chainBaseManager.getAccountStore().put(accountCapsule.createDbKey(), accountCapsule);
+    ResourceSyncContext.recordAccountDirty(accountCapsule.createDbKey());
+    
     chainBaseManager.getAccountStore().put(issuerAccountCapsule.createDbKey(),
         issuerAccountCapsule);
+    ResourceSyncContext.recordAccountDirty(issuerAccountCapsule.createDbKey());
 
     return true;
 
@@ -494,6 +504,7 @@ public class BandwidthProcessor extends ResourceProcessor {
     accountCapsule.setLatestConsumeTime(now);
 
     chainBaseManager.getAccountStore().put(accountCapsule.createDbKey(), accountCapsule);
+    ResourceSyncContext.recordAccountDirty(accountCapsule.createDbKey());
     return true;
   }
 
@@ -534,12 +545,15 @@ public class BandwidthProcessor extends ResourceProcessor {
     accountCapsule.setLatestOperationTime(latestOperationTime);
 
     chainBaseManager.getDynamicPropertiesStore().savePublicNetUsage(newPublicNetUsage);
+    ResourceSyncContext.recordDynamicKeyDirty("PUBLIC_NET_USAGE".getBytes());
+    
     chainBaseManager.getDynamicPropertiesStore().savePublicNetTime(publicNetTime);
+    ResourceSyncContext.recordDynamicKeyDirty("PUBLIC_NET_TIME".getBytes());
+    
     chainBaseManager.getAccountStore().put(accountCapsule.createDbKey(), accountCapsule);
+    ResourceSyncContext.recordAccountDirty(accountCapsule.createDbKey());
     return true;
 
   }
 
 }
-
-

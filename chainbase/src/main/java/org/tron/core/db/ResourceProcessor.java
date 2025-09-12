@@ -225,13 +225,17 @@ abstract class ResourceProcessor {
       accountCapsule.setLatestOperationTime(latestOperationTime);
       Commons.adjustBalance(accountStore, accountCapsule, -fee,
           this.disableJavaLangMath());
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(accountCapsule.createDbKey());
       if (dynamicPropertiesStore.supportTransactionFeePool()) {
         dynamicPropertiesStore.addTransactionFeePool(fee);
+        org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("TRANSACTION_FEE_POOL".getBytes());
       } else if (dynamicPropertiesStore.supportBlackHoleOptimization()) {
         dynamicPropertiesStore.burnTrx(fee);
+        org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("BURN_TRX_AMOUNT".getBytes());
       } else {
         Commons.adjustBalance(accountStore, accountStore.getBlackhole().createDbKey(), +fee,
             this.disableJavaLangMath());
+        org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(accountStore.getBlackhole().createDbKey());
       }
 
       return true;
@@ -246,11 +250,14 @@ abstract class ResourceProcessor {
       accountCapsule.setLatestOperationTime(latestOperationTime);
       Commons.adjustBalance(accountStore, accountCapsule, -fee,
           this.disableJavaLangMath());
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(accountCapsule.createDbKey());
       if (dynamicPropertiesStore.supportBlackHoleOptimization()) {
         dynamicPropertiesStore.burnTrx(fee);
+        org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("BURN_TRX_AMOUNT".getBytes());
       } else {
         Commons.adjustBalance(accountStore, accountStore.getBlackhole().createDbKey(), +fee,
             this.disableJavaLangMath());
+        org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(accountStore.getBlackhole().createDbKey());
       }
 
       return true;

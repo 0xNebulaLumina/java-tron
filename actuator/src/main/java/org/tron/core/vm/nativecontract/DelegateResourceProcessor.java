@@ -17,6 +17,7 @@ import org.tron.core.actuator.ActuatorConstant;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.DelegatedResourceAccountIndexCapsule;
 import org.tron.core.capsule.DelegatedResourceCapsule;
+import org.tron.core.storage.sync.ResourceSyncContext;
 import org.tron.core.db.BandwidthProcessor;
 import org.tron.core.db.EnergyProcessor;
 import org.tron.core.exception.ContractValidateException;
@@ -141,6 +142,7 @@ public class DelegateResourceProcessor {
     }
 
     repo.updateAccount(ownerCapsule.createDbKey(), ownerCapsule);
+    ResourceSyncContext.recordAccountDirty(ownerCapsule.createDbKey());
   }
 
   private void delegateResource(
@@ -188,5 +190,6 @@ public class DelegateResourceProcessor {
     }
     repo.updateDelegatedResource(key, delegatedResourceCapsule);
     repo.updateAccount(receiverCapsule.createDbKey(), receiverCapsule);
+    ResourceSyncContext.recordAccountDirty(receiverCapsule.createDbKey());
   }
 }

@@ -33,6 +33,7 @@ import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.ReceiptCapsule;
+import org.tron.core.storage.sync.ResourceSyncContext;
 import org.tron.core.db.EnergyProcessor;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
@@ -589,6 +590,7 @@ public class VMActuator implements Actuator2 {
       receipt.setCallerEnergyMergedUsage(account.getEnergyUsage());
       receipt.setCallerEnergyMergedWindowSize(account.getWindowSize(ENERGY));
       rootRepository.updateAccount(account.createDbKey(), account);
+      ResourceSyncContext.recordAccountDirty(account.createDbKey());
     }
     return min(availableEnergy, energyFromFeeLimit, VMConfig.disableJavaLangMath());
 
@@ -756,6 +758,7 @@ public class VMActuator implements Actuator2 {
       receipt.setOriginEnergyMergedUsage(creator.getEnergyUsage());
       receipt.setOriginEnergyMergedWindowSize(creator.getWindowSize(ENERGY));
       rootRepository.updateAccount(creator.createDbKey(), creator);
+      ResourceSyncContext.recordAccountDirty(creator.createDbKey());
     }
     return addExact(callerEnergyLimit, creatorEnergyLimit,
         VMConfig.disableJavaLangMath());
