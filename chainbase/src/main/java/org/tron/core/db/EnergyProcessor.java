@@ -17,6 +17,7 @@ import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol.Account.AccountResource;
 
 import static org.tron.protos.contract.Common.ResourceCode.ENERGY;
+import org.tron.core.storage.sync.ResourceSyncContext;
 
 @Slf4j(topic = "DB")
 public class EnergyProcessor extends ResourceProcessor {
@@ -58,7 +59,10 @@ public class EnergyProcessor extends ResourceProcessor {
         totalEnergyAverageTime, now, averageWindowSize);
 
     dynamicPropertiesStore.saveTotalEnergyAverageUsage(newPublicEnergyAverageUsage);
+    ResourceSyncContext.recordDynamicKeyDirty("TOTAL_ENERGY_AVERAGE_USAGE".getBytes());
+    
     dynamicPropertiesStore.saveTotalEnergyAverageTime(now);
+    ResourceSyncContext.recordDynamicKeyDirty("TOTAL_ENERGY_AVERAGE_TIME".getBytes());
   }
 
   public void updateAdaptiveTotalEnergyLimit() {
@@ -84,6 +88,7 @@ public class EnergyProcessor extends ResourceProcessor {
         this.disableJavaLangMath());
 
     dynamicPropertiesStore.saveTotalEnergyCurrentLimit(result);
+    ResourceSyncContext.recordDynamicKeyDirty("TOTAL_ENERGY_CURRENT_LIMIT".getBytes());
     logger.debug("Adjust totalEnergyCurrentLimit, old: {}, new: {}.",
         totalEnergyCurrentLimit, result);
   }
@@ -129,10 +134,12 @@ public class EnergyProcessor extends ResourceProcessor {
     accountCapsule.setLatestConsumeTimeForEnergy(now);
 
     accountStore.put(accountCapsule.createDbKey(), accountCapsule);
+    ResourceSyncContext.recordAccountDirty(accountCapsule.createDbKey());
 
     if (dynamicPropertiesStore.getAllowAdaptiveEnergy() == 1) {
       long blockEnergyUsage = dynamicPropertiesStore.getBlockEnergyUsage() + energy;
       dynamicPropertiesStore.saveBlockEnergyUsage(blockEnergyUsage);
+      ResourceSyncContext.recordDynamicKeyDirty("BLOCK_ENERGY_USAGE".getBytes());
     }
 
     return true;

@@ -17,6 +17,7 @@ import org.tron.core.ChainBaseManager;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.DelegatedResourceAccountIndexCapsule;
 import org.tron.core.capsule.DelegatedResourceCapsule;
+import org.tron.core.storage.sync.ResourceSyncContext;
 import org.tron.core.db.BandwidthProcessor;
 import org.tron.core.db.EnergyProcessor;
 import org.tron.core.exception.ContractValidateException;
@@ -155,6 +156,7 @@ public class UnDelegateResourceProcessor {
           break;
       }
       repo.updateAccount(receiverCapsule.createDbKey(), receiverCapsule);
+      ResourceSyncContext.recordAccountDirty(receiverCapsule.createDbKey());
     }
 
     // modify owner Account
@@ -207,5 +209,6 @@ public class UnDelegateResourceProcessor {
 
     repo.updateDelegatedResource(key, delegatedResourceCapsule);
     repo.updateAccount(ownerCapsule.createDbKey(), ownerCapsule);
+    ResourceSyncContext.recordAccountDirty(ownerCapsule.createDbKey());
   }
 }
