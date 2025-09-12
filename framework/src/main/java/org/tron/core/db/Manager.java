@@ -49,6 +49,12 @@ import org.bouncycastle.util.encoders.Hex;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.TransactionInfoList;
+import org.tron.core.execution.reporting.ExecutionCsvLogger;
+import org.tron.core.execution.reporting.ExecutionCsvRecord;
+import org.tron.core.execution.reporting.ExecutionCsvRecordBuilder;
+import org.tron.core.execution.reporting.StateChangeJournalRegistry;
+import org.tron.core.execution.reporting.StateChangeRecorderBridge;
+import org.tron.core.db.StateChangeRecorderContext;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.bloom.Bloom;
 import org.tron.common.cron.CronExpression;
@@ -1535,6 +1541,8 @@ public class Manager {
     consumeMemoFee(trxCap, trace);
 
     trace.init(blockCap, eventPluginLoaded);
+    StateChangeJournalRegistry.initializeForCurrentTransaction();
+    StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
     trace.checkIsConstant();
     trace.exec();
 
@@ -1542,6 +1550,9 @@ public class Manager {
       trace.setResult();
       if (trace.checkNeedRetry()) {
         trace.init(blockCap, eventPluginLoaded);
+        StateChangeJournalRegistry.clearForCurrentTransaction();
+        StateChangeJournalRegistry.initializeForCurrentTransaction();
+        StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
         trace.checkIsConstant();
         trace.exec();
         trace.setResult();
@@ -1560,6 +1571,13 @@ public class Manager {
     if (getDynamicPropertiesStore().supportVM()) {
       trxCap.setResult(trace.getTransactionContext());
     }
+    
+    // Log execution details to CSV for remote vs embedded comparison
+    logExecutionToCsv(trxCap, blockCap, trace);
+    
+    // Clean up journal after CSV logging is complete
+    StateChangeJournalRegistry.clearForCurrentTransaction();
+    StateChangeRecorderContext.clear();
     chainBaseManager.getTransactionStore().put(trxCap.getTransactionId().getBytes(), trxCap);
 
     Optional.ofNullable(transactionCache)
@@ -2674,6 +2692,35 @@ public class Manager {
     }
 
     return false;
+  }
+
+  /**
+   * Log transaction execution details to CSV for remote vs embedded comparison.
+   * This method is called after transaction execution and finalization.
+   * 
+   * @param trxCap Transaction capsule
+   * @param blockCap Block capsule (may be null for pending transactions)  
+   * @param trace Transaction trace containing execution results
+   */
+  private void logExecutionToCsv(TransactionCapsule trxCap, BlockCapsule blockCap, TransactionTrace trace) {
+    try {
+      // Only log if CSV logging is enabled
+      if (!ExecutionCsvLogger.isEnabled()) {
+        return;
+      }
+      
+      // Build CSV record from transaction execution data
+      ExecutionCsvRecord record = ExecutionCsvRecordBuilder.buildRecord(trxCap, blockCap, trace);
+      if (record != null) {
+        // Log to background queue (non-blocking)
+        ExecutionCsvLogger.getInstance().logRecord(record);
+      }
+      
+    } catch (Exception e) {
+      // CSV logging should never interfere with transaction execution
+      // Log error but don't propagate exception
+      logger.debug("Error logging execution to CSV: {}", e.getMessage());
+    }
   }
 
   private static class ValidateSignTask implements Callable<Boolean> {

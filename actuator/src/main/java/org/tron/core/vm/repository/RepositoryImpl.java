@@ -43,6 +43,7 @@ import org.tron.core.db.BlockIndexStore;
 import org.tron.core.db.BlockStore;
 import org.tron.core.db.KhaosDatabase;
 import org.tron.core.db.TransactionTrace;
+import org.tron.core.db.StateChangeRecorderContext;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.ItemNotFoundException;
 import org.tron.core.exception.StoreException;
@@ -275,6 +276,17 @@ public class RepositoryImpl implements Repository {
   public AccountCapsule createAccount(byte[] address, Protocol.AccountType type) {
     Key key = new Key(address);
     AccountCapsule account = new AccountCapsule(ByteString.copyFrom(address), type);
+    
+    // Record account creation for state tracking (if enabled)
+    if (StateChangeRecorderContext.isEnabled()) {
+      try {
+        StateChangeRecorderContext.recordAccountChange(address, null, account);
+      } catch (Exception e) {
+        // Log error but don't fail the transaction
+        logger.warn("Failed to record account creation for state tracking", e);
+      }
+    }
+    
     accountCache.put(key, Value.create(account, Type.CREATE));
     return account;
   }
@@ -286,6 +298,17 @@ public class RepositoryImpl implements Repository {
     AccountCapsule account = new AccountCapsule(ByteString.copyFrom(address),
         ByteString.copyFromUtf8(accountName),
         type);
+    
+    // Record account creation for state tracking (if enabled)
+    if (StateChangeRecorderContext.isEnabled()) {
+      try {
+        StateChangeRecorderContext.recordAccountChange(address, null, account);
+      } catch (Exception e) {
+        // Log error but don't fail the transaction
+        logger.warn("Failed to record account creation for state tracking", e);
+      }
+    }
+    
     accountCache.put(key, Value.create(account, Type.CREATE));
     return account;
   }
@@ -696,7 +719,8 @@ public class RepositoryImpl implements Repository {
 
   @Override
   public long addBalance(byte[] address, long value) {
-    AccountCapsule accountCapsule = getAccount(address);
+    AccountCapsule oldAccountCapsule = getAccount(address);
+    AccountCapsule accountCapsule = oldAccountCapsule;
     if (accountCapsule == null) {
       accountCapsule = createAccount(address, Protocol.AccountType.Normal);
     }
@@ -711,6 +735,19 @@ public class RepositoryImpl implements Repository {
           StringUtil.createReadableString(accountCapsule.createDbKey())
               + " insufficient balance");
     }
+    
+    // Record account change for state tracking (if enabled)
+    if (StateChangeRecorderContext.isEnabled() && value != 0) {
+      try {
+        AccountCapsule newAccountCapsule = new AccountCapsule(accountCapsule.getInstance());
+        newAccountCapsule.setBalance(addExact(balance, value, VMConfig.disableJavaLangMath()));
+        StateChangeRecorderContext.recordAccountChange(address, oldAccountCapsule, newAccountCapsule);
+      } catch (Exception e) {
+        // Log error but don't fail the transaction
+        logger.warn("Failed to record account change for state tracking", e);
+      }
+    }
+    
     accountCapsule.setBalance(addExact(balance, value, VMConfig.disableJavaLangMath()));
     Key key = Key.create(address);
     accountCache.put(key, Value.create(accountCapsule,
@@ -769,6 +806,17 @@ public class RepositoryImpl implements Repository {
 
   @Override
   public void putAccountValue(byte[] address, AccountCapsule accountCapsule) {
+    // Record account change for state tracking (if enabled)
+    if (StateChangeRecorderContext.isEnabled()) {
+      try {
+        AccountCapsule oldAccountCapsule = getAccount(address);
+        StateChangeRecorderContext.recordAccountChange(address, oldAccountCapsule, accountCapsule);
+      } catch (Exception e) {
+        // Log error but don't fail the transaction
+        logger.warn("Failed to record account change for state tracking", e);
+      }
+    }
+    
     accountCache.put(new Key(address),
         Value.create(accountCapsule, Type.CREATE));
   }
