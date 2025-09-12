@@ -267,12 +267,16 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       long energyPrice = 1; // Default energy price
       long nonce = 0; // TRON doesn't use nonce like Ethereum
 
+      // Determine transaction kind based on contract type
+      TxKind txKind = TxKind.NON_VM; // Default to non-VM
+
       // Extract specific data based on contract type
       switch (contract.getType()) {
         case TransferContract:
           TransferContract transferContract = contractParameter.unpack(TransferContract.class);
           toAddress = transferContract.getToAddress().toByteArray();
           value = transferContract.getAmount();
+          txKind = TxKind.NON_VM; // Simple TRX transfer
           break;
 
         case TransferAssetContract:
@@ -280,6 +284,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               contractParameter.unpack(TransferAssetContract.class);
           toAddress = transferAssetContract.getToAddress().toByteArray();
           value = transferAssetContract.getAmount();
+          txKind = TxKind.NON_VM; // TRC-10 asset transfer
           break;
 
         case CreateSmartContract:
@@ -289,6 +294,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             data = createContract.getNewContract().getBytecode().toByteArray();
             value = createContract.getNewContract().getCallValue();
           }
+          txKind = TxKind.VM; // Smart contract creation requires VM
           break;
 
         case TriggerSmartContract:
@@ -297,13 +303,22 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = triggerContract.getContractAddress().toByteArray();
           data = triggerContract.getData().toByteArray();
           value = triggerContract.getCallValue();
+          txKind = TxKind.VM; // Smart contract invocation requires VM
           break;
 
         default:
-          // For other contract types, use default values
-          logger.debug("Using default values for contract type: {}", contract.getType());
+          // For other contract types, use default values and classify as non-VM
+          // This includes system contracts, governance contracts, etc.
+          logger.debug("Using default values for contract type: {}, classified as NON_VM", contract.getType());
+          txKind = TxKind.NON_VM;
           break;
       }
+
+      // Log transaction classification
+      logger.debug("Classified transaction {} as {}: contract_type={}", 
+          context.getTrxCap().getTransactionId().toString(), 
+          txKind.name(), 
+          contract.getType().name());
 
       // Build the transaction
       TronTransaction.Builder txBuilder =
@@ -314,7 +329,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               .setData(ByteString.copyFrom(data))
               .setEnergyLimit(energyLimit)
               .setEnergyPrice(energyPrice)
-              .setNonce(nonce);
+              .setNonce(nonce)
+              .setTxKind(txKind); // Set the transaction kind for proper processing
 
       // Build the execution context
       BlockCapsule blockCap = context.getBlockCap();
@@ -351,6 +367,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
                   .setEnergyLimit(1000000)
                   .setEnergyPrice(1)
                   .setNonce(0)
+                  .setTxKind(TxKind.NON_VM) // Default to non-VM for fallback case
                   .build())
           .setContext(
               ExecutionContext.newBuilder()

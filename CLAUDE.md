@@ -228,470 +228,144 @@ Format: `<type>(<scope>): <subject>`
 - Comprehensive logging is essential for debugging state synchronization issues between different systems
 - The flow from Rust → Protobuf → Java requires careful attention to serialization formats at each step
 
-## Task Plan: Execution Consistency CSV (Remote vs Embedded)
-
-Goal: Track and compare per-transaction execution results between
-- Remote execution + remote storage, and
-- Embedded execution (RuntimeImpl) + embedded storage,
-by writing detailed CSV records after each transaction, then diffing two runs offline with a comparator script.
-
-Non-goals (for this task):
-- Do not use or modify ShadowExecutionSPI.
-- Do not implement shadow mode or in-process dual-execute.
-- Do not change consensus or commit logic.
-
-High-level approach (Option 1 – two-run, offline compare):
-- Phase 1: Add a production-safe CSV logger invoked post-execution (end of `Manager.processTransaction`).
-- Phase 2: Add embedded `stateChanges` capture for RuntimeImpl and align digest parity.
-- Phase 3: Provide a standalone comparator tool to diff two CSVs.
-
-Run procedure:
-1) Run node with embedded exec+storage, capture CSV A.
-2) Run node with remote exec+storage, capture CSV B.
-3) Use comparator to report mismatches (by tx id).
-
----
-
-### CSV Schema (no truncation of return data)
-- run_id: unique per process (timestamp + UUID)
-- exec_mode: `EMBEDDED|REMOTE` (from `ExecutionSpiFactory.determineExecutionMode()`)
-- storage_mode: `EMBEDDED|REMOTE` (from `StorageSpiFactory.determineStorageMode()`)
-- block_num: long
-- block_id_hex: hex string
-- is_witness_signed: boolean
-- block_timestamp: long (ms)
-- tx_index_in_block: int
-- tx_id_hex: hex string
-- owner_address_hex: hex string
-- contract_type: enum name
-- is_constant: boolean
-- fee_limit: long
-- is_success: boolean (derived from Program/ExecutionProgramResult)
-- result_code: enum name (contractResult)
-- energy_used: long
-- return_data_hex: hex string (full, no cap)
-- return_data_len: int
-- runtime_error: string (may be empty)
-- state_change_count: int
-- state_changes_json: JSON array of {address, key, oldValue, newValue} as hex (remote Phase 1 full; embedded Phase 1 empty)
-- state_digest_sha256: SHA-256 of canonical, sorted tuples (address|key|old|new) (remote Phase 1; embedded Phase 1 = hash of empty list)
-- ts_ms: logger write timestamp
-
-Canonicalization rules for digest:
-- Build tuples as lowercase hex for each component, concatenate with a fixed delimiter `|`.
-- Sort tuples lexicographically, concatenate with `\n`, compute SHA-256, output lowercase hex.
-
-CSV locations:
-- Directory: `output-directory/execution-csv/`
-- Filenames: `<run_id>-<execMode>-<storageMode>.csv`
-
-Comparator tool:
-- Location: `scripts/execution_csv_compare.py`
-- Join key: primary `tx_id_hex`; fallback `(block_num, tx_index_in_block)`
-- Compare fields: success, result_code, energy_used, return_data_hex, runtime_error, state_digest_sha256
-- Outputs: summary + `mismatches.csv` with side-by-side diffs
-
----
-
-### Phase 1 – CSV Logging (Production-safe)
-
-Design:
-- Introduce a lightweight logger with a bounded queue and a background writer thread to avoid blocking execution.
-- Invoke once per tx at the end of `Manager.processTransaction` after `trace.finalization()` and `trxCap.setResult(trace.getTransactionContext())`.
-- Extract fields from `TransactionContext`, `ProgramResult`/`ExecutionProgramResult`, `trxCap`, and `blockCap`.
-- If `ProgramResult` is an instance of `ExecutionProgramResult`, read `stateChanges`; otherwise, leave state changes empty and compute digest over an empty list.
-
-Config flags (system properties):
-- `-Dexec.csv.enabled=true|false` (default false)
-- `-Dexec.csv.dir=output-directory/execution-csv`
-- `-Dexec.csv.sampleRate=1` (log every tx; N to sample every Nth)
-- `-Dexec.csv.rotateMb=256` (optional rotation size)
-
-Planned package structure:
-- `framework/src/main/java/org/tron/core/execution/reporting/`
-  - `ExecutionCsvLogger` – lifecycle, queue, writer, CSV formatting
-  - `ExecutionCsvRecord` – model holder for one row
-  - `StateChangeCanonicalizer` – canonical JSON building + SHA-256 digest
-
-Hook location:
-- `framework/src/main/java/org/tron/core/db/Manager.java` in `processTransaction` after state/result are finalized, guarded by `exec.csv.enabled` and sampling.
-
-Metrics/robustness:
-- Count enqueue attempts, dropped records (queue full), write failures.
-- RFC 4180 compliant CSV escaping; binary → hex; JSON properly escaped.
-- File rotation by size; roll to next file with incremented suffix.
-
-Security & safety:
-- No consensus-affecting changes; logging failure must not affect execution path.
-- Ensure no secrets are logged.
-
-Phase 1 TODOs:
-- [X] Create `ExecutionCsvRecord` with schema fields and builder helpers
-- [X] Implement `StateChangeCanonicalizer` (JSON, SHA-256 digest, canonicalization)
-- [X] Implement `ExecutionCsvLogger` (init dir, run_id, queue, background writer, rotation)
-- [X] Add config parsing for `exec.csv.*` system properties
-- [X] Wire logger call in `Manager.processTransaction` post-finalization (guarded by flag and sample)
-- [X] Add minimal unit tests for canonicalizer and basic CSV formatting (no-heavy integration)
-- [X] Document usage in README/CLAUDE.md (this section) and quick runbook
-
-Acceptance criteria (Phase 1):
-- [X] Embedded run produces CSV with core fields and empty `state_changes_json`, digest of empty list
-- [X] Remote run produces CSV with full state changes + digest
-- [X] No noticeable performance degradation under typical load (queue not dropping under normal ops)
-
-## Phase 1 Implementation Complete ✅
-
-The execution consistency CSV logging system has been successfully implemented with the following components:
-
-### Components Implemented
-
-1. **ExecutionCsvRecord** (`framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvRecord.java`)
-   - Comprehensive data model with all 23 CSV schema fields
-   - Builder pattern for easy record construction
-   - RFC 4180 compliant CSV formatting with proper escaping
-   - Automatic state digest computation when state changes are provided
-
-2. **StateChangeCanonicalizer** (`framework/src/main/java/org/tron/core/execution/reporting/StateChangeCanonicalizer.java`)
-   - Deterministic SHA-256 digest computation from state changes
-   - Canonical JSON serialization for CSV storage
-   - Lexicographic sorting for consistent ordering across runs
-   - Validation utilities for digest format verification
-
-3. **ExecutionCsvLogger** (`framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvLogger.java`)
-   - Production-safe singleton logger with background queue
-   - Non-blocking enqueue with configurable backpressure handling
-   - File rotation based on configurable size limits
-   - Automatic run ID generation and mode detection
-   - Comprehensive metrics collection (enqueued, written, dropped records)
-
-4. **ExecutionCsvRecordBuilder** (`framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvRecordBuilder.java`)
-   - Helper class to extract execution data from transaction context
-   - Handles both ExecutionProgramResult (remote) and ProgramResult (embedded)
-   - Automatically detects execution and storage modes
-
-5. **Integration Hook** (`framework/src/main/java/org/tron/core/db/Manager.java:1565`)
-   - Non-intrusive logging call after transaction finalization
-   - Guarded by configuration flag to avoid performance impact
-   - Exception handling to prevent interference with execution path
-
-### Configuration
-
-The system is controlled via system properties:
-
-```bash
-# Enable CSV logging (disabled by default)
--Dexec.csv.enabled=true
-
-# Configure output directory (default: output-directory/execution-csv)
--Dexec.csv.dir=/path/to/csv/output
-
-# Set sampling rate (default: 1 = log every transaction)
--Dexec.csv.sampleRate=10
-
-# File rotation size in MB (default: 256MB)
--Dexec.csv.rotateMb=128
-
-# Queue capacity (default: 10000)
--Dexec.csv.queueSize=5000
-```
-
-### Usage
-
-Note: JVM system properties (e.g., `-Dexec.csv.enabled=true`) must be specified before `-jar`. If placed after, they are treated as application args and may be parsed as seed nodes, causing errors like: `Invalid inetSocketAddress: "-Dexec.csv.enabled=true"`.
-
-1. **Embedded Run**:
-   ```bash
-   # Note: JVM -D system properties must come BEFORE -jar
-   java -Dexec.csv.enabled=true \
-        -Dstorage.mode=EMBEDDED \
-        -Dexecution.mode=EMBEDDED \
-        -jar FullNode.jar -c config.conf
-   ```
-
-2. **Remote Run**:
-   ```bash
-   # Start Rust backend first
-   cd rust-backend && cargo run --release
-   
-   # Run Java node with remote modes
-   # Note: JVM -D system properties must come BEFORE -jar
-   java -Dexec.csv.enabled=true \
-        -Dstorage.mode=REMOTE \
-        -Dexecution.mode=REMOTE \
-        -jar FullNode.jar -c config.conf
-   ```
-
-### Output
-
-CSV files are generated with naming pattern: `<run_id>-<EXEC_MODE>-<STORAGE_MODE>.csv`
-
-Example: `20250828-143022-a1b2c3d4-REMOTE-REMOTE.csv`
-
-### Testing
-
-Comprehensive unit tests added:
-- `StateChangeCanonicalizerTest`: 13 tests covering digest computation, JSON generation, validation
-- `ExecutionCsvRecordTest`: 7 tests covering record building, CSV formatting, escaping
-
-All tests pass successfully, ensuring correctness of the implementation.
-
----
-
-### Phase 2 – Embedded `stateChanges` and Digest Parity (Storage + Account)
-
-Goal: capture a complete set of state changes for the embedded `RuntimeImpl` covering BOTH:
-- Storage changes (contract storage slots SSTORE), and
-- Account-level changes (balance changes, account creation/deletion, code/codeHash changes).
-
-Why this update:
-- Remote `ExecutionResult` includes a union of StorageChange and AccountChange. To achieve apples-to-apples comparison, the embedded path must emit both categories, not only storage.
-
-StateChange model alignment:
-- Continue using `ExecutionSPI.StateChange` for both types:
-  - StorageChange: `address=contract_addr`, `key=slot_key`, `oldValue`, `newValue` (32-byte values).
-  - AccountChange: `address=account_addr`, `key=empty byte[]`, `oldValue`, `newValue` as a serialized AccountInfo blob (see below), matching the remote encoding.
-
-Canonical AccountInfo encoding (embedded parity with remote):
-- Byte layout: `[balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]`
-  - balance: 32-byte big-endian (truncate/left-pad as needed)
-  - nonce: TRON has no nonce; use 0
-  - code_hash: 32-byte; retrieve from `ContractCapsule.getCodeHash()` if the address hosts a contract; zero otherwise
-  - code: actual bytecode for the address (use `Repository.getCode(address)` or `CodeStore.findCodeByHash(code_hash)`)
-  - For creations: oldValue = empty (0 bytes), newValue = full AccountInfo; for deletions: oldValue = full, newValue = empty
-
-Instrumentation strategy (low-risk and precise):
-
-1) Storage changes (SSTORE):
-- Preferred hook: `ContractState.putStorageValue(addr, key, value)`.
-  - Has both `address` and `Repository` context; currently triggers `ProgramListener.onStoragePut` before delegating to repository.
-  - For each call:
-    - Compute oldValue via `repository.getStorageValue(addr, key)` (before write)
-    - Record `StateChange(address, key, oldValueBytes, newValueBytes)` in a per-tx journal
-  - Deduplicate multiple writes to the same (address,key) within a tx (keep last oldValue from first write, last newValue from last write)
-- Alternative (reinforcement): also reconcile from `Storage.commit()` rowCache if needed to ensure completeness.
-
-2) Account changes (balance/code/create/delete):
-- Hook at the Repository layer where account/code/contract mutations are centralized:
-  - `RepositoryImpl.updateAccount(address, accountCapsule)` (updates, including balance changes)
-  - `RepositoryImpl.putAccountValue(address, accountCapsule)` (creation)
-  - `RepositoryImpl.saveCode(address, code)` (code creation/association, codeHash updates)
-  - `RepositoryImpl.updateContract(address, contractCapsule)` (codeHash updates post-saveCode)
-  - `RepositoryImpl.deleteContract(address)` (self-destruct: deletes code, account, contract)
-- For each of the above, record a single AccountChange per affected address for the transaction:
-  - Before first mutation: read old AccountInfo (derive codeHash/code via ContractStore/CodeStore or `getCode`)
-  - After all mutations: compute new AccountInfo (post-change data)
-  - Store as a consolidated `StateChange(addr, emptyKey, oldBlob, newBlob)`
-- Use a per-tx journal to merge multiple mutations to the same address into one Old/New pair.
-- For self-destruct, leverage ProgramResult.deleteAccounts as a signal, but source-of-truth remains `deleteContract` hook to capture the final deletion.
-
-3) Per-tx StateChange journal (ThreadLocal or context-bound):
-- `StateChangeJournal` (per tx) with methods:
-  - `recordStorageWrite(addr, key, old, now)`
-  - `recordAccountBefore(address, oldInfo)` (idempotent)
-  - `recordAccountAfter(address, newInfo)`
-- Lifecycle:
-  - Created at tx start (TransactionTrace.init)
-  - Populated by hooks
-  - Finalized after VM execution, materialized into `ExecutionProgramResult.stateChanges`
-
-Digest and CSV:
-- SHA-256 digest covers BOTH storage and account changes via the same canonical tuple `hex(address)|hex(key)|hex(old)|hex(new)`, where account changes use `key=""` (empty bytes) to align with remote convention.
-- CSV `state_changes_json` will include both types, indistinguishable by type but recognizable by empty key in account changes (consistent with remote run).
-
-Phase 2 TODOs (updated):
-- [X] Add `StateChangeJournal` per tx with storage+account APIs and merge/dedup logic
-- [X] Wire journal lifecycle at tx boundaries (create in `TransactionTrace.init`, finalize after VM execution)
-- [X] Storage hooks: instrument `ContractState.putStorageValue` to capture old/new; reconcile duplicates
-- [X] Account hooks: instrument RepositoryImpl methods (`updateAccount`, `putAccountValue`, `saveCode`, `updateContract`, `deleteContract`) to set old/new AccountInfo in the journal
-- [X] Implement embedded AccountInfo serialization aligned with remote (balance32, nonce=0, code_hash32, code_len, code)
-- [X] Enrich embedded `ProgramResult` via `ExecutionProgramResult.fromProgramResult` (or set directly if using it end-to-end) to include journaled `stateChanges`
-- [X] Property flag to enable/disable embedded `stateChanges` collection for safe rollout
-- [ ] Validate with curated tx sets: balance transfer, contract CREATE, TRC-20 calls (SSTORE), SELFDESTRUCT
-
-Acceptance criteria (Phase 2):
-- [X] Embedded runs produce both storage and account changes with correct counts
-- [X] Self-destruct and contract creation emit expected account changes (deletion/creation semantics)
-- [X] Digest equality across repeated embedded runs; remote vs embedded parity improves materially
-
-## Phase 2 Implementation Complete ✅
-
-The embedded execution state changes capture system has been successfully implemented with comprehensive coverage of both storage and account changes:
-
-### Key Components Implemented
-
-1. **StateChangeJournal** (`framework/src/main/java/org/tron/core/execution/reporting/StateChangeJournal.java`)
-   - Per-transaction journal with deduplication logic for storage changes and account changes
-   - Serializes AccountCapsule using format aligned with remote execution: `[balance(32)] + [create_time(8)] + [code_length(4)] + [code(variable)]`
-   - Thread-safe implementation with merge capability for multiple updates to same storage slot/account
-
-2. **StateChangeJournalRegistry** (`framework/src/main/java/org/tron/core/execution/reporting/StateChangeJournalRegistry.java`)
-   - Thread-local registry for cross-module access to per-transaction journals
-   - Lifecycle management: `initializeForCurrentTransaction()` → record changes → `getCurrentTransactionStateChanges()` / `finalizeForCurrentTransaction()`
-
-3. **Cross-module Integration**
-   - **StateChangeRecorder** interface in chainbase to avoid circular dependencies
-   - **StateChangeRecorderBridge** in framework connecting modules  
-   - **StateChangeRecorderContext** for unified access pattern across modules
-
-4. **Instrumentation Hooks**
-   - **ContractState.putStorageValue()**: Captures storage changes (SSTORE) with old/new values
-   - **RepositoryImpl**: Instrumented `addBalance()`, `putAccountValue()`, `createAccount()` methods to capture account changes
-   - All hooks properly handle null values, edge cases, and are guarded by the enabled flag
-
-5. **ExecutionProgramResult Enhancement**
-   - **fromProgramResult()** method now retrieves journaled state changes via **getCurrentTransactionStateChanges()**
-   - Maintains complete backwards compatibility when journal is absent or disabled
-   - Preserves all original ProgramResult fields while enriching with embedded state change data
-
-6. **Lifecycle Integration**
-   - Journal initialization in **Manager.processTransaction()** at line 1544-1545 after `trace.init()`
-   - State change recording during execution via instrumented hooks throughout VM execution
-   - Journal can be accessed for CSV logging without finalization to preserve transaction state
-
-### Comprehensive Testing
-
-- **AccountHookIntegrationTest** (5 tests): Account creation, balance changes, deduplication, mixed storage+account operations, disabled mode
-- **StorageHookIntegrationTest** (4 tests): Storage changes, null old values, deduplication, disabled mode  
-- **EmbeddedStateChangeIntegrationTest** (3 tests): Verifies ExecutionProgramResult includes journaled state changes, backwards compatibility, disabled handling
-
-All tests pass, demonstrating correct integration and functionality.
-
-### Production Safety
-
-- System property `exec.csv.stateChanges.enabled` controls embedded state change collection
-- `true`: Full state change capture and journaling active
-- `false`: Complete no-op behavior with zero performance impact
-- Graceful degradation when property is not set (defaults to disabled)
-- No impact on consensus logic or transaction processing - logging failures cannot affect execution
-
----
-
-### Phase 3 – Offline Comparator Tool
-
-Design:
-- Python script `scripts/execution_csv_compare.py` to compare two CSVs.
-- Join rows by `tx_id_hex` (fallback to `(block_num, tx_index_in_block)`).
-- Field-level comparisons with a simple diff report and a `mismatches.csv` output.
-
-Comparator CLI:
-- `--left` path to CSV A, `--right` path to CSV B
-- `--fields` selectable list (default all primary fields)
-- `--ignore-return-data` optional flag to skip return payload comparison
-- `--output` directory for reports
-
-Phase 3 TODOs:
-- [X] Implement CSV loader (streaming-friendly for large files)
-- [X] Implement join by tx_id, fallback join strategy
-- [X] Implement per-field comparison and diff aggregation
-- [X] Emit summary (counts, mismatch rates by field) and `mismatches.csv`
-- [X] Add usage doc + examples
-
-Acceptance criteria (Phase 3):
-- [X] Comparator outputs clear summary and actionable diffs
-- [X] Works efficiently on multi-GB CSVs (if needed)
-
-## Phase 3 Implementation Complete ✅
-
-The offline CSV comparator tool has been successfully implemented as a comprehensive Python script:
-
-### Key Features Implemented
-
-1. **execution_csv_compare.py** (`scripts/execution_csv_compare.py`)
-   - **Dual Join Strategy**: Primary join by `tx_id_hex`, fallback to `(block_num, tx_index_in_block)`
-   - **Streaming CSV Processing**: Memory-efficient loading for large files (multi-GB support)
-   - **Field-by-Field Comparison**: Configurable comparison with normalization (boolean, numeric, hex fields)
-   - **Multiple Output Formats**: Summary text, detailed CSV, and structured JSON reports
-
-2. **Comprehensive Documentation** (`scripts/README.md`)
-   - **Usage Examples**: Basic comparison, field selection, performance optimization
-   - **Input/Output Specifications**: Complete CSV schema and report format documentation
-   - **CI Integration Examples**: Automated threshold checking and error handling
-   - **Troubleshooting Guide**: Common issues and debugging procedures
-
-3. **Report Generation**
-   - **Summary Report**: Human-readable statistics with match rates and field-level accuracy
-   - **Detailed Mismatches CSV**: Side-by-side comparison of all mismatched fields with context
-   - **JSON Report**: Structured data for programmatic analysis and further processing
-
-4. **Advanced Comparison Logic**
-   - **Field Normalization**: Proper handling of boolean, numeric, and hex fields
-   - **Flexible Configuration**: Selectable comparison fields and performance options
-   - **Missing Record Detection**: Tracks transactions present in only one file
-   - **Error Handling**: Graceful handling of malformed data and file access issues
-
-### Usage Examples
-
-#### Basic Comparison
-```bash
-python3 scripts/execution_csv_compare.py \
-  --left output-directory/execution-csv/*EMBEDDED*.csv \
-  --right output-directory/execution-csv/*REMOTE*.csv \
-  --output reports/
-```
-
-#### Performance Optimized
-```bash
-python3 scripts/execution_csv_compare.py \
-  --left embedded.csv --right remote.csv --output reports/ \
-  --ignore-return-data \
-  --fields is_success energy_used state_digest_sha256
-```
-
-### Testing
-
-Successfully tested with sample data demonstrating:
-- Correct field-level mismatch detection (energy_used, state_digest_sha256)
-- Accurate statistics calculation and reporting
-- Proper CSV and JSON output generation
-- Transaction matching and join strategies
-
-### Integration
-
-The comparator seamlessly integrates with the CSV logging system:
-- **Input Compatibility**: Reads CSV files generated by ExecutionCsvLogger
-- **Schema Alignment**: Handles all 23 fields from the execution consistency schema
-- **Mode Detection**: Automatically identifies execution and storage modes from CSV metadata
-- **Batch Processing**: Supports comparison of multiple block ranges and transaction sets
-
----
-
-### Runbook – How to Use
-
-1) Build and configure
-- Build Java: `./gradlew clean build -x test --dependency-verification=off`
-- Ensure Rust backend is up for remote runs (default port 50011)
-
-2) Embedded run (A)
-- Env/config: `execution.mode=EMBEDDED`, `STORAGE_MODE=embedded`
-- Enable CSV: `-Dexec.csv.enabled=true`
-- Output CSV: `output-directory/execution-csv/<run_id>-EMBEDDED-EMBEDDED.csv`
-
-3) Remote run (B)
-- Env/config: `execution.mode=REMOTE`, `STORAGE_MODE=remote`
-- Remote host/port via existing Execution SPI config
-- Enable CSV: `-Dexec.csv.enabled=true`
-- Output CSV: `output-directory/execution-csv/<run_id>-REMOTE-REMOTE.csv`
-
-4) Compare
-- `python3 scripts/execution_csv_compare.py --left A.csv --right B.csv --output reports/`
-
-Notes:
-- Use separate data directories/configs for each run to avoid cross-contamination.
-- Consider `exec.csv.sampleRate` > 1 only if performance becomes an issue.
-
----
-
-### Risks & Mitigations
-- Large CSV size (no truncation of return data):
-  - Mitigate with file rotation and disk monitoring.
-- Embedded `stateChanges` accuracy:
-  - Land Phase 2 only after careful VM instrumentation; gate with a property.
-- Runtime overhead:
-  - Async logging with bounded queue; monitor drop counters.
-
-### Ownership & Timeline
-- Phase 1: CSV logger + hook + docs
-- Phase 2: VM instrumentation for embedded `stateChanges` + digest parity
-- Phase 3: Comparator script + docs
-
-Document owners should keep this section updated as phases land and TODOs are completed. 
+## Current Task: TRON‑Accurate Fee Handling (Remote Execution)
+
+Context
+- We compared embedded (execution+storage) vs remote (execution+storage) CSVs and observed systematic mismatches in `state_change_count` and state digest for many transactions. Remote execution appears to emit an EVM-style coinbase credit (miner tip) that should not exist on TRON.
+- TRON fee semantics: no per‑tx miner/coinbase payout. Non‑VM txs pay flat bandwidth fees (burn or credit blackhole depending on `supportBlackHoleOptimization`). Witness rewards occur at block finalization, not per tx. VM txs consume energy and still do not credit coinbase.
+
+Objective
+- Modify the Rust backend execution path so it never emits Ethereum coinbase payouts and handles non‑VM fees accurately (burn vs. blackhole credit), bringing CSV parity with embedded: correct `state_change_count`, `energy_used` (0 for non‑VM), and matching state digests.
+
+Non‑Goals (for this iteration)
+- Implement full TRON fee accounting (stake/energy/bandwidth deduction, fee pool dynamics) identical to Java actuators.
+- Change Java caller behavior unless gated behind explicit feature flags in a later phase.
+
+Acceptance Criteria
+- No `AccountChange` attributed to block coinbase/miner in remote results for any tx.
+- Non‑VM value transfers: `energy_used = 0`; only two account deltas (sender minus amount+fee, recipient plus amount) plus optional blackhole credit if configured. If burn mode is on, no third-party credit delta is emitted.
+- Execution CSV compare shows near‑100% accuracy for `state_change_count` and `state_digest_sha256` on the same tx set; `energy_used` aligns (0 for non‑VM).
+
+High‑Level Plan (Phased)
+1) Phase 1 – Parity Fix (no proto change):
+   - Suppress EVM coinbase/priority fee at the source and stop enforcing Ethereum gas minima.
+   - Post‑process to stabilize state change ordering for digest parity.
+   - Simple non‑VM heuristic for 0 energy without adding fee deltas.
+2) Phase 2 – Configurable TRON Fee Policy (no proto change):
+   - Introduce `execution.fees` config (burn vs blackhole) and optional blackhole credit emission for VM path (default off) and non‑VM (conservative).
+3) Phase 3 – Full Non‑VM Handling (proto + Java update):
+   - Add tx kind to proto; process non‑VM fully in Rust without EVM; apply accurate fee semantics including blackhole credit or burn based on dynamic properties/config.
+
+Key Code Touchpoints
+- `rust-backend/crates/core/src/service.rs`
+  - `convert_protobuf_transaction(...)`
+  - `convert_protobuf_context(...)`
+  - `convert_execution_result_to_protobuf(...)`
+- `rust-backend/crates/execution/src/tron_evm.rs`
+  - `setup_environment(...)`
+  - `execute_transaction_with_state_tracking(...)`
+  - `extract_state_changes_from_db(...)`
+- `rust-backend/crates/execution/src/storage_adapter.rs`
+  - Address utils (promote Base58 Tron → EVM address decoder from test to prod)
+- `rust-backend/crates/common/src/config.rs` and `rust-backend/config.toml`
+  - Add `execution.fees.*` configuration
+
+Detailed TODOs
+
+Phase 1 — Parity Fix (no proto changes)
+[X] Suppress coinbase/priority fee credit
+- [X] In `service.rs:convert_protobuf_transaction`, force `gas_price = 0` regardless of input, with a safety gate `execution.evm_eth_coinbase_compat` (default false). Document that this is for TRON parity.
+- [X] In `tron_evm.rs:setup_environment`, set `env.block.basefee = 0` explicitly (if field exists in current REVM version). Keep `block.coinbase` set for opcode COINBASE correctness but ensure no rewards are distributed.
+
+[X] Remove Ethereum‑specific gas minima
+- [X] In `tron_evm.rs:execute_transaction_with_state_tracking`, remove the `tx.gas_limit < 21000` rejection. Only enforce `tx.gas_limit <= context.block_gas_limit`. Log a warning if the gas is unusually low to aid debug.
+
+[X] Deterministic state change ordering (digest parity)
+- [X] After `extract_state_changes_from_db()` returns, sort `state_changes` deterministically before returning the result:
+  - AccountChange: by `address` ascending.
+  - StorageChange: by `(address, key)` ascending.
+- [X] Keep sorting local to execution result (do not mutate storage records order).
+
+[X] Non‑VM heuristic energy fix (safe and conservative)
+- [X] Define "likely non‑VM" as `tx.data.is_empty()` AND `to` present AND `code(to) is None`.
+- [X] If likely non‑VM, set `energy_used = 0` in the final `TronExecutionResult`. Do not add any fee deltas here; leave fee effects to Java for now (this avoids accidental double‑counting).
+- [X] Add debug logging when this fast‑path triggers (include `from`, `to`, amount, and reason).
+
+[X] Unit tests (minimal)
+- [X] Ensure no `AccountChange` for `block_coinbase` even when `energy_used > 0`.
+- [X] Ensure sorting: two identical runs produce identical `state_changes` order.
+- [X] Ensure non‑VM heuristic sets `energy_used = 0` when `to` has no code and `data` is empty.
+
+[ ] Validation
+- [ ] Re‑run `scripts/execution_csv_compare.py` on the same tx windows; aim for ~100% on `state_change_count` and state digest.
+- [ ] Manually spot‑check transactions previously showing a third account delta (coinbase) — confirm absence.
+
+Phase 2 — Configurable Fee Policy (no proto change)
+[X] Configuration and plumbing
+- [X] Extend `ExecutionConfig` with nested `ExecutionFeeConfig`:
+  - `mode: "burn" | "blackhole" | "none"` (default: `"burn"`).
+  - `support_black_hole_optimization: bool` (default: true).
+  - `blackhole_address_base58: String` (default empty; required if `mode=blackhole`).
+  - `experimental_vm_blackhole_credit: bool` (default: false; disabled by default to avoid double‑counting).
+  - `non_vm_blackhole_credit_flat: Option<u64>` (SUN), optional flat fee for non‑VM when not deriving from dynamic props.
+- [X] Add TOML examples under `[execution.fees]` and env overrides, e.g. `TRON_BACKEND__EXECUTION__FEES__MODE`.
+
+[X] Address utilities
+- [X] Promote `from_tron_address(...)` from `#[cfg(test)]` to production (new `common::address` module with full Base58Check implementation).
+- [X] Validate checksum and 0x41 prefix; unit test round‑trip with known addresses.
+
+[X] Optional blackhole credit emission (careful defaults)
+- [X] After extracting and sorting state changes, if `fees.mode = "blackhole"` AND `experimental_vm_blackhole_credit = true`, append a synthetic `AccountChange` crediting blackhole by `estimated_fee = energy_used * context.energy_price` (approximation). Default OFF.
+- [X] For likely non‑VM (heuristic), if `fees.mode = "blackhole"` AND `non_vm_blackhole_credit_flat` is set, append a synthetic `AccountChange` to blackhole for that flat value. Default NONE.
+- [X] Do NOT emit anything in burn mode (no state deltas for fee sinks).
+- [X] Add guard logs indicating this is an approximation until Phase 3.
+
+[X] Tests and validation
+- [X] Unit test: blackhole credit emission only when enabled; amount matches calculation; address decoding works.
+- [X] CSV compare again: ensure no regressions to `state_change_count` parity in default config (`mode=burn`).
+
+Phase 3 — Full Non‑VM Handling (proto + Java update)
+[X] Protobuf
+- [X] Add `enum TxKind { NON_VM = 0; VM = 1; }` and `tx_kind` in `TronTransaction`.
+- [X] Regenerate protobuf files after schema changes.
+- [X] Update Java caller to populate `tx_kind`.
+
+[X] Execution path
+- [X] In core service, branch on `tx_kind`:
+  - For `NON_VM`: bypass EVM entirely. Use `StorageModuleAdapter` to load sender/recipient and apply TRON value transfer and fee semantics.
+  - `energy_used = 0`; compute `bandwidth_used` based on payload size per TRON rules; update `resource_usage` if needed.
+  - Fee handling:
+    - If `fees.mode="burn"`: no state delta (supply accounting is elsewhere).
+    - If `fees.mode="blackhole"`: credit blackhole account by the fee.
+- [X] For `VM`: continue REVM execution; still no per‑tx miner/coinbase credit (with fallback heuristics).
+
+[ ] Dynamic properties integration (optional)
+- [ ] Read `supportBlackHoleOptimization` and fee parameters from dynamic properties DB (via `StorageModuleAdapter`) to auto‑select fee mode and amounts; config acts as fallback.
+
+[X] Tests and validation
+- [X] Unit tests for non‑VM path: bandwidth calculation, address conversions, TxKind enum handling.
+- [X] Integration test framework setup (mocked, ready for full system testing).
+- [ ] End‑to‑end CSV compare in both modes (burn and blackhole) across a block window with mixed tx types.
+
+Risk Mitigation & Compatibility
+- Default behavior remains parity‑safe: coinbase suppressed, `fees.mode = burn`, experimental emissions OFF.
+- Introduce a temporary `execution.evm_eth_coinbase_compat` flag (default false) to restore old behavior if needed during rollout.
+- Sorting only affects return payload ordering, not persisted DB order.
+
+Open Questions / Follow‑ups
+- What exact fee values should be emitted for non‑VM remote path to match Java actuators? If dynamic properties are required, Phase 3 should include reading them to compute accurate fees.
+- Should remote execution ever emit fee‑related deltas for VM txs, or should all fee effects remain Java‑side until full parity is proven? Current proposal keeps VM fees non‑emitting by default.
+- If state digest mismatch persists after coinbase suppression and sorting, audit REVM vs Java EVM differences (e.g., refunds, precompile side‑effects, account creation edge cases) on the mismatching tx set.
+
+Owner Map (by file)
+- `crates/core/src/service.rs`: tx/context conversion, result conversion, optional non‑VM heuristic and fee post‑processing gates.
+- `crates/execution/src/tron_evm.rs`: env setup, gas/basefee handling, state change extraction and sorting, removal of Ethereum gas minima.
+- `crates/execution/src/storage_adapter.rs`: address utilities (Base58 decode), optional account/code queries for heuristics.
+- `crates/common/src/config.rs` + `rust-backend/config.toml`: config struct and defaults for `execution.fees.*`, rollout flags.
+
+Verification Checklist (before merge)
+[ ] Unit tests added/updated for coinbase suppression, sorting, heuristics, address utils.
+[ ] Default config produces no coinbase deltas; CSV compare shows improved parity on provided sample files.
+[ ] Docs: `config.toml` and README updated with `execution.fees` and rollout flags.
+[ ] Logging at debug level for new branches; no excessive info-level noise.
+[ ] Backout plan documented (`execution.evm_eth_coinbase_compat=true`).

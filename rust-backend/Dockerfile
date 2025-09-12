@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy proto files first
+# TODO: fixme, now we should use `{project_root}/framework/src/main/proto/`
 COPY proto/ /app/proto/
 
 # Copy Cargo files
