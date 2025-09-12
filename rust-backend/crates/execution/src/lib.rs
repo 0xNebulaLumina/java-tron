@@ -29,6 +29,10 @@ impl ExecutionModule {
         }
     }
 
+    pub fn get_config(&self) -> Result<&ExecutionConfig, String> {
+        Ok(&self.config)
+    }
+
     /// Execute a transaction using the provided storage adapter
     pub fn execute_transaction_with_storage<S: StorageAdapter + 'static>(
         &self,
@@ -214,5 +218,124 @@ impl Module for ExecutionModule {
     
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use revm_primitives::{Address, U256, Bytes};
+
+    #[test]
+    fn test_coinbase_suppression_config() {
+        // Test that default config suppresses coinbase payouts
+        let config = ExecutionConfig::default();
+        assert_eq!(config.evm_eth_coinbase_compat, false, "Default config should suppress coinbase payouts for TRON parity");
+    }
+
+    #[test]
+    fn test_execution_module_creation() {
+        let config = ExecutionConfig::default();
+        let module = ExecutionModule::new(config.clone());
+        
+        // Test config access
+        let retrieved_config = module.get_config().unwrap();
+        assert_eq!(retrieved_config.evm_eth_coinbase_compat, false);
+        assert_eq!(retrieved_config.energy_limit, 100_000_000);
+    }
+
+    #[test]
+    fn test_non_vm_transaction_example() {
+        let config = ExecutionConfig::default();
+        let module = ExecutionModule::new(config);
+
+        // Create a simple TRX transfer (non-VM transaction)
+        let from = Address::from_slice(&[0x01; 20]);
+        let to = Address::from_slice(&[0x02; 20]);
+        let transaction = TronTransaction {
+            from,
+            to: Some(to),
+            value: U256::from(1000000), // 1 TRX in SUN
+            data: Bytes::new(), // Empty data = non-VM
+            gas_limit: 21000,
+            gas_price: U256::ZERO, // Should be 0 for TRON parity
+            nonce: 1,
+        };
+
+        // Verify transaction structure for non-VM characteristics
+        assert!(transaction.data.is_empty(), "Non-VM transaction should have empty data");
+        assert_eq!(transaction.gas_price, U256::ZERO, "TRON mode should use gas_price = 0");
+        assert!(transaction.to.is_some(), "Transfer transaction should have a 'to' address");
+    }
+
+    #[test]
+    fn test_vm_transaction_example() {
+        // Create a contract call (VM transaction)
+        let from = Address::from_slice(&[0x01; 20]);
+        let to = Address::from_slice(&[0x02; 20]);
+        let transaction = TronTransaction {
+            from,
+            to: Some(to),
+            value: U256::ZERO,
+            data: Bytes::from(vec![0x70, 0xa0, 0x82, 0x31]), // balanceOf() function selector
+            gas_limit: 50000,
+            gas_price: U256::ZERO, // Should still be 0 for TRON parity
+            nonce: 1,
+        };
+
+        // Verify transaction structure for VM characteristics
+        assert!(!transaction.data.is_empty(), "VM transaction should have data");
+        assert_eq!(transaction.gas_price, U256::ZERO, "TRON mode should use gas_price = 0 even for VM");
+    }
+
+    #[test]
+    fn test_fee_config_defaults() {
+        use tron_backend_common::ExecutionFeeConfig;
+        
+        // Test default fee configuration
+        let fee_config = ExecutionFeeConfig::default();
+        assert_eq!(fee_config.mode, "burn", "Default fee mode should be 'burn' for TRON parity");
+        assert_eq!(fee_config.support_black_hole_optimization, true, "Should support blackhole optimization by default");
+        assert_eq!(fee_config.blackhole_address_base58, "", "Blackhole address should be empty by default");
+        assert_eq!(fee_config.experimental_vm_blackhole_credit, false, "VM blackhole credit should be disabled by default");
+        assert_eq!(fee_config.non_vm_blackhole_credit_flat, None, "Non-VM flat fee should be None by default");
+    }
+
+    #[test]
+    fn test_execution_config_with_fees() {
+        let config = ExecutionConfig::default();
+        
+        // Verify that ExecutionConfig includes fee configuration
+        assert_eq!(config.fees.mode, "burn");
+        assert_eq!(config.evm_eth_coinbase_compat, false, "Coinbase compat should be off by default");
+        
+        // Test that both Phase 1 and Phase 2 configurations work together
+        assert_eq!(config.fees.experimental_vm_blackhole_credit, false, "Phase 2 experimental features should be off");
+    }
+
+    #[test] 
+    fn test_fee_mode_variants() {
+        use tron_backend_common::ExecutionFeeConfig;
+        
+        // Test creating fee configs with different modes
+        let burn_config = ExecutionFeeConfig {
+            mode: "burn".to_string(),
+            ..ExecutionFeeConfig::default()
+        };
+        assert_eq!(burn_config.mode, "burn");
+        
+        let blackhole_config = ExecutionFeeConfig {
+            mode: "blackhole".to_string(),
+            blackhole_address_base58: "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy".to_string(),
+            ..ExecutionFeeConfig::default()
+        };
+        assert_eq!(blackhole_config.mode, "blackhole");
+        assert!(!blackhole_config.blackhole_address_base58.is_empty());
+        
+        let none_config = ExecutionFeeConfig {
+            mode: "none".to_string(),
+            ..ExecutionFeeConfig::default()
+        };
+        assert_eq!(none_config.mode, "none");
     }
 } 

@@ -467,6 +467,12 @@ message ExecuteTransactionResponse {
   string error_message = 3;
 }
 
+// Transaction Kind enumeration for TRON-accurate processing
+enum TxKind {
+  NON_VM = 0;  // Non-VM transaction (e.g., TransferContract)
+  VM = 1;      // VM transaction (smart contract execution)
+}
+
 message TronTransaction {
   bytes from = 1;
   bytes to = 2;
@@ -482,6 +488,7 @@ message TronTransaction {
   int64 bandwidth_limit = 11;
   int64 origin_energy_limit = 12;
   repeated TronResource resources = 13;
+  TxKind tx_kind = 14;  // Transaction type for proper processing
 }
 
 message TronResource {

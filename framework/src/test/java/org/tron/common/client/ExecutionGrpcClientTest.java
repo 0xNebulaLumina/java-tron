@@ -147,6 +147,46 @@ public class ExecutionGrpcClientTest {
   }
 
   @Test
+  public void testTxKindEnumValues() {
+    // Test that TxKind enum values are accessible and correct
+    Assert.assertEquals(0, TxKind.NON_VM.getNumber());
+    Assert.assertEquals(1, TxKind.VM.getNumber());
+  }
+
+  @Test
+  public void testTronTransactionWithTxKind() {
+    // Test Non-VM transaction (simple transfer)
+    TronTransaction nonVmTransaction = TronTransaction.newBuilder()
+        .setFrom(com.google.protobuf.ByteString.copyFrom(new byte[20]))
+        .setTo(com.google.protobuf.ByteString.copyFrom(new byte[20]))
+        .setValue(com.google.protobuf.ByteString.copyFrom(new byte[32]))
+        .setData(com.google.protobuf.ByteString.copyFrom(new byte[0]))
+        .setEnergyLimit(1000000)
+        .setEnergyPrice(1)
+        .setNonce(0)
+        .setTxKind(TxKind.NON_VM)
+        .build();
+
+    Assert.assertEquals(TxKind.NON_VM, nonVmTransaction.getTxKind());
+    Assert.assertEquals(0, nonVmTransaction.getTxKind().getNumber());
+
+    // Test VM transaction (smart contract)
+    TronTransaction vmTransaction = TronTransaction.newBuilder()
+        .setFrom(com.google.protobuf.ByteString.copyFrom(new byte[20]))
+        .setTo(com.google.protobuf.ByteString.copyFrom(new byte[20]))
+        .setValue(com.google.protobuf.ByteString.copyFrom(new byte[32]))
+        .setData(com.google.protobuf.ByteString.copyFrom(new byte[4])) // Non-empty data for contract call
+        .setEnergyLimit(1000000)
+        .setEnergyPrice(1)
+        .setNonce(0)
+        .setTxKind(TxKind.VM)
+        .build();
+
+    Assert.assertEquals(TxKind.VM, vmTransaction.getTxKind());
+    Assert.assertEquals(1, vmTransaction.getTxKind().getNumber());
+  }
+
+  @Test
   public void testCallContractRequestCreation() {
     // Test that we can create call contract requests
     CallContractRequest request = CallContractRequest.newBuilder()

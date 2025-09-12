@@ -1,356 +1,255 @@
-I want to track/compare whether remote-mode execution behavior is consistent with embedde-mode execution.
+I want to compare the (embedded execution + embedded storage) results vs the (remote execution + remote storage) results,
 
-you could print
-+ ExecutionProgramResult
-   + isSuccess
-   + energyUsed
-   + return data
-   + error messages (runtimeError)
-   + stateChanges
-+ TransactionContext
-   + blockCap
-   + trxCap
-   + programResult
-+ stateDigest
+So I run
+```
+nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
+     -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m \
+     -XX:MaxDirectMemorySize=1G -XX:+PrintGCDetails \
+     -XX:+PrintGCDateStamps  -Xloggc:gc.log \
+     -XX:+UseConcMarkSweepGC -XX:NewRatio=2 \
+     -XX:+CMSScavengeBeforeRemark -XX:+ParallelRefProcEnabled \
+     -XX:+HeapDumpOnOutOfMemoryError \
+     -XX:+UseCMSInitiatingOccupancyOnly  -XX:CMSInitiatingOccupancyFraction=70 \
+     -Dexec.csv.enabled=true -Dexec.csv.stateChanges.enabled=true \
+     -jar ./build/libs/FullNode.jar -c ./main_net_config_embedded.conf >> start.log 2>&1 &
+```
 
-to a csv
-after executing each tx.
+and
+```
+nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
+     -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m \
+     -XX:MaxDirectMemorySize=1G -XX:+PrintGCDetails \
+     -XX:+PrintGCDateStamps  -Xloggc:gc.log \
+     -XX:+UseConcMarkSweepGC -XX:NewRatio=2 \
+     -XX:+CMSScavengeBeforeRemark -XX:+ParallelRefProcEnabled \
+     -XX:+HeapDumpOnOutOfMemoryError \
+     -XX:+UseCMSInitiatingOccupancyOnly  -XX:CMSInitiatingOccupancyFraction=70 \
+     -Dexec.csv.enabled=true -Dexec.csv.stateChanges.enabled=true \
+     -jar ./build/libs/FullNode.jar -c ./main_net_config_remote.conf \
+     --execution-spi-enabled --execution-mode "REMOTE" >> start.log 2>&1 &
+```
 
-other requirement:
-+ don't do it in ShadowExecutionSPI
-+ no need to consider shadow mode
-+ the main focus is (remote execution + remote storage) vs (embedded execution + embedded storage). and by "embedded execution" I mean the orginil native java execution, the "RuntimeImpl()", instead of EmbeddedExecutionSPI inside "RuntimeSpiImpl()"
+respectively.
 
 
----
+The result csv are
++ output-directory/execution-csv/20250829-134317-a5713e7a-embedded-embedded.csv
++ output-directory/execution-csv/20250830-074028-d1b5315f-remote-remote.csv
+respectively.
 
-Restating your goal
 
-- You want to verify that “remote execution + remote storage” produces the same observable behavior as “embedded execution + embedded storage” (where “embedded
-execution” is the original Java path RuntimeImpl, not the ExecutionSPI wrapper).
-- After each transaction executes, dump key execution and context data to CSV, including:
-    - ExecutionProgramResult: isSuccess, energyUsed, return data, runtimeError, stateChanges
-    - TransactionContext: blockCap, trxCap, programResult
-    - stateDigest
-- Do not implement this inside ShadowExecutionSPI, and you don’t need to support shadow mode.
+Then I run the compare tool:
+```
+python3 scripts/execution_csv_compare.py \
+ --left output-directory/execution-csv/20250829-134317-a5713e7a-embedded-embedded.csv \
+ --right output-directory/execution-csv/20250830-074028-d1b5315f-remote-remote.csv \
+ --output reports/
+```
 
-Key constraints and challenges
+The output is:
+```
+Starting execution CSV comparison...
+Left file:  output-directory/execution-csv/20250829-134317-a5713e7a-embedded-embedded.csv
+Right file: output-directory/execution-csv/20250830-074028-d1b5315f-remote-remote.csv
+Output dir: reports/
+Comparing fields: is_success, result_code, energy_used, return_data_hex, runtime_error, state_digest_sha256, state_change_count
+Loading output-directory/execution-csv/20250829-134317-a5713e7a-embedded-embedded.csv...
+Loaded 2116 rows from output-directory/execution-csv/20250829-134317-a5713e7a-embedded-embedded.csv
+Loading output-directory/execution-csv/20250830-074028-d1b5315f-remote-remote.csv...
+Loaded 888 rows from output-directory/execution-csv/20250830-074028-d1b5315f-remote-remote.csv
+Performing join and comparison...
 
-- The embedded Java path (RuntimeImpl) produces a ProgramResult that doesn’t currently carry stateChanges. Remote execution returns stateChanges via gRPC, so
-parity of “stateChanges” requires extra plumbing on the embedded path.
-- Storage mode is global (set via Args/CommonParameter + StorageSpiFactory); mixing storage modes within a single process and a single block/tx flow is risky.
-- Logging large return data or capturing many state changes may be expensive; CSV writing must be safe and non-blocking under mainnet load.
-- A reliable stateDigest should be computed deterministically across modes; StateDigestJni exists, but it expects normalized account info you may not have in
-embedded without deeper hooks.
+Reports generated in reports//
+- Summary: comparison_summary.txt
+- Mismatches: mismatches.csv
+- JSON data: comparison_results.json
 
-Clarifying questions
+Comparison complete!
+Matched transactions: 888
+Mismatched transactions: 2116
+Left-only transactions: 1228
+Right-only transactions: 0
+is_success: 99.3% accuracy (6/888 mismatches)
+result_code: 99.3% accuracy (6/888 mismatches)
+energy_used: 0.7% accuracy (882/888 mismatches)
+return_data_hex: 100.0% accuracy (0/888 mismatches)
+runtime_error: 99.3% accuracy (6/888 mismatches)
+state_digest_sha256: 0.0% accuracy (888/888 mismatches)
+state_change_count: 0.0% accuracy (888/888 mismatches)
+Comparison completed successfully!
+```
 
-- CSV scope: Do you want one combined CSV (both modes together) or one CSV per run/mode and a separate comparator tool to diff them?
-- Digest algorithm: Is SHA-256 of normalized state changes acceptable, or do you require StateDigestJni/keccak-based digest? If the latter, are we okay to start
-with remote-only digest and add embedded parity later?
-- Return data: OK to cap/truncate return payload length (e.g., 4 KB) in CSV?
-- Sampling: Do you need every tx or is configurable sampling (e.g., every N tx) acceptable for mainnet performance?
+And I found the `state_change_count` in `20250829-134317-a5713e7a-embedded-embedded.csv` and `20250830-074028-d1b5315f-remote-remote.csv` are different.
+I think it's due to coinbase/fee sink-ish account change in evm, which should not appear on TRON.
 
-Solution options
+basically
 
-1. Two-run, CSV + offline comparator (recommended)
+Fee Semantics: EVM vs TRON
 
-- How it works:
-    - Add a CSV logger invoked after each tx execution inside the existing flow (e.g., end of Manager.processTransaction), independent of ShadowExecution.
-    - Run the node twice over the same blocks: once configured as embedded+embedded (RuntimeImpl + embedded storage), once as remote+remote (RuntimeSpiImpl with
-RemoteExecutionSPI + remote storage).
-    - Each run writes a CSV with the same schema and a “mode” banner (exec_mode, storage_mode). A small comparator tool then joins by (blockNum, txIndex or txId)
-and reports mismatches.
-- Pros:
-    - Zero interference with state or consensus logic.
-    - Clean separation of modes; real-world fidelity for both configurations.
-    - Easy to roll out and revert; safe in production.
-- Cons:
-    - Requires two replays (time + ops).
-    - Embedded path initially won’t have stateChanges; stateDigest parity will start as “best effort”.
+- EVM gas model:
+    - Base fee: burned (EIP‑1559); pre‑1559 all gas went to miner.
+    - Priority fee (“tip”): credited to the miner’s coinbase address in the same transaction state
+transition.
+    - Simple ETH transfer typically uses 21000 gas; coinbase gets the tip; this shows up as an account
+delta to the miner.
+- TRON resource model:
+    - Resources: bandwidth (for non‑VM tx) and energy (only for VM tx).
+    - Non‑VM (e.g., TransferContract): flat network fee plus optional “account creation” fee.
+    - Fee destination:
+    - Burn: if `supportBlackHoleOptimization` is enabled, the fee is burned — no account receives funds;
+total supply decreases (no state change to a fee account).
+    - Blackhole account: otherwise, fee is transferred to a designated “blackhole” account (an actual
+account in state).
+- Witness rewards: paid at block finalization in Manager#payReward (block/fee pool accounting), not
+per transaction to a coinbase address. There is no EVM‑style miner tip credited in the same tx state
+transitions.
 
-2. In-process dual-execute (not Shadow) with rollback
+What “TRON‑Accurate Fee Handling” Means
 
-- How it works:
-    - For each tx, take a snapshot (via RevokingDatabase/SnapshotManager), run “embedded+embedded,” capture metrics, revert; then run “remote+remote,” capture
-metrics, and commit only the canonical path.
-    - CSV logs both results; compare inline and/or offline.
-- Pros:
-    - Single-pass validation; real-time mismatches.
-- Cons:
-    - Complex and risky: touching snapshot/revert and flipping global storage/execution modes per-tx can cause contention, perf regressions, and correctness
-hazards.
-    - Requires extra guardrails to prevent state drift or accidental double-apply.
-    - Not recommended for production.
+- Non‑VM transactions:
+    - Do not credit any “coinbase/miner” account as part of the tx state changes.
+    - Apply only:
+    - Sender balance decrease by `amount + fee`.
+    - Recipient balance increase by `amount`.
+    - Fee handling:
+      - If burning: no extra account delta (supply reduction handled by dynamic properties, not as an
+account transfer).
+      - If blackhole path: credit the blackhole account by `fee`.
+- Energy used should be 0 (not 21000), because the EVM is not involved.
+- VM transactions:
+    - Charge energy according to TRON’s rules (caller vs origin share via consumeUserResourcePercent,
+staking/freeze mechanics).
+    - Still no per‑tx miner/coinbase credit. Fee burn or fee pool accounting follows TRON proposals and is
+not an EVM miner payout.
 
-3. Integration tests with synthetic CSV artifacts
+Why the Remote Backend Should Not Emit Coinbase
 
-- How it works:
-    - Build a JUnit suite that runs curated tx sets in both modes, emits CSV artifacts, and compares them as an assertion.
-- Pros:
-    - Deterministic; good for CI signal.
-- Cons:
-    - Limited to synthetic cases and won’t reflect mainnet variability.
-    - Still doesn’t solve production CSV needs.
+- The Java actuator path (embedded) never credits a coinbase/miner address during a tx. It either burns or
+credits blackhole (per config).
+- The “extra” account change you saw in remote CSV is a carryover from Ethereum semantics. It should be
+removed for TRON parity.
+- If burning is enabled, the correct behavior is to emit no third account change at all.
 
-Recommendation
 
-- Adopt Option 1 (two-run CSV + offline comparator).
-    - It’s simple, non-invasive, and aligns with “don’t use ShadowExecutionSPI.”
-    - Start with a robust per-tx CSV logger (mode-tagged), then add a companion comparator tool.
-    - Defer embedded stateChanges/stateDigest parity to a second phase (instrumentation of the Java VM path), keeping early results useful by comparing core
-semantics: success, energyUsed, return data, runtimeError.
+Now, no need to code, think hard and  give me a plan on:
 
-Proposed implementation plan
+Modify Rust backend to emit TRON‑accurate fee handling for non‑VM (burn vs. blackhole credit), so it doesn’t report the extra “coinbase” change when it shouldn’t exist on TRON.
 
-Phase 1: CSV logging (minimal-risk, production-safe)
-
-- Hook point
-    - Log at the end of Manager.processTransaction after trace.finalization() and trxCap.setResult(trace.getTransactionContext()).
-    - This provides access to TransactionContext, ProgramResult (or ExecutionProgramResult), trxCap, blockCap.
-- CSV schema (columns)
-    - run_id (timestamp UUID), exec_mode (EMBEDDED/REMOTE), storage_mode (EMBEDDED/REMOTE)
-    - block_num, block_id, tx_index_in_block, tx_id
-    - contract_type, is_constant (boolean)
-    - is_success (derived from Program/ExecutionProgramResult), energy_used
-    - return_hex (truncated), return_len
-    - runtime_error (sanitized)
-    - state_change_count (remote: size of list; embedded: 0 initially)
-    - state_digest (remote: computed; embedded: empty or placeholder until Phase 2)
-    - ts_ms
-- State digest v1
-    - Remote: compute SHA-256 over a canonical serialization of stateChanges:
-    - Tuple per change: hex(address)|hex(key)|hex(oldValue)|hex(newValue)
-    - Sort tuples lexicographically and hash the concatenation. Stable across runs.
-- Embedded: leave empty for now (or hash of empty list) and document that Phase 2 adds parity.
-- Controls/safety
-    - System properties env:
-    - `-Dexec.csv.enabled=true|false`
-    - `-Dexec.csv.dir=...` (default `output-directory/execution-csv/`)
-    - `-Dexec.csv.maxReturnBytes=4096`
-    - `-Dexec.csv.sampleRate=1` (1 = log every tx)
-- Non-blocking writer using a bounded queue + background thread; drop-with-metric on backpressure.
-- Sanitize newlines/commas; hex-encode binary fields.
-- Mode tagging
-    - Exec mode: ExecutionSpiFactory.determineExecutionMode()
-    - Storage mode: StorageSpiFactory.determineStorageMode()
-- Deliverables
-    - ExecutionCsvLogger utility with rolling files (e.g., per day/size).
-    - Minimal call site in Manager.processTransaction guarded by flag.
-    - README snippet on enabling and schema.
-
-Phase 2: Embedded stateChanges + stateDigest parity (optional, higher effort)
-
-- Goal: Add comparable stateChanges for embedded RuntimeImpl.
-- Approach options:
-    - VM hook: instrument the Java VM (e.g., Program/SSTORE) to collect storage writes into an in-memory list on ProgramResult. This matches the remote semantics
-and is the most accurate.
-    - Storage tap: add a thin “observer” around DB batch writes during tx execution to collect keys updated across ContractStore/AccountStore. Higher risk and
-harder to scope.
-- State digest v2
-    - Standardize on the same canonical serialization and hash function as remote (keep current SHA-256 or swap to keccak if you want StateDigestJni parity).
-- Deliverables
-    - ProgramResult (or ExecutionProgramResult.fromProgramResult) enhanced to include embedded stateChanges.
-    - CSV logger updated transparently.
-
-Phase 3: Offline comparator tool
-
-- Functionality
-    - Input: two CSVs from separate replays: embedded.csv and remote.csv.
-    - Join rows by (block_num, tx_id) (fallback to (block_num, tx_index_in_block)).
-    - Compare per-field with tolerances:
-    - is_success, energy_used (exact), return_hex (exact), runtime_error (normalized), state_digest (exact if available).
-- Output: summary stats + a mismatches.csv with diffs.
-- Controls
-    - --fields to select comparison fields.
-    - --ignore-return-data to speed up or reduce noise.
-- Deliverables
-    - Simple Java CLI or a small Python script in scripts/ plus usage docs.
-
-CSV content details
-
-- blockCap: block_num, block_id (hex), is_witness_signed (bool)
-- trxCap: tx_id (hex), contract_type, tx_index_in_block, fee_limit
-- programResult/ExecutionProgramResult:
-    - is_success, energy_used, return_hex/len, runtime_error
-    - state_change_count
-- stateDigest: sha256(serialized_state_changes) for remote; empty/placeholder for embedded v1.
-
-Environment considerations
-
-- Ensure remote backend is up for the remote run; expose -Dexecution.remote.host/port or the existing ExecutionSpiFactory envs.
-- Avoid checkstyle friction by following existing style; wire via system props rather than config changes where possible.
-- Do not change consensus or commit paths; CSV writing is side-effect-free.
-
-What I need from you to proceed
-
-- Confirm you prefer Option 1 (two-run CSV + offline comparator).
-- Confirm digest choice: OK to start with SHA-256 over normalized stateChanges and add StateDigestJni/keccak in Phase 2?
-- CSV layout approval and whether to cap/truncate return data.
-- Preferred location for CSV files and comparator tool.
 
 ---
 
-- Confirm you prefer Option 1 (two-run CSV + offline comparator): yes, confirm.
-- Confirm digest choice: OK to start with SHA-256 over normalized stateChanges and add StateDigestJni/keccak in Phase 2: yes, confirm.
-- CSV layout approval and whether to cap/truncate return data: approve layout, don't cap/truncate return data
-- Preferred location for CSV files and comparator tool: you can decide.
 
-now no need to code, update and restate the plan 
+Goal
 
----
+- Remove Ethereum-style coinbase credit from remote execution results and emit TRON-accurate fee effects
+for non-VM txs (burn vs. blackhole), so state_change_count and state digest match embedded.
 
-Confirmed. Here’s the updated, concrete plan for Option 1 (two-run CSV + offline comparator), with SHA-256 state digest now and StateDigestJni later, and no
-truncation of return data.
+Behavioral Invariants
 
-Scope
+- No per-tx miner/coinbase credit on TRON (VM and non-VM).
+- Non-VM (e.g., TransferContract): energy_used = 0; only sender/recipient deltas; fee is burn (no state
+delta) or blackhole credit (1 extra delta).
+- VM txs: charge/report energy used; no miner/coinbase credit; any fee burn/blackhole accounting should
+not appear as EVM state changes.
 
-- Compare “remote execution + remote storage” vs “embedded execution (RuntimeImpl) + embedded storage”.
-- Log per-tx execution details to CSV after execution (no ShadowExecutionSPI).
-- Phase 1 focuses on safe CSV logging and reproducible runs; Phase 2 adds embedded stateChanges parity; Phase 3 provides an offline comparator.
+Phase 1 – Parity Fix (no proto change)
 
-Artifacts & Locations
+- Suppress EVM coinbase payout:
+    - service: set gas_price = 0 in convert_protobuf_transaction to prevent REVM from moving funds to
+coinbase. File: rust-backend/crates/core/src/service.rs.
+    - evm env: ensure block.basefee = 0 (if available) and keep enable_london_fork true or set basefee
+explicitly to zero. File: crates/execution/src/tron_evm.rs.
+- Remove Ethereum-specific gas checks:
+    - Drop the tx.gas_limit < 21000 rejection. Only enforce tx.gas_limit <= context.block_gas_limit. File:
+crates/execution/src/tron_evm.rs.
+- Stabilize state change ordering for digest parity:
+    - Before returning, sort state_changes deterministically:
+    - AccountChange: by `address` ascending.
+    - StorageChange: by `(address, key)` ascending.
+- File: crates/execution/src/tron_evm.rs (post extract_state_changes_from_db).
+- Heuristic non-VM energy fix (optional stopgap):
+    - If data.is_empty() and to has no code (query via storage adapter), set energy_used = 0. Do not add
+any fee deltas. Files: crates/core/src/service.rs (after result), or in tron_evm.rs post-process result.
 
-- CSV outputs: output-directory/execution-csv/<run_id>-<execMode>-<storageMode>.csv
-- Comparator tool: scripts/execution_csv_compare.py
-- Logger classes: framework/src/main/java/org/tron/core/execution/reporting/:
-    - ExecutionCsvLogger.java (writer, rotation, background queue)
-    - ExecutionCsvRecord.java (row model)
-    - StateChangeCanonicalizer.java (normalize + SHA-256 digest)
+Result: No coinbase state deltas; non-VM txs report energy 0; state_change_count should match embedded;
+digest accuracy improves.
 
-CSV Schema (per row)
+Phase 2 – TRON Fee Policy (configurable, still no proto change)
 
-- run_id: unique per process (e.g., timestamp + UUID)
-- exec_mode: EMBEDDED|REMOTE (from ExecutionSpiFactory.determineExecutionMode())
-- storage_mode: EMBEDDED|REMOTE (from StorageSpiFactory.determineStorageMode())
-- block_num, block_id_hex, is_witness_signed, block_timestamp
-- tx_index_in_block, tx_id_hex, owner_address_hex
-- contract_type, is_constant, fee_limit
-- is_success, result_code, energy_used
-- return_data_hex, return_data_len
-- runtime_error
-- state_change_count
-- state_changes_json: JSON array of {address, key, oldValue, newValue} as hex (full content; no truncation)
-- state_digest_sha256: SHA-256 over canonicalized, sorted stateChanges tuples
-- ts_ms: write timestamp
-Notes:
-- Embedded Phase 1: state_changes_json empty, state_digest_sha256 hash of empty list.
-- Remote Phase 1: full stateChanges emitted and hashed.
+- Add execution fee policy config:
+    - ExecutionConfig additions:
+    - `fees.mode`: `"burn" | "blackhole" | "none"` (default `"burn"`).
+    - `fees.blackhole_address_base58`: Base58 Tron address for credit path.
+    - `fees.support_black_hole_optimization`: bool (default true).
+- Wire env overrides TRON_BACKEND__EXECUTION__FEES__.... Files: crates/common/src/config.rs, rust-backend/
+config.toml.
+- Address parsing helper:
+    - Add a production-safe Base58 Tron address → 20-byte EVM address decoder (lift from_tron_address out
+of #[cfg(test)]). Files: crates/execution/src/storage_adapter.rs or a small crates/common/src/addr.rs.
+- Fee post-processor (VM path only, optional and conservative):
+    - Keep gas_price=0 to avoid coinbase deltas.
+    - If fees.mode = "blackhole" and you want to reflect a fee delta, optionally credit blackhole with a
+simple fee = energy_used * context.energy_price. Note: this is an approximation and not full TRON resource
+settlement; guard behind fees.experimental_vm_blackhole_credit = false by default.
+    - If fees.mode = "burn", do nothing (no state delta).
+    - Implement as a post-processing step after extract_state_changes_from_db, appending a synthetic
+AccountChange for blackhole if enabled. Files: crates/execution/src/tron_evm.rs (post-processing) or
+crates/core/src/service.rs (before converting to protobuf).
+- Non-VM stopgap (no proto change):
+    - Keep non-VM heuristic (no code at to, empty data) to set energy_used=0.
+    - Do not attempt to compute actual TRON non-VM flat fees here; leave fee effects to Java unless you
+enable an optional fees.non_vm_blackhole_credit_flat config and can read dynamic fee parameters from
+storage (future step).
 
-Phase 1: CSV Logging (Production-Safe)
+Result: Configurable fee emission that defaults to “burn” (no extra deltas), ensuring parity; optional
+blackhole credit only when explicitly enabled.
 
-- Hook: end of Manager.processTransaction after:
-    - trace.finalization() and trxCap.setResult(trace.getTransactionContext()).
-    - Access: TransactionContext, ProgramResult (or ExecutionProgramResult), trxCap, blockCap.
-- Behavior:
-    - Build a row from context and result fields.
-    - If ProgramResult is an ExecutionProgramResult with stateChanges, include full JSON and digest; otherwise leave empty and compute digest over zero changes.
-    - Background writer flushes to CSV; backpressure: drop with metric (counter).
-- Controls (system properties):
-    - -Dexec.csv.enabled=true|false (default false)
-    - -Dexec.csv.dir=output-directory/execution-csv
-    - -Dexec.csv.sampleRate=1 (1 = all tx; higher = sample)
-    - -Dexec.csv.rotateMb=256 (optional rotation)
-- Safety:
-    - RFC 4180 quoting, hex-encode binary fields, JSON properly escaped.
-    - No truncation of return data per your requirement.
-- Run procedure:
-    - Embedded run: execution.mode=EMBEDDED, STORAGE_MODE=embedded.
-    - Remote run: execution.mode=REMOTE, STORAGE_MODE=remote, set execution.remote.* host/port to Rust backend.
-    - Ensure separate data dirs/configs so replays are independent.
+Phase 3 – Full Non‑VM Handling (requires proto + Java caller change)
 
-Phase 2: Embedded stateChanges + Digest Parity
+- Extend proto to carry tx type:
+    - Add enum TxKind { NON_VM = 0; VM = 1; } to TronTransaction and a tx_kind field.
+    - Pass tx kind from Java (remote mode).
+- Implement non‑VM processor (storage-native, no EVM):
+    - For NON_VM: apply TRX transfer semantics with proper fee handling:
+    - Update sender balance: `-(amount + fee)`, recipient `+amount`.
+    - Fee:
+      - If `fees.mode="burn"`: do not create an account delta (burn is supply change).
+      - If `fees.mode="blackhole"`: credit blackhole account by `fee`.
+    - `energy_used = 0`, `bandwidth_used` computed from payload size and TRON rules; add
+`TronResourceUsage` if needed.
+- Use StorageModuleAdapter to load/update accounts and push StateChangeRecord::AccountChange. Files: new
+util in crates/core/src/service.rs or a new crates/execution/src/non_vm.rs.
+- Dynamic properties:
+    - Optionally read supportBlackHoleOptimization and network fee params from chain state (dynamic
+properties DB) to auto-derive fee mode/amount; otherwise use config fallback.
 
-- Goal: capture the same stateChanges for the embedded RuntimeImpl.
-- Approach (preferred): instrument the Java VM (SSTORE path) to record storage writes into ProgramResult (or into an ExecutionProgramResult.fromProgramResult
-enrichment step).
-- Alternative (riskier): observe DB batch writes during tx execution to infer storage changes.
-- Digest: continue SHA-256 canon initially; optionally add keccak/StateDigestJni parity afterward (behind a flag).
-- CSV: populated state_changes_json and digest for embedded.
+Result: Remote backend applies TRON-accurate non‑VM fees and emits correct state deltas including
+blackhole credit when configured.
 
-Phase 3: Offline Comparator Tool
+Validation
 
-- Location: scripts/execution_csv_compare.py
-- Input: two CSV files (remote and embedded runs).
-- Join key: primary tx_id_hex; fallback (block_num, tx_index_in_block).
-- Field comparisons:
-    - is_success, result_code, energy_used: exact
-    - return_data_hex: exact
-    - runtime_error: exact (phase-in normalization if needed)
-    - state_digest_sha256: exact; log size and location of first mismatch
-- Output:
-    - Summary (counts, mismatch rate by field)
-    - mismatches.csv with both sides’ values for diffed fields
-    - Optional filters: --fields, --ignore-return-data
+- Unit tests:
+    - VM: ensure no AccountChange for coinbase even when energy_used > 0. Files: crates/execution/src/
+tests/*.
+    - Sorting: ensure deterministic ordering of state_changes.
+    - Addr parsing: Base58 ↔ 20-byte conversions round-trip.
+- Integration checks:
+    - Re-run your two nodes and scripts/execution_csv_compare.py:
+    - Expect `state_change_count` and `state_digest_sha256` to converge to ~100% on VM txs.
+    - `energy_used`: matches embedded; non‑VM → 0.
+    - No coinbase-related mismatches.
+- Performance: confirm no regression from sorting and post-processing; log only at debug.
 
-Operational Guidance
+Rollout
 
-- Separate state/data directories per run to avoid cross-contamination.
-- Ensure Rust backend up and configured for remote run.
-- Consider log file rotation if CSV grows large.
-- Start with sampleRate=1 and turn off sampling unless performance requires it.
+- Default config: fees.mode="burn", coinbase suppression on. No behavior change visible to Java except
+removal of coinbase deltas.
+- Backward-compat flags: execution.evm_eth_coinbase_compat=true (off by default) to temporarily restore
+old behavior if needed.
+- Docs: update rust-backend/config.toml and README about fee policy and TRON parity, note the proto
+extension in Phase 3.
 
-Risks & Mitigations
+If you want, I can draft the exact config keys and the minimal code diffs for Phase 1 to get you parity
+quickly, then outline the Phase 2/3 changes behind feature flags.
 
-- Large rows due to return_data and state_changes_json:
-    - You requested no truncation; we will honor that. Rotation + disk monitoring recommended.
-- Embedded stateChanges parity:
-    - Delivered in Phase 2 (VM instrumentation). Until then, digest and JSON will be missing on embedded; comparisons rely on core fields + digest only for
-remote.
-- Performance overhead:
-    - Use async writer; measure queue drops and file I/O latency via simple counters.
 
-Timeline Snapshot
-
-- Phase 1: Add logger, hook in Manager, config flags, docs.
-- Phase 2: VM instrumentation for embedded stateChanges; enable full parity + digest.
-- Phase 3: Comparator script + usage instructions; CI-friendly outputs.
-
----
-
-I have already completed Phase 1 according to your suggestion. But now I have a concern regarding your Phase II plan. It will only track storage change? What
-about the account change? For example, account balance, account code, and account creation, account self-destruct, etc. Think harder and then explain to me and
-update the plan if needed.
-
----
-
-You’re right to be concerned: Phase 2 must capture more than storage writes. Remote mode’s ExecutionResult covers both storage changes and account-level changes
-(balance, code/codeHash, create/delete). I’ve revised the plan to include full account change tracking for embedded execution, matching remote semantics.
-
-What changes and why
-
-- Add account changes: balance changes, account creation, code/codeHash updates, and deletion (self-destruct).
-- Keep storage changes: SSTORE slot updates with old/new values.
-- Unify representation: both types map to ExecutionSPI.StateChange. For account changes, use empty key [] and serialize AccountInfo to old/new (same layout as
-remote).
-
-How to collect in embedded path (no code yet; plan only)
-
-- Storage changes: hook ContractState.putStorageValue(addr,key,val). Before writing, read old via repository.getStorageValue(addr,key) and record (addr, key, old,
-new). Deduplicate multiple writes within a tx.
-- Account changes:
-    - updateAccount(address, accountCapsule): capture before/after AccountInfo (balance, codeHash, code).
-    - putAccountValue(address, accountCapsule): capture as creation (old empty, new full).
-    - saveCode(address, code) + updateContract(address, contract): capture code/codeHash change in AccountInfo.
-    - deleteContract(address): capture deletion (old full, new empty). ProgramResult.deleteAccounts can supplement detection; deletion hook is canonical.
-- Serialization parity: AccountInfo bytes = [balance(32)] + [nonce(8=0)] + [code_hash(32)] + [code_length(4)] + [code]. Fetch code via Repository.getCode(address)
-or CodeStore by hash; codeHash via ContractCapsule.getCodeHash().
-
-Lifecycle and plumbing
-
-- Per-tx StateChangeJournal (thread-local or context-bound) with:
-    - recordStorageWrite(addr, key, old, now)
-    - recordAccountBefore(address, oldInfo); recordAccountAfter(address, newInfo)
-    - Merge/dedup semantics so each (address,key) or address appears once with final old/new.
-- Create journal at tx start; finalize after VM execution; inject list into ExecutionProgramResult.stateChanges and CSV logger.
-- Digest: continue SHA-256 over canonical tuples hex(address)|hex(key)|hex(old)|hex(new) with empty key for account changes (matches remote).
-
-Plan updates added to CLAUDE.md
-
-- Expanded Phase 2 to cover account changes and detailed hooks.
-- Defined AccountInfo encoding for embedded to match remote.
-- Updated TODOs: add journal, wire hooks (storage + account), enrich ProgramResult, rollout flag, validation steps.
-- CSV and comparator remain compatible (account changes appear with empty key, same as remote).
-
-If you want, I can also add acceptance tests you can run locally for four cases: TRX transfer (balance), contract CREATE (code/codeHash), TRC-20 transfer
-(storage), and SELFDESTRUCT (deletion) to validate the end-to-end parity signal once you’re ready to implement.

@@ -26,6 +26,8 @@ tracing = "0.1"
 # Utilities
 uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"  # For TRON address checksum calculation
+num-bigint = "0.4"  # For Base58 encoding without overflow
 
 # Metrics
 prometheus = "0.13"

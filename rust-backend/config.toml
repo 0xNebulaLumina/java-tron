@@ -23,6 +23,33 @@ enable_istanbul_fork = true
 energy_limit = 1000000000  # Increased from 100M to 1B to handle complex transactions
 bandwidth_limit = 5000
 max_cpu_time_of_one_tx = 80
+# TRON Parity: Suppress EVM-style coinbase/miner payouts (default: false for parity)
+# Set to true to restore old Ethereum-compatible behavior if needed during rollout
+evm_eth_coinbase_compat = false
+
+# TRON Fee Policy Configuration (Phase 2)
+[execution.fees]
+# Fee handling mode: "burn" (default), "blackhole", or "none"
+# - "burn": Fees are burned (no state delta, supply reduction handled elsewhere)
+# - "blackhole": Fees are credited to designated blackhole address
+# - "none": No fee handling (useful for testing)
+mode = "burn"
+
+# Whether black hole optimization is supported (matches java-tron's supportBlackHoleOptimization)
+support_black_hole_optimization = true
+
+# Base58-encoded TRON address for blackhole (required if mode = "blackhole")
+# Example: "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"
+blackhole_address_base58 = ""
+
+# EXPERIMENTAL: Emit synthetic VM blackhole credits (default: false)
+# When enabled, VM transactions will emit estimated fee credits to blackhole
+# This is an approximation and should remain off by default to avoid double-counting
+experimental_vm_blackhole_credit = false
+
+# Optional flat fee for non-VM transactions in SUN (when not reading from dynamic properties)
+# Uncomment to enable flat fee emission for non-VM transactions in blackhole mode
+# non_vm_blackhole_credit_flat = 1000000  # 1 TRX in SUN
 
 [modules.storage]
 enabled = true
