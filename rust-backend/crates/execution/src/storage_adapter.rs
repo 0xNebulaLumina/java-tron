@@ -4,6 +4,89 @@ use revm::primitives::{Account, AccountInfo, Bytecode, B256, U256, Address};
 use revm::{Database, DatabaseCommit};
 use tron_backend_storage::StorageEngine;
 
+/// TRON Witness information - equivalent to WitnessCapsule in Java
+#[derive(Debug, Clone)]
+pub struct WitnessInfo {
+    pub address: Address,     // 20-byte witness address (owner address)
+    pub url: String,          // Witness URL
+    pub vote_count: u64,      // Total votes received
+}
+
+impl WitnessInfo {
+    pub fn new(address: Address, url: String, vote_count: u64) -> Self {
+        Self {
+            address,
+            url,
+            vote_count,
+        }
+    }
+
+    /// Serialize witness info to bytes for storage
+    pub fn serialize(&self) -> Vec<u8> {
+        // Format: [address(20)] + [url_length(4)] + [url(variable)] + [vote_count(8)]
+        let url_bytes = self.url.as_bytes();
+        let mut result = Vec::with_capacity(20 + 4 + url_bytes.len() + 8);
+
+        // Add address (20 bytes)
+        result.extend_from_slice(self.address.as_slice());
+
+        // Add URL length (4 bytes, big-endian)
+        let url_len = url_bytes.len() as u32;
+        result.extend_from_slice(&url_len.to_be_bytes());
+
+        // Add URL bytes
+        result.extend_from_slice(url_bytes);
+
+        // Add vote count (8 bytes, big-endian)
+        result.extend_from_slice(&self.vote_count.to_be_bytes());
+
+        result
+    }
+
+    /// Deserialize witness info from bytes
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        if data.len() < 32 { // Minimum: 20 (address) + 4 (url_len) + 0 (url) + 8 (vote_count)
+            return Err(anyhow::anyhow!("Insufficient data for witness info"));
+        }
+
+        let mut offset = 0;
+
+        // Read address (20 bytes)
+        let mut addr_bytes = [0u8; 20];
+        addr_bytes.copy_from_slice(&data[offset..offset + 20]);
+        let address = Address::from(addr_bytes);
+        offset += 20;
+
+        // Read URL length (4 bytes)
+        if offset + 4 > data.len() {
+            return Err(anyhow::anyhow!("Cannot read URL length"));
+        }
+        let url_len = u32::from_be_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+        ]) as usize;
+        offset += 4;
+
+        // Read URL bytes
+        if offset + url_len > data.len() {
+            return Err(anyhow::anyhow!("Cannot read URL data"));
+        }
+        let url = String::from_utf8(data[offset..offset + url_len].to_vec())
+            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in witness URL: {}", e))?;
+        offset += url_len;
+
+        // Read vote count (8 bytes)
+        if offset + 8 > data.len() {
+            return Err(anyhow::anyhow!("Cannot read vote count"));
+        }
+        let vote_count = u64::from_be_bytes([
+            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7]
+        ]);
+
+        Ok(WitnessInfo::new(address, url, vote_count))
+    }
+}
+
 /// Storage adapter trait for different storage backends
 pub trait StorageAdapter: Send + Sync {
     /// Get account information
@@ -122,6 +205,16 @@ impl StorageModuleAdapter {
         "contract"
     }
 
+    /// Get the appropriate database name for dynamic properties
+    fn dynamic_properties_database(&self) -> &str {
+        "properties"
+    }
+
+    /// Get the appropriate database name for witness store
+    fn witness_database(&self) -> &str {
+        "witness"
+    }
+
     /// Convert Address to storage key for accounts (matching java-tron format)
     /// Java-tron stores accounts using 21-byte addresses with 0x41 prefix
     /// REVM uses 20-byte addresses, so we need to add the 0x41 prefix
@@ -135,6 +228,14 @@ impl StorageModuleAdapter {
     /// Convert Address to storage key for code (raw address, matching java-tron)
     fn code_key(&self, address: &Address) -> Vec<u8> {
         address.as_slice().to_vec()
+    }
+
+    /// Convert Address to storage key for witness store (21-byte address with 0x41 prefix)
+    fn witness_key(&self, address: &Address) -> Vec<u8> {
+        let mut key = Vec::with_capacity(21);
+        key.push(0x41); // Tron address prefix
+        key.extend_from_slice(address.as_slice()); // 20-byte address
+        key
     }
 
     /// Convert Address and storage key to contract storage key (matching java-tron's Storage.compose format)
@@ -298,6 +399,134 @@ impl StorageModuleAdapter {
                 Ok(pos + 4)
             },
             _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type))
+        }
+    }
+
+    /// Get AccountUpgradeCost dynamic property
+    /// Default value for witness creation cost in SUN
+    pub fn get_account_upgrade_cost(&self) -> Result<u64> {
+        let key = b"ACCOUNT_UPGRADE_COST";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let cost = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(cost)
+                } else {
+                    // Use default value for AccountUpgradeCost
+                    Ok(9999000000) // 9999 TRX in SUN (default from TRON)
+                }
+            },
+            None => {
+                // Use default value for AccountUpgradeCost
+                Ok(9999000000) // 9999 TRX in SUN (default from TRON)
+            }
+        }
+    }
+
+    /// Get AllowMultiSign dynamic property
+    /// Default value: 1 (enabled)
+    pub fn get_allow_multi_sign(&self) -> Result<bool> {
+        let key = b"ALLOW_MULTI_SIGN";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if !data.is_empty() {
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(true) // Default enabled
+                }
+            },
+            None => {
+                Ok(true) // Default enabled
+            }
+        }
+    }
+
+    /// Get SupportBlackHoleOptimization dynamic property
+    /// Default value: true (burning enabled)
+    pub fn support_black_hole_optimization(&self) -> Result<bool> {
+        let key = b"SUPPORT_BLACK_HOLE_OPTIMIZATION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if !data.is_empty() {
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(true) // Default enabled
+                }
+            },
+            None => {
+                Ok(true) // Default enabled
+            }
+        }
+    }
+
+    /// Get blackhole address (if crediting instead of burning)
+    /// Returns the configured blackhole address or None if using burn mode
+    pub fn get_blackhole_address(&self) -> Result<Option<Address>> {
+        let key = b"BLACK_HOLE_ADDRESS";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 20 {
+                    let mut addr_bytes = [0u8; 20];
+                    addr_bytes.copy_from_slice(&data[0..20]);
+                    Ok(Some(Address::from(addr_bytes)))
+                } else {
+                    Ok(None) // No blackhole address configured - use burn mode
+                }
+            },
+            None => {
+                Ok(None) // No blackhole address configured - use burn mode
+            }
+        }
+    }
+
+    /// Get witness information by address
+    pub fn get_witness(&self, address: &Address) -> Result<Option<WitnessInfo>> {
+        let key = self.witness_key(address);
+        tracing::debug!("Getting witness for address {:?}, key: {}",
+                       address, hex::encode(&key));
+
+        match self.storage_engine.get(self.witness_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found witness data, length: {}", data.len());
+                match WitnessInfo::deserialize(&data) {
+                    Ok(witness) => {
+                        tracing::debug!("Successfully deserialized witness - URL: {}, votes: {}",
+                                       witness.url, witness.vote_count);
+                        Ok(Some(witness))
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to deserialize witness data: {}", e);
+                        Ok(None) // Return None instead of error for corrupted data
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("No witness found for address {:?}", address);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store witness information
+    pub fn put_witness(&self, witness: &WitnessInfo) -> Result<()> {
+        let key = self.witness_key(&witness.address);
+        let data = witness.serialize();
+
+        tracing::debug!("Storing witness for address {:?}, key: {}, URL: {}, votes: {}",
+                       witness.address, hex::encode(&key), witness.url, witness.vote_count);
+
+        self.storage_engine.put(self.witness_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Check if an address is already a witness
+    pub fn is_witness(&self, address: &Address) -> Result<bool> {
+        match self.get_witness(address)? {
+            Some(_) => Ok(true),
+            None => Ok(false),
         }
     }
 }

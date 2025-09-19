@@ -24,40 +24,40 @@ Milestone Checklist
 Phase 1 — WitnessCreate Parity (and zero-address fix)
 
 1) Contract Metadata Plumbing (Rust)
-- [ ] Extend internal conversion to carry contract_type and asset_id
-  - [ ] service.rs: convert_protobuf_transaction() — parse TronTransaction.contract_type, TronTransaction.asset_id
-  - [ ] Define internal enum ContractType mirroring protobuf; add TryFrom/i32 mapping
-  - [ ] Add TxMetadata { tx_kind, contract_type, asset_id: Option<Vec<u8>> }
-- [ ] Thread metadata to Non-VM dispatcher
-  - [ ] execute_transaction() — pass tx_kind + contract_type to Non-VM branch
-  - [ ] Replace execute_non_vm_transaction(...) with execute_non_vm_dispatch(...)
+- [x] Extend internal conversion to carry contract_type and asset_id
+  - [x] service.rs: convert_protobuf_transaction() — parse TronTransaction.contract_type, TronTransaction.asset_id
+  - [x] Define internal enum ContractType mirroring protobuf; add TryFrom/i32 mapping
+  - [x] Add TxMetadata { tx_kind, contract_type, asset_id: Option<Vec<u8>> }
+- [x] Thread metadata to Non-VM dispatcher
+  - [x] execute_transaction() — pass tx_kind + contract_type to Non-VM branch
+  - [x] Replace execute_non_vm_transaction(...) with execute_non_vm_dispatch(...)
 
 2) Address Handling Fix
-- [ ] Java: Stop using to=0x00.. for system contracts
-  - [ ] RemoteExecutionSPI: For WitnessCreate/Update/Vote set .setTo(ByteString.EMPTY)
-  - [ ] Keep txKind=NON_VM, setContractType(...), setAssetId(...) only when applicable
-- [ ] Rust: Allow transaction.to=None for system contracts
-  - [ ] Non-VM dispatcher must not require `to` except for TRANSFER_CONTRACT/TRANSFER_ASSET_CONTRACT
+- [x] Java: Stop using to=0x00.. for system contracts
+  - [x] RemoteExecutionSPI: For WitnessCreate/Update/Vote set .setTo(ByteString.EMPTY)
+  - [x] Keep txKind=NON_VM, setContractType(...), setAssetId(...) only when applicable
+- [x] Rust: Allow transaction.to=None for system contracts
+  - [x] Non-VM dispatcher must not require `to` except for TRANSFER_CONTRACT/TRANSFER_ASSET_CONTRACT
 
 3) Dynamic Properties Access (Rust)
-- [ ] Define property accessors in storage engine/adapter
-  - [ ] get_account_upgrade_cost() (AccountUpgradeCost)
-  - [ ] get_allow_multi_sign() (AllowMultiSign)
-  - [ ] support_black_hole_optimization() (SupportBlackHoleOptimization)
-  - [ ] get_blackhole_address() (when crediting)
-- [ ] Ensure defaults match embedded at block heights under test
-  - [ ] Document canonical keys and default values
+- [x] Define property accessors in storage engine/adapter
+  - [x] get_account_upgrade_cost() (AccountUpgradeCost)
+  - [x] get_allow_multi_sign() (AllowMultiSign)
+  - [x] support_black_hole_optimization() (SupportBlackHoleOptimization)
+  - [x] get_blackhole_address() (when crediting)
+- [x] Ensure defaults match embedded at block heights under test
+  - [x] Document canonical keys and default values
 
 4) Witness Store Support (Rust Storage)
-- [ ] Add CF/namespace for WitnessStore (by 21-byte Tron address key)
-- [ ] Define serialization for WitnessCapsule-equivalent { address, url, voteCount }
-- [ ] Implement get_witness(addr), put_witness(witness)
-- [ ] Unit-test roundtrip (serialize/deserialize)
+- [x] Add CF/namespace for WitnessStore (by 21-byte Tron address key)
+- [x] Define serialization for WitnessCapsule-equivalent { address, url, voteCount }
+- [x] Implement get_witness(addr), put_witness(witness)
+- [x] Unit-test roundtrip (serialize/deserialize)
 
 5) Account Serialization Parity (Rust→Java Bridge)
-- [ ] Ensure empty-code normalization to keccak("") (c5d246…a470) is preserved
-- [ ] Keep account serialization format (balance[32] + nonce[8] + code_hash[32] + code_len[4] + code)
-- [ ] Verify RemoteExecutionSPI.serializeAccountInfo() remains the consumer of AccountChange data
+- [x] Ensure empty-code normalization to keccak("") (c5d246…a470) is preserved
+- [x] Keep account serialization format (balance[32] + nonce[8] + code_hash[32] + code_len[4] + code)
+- [x] Verify RemoteExecutionSPI.serializeAccountInfo() remains the consumer of AccountChange data
 
 6) Implement WitnessCreate Handler (Rust)
 - [ ] Validate preconditions

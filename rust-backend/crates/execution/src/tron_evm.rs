@@ -11,6 +11,121 @@ use crate::precompiles::TronPrecompiles;
 use crate::storage_adapter::{StorageAdapterDatabase, StorageAdapter};
 
 // Tron-specific transaction and execution types
+
+/// TRON Contract Type enumeration - matches protobuf ContractType
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum TronContractType {
+    AccountCreateContract = 0,
+    TransferContract = 1,
+    TransferAssetContract = 2,
+    VoteAssetContract = 3,
+    VoteWitnessContract = 4,
+    WitnessCreateContract = 5,
+    AssetIssueContract = 6,
+    WitnessUpdateContract = 8,
+    ParticipateAssetIssueContract = 9,
+    AccountUpdateContract = 10,
+    FreezeBalanceContract = 11,
+    UnfreezeBalanceContract = 12,
+    WithdrawBalanceContract = 13,
+    UnfreezeAssetContract = 14,
+    UpdateAssetContract = 15,
+    ProposalCreateContract = 16,
+    ProposalApproveContract = 17,
+    ProposalDeleteContract = 18,
+    SetAccountIdContract = 19,
+    CustomContract = 20,
+    CreateSmartContract = 30,
+    TriggerSmartContract = 31,
+    GetContract = 32,
+    UpdateSettingContract = 33,
+    ExchangeCreateContract = 41,
+    ExchangeInjectContract = 42,
+    ExchangeWithdrawContract = 43,
+    ExchangeTransactionContract = 44,
+    UpdateEnergyLimitContract = 45,
+    AccountPermissionUpdateContract = 46,
+    ClearAbiContract = 48,
+    UpdateBrokerageContract = 49,
+    ShieldContract = 51,
+    MarketSellAssetContract = 52,
+    MarketCancelOrderContract = 53,
+    FreezeBalanceV2Contract = 54,
+    UnfreezeBalanceV2Contract = 55,
+    WithdrawExpireUnfreezeContract = 56,
+    DelegateResourceContract = 57,
+    UndelegateResourceContract = 58,
+    CancelAllUnfreezeV2Contract = 59,
+}
+
+impl TryFrom<i32> for TronContractType {
+    type Error = String;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(TronContractType::AccountCreateContract),
+            1 => Ok(TronContractType::TransferContract),
+            2 => Ok(TronContractType::TransferAssetContract),
+            3 => Ok(TronContractType::VoteAssetContract),
+            4 => Ok(TronContractType::VoteWitnessContract),
+            5 => Ok(TronContractType::WitnessCreateContract),
+            6 => Ok(TronContractType::AssetIssueContract),
+            8 => Ok(TronContractType::WitnessUpdateContract),
+            9 => Ok(TronContractType::ParticipateAssetIssueContract),
+            10 => Ok(TronContractType::AccountUpdateContract),
+            11 => Ok(TronContractType::FreezeBalanceContract),
+            12 => Ok(TronContractType::UnfreezeBalanceContract),
+            13 => Ok(TronContractType::WithdrawBalanceContract),
+            14 => Ok(TronContractType::UnfreezeAssetContract),
+            15 => Ok(TronContractType::UpdateAssetContract),
+            16 => Ok(TronContractType::ProposalCreateContract),
+            17 => Ok(TronContractType::ProposalApproveContract),
+            18 => Ok(TronContractType::ProposalDeleteContract),
+            19 => Ok(TronContractType::SetAccountIdContract),
+            20 => Ok(TronContractType::CustomContract),
+            30 => Ok(TronContractType::CreateSmartContract),
+            31 => Ok(TronContractType::TriggerSmartContract),
+            32 => Ok(TronContractType::GetContract),
+            33 => Ok(TronContractType::UpdateSettingContract),
+            41 => Ok(TronContractType::ExchangeCreateContract),
+            42 => Ok(TronContractType::ExchangeInjectContract),
+            43 => Ok(TronContractType::ExchangeWithdrawContract),
+            44 => Ok(TronContractType::ExchangeTransactionContract),
+            45 => Ok(TronContractType::UpdateEnergyLimitContract),
+            46 => Ok(TronContractType::AccountPermissionUpdateContract),
+            48 => Ok(TronContractType::ClearAbiContract),
+            49 => Ok(TronContractType::UpdateBrokerageContract),
+            51 => Ok(TronContractType::ShieldContract),
+            52 => Ok(TronContractType::MarketSellAssetContract),
+            53 => Ok(TronContractType::MarketCancelOrderContract),
+            54 => Ok(TronContractType::FreezeBalanceV2Contract),
+            55 => Ok(TronContractType::UnfreezeBalanceV2Contract),
+            56 => Ok(TronContractType::WithdrawExpireUnfreezeContract),
+            57 => Ok(TronContractType::DelegateResourceContract),
+            58 => Ok(TronContractType::UndelegateResourceContract),
+            59 => Ok(TronContractType::CancelAllUnfreezeV2Contract),
+            _ => Err(format!("Invalid contract type: {}", value)),
+        }
+    }
+}
+
+/// Transaction metadata for TRON system contracts
+#[derive(Debug, Clone)]
+pub struct TxMetadata {
+    pub contract_type: Option<TronContractType>,
+    pub asset_id: Option<Vec<u8>>,  // For TRC-10 transfers
+}
+
+impl Default for TxMetadata {
+    fn default() -> Self {
+        Self {
+            contract_type: None,
+            asset_id: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TronTransaction {
     pub from: revm::primitives::Address,
@@ -20,6 +135,7 @@ pub struct TronTransaction {
     pub gas_limit: u64,
     pub gas_price: revm::primitives::U256,
     pub nonce: u64,
+    pub metadata: TxMetadata,  // Added metadata for contract type and asset ID
 }
 
 #[derive(Debug, Clone)]

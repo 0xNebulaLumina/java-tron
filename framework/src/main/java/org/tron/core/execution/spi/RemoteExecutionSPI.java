@@ -20,6 +20,9 @@ import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContra
 import org.tron.protos.contract.BalanceContract.TransferContract;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
+import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
+import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
+import org.tron.protos.contract.WitnessContract.VoteWitnessContract;
 import tron.backend.BackendOuterClass.*;
 
 /**
@@ -326,6 +329,34 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           value = triggerContract.getCallValue();
           txKind = TxKind.VM; // Smart contract invocation requires VM
           contractType = tron.backend.BackendOuterClass.ContractType.TRIGGER_SMART_CONTRACT;
+          break;
+
+        case WitnessCreateContract:
+          WitnessCreateContract witnessCreateContract =
+              contractParameter.unpack(WitnessCreateContract.class);
+          // For witness creation, do NOT set toAddress to 0x00 - leave it empty
+          toAddress = new byte[0]; // Empty instead of zero address
+          // URL is not used in execution data, just for validation
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.WITNESS_CREATE_CONTRACT;
+          break;
+
+        case WitnessUpdateContract:
+          WitnessUpdateContract witnessUpdateContract =
+              contractParameter.unpack(WitnessUpdateContract.class);
+          // For witness update, do NOT set toAddress to 0x00 - leave it empty
+          toAddress = new byte[0]; // Empty instead of zero address
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.WITNESS_UPDATE_CONTRACT;
+          break;
+
+        case VoteWitnessContract:
+          VoteWitnessContract voteWitnessContract =
+              contractParameter.unpack(VoteWitnessContract.class);
+          // For vote witness, do NOT set toAddress to 0x00 - leave it empty
+          toAddress = new byte[0]; // Empty instead of zero address
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.VOTE_WITNESS_CONTRACT;
           break;
 
         default:

@@ -8,9 +8,9 @@ use async_trait::async_trait;
 use tron_backend_common::{Module, ModuleHealth, ExecutionConfig};
 
 // Re-export key types for external use
-pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange};
+pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, TronContractType, TxMetadata};
 pub use precompiles::TronPrecompiles;
-pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageModuleAdapter, StorageAdapterDatabase, StateChangeRecord};
+pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageModuleAdapter, StorageAdapterDatabase, StateChangeRecord, WitnessInfo};
 
 mod tron_evm;
 mod precompiles;
@@ -260,6 +260,7 @@ mod tests {
             gas_limit: 21000,
             gas_price: U256::ZERO, // Should be 0 for TRON parity
             nonce: 1,
+            metadata: crate::tron_evm::TxMetadata::default(),
         };
 
         // Verify transaction structure for non-VM characteristics
@@ -281,6 +282,7 @@ mod tests {
             gas_limit: 50000,
             gas_price: U256::ZERO, // Should still be 0 for TRON parity
             nonce: 1,
+            metadata: crate::tron_evm::TxMetadata::default(),
         };
 
         // Verify transaction structure for VM characteristics

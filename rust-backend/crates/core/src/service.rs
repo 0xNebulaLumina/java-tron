@@ -176,22 +176,63 @@ impl BackendService {
         Ok(())
     }
     
-    /// Execute a non-VM transaction natively without EVM
-    /// Handles TRON value transfer with proper fee accounting
-    fn execute_non_vm_transaction(
+    /// Execute a non-VM transaction with contract type dispatch
+    /// Routes to specific handlers based on TRON contract type
+    fn execute_non_vm_contract(
         &self,
         storage_adapter: &tron_backend_execution::StorageModuleAdapter,
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        debug!("Executing non-VM transaction: from={:?}, to={:?}, value={}", 
+        debug!("Executing non-VM contract: from={:?}, to={:?}, value={}, contract_type={:?}",
+               transaction.from, transaction.to, transaction.value, transaction.metadata.contract_type);
+
+        // Branch execution based on contract type
+        match transaction.metadata.contract_type {
+            Some(tron_backend_execution::TronContractType::TransferContract) => {
+                debug!("Executing TRANSFER_CONTRACT");
+                self.execute_transfer_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::WitnessCreateContract) => {
+                debug!("Executing WITNESS_CREATE_CONTRACT");
+                self.execute_witness_create_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::WitnessUpdateContract) => {
+                debug!("Executing WITNESS_UPDATE_CONTRACT");
+                self.execute_witness_update_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::VoteWitnessContract) => {
+                debug!("Executing VOTE_WITNESS_CONTRACT");
+                self.execute_vote_witness_contract(storage_adapter, transaction, context)
+            },
+            Some(contract_type) => {
+                // Other contract types not yet implemented - return error to fall back to Java
+                Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
+            },
+            None => {
+                // No contract type specified - use legacy transfer logic for backward compatibility
+                debug!("No contract type specified, using legacy transfer logic");
+                self.execute_transfer_contract(storage_adapter, transaction, context)
+            }
+        }
+    }
+
+    /// Execute a TRANSFER_CONTRACT (legacy non-VM transaction)
+    /// Handles TRON value transfer with proper fee accounting
+    fn execute_transfer_contract(
+        &self,
+        storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        debug!("Executing TRANSFER_CONTRACT: from={:?}, to={:?}, value={}",
                transaction.from, transaction.to, transaction.value);
-        
+
         let execution_config = self.get_execution_config()?;
         let fee_config = &execution_config.fees;
-        
-        // For non-VM transactions, we need the 'to' address
-        let to_address = transaction.to.ok_or("Non-VM transaction must have 'to' address")?;
+
+        // For TRANSFER_CONTRACT specifically, we need the 'to' address
+        let to_address = transaction.to.ok_or("TRANSFER_CONTRACT must have 'to' address")?;
         
         // Calculate bandwidth used based on transaction payload size
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
@@ -363,7 +404,65 @@ impl BackendService {
             error: None,
         })
     }
-    
+
+    /// Execute a WITNESS_CREATE_CONTRACT
+    /// Creates a new witness account with proper validation and state changes
+    fn execute_witness_create_contract(
+        &self,
+        _storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        _transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        // TODO: Implement witness creation logic
+        // - Validate owner account exists and has sufficient balance
+        // - Validate URL format
+        // - Check owner is not already a witness
+        // - Deduct AccountUpgradeCost from owner balance
+        // - Create witness entry in WitnessStore
+        // - Set isWitness flag on owner account
+        // - Handle blackhole vs burn fee mode
+        // - Emit deterministic state changes for CSV parity
+
+        warn!("WITNESS_CREATE_CONTRACT not yet implemented - falling back to Java");
+        Err("WITNESS_CREATE_CONTRACT not yet implemented".to_string())
+    }
+
+    /// Execute a WITNESS_UPDATE_CONTRACT
+    /// Updates witness URL and other parameters
+    fn execute_witness_update_contract(
+        &self,
+        _storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        _transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        // TODO: Implement witness update logic
+        // - Validate owner is an existing witness
+        // - Validate URL format
+        // - Update witness entry in WitnessStore
+        // - Emit minimal state changes (no balance changes)
+
+        warn!("WITNESS_UPDATE_CONTRACT not yet implemented - falling back to Java");
+        Err("WITNESS_UPDATE_CONTRACT not yet implemented".to_string())
+    }
+
+    /// Execute a VOTE_WITNESS_CONTRACT
+    /// Handles witness voting with tally updates
+    fn execute_vote_witness_contract(
+        &self,
+        _storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        _transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        // TODO: Implement vote witness logic
+        // - Validate voter account and witness targets
+        // - Update vote mappings and witness tallies
+        // - Handle vote power calculations
+        // - Emit account and storage changes for vote data
+
+        warn!("VOTE_WITNESS_CONTRACT not yet implemented - falling back to Java");
+        Err("VOTE_WITNESS_CONTRACT not yet implemented".to_string())
+    }
+
     /// Calculate bandwidth usage for a transaction based on its serialized size
     fn calculate_bandwidth_usage(transaction: &TronTransaction) -> u64 {
         // Approximate bandwidth calculation based on transaction fields
@@ -1551,16 +1650,16 @@ impl crate::backend::backend_server::Backend for BackendService {
         // Phase 3: Branch execution based on transaction kind
         let execution_result = match tx_kind {
             crate::backend::TxKind::NonVm => {
-                info!("Executing NON_VM transaction natively (bypassing EVM)");
-                // Execute non-VM transaction natively without EVM
-                match self.execute_non_vm_transaction(&storage_adapter, &transaction, &context) {
+                info!("Executing NON_VM transaction with contract type dispatch");
+                // Execute non-VM transaction with contract type dispatch
+                match self.execute_non_vm_contract(&storage_adapter, &transaction, &context) {
                     Ok(result) => {
-                        info!("Non-VM transaction executed successfully - energy_used: {}, bandwidth_used: {}, state_changes: {}",
+                        info!("Non-VM contract executed successfully - energy_used: {}, bandwidth_used: {}, state_changes: {}",
                               result.energy_used, result.bandwidth_used, result.state_changes.len());
                         Ok(result)
                     },
                     Err(e) => {
-                        error!("Non-VM transaction execution failed: {}", e);
+                        error!("Non-VM contract execution failed: {}", e);
                         Err(anyhow::anyhow!("Non-VM execution error: {}", e))
                     }
                 }
@@ -1887,10 +1986,10 @@ impl BackendService {
     // Helper functions for converting between protobuf and execution types
     fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>) -> Result<(TronTransaction, crate::backend::TxKind), String> {
         let tx = tx.ok_or("Transaction is required")?;
-        
+
         // Log the raw transaction data from Java
-        debug!("Raw transaction from Java - energy_limit: {}, energy_price: {}, data_len: {}", 
-               tx.energy_limit, tx.energy_price, tx.data.len());
+        debug!("Raw transaction from Java - energy_limit: {}, energy_price: {}, data_len: {}, contract_type: {}, asset_id_len: {}",
+               tx.energy_limit, tx.energy_price, tx.data.len(), tx.contract_type, tx.asset_id.len());
         
         // Convert bytes to Address (strip Tron 0x41 prefix if present)
         let from_bytes = Self::strip_tron_address_prefix(&tx.from)?;
@@ -1945,7 +2044,35 @@ impl BackendService {
         } else {
             tx.energy_limit as u64
         };
-        
+
+        // Extract contract_type and asset_id from protobuf for TRON system contracts
+        let contract_type = if tx.contract_type != 0 {
+            match tron_backend_execution::TronContractType::try_from(tx.contract_type) {
+                Ok(ct) => {
+                    debug!("Parsed contract type: {:?}", ct);
+                    Some(ct)
+                },
+                Err(e) => {
+                    warn!("Invalid contract type {}: {}, ignoring", tx.contract_type, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let asset_id = if !tx.asset_id.is_empty() {
+            debug!("Parsed asset_id: {} bytes", tx.asset_id.len());
+            Some(tx.asset_id.clone())
+        } else {
+            None
+        };
+
+        let metadata = tron_backend_execution::TxMetadata {
+            contract_type,
+            asset_id,
+        };
+
         let transaction = TronTransaction {
             from,
             to,
@@ -1954,11 +2081,12 @@ impl BackendService {
             gas_limit,
             gas_price,
             nonce: tx.nonce as u64,
+            metadata,
         };
-        
+
         // Extract tx_kind from protobuf, default to VM for backward compatibility
         let tx_kind = crate::backend::TxKind::try_from(tx.tx_kind).unwrap_or(crate::backend::TxKind::Vm);
-        debug!("Transaction kind: {:?}", tx_kind);
+        debug!("Transaction kind: {:?}, contract_type: {:?}", tx_kind, transaction.metadata.contract_type);
         
         Ok((transaction, tx_kind))
     }
@@ -2012,6 +2140,7 @@ impl BackendService {
             gas_limit: 1000000, // Default gas limit for contract calls
             gas_price: revm_primitives::U256::from(1),
             nonce: 0, // Contract calls don't use nonce
+            metadata: tron_backend_execution::TxMetadata::default(), // No specific metadata for contract calls
         })
     }
 
