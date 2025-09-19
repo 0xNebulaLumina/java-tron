@@ -43,6 +43,8 @@ pub struct ExecutionConfig {
     pub evm_eth_coinbase_compat: bool,
     /// TRON fee handling configuration
     pub fees: ExecutionFeeConfig,
+    /// Remote execution feature flags
+    pub remote: RemoteExecutionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +69,22 @@ pub struct ExecutionFeeConfig {
     /// Optional flat fee for non-VM transactions in SUN (when not reading from dynamic properties)
     /// If None, no fee deltas are emitted for non-VM transactions
     pub non_vm_blackhole_credit_flat: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteExecutionConfig {
+    /// Global enable/disable for remote system contract execution
+    pub system_enabled: bool,
+    /// Enable WITNESS_CREATE_CONTRACT execution
+    pub witness_create_enabled: bool,
+    /// Enable WITNESS_UPDATE_CONTRACT execution
+    pub witness_update_enabled: bool,
+    /// Enable VOTE_WITNESS_CONTRACT execution
+    pub vote_witness_enabled: bool,
+    /// Enable TRC-10 transfers (requires additional storage support)
+    pub trc10_enabled: bool,
+    /// Emit storage changes for witness/vote data (may affect CSV output)
+    pub emit_storage_changes: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +143,7 @@ impl Default for ExecutionConfig {
             max_cpu_time_of_one_tx: 80,
             evm_eth_coinbase_compat: false, // Default off for TRON parity
             fees: ExecutionFeeConfig::default(),
+            remote: RemoteExecutionConfig::default(),
         }
     }
 }
@@ -180,5 +199,18 @@ impl Config {
 
         let config = builder.build()?;
         config.try_deserialize()
+    }
+}
+
+impl Default for RemoteExecutionConfig {
+    fn default() -> Self {
+        Self {
+            system_enabled: true,
+            witness_create_enabled: true,
+            witness_update_enabled: false,
+            vote_witness_enabled: false,
+            trc10_enabled: false,
+            emit_storage_changes: false,
+        }
     }
 } 

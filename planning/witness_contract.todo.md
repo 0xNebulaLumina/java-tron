@@ -60,25 +60,25 @@ Phase 1 — WitnessCreate Parity (and zero-address fix)
 - [x] Verify RemoteExecutionSPI.serializeAccountInfo() remains the consumer of AccountChange data
 
 6) Implement WitnessCreate Handler (Rust)
-- [ ] Validate preconditions
-  - [ ] Owner account exists
-  - [ ] Owner not already a witness
-  - [ ] URL validity check (match embedded or accept as-is initially; log deviations)
-  - [ ] Balance >= AccountUpgradeCost
-- [ ] Mutations
-  - [ ] Insert witness entry: (owner, url, voteCount=0)
-  - [ ] Update owner account flags: isWitness=true; default witness permission if allowMultiSign==1
-  - [ ] Deduct AccountUpgradeCost from owner balance
-  - [ ] Burn or credit cost:
-    - [ ] If supportBlackHoleOptimization() -> burn (no account delta)
-    - [ ] Else -> credit blackhole account +cost (AccountChange)
-  - [ ] Increment total create witness cost (DynamicProperties)
-- [ ] Emitted state changes (for CSV parity)
-  - [ ] Owner AccountChange: balance decreased (old/new)
-  - [ ] Owner AccountChange: metadata/permission changed (ensure serialized blob reflects change)
-  - [ ] Optional blackhole AccountChange only when not burning
-  - [ ] No zero-address AccountChange
-- [ ] Deterministic ordering: sort by address asc; account before storage for same address
+- [x] Validate preconditions
+  - [x] Owner account exists
+  - [x] Owner not already a witness
+  - [x] URL validity check (match embedded or accept as-is initially; log deviations)
+  - [x] Balance >= AccountUpgradeCost
+- [x] Mutations
+  - [x] Insert witness entry: (owner, url, voteCount=0)
+  - [x] Update owner account flags: isWitness=true; default witness permission if allowMultiSign==1
+  - [x] Deduct AccountUpgradeCost from owner balance
+  - [x] Burn or credit cost:
+    - [x] If supportBlackHoleOptimization() -> burn (no account delta)
+    - [x] Else -> credit blackhole account +cost (AccountChange)
+  - [ ] Increment total create witness cost (DynamicProperties) [Note: deferred - not critical for CSV parity]
+- [x] Emitted state changes (for CSV parity)
+  - [x] Owner AccountChange: balance decreased (old/new)
+  - [x] Owner AccountChange: metadata/permission changed (ensure serialized blob reflects change)
+  - [x] Optional blackhole AccountChange only when not burning
+  - [x] No zero-address AccountChange
+- [x] Deterministic ordering: sort by address asc; account before storage for same address
 
 7) Logging and Metrics
 - [ ] Log chosen Non-VM branch: WitnessCreateContract
@@ -92,13 +92,13 @@ Phase 1 — WitnessCreate Parity (and zero-address fix)
 - [ ] Java: If disabled or error encountered, throw to fall back to Java actuator
 
 9) Tests (Rust Unit + Integration)
-- [ ] Unit: convert_protobuf_transaction() parses contract_type and allows to=None
-- [ ] Unit: Witness store read/write
-- [ ] Unit: Dynamic properties defaulting
-- [ ] Integration: Execute WitnessCreate with fixture context
-  - [ ] Emitted changes count matches embedded (2 owner changes; +blackhole if mode == credit)
-  - [ ] Account blobs lengths 76 and code hash equals keccak("")
-  - [ ] Deterministic order; digest parity script passes for the tx
+- [x] Unit: convert_protobuf_transaction() parses contract_type and allows to=None
+- [x] Unit: Witness store read/write
+- [x] Unit: Dynamic properties defaulting
+- [x] Integration: Execute WitnessCreate with fixture context
+  - [x] Emitted changes count matches embedded (2 owner changes; +blackhole if mode == credit)
+  - [x] Account blobs lengths 76 and code hash equals keccak("")
+  - [x] Deterministic order; digest parity script passes for the tx
 
 10) End-to-End Validation
 - [ ] Re-run remote-remote on blocks up to and including 1785

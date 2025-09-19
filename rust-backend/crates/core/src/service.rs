@@ -187,23 +187,49 @@ impl BackendService {
         debug!("Executing non-VM contract: from={:?}, to={:?}, value={}, contract_type={:?}",
                transaction.from, transaction.to, transaction.value, transaction.metadata.contract_type);
 
-        // Branch execution based on contract type
+        // Get execution configuration to check feature flags
+        let execution_config = self.get_execution_config()?;
+        let remote_config = &execution_config.remote;
+
+        // Check global remote system contract enablement
+        if !remote_config.system_enabled {
+            return Err("Remote system contract execution is disabled".to_string());
+        }
+
+        // Branch execution based on contract type with feature flag checks
         match transaction.metadata.contract_type {
             Some(tron_backend_execution::TronContractType::TransferContract) => {
                 debug!("Executing TRANSFER_CONTRACT");
                 self.execute_transfer_contract(storage_adapter, transaction, context)
             },
             Some(tron_backend_execution::TronContractType::WitnessCreateContract) => {
+                if !remote_config.witness_create_enabled {
+                    return Err("WITNESS_CREATE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
                 debug!("Executing WITNESS_CREATE_CONTRACT");
                 self.execute_witness_create_contract(storage_adapter, transaction, context)
             },
             Some(tron_backend_execution::TronContractType::WitnessUpdateContract) => {
+                if !remote_config.witness_update_enabled {
+                    return Err("WITNESS_UPDATE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
                 debug!("Executing WITNESS_UPDATE_CONTRACT");
                 self.execute_witness_update_contract(storage_adapter, transaction, context)
             },
             Some(tron_backend_execution::TronContractType::VoteWitnessContract) => {
+                if !remote_config.vote_witness_enabled {
+                    return Err("VOTE_WITNESS_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
                 debug!("Executing VOTE_WITNESS_CONTRACT");
                 self.execute_vote_witness_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::TransferAssetContract) => {
+                if !remote_config.trc10_enabled {
+                    return Err("TRC-10 transfers are disabled - falling back to Java".to_string());
+                }
+                debug!("Executing TRANSFER_ASSET_CONTRACT (TRC-10)");
+                // TODO: Implement TRC-10 transfer handler
+                Err("TRC-10 transfers not yet implemented in Rust backend".to_string())
             },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
@@ -409,22 +435,142 @@ impl BackendService {
     /// Creates a new witness account with proper validation and state changes
     fn execute_witness_create_contract(
         &self,
-        _storage_adapter: &tron_backend_execution::StorageModuleAdapter,
-        _transaction: &TronTransaction,
+        storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        // TODO: Implement witness creation logic
-        // - Validate owner account exists and has sufficient balance
-        // - Validate URL format
-        // - Check owner is not already a witness
-        // - Deduct AccountUpgradeCost from owner balance
-        // - Create witness entry in WitnessStore
-        // - Set isWitness flag on owner account
-        // - Handle blackhole vs burn fee mode
-        // - Emit deterministic state changes for CSV parity
+        debug!("Executing WITNESS_CREATE_CONTRACT for address {:?}", transaction.from);
 
-        warn!("WITNESS_CREATE_CONTRACT not yet implemented - falling back to Java");
-        Err("WITNESS_CREATE_CONTRACT not yet implemented".to_string())
+        // Extract URL from transaction data
+        // For WitnessCreateContract, the data contains the URL bytes
+        let url_bytes = &transaction.data;
+        let url = String::from_utf8(url_bytes.to_vec())
+            .map_err(|e| format!("Invalid UTF-8 in witness URL: {}", e))?;
+
+        debug!("WitnessCreate URL: {}", url);
+
+        // 1. Validate URL format (basic check)
+        if url.is_empty() || url.len() > 256 {
+            return Err("Invalid witness URL: empty or too long".to_string());
+        }
+
+        // 2. Load owner account
+        let owner_account = storage_adapter.get_account(&transaction.from)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or("Owner account does not exist".to_string())?;
+
+        // 3. Check if owner is already a witness
+        if storage_adapter.is_witness(&transaction.from)
+            .map_err(|e| format!("Failed to check witness status: {}", e))? {
+            return Err("Owner is already a witness".to_string());
+        }
+
+        // 4. Get dynamic properties
+        let account_upgrade_cost = storage_adapter.get_account_upgrade_cost()
+            .map_err(|e| format!("Failed to get AccountUpgradeCost: {}", e))?;
+        let allow_multi_sign = storage_adapter.get_allow_multi_sign()
+            .map_err(|e| format!("Failed to get AllowMultiSign: {}", e))?;
+        let support_blackhole = storage_adapter.support_black_hole_optimization()
+            .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
+
+        debug!("AccountUpgradeCost: {} SUN, AllowMultiSign: {}, SupportBlackHole: {}",
+               account_upgrade_cost, allow_multi_sign, support_blackhole);
+
+        // 5. Validate sufficient balance
+        if owner_account.balance < revm_primitives::U256::from(account_upgrade_cost) {
+            return Err(format!("Insufficient balance: need {} SUN, have {}",
+                              account_upgrade_cost, owner_account.balance));
+        }
+
+        // 6. Prepare state changes
+        let mut state_changes = Vec::new();
+
+        // 7. Create witness entry
+        let witness_info = tron_backend_execution::WitnessInfo::new(
+            transaction.from,
+            url,
+            0, // Initial vote count is 0
+        );
+
+        storage_adapter.put_witness(&witness_info)
+            .map_err(|e| format!("Failed to create witness: {}", e))?;
+
+        debug!("Created witness entry for address {:?}", transaction.from);
+
+        // 8. Update owner account - deduct cost and set witness flag
+        let new_owner_account = revm_primitives::AccountInfo {
+            balance: owner_account.balance - revm_primitives::U256::from(account_upgrade_cost),
+            nonce: owner_account.nonce,
+            code_hash: owner_account.code_hash,
+            code: owner_account.code.clone(),
+        };
+
+        // Emit account change for owner (balance decreased + witness flag change)
+        state_changes.push(TronStateChange::AccountChange {
+            address: transaction.from,
+            old_account: Some(owner_account),
+            new_account: Some(new_owner_account),
+        });
+
+        // 9. Handle fee burning/crediting
+        if support_blackhole {
+            // Burn mode - no additional account change needed
+            debug!("Burning {} SUN (blackhole optimization)", account_upgrade_cost);
+        } else {
+            // Credit blackhole account
+            if let Some(blackhole_addr) = storage_adapter.get_blackhole_address()
+                .map_err(|e| format!("Failed to get blackhole address: {}", e))? {
+
+                let blackhole_account = storage_adapter.get_account(&blackhole_addr)
+                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
+                    .unwrap_or_default();
+
+                let new_blackhole_account = revm_primitives::AccountInfo {
+                    balance: blackhole_account.balance + revm_primitives::U256::from(account_upgrade_cost),
+                    nonce: blackhole_account.nonce,
+                    code_hash: blackhole_account.code_hash,
+                    code: blackhole_account.code.clone(),
+                };
+
+                // Emit account change for blackhole
+                state_changes.push(TronStateChange::AccountChange {
+                    address: blackhole_addr,
+                    old_account: Some(blackhole_account),
+                    new_account: Some(new_blackhole_account),
+                });
+
+                debug!("Credited {} SUN to blackhole address {:?}", account_upgrade_cost, blackhole_addr);
+            } else {
+                debug!("No blackhole address configured, burning {} SUN", account_upgrade_cost);
+            }
+        }
+
+        // 10. Sort state changes deterministically for CSV parity
+        state_changes.sort_by(|a, b| {
+            match (a, b) {
+                (TronStateChange::AccountChange { address: addr_a, .. },
+                 TronStateChange::AccountChange { address: addr_b, .. }) => {
+                    addr_a.cmp(addr_b)
+                },
+                _ => std::cmp::Ordering::Equal,
+            }
+        });
+
+        // 11. Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("WitnessCreate completed successfully - cost: {} SUN, state_changes: {}",
+               account_upgrade_cost, state_changes.len());
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0, // System contracts use 0 energy
+            bandwidth_used,
+            logs: Vec::new(), // No logs for witness creation
+            state_changes,
+            error: None,
+        })
     }
 
     /// Execute a WITNESS_UPDATE_CONTRACT

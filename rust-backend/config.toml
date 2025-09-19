@@ -57,4 +57,20 @@ settings = {}
 
 [modules.execution]
 enabled = true
-settings = {} 
+settings = {}
+
+# Remote Execution Feature Flags
+[remote.execution]
+# Global enable/disable for remote system contract execution
+system_enabled = true
+
+# Specific contract type flags
+witness_create_enabled = true
+witness_update_enabled = false  # Disabled until implemented
+vote_witness_enabled = false    # Disabled until implemented
+
+# TRC-10 transfers (requires additional storage support)
+trc10_enabled = false
+
+# Emit storage changes for witness/vote data (may affect CSV output)
+emit_storage_changes = false 

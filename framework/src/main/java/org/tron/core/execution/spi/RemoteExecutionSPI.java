@@ -336,7 +336,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               contractParameter.unpack(WitnessCreateContract.class);
           // For witness creation, do NOT set toAddress to 0x00 - leave it empty
           toAddress = new byte[0]; // Empty instead of zero address
-          // URL is not used in execution data, just for validation
+          // Include URL in execution data for Rust backend processing
+          data = witnessCreateContract.getUrl().toByteArray();
           txKind = TxKind.NON_VM; // System contract
           contractType = tron.backend.BackendOuterClass.ContractType.WITNESS_CREATE_CONTRACT;
           break;
@@ -346,6 +347,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               contractParameter.unpack(WitnessUpdateContract.class);
           // For witness update, do NOT set toAddress to 0x00 - leave it empty
           toAddress = new byte[0]; // Empty instead of zero address
+          // Include update URL in execution data for Rust backend processing
+          data = witnessUpdateContract.getUpdateUrl().toByteArray();
           txKind = TxKind.NON_VM; // System contract
           contractType = tron.backend.BackendOuterClass.ContractType.WITNESS_UPDATE_CONTRACT;
           break;
@@ -355,6 +358,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               contractParameter.unpack(VoteWitnessContract.class);
           // For vote witness, do NOT set toAddress to 0x00 - leave it empty
           toAddress = new byte[0]; // Empty instead of zero address
+          // Serialize vote data for Rust backend processing (simplified for now)
+          data = voteWitnessContract.toByteArray(); // Full contract data
           txKind = TxKind.NON_VM; // System contract
           contractType = tron.backend.BackendOuterClass.ContractType.VOTE_WITNESS_CONTRACT;
           break;
