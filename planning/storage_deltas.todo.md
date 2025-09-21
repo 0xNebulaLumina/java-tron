@@ -47,26 +47,26 @@ Compatibility & Risks
 - URL normalization: do not transform (no trim, lowercasing); bytes must be used as-is.
 
 Implementation Checklist — Remote (Rust)
-- [ ] Add helper: `compute_metadata_key(address, tag) -> U256`
-  - [ ] Concatenate: [0x41] + address(20) + ASCII tag bytes.
-  - [ ] Return keccak256(bytes) as U256 (big-endian).
-- [ ] Add helper: `digest_bytes_to_u256(bytes) -> U256` using keccak256.
-- [ ] WitnessCreate
-  - [ ] After `put_witness(...)`, compute new_digest.
-  - [ ] Push StorageChange { address: owner, key: witness_key, old=0, new=new_digest } when flag enabled.
-  - [ ] Ordering: ensure AccountChange for owner precedes StorageChange.
-- [ ] WitnessUpdate
-  - [ ] Read old witness record; compute old_digest.
-  - [ ] Write new record; compute new_digest.
-  - [ ] Push StorageChange { address: owner, key, old_digest, new_digest } when flag enabled.
+- [x] Add helper: `compute_metadata_key(address, tag) -> U256`
+  - [x] Concatenate: [0x41] + address(20) + ASCII tag bytes.
+  - [x] Return keccak256(bytes) as U256 (big-endian).
+- [x] Add helper: `digest_bytes_to_u256(bytes) -> U256` using keccak256.
+- [x] WitnessCreate
+  - [x] After `put_witness(...)`, compute new_digest.
+  - [x] Push StorageChange { address: owner, key: witness_key, old=0, new=new_digest } when flag enabled.
+  - [x] Ordering: ensure AccountChange for owner precedes StorageChange.
+- [x] WitnessUpdate
+  - [x] Read old witness record; compute old_digest.
+  - [x] Write new record; compute new_digest.
+  - [x] Push StorageChange { address: owner, key, old_digest, new_digest } when flag enabled.
 - [ ] VoteWitness (Phase 2)
   - [ ] Decide minimum viable set for parity (start with voter mapping digest only).
-  - [ ] Compute digest over canonical voter’s vote array serialization:
+  - [ ] Compute digest over canonical voter's vote array serialization:
         voter_digest = keccak256( concat_sorted_by_witness( witness_addr20 || votes_u64_be ) ).
   - [ ] Emit StorageChange with address=voter, key=voter_vote_key, old/new digests.
   - [ ] Optionally emit per-witness tally change (behind a sub-flag) once tallies implemented.
-- [ ] Sorting: confirm StorageChange ordering uses existing compare rules.
-- [ ] Flag wiring: read `remote.execution.emit_storage_changes` from config.toml/common config.
+- [x] Sorting: confirm StorageChange ordering uses existing compare rules.
+- [x] Flag wiring: read `remote.execution.emit_storage_changes` from config.toml/common config.
 - [ ] Unit tests
   - [ ] Test key derivation with known address/tag → expected U256.
   - [ ] Test digest determinism for WitnessInfo bytes.
@@ -75,19 +75,19 @@ Implementation Checklist — Remote (Rust)
   - [ ] Test sorting rule (account first, then storage).
 
 Implementation Checklist — Embedded (Java)
-- [ ] Introduce a recorder hook for storage metadata deltas (parallel to state change recorder):
-  - [ ] Interface/method to record StorageChange(address, key[32], old[32], new[32]).
-- [ ] WitnessCreateActuator
-  - [ ] After storing witness entry, if `embedded.exec.emitStorageChanges` is true:
-    - [ ] Build witness record bytes (canonical Java-side builder mirroring Rust fields).
-    - [ ] Compute new_digest = keccak256(bytes).
-    - [ ] Emit StorageChange with old=0, new=new_digest; key per derivation rule.
-- [ ] WitnessUpdateActuator
-  - [ ] Read old witness record; compute old_digest.
-  - [ ] Write new witness record; compute new_digest.
-  - [ ] Emit StorageChange with old/new digests; key per derivation rule.
+- [x] Introduce a recorder hook for storage metadata deltas (parallel to state change recorder):
+  - [x] Interface/method to record StorageChange(address, key[32], old[32], new[32]).
+- [x] WitnessCreateActuator
+  - [x] After storing witness entry, if `embedded.exec.emitStorageChanges` is true:
+    - [x] Build witness record bytes (canonical Java-side builder mirroring Rust fields).
+    - [x] Compute new_digest = keccak256(bytes).
+    - [x] Emit StorageChange with old=0, new=new_digest; key per derivation rule.
+- [x] WitnessUpdateActuator
+  - [x] Read old witness record; compute old_digest.
+  - [x] Write new witness record; compute new_digest.
+  - [x] Emit StorageChange with old/new digests; key per derivation rule.
 - [ ] VoteWitness
-  - [ ] When updating voter’s mapping, compute voter_digest from canonical array (same order convention as Rust) and emit StorageChange.
+  - [ ] When updating voter's mapping, compute voter_digest from canonical array (same order convention as Rust) and emit StorageChange.
 - [ ] Unit tests (Java)
   - [ ] Deterministic key and digest with fixed fixtures.
   - [ ] Per-contract actuator tests: proper emission under the flag.

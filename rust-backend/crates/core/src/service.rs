@@ -5,6 +5,7 @@ use tonic::{Request, Response, Status};
 use tracing::{info, error, debug, warn};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
+use sha3::{Digest, Keccak256};
 
 use tron_backend_common::{ModuleManager, HealthStatus, from_tron_address};
 use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, StorageAdapter};
@@ -315,7 +316,7 @@ impl BackendService {
         });
         // Persist sender account update
         storage_adapter
-            .set_account(transaction.from, new_sender_account.clone())
+            .set_account(transaction.from, new_sender_account)
             .map_err(|e| format!("Failed to persist sender account: {}", e))?;
         
         // Update recipient account: balance += value
@@ -341,7 +342,7 @@ impl BackendService {
         });
         // Persist recipient account update
         storage_adapter
-            .set_account(to_address, new_recipient_account.clone())
+            .set_account(to_address, new_recipient_account)
             .map_err(|e| format!("Failed to persist recipient account: {}", e))?;
         
         // Handle fee based on configuration (only if fee_amount > 0)
@@ -386,7 +387,7 @@ impl BackendService {
                                 });
                                 // Persist blackhole account update
                                 storage_adapter
-                                    .set_account(blackhole_address, new_blackhole_account.clone())
+                                    .set_account(blackhole_address, new_blackhole_account)
                                     .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
                                 
                                 debug!("Credited fee {} SUN to blackhole address {}", fee_amount, fee_config.blackhole_address_base58);
@@ -514,6 +515,16 @@ impl BackendService {
 
         debug!("Created witness entry for address {:?}", transaction.from);
 
+        // Emit storage delta for witness metadata if feature flag is enabled
+        let execution_config = self.get_execution_config()?;
+        Self::emit_witness_storage_delta_if_enabled(
+            &mut state_changes,
+            &execution_config,
+            &transaction.from,
+            None, // old_witness = None for creation
+            Some(&witness_info),
+        );
+
         // 8. Update owner account - deduct cost and set witness flag
         let new_owner_account = revm_primitives::AccountInfo {
             balance: owner_account.balance - revm_primitives::U256::from(account_upgrade_cost),
@@ -530,7 +541,7 @@ impl BackendService {
         });
         // Persist owner account update
         storage_adapter
-            .set_account(transaction.from, new_owner_account.clone())
+            .set_account(transaction.from, new_owner_account)
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
         // 9. Handle fee burning/crediting
@@ -564,7 +575,7 @@ impl BackendService {
 
                 // Persist blackhole account update
                 storage_adapter
-                    .set_account(blackhole_addr, new_blackhole_account.clone())
+                    .set_account(blackhole_addr, new_blackhole_account)
                     .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
 
                 let bh_tron = revm_primitives::hex::encode(Self::add_tron_address_prefix(&blackhole_addr));
@@ -618,18 +629,102 @@ impl BackendService {
     /// Updates witness URL and other parameters
     fn execute_witness_update_contract(
         &self,
-        _storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
-        _transaction: &TronTransaction,
+        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        // TODO: Implement witness update logic
-        // - Validate owner is an existing witness
-        // - Validate URL format
-        // - Update witness entry in WitnessStore
-        // - Emit minimal state changes (no balance changes)
+        debug!("Executing WITNESS_UPDATE_CONTRACT for address {:?}", transaction.from);
 
-        warn!("WITNESS_UPDATE_CONTRACT not yet implemented - falling back to Java");
-        Err("WITNESS_UPDATE_CONTRACT not yet implemented".to_string())
+        // Extract URL from transaction data
+        // For WitnessUpdateContract, the data contains the new URL bytes
+        let url_bytes = &transaction.data;
+        let new_url = String::from_utf8(url_bytes.to_vec())
+            .map_err(|e| format!("Invalid UTF-8 in witness URL: {}", e))?;
+
+        debug!("WitnessUpdate new URL: {}", new_url);
+
+        // 1. Validate URL format (basic check)
+        if new_url.len() > 256 {
+            return Err("Invalid witness URL: too long".to_string());
+        }
+
+        // 2. Validate owner is an existing witness
+        let old_witness = storage_adapter.get_witness(&transaction.from)
+            .map_err(|e| format!("Failed to get witness: {}", e))?
+            .ok_or("Owner is not a witness - cannot update".to_string())?;
+
+        debug!("Found existing witness - old URL: {}, votes: {}", old_witness.url, old_witness.vote_count);
+
+        // 3. Create updated witness entry (preserve vote count)
+        let updated_witness = tron_backend_execution::WitnessInfo::new(
+            transaction.from,
+            new_url,
+            old_witness.vote_count, // Preserve existing vote count
+        );
+
+        // 4. Update witness entry in storage
+        storage_adapter.put_witness(&updated_witness)
+            .map_err(|e| format!("Failed to update witness: {}", e))?;
+
+        debug!("Updated witness entry for address {:?}", transaction.from);
+
+        // 5. Prepare state changes
+        let mut state_changes = Vec::new();
+
+        // Emit storage delta for witness metadata if feature flag is enabled
+        let execution_config = self.get_execution_config()?;
+        Self::emit_witness_storage_delta_if_enabled(
+            &mut state_changes,
+            &execution_config,
+            &transaction.from,
+            Some(&old_witness), // old_witness
+            Some(&updated_witness), // new_witness
+        );
+
+        // 6. Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // 7. Sort state changes deterministically for CSV parity
+        state_changes.sort_by(|a, b| {
+            match (a, b) {
+                (TronStateChange::AccountChange { address: addr_a, .. },
+                 TronStateChange::AccountChange { address: addr_b, .. }) => {
+                    addr_a.cmp(addr_b)
+                },
+                (TronStateChange::StorageChange { address: addr_a, key: key_a, .. },
+                 TronStateChange::StorageChange { address: addr_b, key: key_b, .. }) => {
+                    addr_a.cmp(addr_b).then(key_a.cmp(key_b))
+                },
+                // Account changes before storage changes for same address
+                (TronStateChange::AccountChange { address: addr_a, .. },
+                 TronStateChange::StorageChange { address: addr_b, .. }) => {
+                    addr_a.cmp(addr_b).then(std::cmp::Ordering::Less)
+                },
+                (TronStateChange::StorageChange { address: addr_a, .. },
+                 TronStateChange::AccountChange { address: addr_b, .. }) => {
+                    addr_a.cmp(addr_b).then(std::cmp::Ordering::Greater)
+                },
+            }
+        });
+
+        let owner_tron = revm_primitives::hex::encode(Self::add_tron_address_prefix(&transaction.from));
+        info!(
+            "WitnessUpdate completed: state_changes={}, owner={}, old_url={}, new_url={}",
+            state_changes.len(),
+            owner_tron,
+            old_witness.url,
+            updated_witness.url
+        );
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(), // No return data for witness updates
+            energy_used: 0, // System contracts use 0 energy
+            bandwidth_used,
+            logs: Vec::new(), // No logs for witness updates
+            state_changes,
+            error: None,
+        })
     }
 
     /// Execute a VOTE_WITNESS_CONTRACT
@@ -2169,7 +2264,82 @@ impl BackendService {
         result.extend_from_slice(address.as_slice());
         result
     }
-    
+
+    // Helper functions for storage delta emission (metadata storage changes)
+
+    /// Compute metadata key for storage delta emission
+    /// Key derivation: keccak256(0x41 || address(20) || tag)
+    fn compute_metadata_key(address: &revm_primitives::Address, tag: &str) -> revm_primitives::U256 {
+        let mut hasher = Keccak256::new();
+
+        // Add Tron prefix (0x41)
+        hasher.update(&[0x41]);
+
+        // Add address (20 bytes)
+        hasher.update(address.as_slice());
+
+        // Add ASCII tag bytes
+        hasher.update(tag.as_bytes());
+
+        // Convert hash to U256 (big-endian)
+        let hash = hasher.finalize();
+        revm_primitives::U256::from_be_bytes(hash.into())
+    }
+
+    /// Convert byte data to U256 using keccak256 digest
+    fn digest_bytes_to_u256(data: &[u8]) -> revm_primitives::U256 {
+        let mut hasher = Keccak256::new();
+        hasher.update(data);
+        let hash = hasher.finalize();
+        revm_primitives::U256::from_be_bytes(hash.into())
+    }
+
+    /// Emit storage delta for witness metadata if feature flag is enabled
+    fn emit_witness_storage_delta_if_enabled(
+        state_changes: &mut Vec<TronStateChange>,
+        execution_config: &tron_backend_common::ExecutionConfig,
+        owner_address: &revm_primitives::Address,
+        old_witness: Option<&tron_backend_execution::WitnessInfo>,
+        new_witness: Option<&tron_backend_execution::WitnessInfo>,
+    ) {
+        // Check if storage delta emission is enabled
+        if !execution_config.remote.emit_storage_changes {
+            return;
+        }
+
+        // Compute metadata key for witness store
+        let witness_key = Self::compute_metadata_key(owner_address, ":witness");
+
+        // Compute old and new values
+        let old_value = match old_witness {
+            Some(witness) => Self::digest_bytes_to_u256(&witness.serialize()),
+            None => revm_primitives::U256::ZERO,
+        };
+
+        let new_value = match new_witness {
+            Some(witness) => Self::digest_bytes_to_u256(&witness.serialize()),
+            None => revm_primitives::U256::ZERO,
+        };
+
+        // Only emit if there's an actual change
+        if old_value != new_value {
+            state_changes.push(TronStateChange::StorageChange {
+                address: *owner_address,
+                key: witness_key,
+                old_value,
+                new_value,
+            });
+
+            debug!(
+                "Emitted witness storage delta - address: {:?}, key: {}, old: {}, new: {}",
+                owner_address,
+                revm_primitives::hex::encode(witness_key.to_be_bytes::<32>()),
+                revm_primitives::hex::encode(old_value.to_be_bytes::<32>()),
+                revm_primitives::hex::encode(new_value.to_be_bytes::<32>())
+            );
+        }
+    }
+
     // Helper functions for converting between protobuf and execution types
     fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>) -> Result<(TronTransaction, crate::backend::TxKind), String> {
         let tx = tx.ok_or("Transaction is required")?;

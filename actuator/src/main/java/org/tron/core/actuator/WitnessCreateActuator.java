@@ -18,6 +18,7 @@ import org.tron.core.store.AccountStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.store.WitnessStore;
 import org.tron.core.utils.TransactionUtil;
+import org.tron.core.db.WitnessStorageDeltaEmitter;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.Transaction.Result.code;
 import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
@@ -131,6 +132,12 @@ public class WitnessCreateActuator extends AbstractActuator {
 
     logger.debug("createWitness,address[{}]", witnessCapsule.createReadableString());
     witnessStore.put(witnessCapsule.createDbKey(), witnessCapsule);
+
+    // Emit storage delta for witness metadata if feature flag is enabled
+    WitnessStorageDeltaEmitter.emitWitnessCreate(
+        witnessCreateContract.getOwnerAddress().toByteArray(),
+        witnessCapsule
+    );
     AccountCapsule accountCapsule = accountStore
         .get(witnessCapsule.createDbKey());
     accountCapsule.setIsWitness(true);

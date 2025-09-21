@@ -30,6 +30,9 @@ async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }
 
+# Crypto dependencies
+sha3 = "0.10"
+
 # REVM dependencies (matching execution crate)
 revm = { version = "14.0", features = ["std"] }
 revm-primitives = "10.0"

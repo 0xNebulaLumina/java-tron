@@ -12,6 +12,7 @@ import org.tron.core.exception.ContractValidateException;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.WitnessStore;
 import org.tron.core.utils.TransactionUtil;
+import org.tron.core.db.WitnessStorageDeltaEmitter;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.Protocol.Transaction.Result.code;
 import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
@@ -25,10 +26,23 @@ public class WitnessUpdateActuator extends AbstractActuator {
 
   private void updateWitness(final WitnessUpdateContract contract) {
     WitnessStore witnessStore = chainBaseManager.getWitnessStore();
-    WitnessCapsule witnessCapsule = witnessStore
-        .get(contract.getOwnerAddress().toByteArray());
+    byte[] ownerAddress = contract.getOwnerAddress().toByteArray();
+
+    // Get old witness state for storage delta emission
+    WitnessCapsule oldWitnessCapsule = witnessStore.get(ownerAddress);
+    WitnessCapsule oldWitnessClone = new WitnessCapsule(oldWitnessCapsule.getData());
+
+    // Update witness URL
+    WitnessCapsule witnessCapsule = witnessStore.get(ownerAddress);
     witnessCapsule.setUrl(contract.getUpdateUrl().toStringUtf8());
     witnessStore.put(witnessCapsule.createDbKey(), witnessCapsule);
+
+    // Emit storage delta for witness metadata if feature flag is enabled
+    WitnessStorageDeltaEmitter.emitWitnessUpdate(
+        ownerAddress,
+        oldWitnessClone,
+        witnessCapsule
+    );
   }
 
   @Override
