@@ -132,7 +132,7 @@ fn base58_decode(encoded: &str) -> Result<Vec<u8>> {
     }
     
     // Convert back to bytes
-    let mut decoded = num.to_bytes_be();
+    let decoded = num.to_bytes_be();
     
     // Add leading zeros for leading '1's
     let mut result = vec![0u8; leading_ones];

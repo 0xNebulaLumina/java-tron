@@ -99,7 +99,7 @@ impl BackendService {
     /// Apply TRON fee policy post-processing to execution results
     fn apply_fee_post_processing(&self, 
                                 result: &mut TronExecutionResult, 
-                                tx: &TronTransaction, 
+                                _tx: &TronTransaction, 
                                 context: &TronExecutionContext, 
                                 is_non_vm: bool) -> Result<(), String> {
         let execution_config = self.get_execution_config()?;
@@ -247,9 +247,9 @@ impl BackendService {
     /// Handles TRON value transfer with proper fee accounting
     fn execute_transfer_contract(
         &self,
-        storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
         transaction: &TronTransaction,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing TRANSFER_CONTRACT: from={:?}, to={:?}, value={}",
                transaction.from, transaction.to, transaction.value);
@@ -311,7 +311,7 @@ impl BackendService {
         state_changes.push(TronStateChange::AccountChange {
             address: transaction.from,
             old_account: Some(sender_account),
-            new_account: Some(new_sender_account),
+            new_account: Some(new_sender_account.clone()),
         });
         // Persist sender account update
         storage_adapter
@@ -337,7 +337,7 @@ impl BackendService {
         state_changes.push(TronStateChange::AccountChange {
             address: to_address,
             old_account: old_recipient_account,
-            new_account: Some(new_recipient_account),
+            new_account: Some(new_recipient_account.clone()),
         });
         // Persist recipient account update
         storage_adapter
@@ -382,7 +382,7 @@ impl BackendService {
                                 state_changes.push(TronStateChange::AccountChange {
                                     address: blackhole_address,
                                     old_account: old_blackhole_account,
-                                    new_account: Some(new_blackhole_account),
+                                    new_account: Some(new_blackhole_account.clone()),
                                 });
                                 // Persist blackhole account update
                                 storage_adapter
@@ -526,7 +526,7 @@ impl BackendService {
         state_changes.push(TronStateChange::AccountChange {
             address: transaction.from,
             old_account: Some(owner_account),
-            new_account: Some(new_owner_account),
+            new_account: Some(new_owner_account.clone()),
         });
         // Persist owner account update
         storage_adapter
@@ -534,7 +534,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
         // 9. Handle fee burning/crediting
-        let mut fee_destination: String = String::from("burn");
+        let fee_destination: String;
         if support_blackhole {
             // Burn mode - no additional account change needed
             info!("Burning {} SUN (blackhole optimization)", account_upgrade_cost);
@@ -559,7 +559,7 @@ impl BackendService {
                 state_changes.push(TronStateChange::AccountChange {
                     address: blackhole_addr,
                     old_account: Some(blackhole_account),
-                    new_account: Some(new_blackhole_account),
+                    new_account: Some(new_blackhole_account.clone()),
                 });
 
                 // Persist blackhole account update
@@ -2005,7 +2005,7 @@ impl crate::backend::backend_server::Backend for BackendService {
             .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
 
         // Convert protobuf types to execution types
-        let transaction = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+        let _transaction = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
             Ok(tx) => tx,
             Err(e) => {
                 error!("Failed to convert transaction: {}", e);
