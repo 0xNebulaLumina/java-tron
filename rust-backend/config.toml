@@ -33,14 +33,14 @@ evm_eth_coinbase_compat = false
 # - "burn": Fees are burned (no state delta, supply reduction handled elsewhere)
 # - "blackhole": Fees are credited to designated blackhole address
 # - "none": No fee handling (useful for testing)
-mode = "burn"
+mode = "blackhole"
 
 # Whether black hole optimization is supported (matches java-tron's supportBlackHoleOptimization)
-support_black_hole_optimization = true
+support_black_hole_optimization = false
 
 # Base58-encoded TRON address for blackhole (required if mode = "blackhole")
 # Example: "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"
-blackhole_address_base58 = ""
+blackhole_address_base58 = "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"
 
 # EXPERIMENTAL: Emit synthetic VM blackhole credits (default: false)
 # When enabled, VM transactions will emit estimated fee credits to blackhole
