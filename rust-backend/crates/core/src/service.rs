@@ -473,8 +473,12 @@ impl BackendService {
         let support_blackhole = storage_adapter.support_black_hole_optimization()
             .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
 
-        debug!("AccountUpgradeCost: {} SUN, AllowMultiSign: {}, SupportBlackHole: {}",
-               account_upgrade_cost, allow_multi_sign, support_blackhole);
+        info!(
+            "WitnessCreate flags: upgrade_cost={} SUN, allow_multi_sign={}, support_blackhole={}",
+            account_upgrade_cost,
+            allow_multi_sign,
+            support_blackhole
+        );
 
         // 5. Validate sufficient balance
         if owner_account.balance < revm_primitives::U256::from(account_upgrade_cost) {
@@ -513,9 +517,11 @@ impl BackendService {
         });
 
         // 9. Handle fee burning/crediting
+        let mut fee_destination: String = String::from("burn");
         if support_blackhole {
             // Burn mode - no additional account change needed
-            debug!("Burning {} SUN (blackhole optimization)", account_upgrade_cost);
+            info!("Burning {} SUN (blackhole optimization)", account_upgrade_cost);
+            fee_destination = String::from("burn");
         } else {
             // Credit blackhole account
             if let Some(blackhole_addr) = storage_adapter.get_blackhole_address()
@@ -539,9 +545,16 @@ impl BackendService {
                     new_account: Some(new_blackhole_account),
                 });
 
-                debug!("Credited {} SUN to blackhole address {:?}", account_upgrade_cost, blackhole_addr);
+                let bh_tron = revm_primitives::hex::encode(Self::add_tron_address_prefix(&blackhole_addr));
+                info!(
+                    "Credited {} SUN to blackhole address {}",
+                    account_upgrade_cost,
+                    bh_tron
+                );
+                fee_destination = format!("blackhole:{}", bh_tron);
             } else {
-                debug!("No blackhole address configured, burning {} SUN", account_upgrade_cost);
+                warn!("No blackhole address configured, burning {} SUN", account_upgrade_cost);
+                fee_destination = String::from("burn(no_addr)");
             }
         }
 
@@ -559,8 +572,14 @@ impl BackendService {
         // 11. Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("WitnessCreate completed successfully - cost: {} SUN, state_changes: {}",
-               account_upgrade_cost, state_changes.len());
+        let owner_tron = revm_primitives::hex::encode(Self::add_tron_address_prefix(&transaction.from));
+        info!(
+            "WitnessCreate completed: cost={} SUN, state_changes={}, owner={}, fee_dest={}",
+            account_upgrade_cost,
+            state_changes.len(),
+            owner_tron,
+            fee_destination
+        );
 
         Ok(TronExecutionResult {
             success: true,

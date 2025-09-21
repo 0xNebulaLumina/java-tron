@@ -445,7 +445,7 @@ impl StorageModuleAdapter {
     }
 
     /// Get SupportBlackHoleOptimization dynamic property
-    /// Default value: true (burning enabled)
+    /// Default value: true (burn optimization enabled to match embedded defaults at target heights)
     pub fn support_black_hole_optimization(&self) -> Result<bool> {
         let key = b"SUPPORT_BLACK_HOLE_OPTIMIZATION";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
@@ -453,11 +453,13 @@ impl StorageModuleAdapter {
                 if !data.is_empty() {
                     Ok(data[0] != 0)
                 } else {
-                    Ok(true) // Default enabled
+                    // Default enabled when value not present
+                    Ok(true)
                 }
             },
             None => {
-                Ok(true) // Default enabled
+                // Default enabled when key not present
+                Ok(true)
             }
         }
     }
