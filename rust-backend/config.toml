@@ -60,7 +60,7 @@ enabled = true
 settings = {}
 
 # Remote Execution Feature Flags
-[remote.execution]
+[execution.remote]
 # Global enable/disable for remote system contract execution
 system_enabled = true
 
