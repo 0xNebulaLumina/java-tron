@@ -180,7 +180,7 @@ impl BackendService {
     /// Routes to specific handlers based on TRON contract type
     fn execute_non_vm_contract(
         &self,
-        storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -313,6 +313,10 @@ impl BackendService {
             old_account: Some(sender_account),
             new_account: Some(new_sender_account),
         });
+        // Persist sender account update
+        storage_adapter
+            .set_account(transaction.from, new_sender_account.clone())
+            .map_err(|e| format!("Failed to persist sender account: {}", e))?;
         
         // Update recipient account: balance += value
         let new_recipient_balance = recipient_account.balance + transaction.value;
@@ -329,12 +333,16 @@ impl BackendService {
         } else {
             Some(recipient_account)
         };
-        
+
         state_changes.push(TronStateChange::AccountChange {
             address: to_address,
             old_account: old_recipient_account,
             new_account: Some(new_recipient_account),
         });
+        // Persist recipient account update
+        storage_adapter
+            .set_account(to_address, new_recipient_account.clone())
+            .map_err(|e| format!("Failed to persist recipient account: {}", e))?;
         
         // Handle fee based on configuration (only if fee_amount > 0)
         if fee_amount > 0 {
@@ -376,6 +384,10 @@ impl BackendService {
                                     old_account: old_blackhole_account,
                                     new_account: Some(new_blackhole_account),
                                 });
+                                // Persist blackhole account update
+                                storage_adapter
+                                    .set_account(blackhole_address, new_blackhole_account.clone())
+                                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
                                 
                                 debug!("Credited fee {} SUN to blackhole address {}", fee_amount, fee_config.blackhole_address_base58);
                             },
@@ -435,7 +447,7 @@ impl BackendService {
     /// Creates a new witness account with proper validation and state changes
     fn execute_witness_create_contract(
         &self,
-        storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -450,8 +462,9 @@ impl BackendService {
         debug!("WitnessCreate URL: {}", url);
 
         // 1. Validate URL format (basic check)
-        if url.is_empty() || url.len() > 256 {
-            return Err("Invalid witness URL: empty or too long".to_string());
+        // Align with embedded: allow empty URL, enforce max length only
+        if url.len() > 256 {
+            return Err("Invalid witness URL: too long".to_string());
         }
 
         // 2. Load owner account
@@ -509,12 +522,16 @@ impl BackendService {
             code: owner_account.code.clone(),
         };
 
-        // Emit account change for owner (balance decreased + witness flag change)
+        // Emit account change for owner (balance decreased)
         state_changes.push(TronStateChange::AccountChange {
             address: transaction.from,
             old_account: Some(owner_account),
             new_account: Some(new_owner_account),
         });
+        // Persist owner account update
+        storage_adapter
+            .set_account(transaction.from, new_owner_account.clone())
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
         // 9. Handle fee burning/crediting
         let mut fee_destination: String = String::from("burn");
@@ -544,6 +561,11 @@ impl BackendService {
                     old_account: Some(blackhole_account),
                     new_account: Some(new_blackhole_account),
                 });
+
+                // Persist blackhole account update
+                storage_adapter
+                    .set_account(blackhole_addr, new_blackhole_account.clone())
+                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
 
                 let bh_tron = revm_primitives::hex::encode(Self::add_tron_address_prefix(&blackhole_addr));
                 info!(
@@ -596,7 +618,7 @@ impl BackendService {
     /// Updates witness URL and other parameters
     fn execute_witness_update_contract(
         &self,
-        _storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        _storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
         _transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -614,7 +636,7 @@ impl BackendService {
     /// Handles witness voting with tally updates
     fn execute_vote_witness_contract(
         &self,
-        _storage_adapter: &tron_backend_execution::StorageModuleAdapter,
+        _storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
         _transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -1808,7 +1830,7 @@ impl crate::backend::backend_server::Backend for BackendService {
         
         // Get the storage engine and create a unified storage adapter
         let storage_engine = self.get_storage_engine()?;
-        let storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
+        let mut storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
             storage_engine.clone(),
         );
 
@@ -1817,7 +1839,7 @@ impl crate::backend::backend_server::Backend for BackendService {
             crate::backend::TxKind::NonVm => {
                 info!("Executing NON_VM transaction with contract type dispatch");
                 // Execute non-VM transaction with contract type dispatch
-                match self.execute_non_vm_contract(&storage_adapter, &transaction, &context) {
+                match self.execute_non_vm_contract(&mut storage_adapter, &transaction, &context) {
                     Ok(result) => {
                         info!("Non-VM contract executed successfully - energy_used: {}, bandwidth_used: {}, state_changes: {}",
                               result.energy_used, result.bandwidth_used, result.state_changes.len());

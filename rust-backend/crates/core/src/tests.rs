@@ -111,8 +111,8 @@ fn test_witness_create_execution() {
 
     match result {
         Ok(execution_result) => {
-            // Verify execution completed successfully
-            assert!(execution_result.energy_used > 0, "Should have used some energy for witness creation");
+            // System contracts consume 0 energy in TRON parity mode
+            assert_eq!(execution_result.energy_used, 0, "WitnessCreate should use 0 energy");
 
             // Verify no zero-address changes (this was the bug we're fixing)
             for change in &execution_result.state_changes {

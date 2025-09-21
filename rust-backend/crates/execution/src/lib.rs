@@ -490,8 +490,9 @@ mod witness_tests {
         match result {
             Ok(execution_result) => {
                 // Verify execution completed
-                assert!(execution_result.energy_used > 0, "Should have used some energy");
-                println!("WitnessCreate executed successfully, energy used: {}", execution_result.energy_used);
+                // System contracts consume 0 energy in TRON parity mode
+                assert_eq!(execution_result.energy_used, 0, "WitnessCreate should use 0 energy");
+                println!("WitnessCreate executed successfully, energy used (expected 0): {}", execution_result.energy_used);
             }
             Err(e) => {
                 // Log error for debugging, but don't fail test if it's a validation error
