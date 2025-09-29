@@ -23,6 +23,7 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
 import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
 import org.tron.protos.contract.WitnessContract.VoteWitnessContract;
+import org.tron.protos.contract.AccountContract.AccountUpdateContract;
 import tron.backend.BackendOuterClass.*;
 
 /**
@@ -279,8 +280,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       long nonce = 0; // TRON doesn't use nonce like Ethereum
 
       // Determine transaction kind based on contract type
-      TxKind txKind = TxKind.NON_VM; // Default to non-VM
-      tron.backend.BackendOuterClass.ContractType contractType = tron.backend.BackendOuterClass.ContractType.TRANSFER_CONTRACT; // Default
+      TxKind txKind; // Will be set based on contract type
+      tron.backend.BackendOuterClass.ContractType contractType; // Will be set based on contract type
       byte[] assetId = new byte[0]; // Default empty for TRX transfers
 
       // Extract specific data based on contract type
@@ -364,14 +365,27 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           contractType = tron.backend.BackendOuterClass.ContractType.VOTE_WITNESS_CONTRACT;
           break;
 
-        default:
-          // For other contract types, use default values and classify as non-VM
-          // This includes system contracts, governance contracts, etc.
-          logger.debug("Using default values for contract type: {}, classified as NON_VM", contract.getType());
+        case AccountUpdateContract:
+          AccountUpdateContract accountUpdateContract =
+              contractParameter.unpack(AccountUpdateContract.class);
+          // Set fromAddress to owner
+          fromAddress = accountUpdateContract.getOwnerAddress().toByteArray();
+          // Leave toAddress empty (do not use zero address)
+          toAddress = new byte[0];
+          // Set value to 0
+          value = 0;
+          // Set data to account name bytes
+          data = accountUpdateContract.getAccountName().toByteArray();
           txKind = TxKind.NON_VM;
-          // Map other contract types - this is a simplified mapping
-          contractType = tron.backend.BackendOuterClass.ContractType.TRANSFER_CONTRACT; // Default fallback
+          contractType = tron.backend.BackendOuterClass.ContractType.ACCOUNT_UPDATE_CONTRACT;
+          logger.debug("Mapped AccountUpdateContract to remote request; owner={}, data_len={}",
+              org.tron.common.utils.ByteArray.toHexString(accountUpdateContract.getOwnerAddress().toByteArray()), data.length);
           break;
+
+        default:
+          // Remove TRANSFER fallback - throw exception to fall back to embedded
+          logger.error("Contract type {} not mapped to remote; falling back to embedded", contract.getType());
+          throw new UnsupportedOperationException(contract.getType() + " not mapped to remote; falling back to embedded");
       }
 
       // Log transaction classification

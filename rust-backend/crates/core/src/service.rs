@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use sha3::{Digest, Keccak256};
 
 use tron_backend_common::{ModuleManager, HealthStatus, from_tron_address};
+use revm_primitives::hex;
 use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, StorageAdapter};
 use crate::backend::*;
 
@@ -231,6 +232,10 @@ impl BackendService {
                 debug!("Executing TRANSFER_ASSET_CONTRACT (TRC-10)");
                 // TODO: Implement TRC-10 transfer handler
                 Err("TRC-10 transfers not yet implemented in Rust backend".to_string())
+            },
+            Some(tron_backend_execution::TronContractType::AccountUpdateContract) => {
+                debug!("Executing ACCOUNT_UPDATE_CONTRACT");
+                self.execute_account_update_contract(storage_adapter, transaction, context)
             },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
@@ -745,6 +750,109 @@ impl BackendService {
         Err("VOTE_WITNESS_CONTRACT not yet implemented".to_string())
     }
 
+    /// Execute an ACCOUNT_UPDATE_CONTRACT
+    /// Updates the account name for a given address with proper validation and CSV parity
+    fn execute_account_update_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::{TronExecutionResult, TronStateChange};
+
+        info!("AccountUpdate owner={} name_len={}",
+              tron_backend_common::to_tron_address(&transaction.from),
+              transaction.data.len());
+
+        // Parse account name from transaction data
+        let name_bytes = transaction.data.as_ref();
+
+        // Validation: name length constraints (1 <= len <= 32 bytes to match java-tron)
+        if name_bytes.is_empty() {
+            warn!("Account name cannot be empty");
+            return Err("Account name cannot be empty".to_string());
+        }
+        if name_bytes.len() > 32 {
+            warn!("Account name cannot exceed 32 bytes, got {}", name_bytes.len());
+            return Err(format!("Account name cannot exceed 32 bytes, got {}", name_bytes.len()));
+        }
+
+        // Validation: UTF-8 encoding (recommended but not enforced)
+        let name_str = match std::str::from_utf8(name_bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                debug!("Account name contains non-UTF-8 bytes: {}", e);
+                // Continue with raw bytes - allowing arbitrary bytes for compatibility
+                ""
+            }
+        };
+
+        // Validation: owner account must exist
+        let owner_account = match storage_adapter.get_account(&transaction.from) {
+            Ok(Some(account)) => account,
+            Ok(None) => {
+                warn!("Owner account does not exist");
+                return Err("Owner account does not exist".to_string());
+            },
+            Err(e) => {
+                error!("Failed to get owner account: {}", e);
+                return Err(format!("Failed to get owner account: {}", e));
+            }
+        };
+
+        // Validation: "only set once" semantics (if enforcing immutability)
+        let existing_name: Option<String> = match storage_adapter.get_account_name(&transaction.from) {
+            Ok(Some(existing_name)) => {
+                warn!("Account name is already set to '{}', rejecting duplicate set attempt", existing_name);
+                return Err("Account name is already set".to_string());
+            },
+            Ok(None) => {
+                debug!("No existing account name found, proceeding with setting");
+                None
+            },
+            Err(e) => {
+                error!("Failed to check existing account name: {}", e);
+                return Err(format!("Failed to check existing account name: {}", e));
+            }
+        };
+
+        // Apply: persist account name
+        if let Err(e) = storage_adapter.set_account_name(transaction.from, name_bytes) {
+            error!("Failed to set account name: {}", e);
+            return Err(format!("Failed to set account name: {}", e));
+        }
+
+        // Debug: previous vs new name strings/hex
+        debug!("Successfully set account name for owner, previous: {:?}, new: {} (hex: {})",
+               existing_name,
+               if name_str.is_empty() { format!("<{} bytes>", name_bytes.len()) } else { name_str.to_string() },
+               hex::encode(name_bytes));
+
+        // State Changes: emit exactly one account-level change for CSV parity
+        // old_account == new_account (no balance/nonce/code changes) to match embedded journaled no-op
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: transaction.from,
+                old_account: Some(owner_account.clone()),
+                new_account: Some(owner_account), // Same account, name is metadata outside AccountInfo
+            }
+        ];
+
+        // Calculate bandwidth based on transaction payload size
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // Result: success with energy_used=0, exactly 1 state change
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(), // No return data for account update
+            energy_used: 0,     // Account update uses zero energy
+            bandwidth_used,     // Compute bandwidth from payload size
+            state_changes,      // Exactly one account-level change
+            logs: vec![],       // No logs for account update
+            error: None,
+        })
+    }
+
     /// Calculate bandwidth usage for a transaction based on its serialized size
     fn calculate_bandwidth_usage(transaction: &TronTransaction) -> u64 {
         // Approximate bandwidth calculation based on transaction fields
@@ -807,7 +915,246 @@ mod tests {
         assert_eq!(crate::backend::TxKind::try_from(1).unwrap(), crate::backend::TxKind::Vm);
     }
     
-    #[test] 
+    #[test]
+    fn test_account_update_contract_happy_path() {
+        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_common::{ExecutionConfig, ExecutionFeeConfig};
+
+        // Create mock storage and service
+        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let config = ExecutionConfig {
+            fee_config: ExecutionFeeConfig::default(),
+            // Add other required config fields...
+        };
+        let service = BackendService::new(config);
+
+        // Create test account (owner must exist)
+        let owner_address = Address::from([1u8; 20]);
+        let owner_account = AccountInfo {
+            balance: U256::from(1000000),
+            nonce: 0,
+            code_hash: revm::primitives::B256::ZERO,
+            code: None,
+        };
+        assert!(storage_adapter.set_account(owner_address, owner_account.clone()).is_ok());
+
+        // Create AccountUpdateContract transaction
+        let account_name = "TestAccount";
+        let transaction = TronTransaction {
+            from: owner_address,
+            to: None, // No to address for account update
+            value: U256::ZERO, // No value transfer
+            data: Bytes::from(account_name.as_bytes()),
+            gas_limit: 0, // No gas for non-VM contracts
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
+                asset_id: None,
+            },
+        };
+
+        let context = TronExecutionContext {
+            block_number: 1,
+            block_timestamp: 1000000,
+            block_hash: [0u8; 32],
+            coinbase: Address::ZERO,
+            energy_limit: 0,
+            energy_price: 0,
+        };
+
+        // Execute the contract
+        let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+
+        // Assert success
+        assert!(result.is_ok(), "Account update should succeed: {:?}", result.err());
+        let execution_result = result.unwrap();
+
+        assert!(execution_result.success, "Execution should be successful");
+        assert_eq!(execution_result.energy_used, 0, "Energy used should be 0");
+        assert_eq!(execution_result.state_changes.len(), 1, "Should have exactly 1 state change");
+        assert!(execution_result.logs.is_empty(), "Should have no logs");
+        assert!(execution_result.error.is_none(), "Should have no error");
+
+        // Verify account name was stored
+        let stored_name = storage_adapter.get_account_name(&owner_address).unwrap();
+        assert_eq!(stored_name, Some("TestAccount".to_string()));
+
+        // Verify state change is account-level with old==new
+        match &execution_result.state_changes[0] {
+            tron_backend_execution::TronStateChange::AccountChange { address, old_account, new_account } => {
+                assert_eq!(*address, owner_address);
+                assert!(old_account.is_some());
+                assert!(new_account.is_some());
+                // old_account == new_account for CSV parity
+                assert_eq!(old_account.as_ref().unwrap().balance, new_account.as_ref().unwrap().balance);
+                assert_eq!(old_account.as_ref().unwrap().nonce, new_account.as_ref().unwrap().nonce);
+            },
+            _ => panic!("Expected AccountChange, got storage change"),
+        }
+    }
+
+    #[test]
+    fn test_account_update_contract_validations() {
+        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_common::{ExecutionConfig, ExecutionFeeConfig};
+
+        // Create mock storage and service
+        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let config = ExecutionConfig {
+            fee_config: ExecutionFeeConfig::default(),
+        };
+        let service = BackendService::new(config);
+
+        let owner_address = Address::from([1u8; 20]);
+        let context = TronExecutionContext {
+            block_number: 1,
+            block_timestamp: 1000000,
+            block_hash: [0u8; 32],
+            coinbase: Address::ZERO,
+            energy_limit: 0,
+            energy_price: 0,
+        };
+
+        // Test 1: Empty name should fail
+        let empty_name_tx = TronTransaction {
+            from: owner_address,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from(vec![]), // Empty name
+            gas_limit: 0,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
+                asset_id: None,
+            },
+        };
+
+        let result = service.execute_account_update_contract(&mut storage_adapter, &empty_name_tx, &context);
+        assert!(result.is_err(), "Empty name should fail");
+        assert!(result.unwrap_err().contains("cannot be empty"));
+
+        // Test 2: Name too long should fail
+        let long_name = "ThisIsAVeryLongAccountNameThatExceedsTheThirtyTwoByteLimitAndShouldFail";
+        let long_name_tx = TronTransaction {
+            from: owner_address,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from(long_name.as_bytes()),
+            gas_limit: 0,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
+                asset_id: None,
+            },
+        };
+
+        let result = service.execute_account_update_contract(&mut storage_adapter, &long_name_tx, &context);
+        assert!(result.is_err(), "Long name should fail");
+        assert!(result.unwrap_err().contains("cannot exceed 32 bytes"));
+
+        // Test 3: Non-existent owner should fail
+        let non_existent_tx = TronTransaction {
+            from: owner_address, // This address doesn't exist in storage
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from("ValidName".as_bytes()),
+            gas_limit: 0,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
+                asset_id: None,
+            },
+        };
+
+        let result = service.execute_account_update_contract(&mut storage_adapter, &non_existent_tx, &context);
+        assert!(result.is_err(), "Non-existent owner should fail");
+        assert!(result.unwrap_err().contains("Owner account does not exist"));
+    }
+
+    #[test]
+    fn test_account_update_contract_duplicate_set() {
+        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_common::{ExecutionConfig, ExecutionFeeConfig};
+
+        // Create mock storage and service
+        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let config = ExecutionConfig {
+            fee_config: ExecutionFeeConfig::default(),
+        };
+        let service = BackendService::new(config);
+
+        // Create test account
+        let owner_address = Address::from([1u8; 20]);
+        let owner_account = AccountInfo {
+            balance: U256::from(1000000),
+            nonce: 0,
+            code_hash: revm::primitives::B256::ZERO,
+            code: None,
+        };
+        assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+
+        let context = TronExecutionContext {
+            block_number: 1,
+            block_timestamp: 1000000,
+            block_hash: [0u8; 32],
+            coinbase: Address::ZERO,
+            energy_limit: 0,
+            energy_price: 0,
+        };
+
+        // First set should succeed
+        let first_tx = TronTransaction {
+            from: owner_address,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from("FirstName".as_bytes()),
+            gas_limit: 0,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
+                asset_id: None,
+            },
+        };
+
+        let result = service.execute_account_update_contract(&mut storage_adapter, &first_tx, &context);
+        assert!(result.is_ok(), "First name set should succeed");
+
+        // Second set should fail (only set once)
+        let second_tx = TronTransaction {
+            from: owner_address,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from("SecondName".as_bytes()),
+            gas_limit: 0,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
+                asset_id: None,
+            },
+        };
+
+        let result = service.execute_account_update_contract(&mut storage_adapter, &second_tx, &context);
+        assert!(result.is_err(), "Duplicate name set should fail");
+        assert!(result.unwrap_err().contains("Account name is already set"));
+
+        // Verify original name is still there
+        let stored_name = storage_adapter.get_account_name(&owner_address).unwrap();
+        assert_eq!(stored_name, Some("FirstName".to_string()));
+    }
+
+    #[test]
     fn test_address_conversion_helpers() {
         // Test Tron address prefix stripping
         let tron_address_with_prefix = vec![0x41, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78];
