@@ -238,6 +238,11 @@ impl StorageModuleAdapter {
         key
     }
 
+    /// Get the appropriate database name for account names
+    fn account_name_database(&self) -> &str {
+        "account-name"
+    }
+
     /// Convert Address and storage key to contract storage key (matching java-tron's Storage.compose format)
     fn contract_storage_key(&self, address: &Address, storage_key: &U256) -> Vec<u8> {
         // Match java-tron's Storage.compose() method:
@@ -557,6 +562,66 @@ impl StorageModuleAdapter {
             Some(_) => Ok(true),
             None => Ok(false),
         }
+    }
+
+    /// Get account name for an address
+    pub fn get_account_name(&self, address: &Address) -> Result<Option<String>> {
+        let key = self.account_key(address); // Reuse account_key helper (21-byte with 0x41 prefix)
+        tracing::debug!("Getting account name for address {:?}, key: {}",
+                       address, hex::encode(&key));
+
+        match self.storage_engine.get(self.account_name_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found account name data, length: {}", data.len());
+                // Decode as UTF-8 string
+                match String::from_utf8(data) {
+                    Ok(name) => {
+                        tracing::debug!("Successfully decoded account name: {}", name);
+                        Ok(Some(name))
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to decode account name as UTF-8: {}", e);
+                        Err(anyhow::anyhow!("Invalid UTF-8 in account name: {}", e))
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("No account name found for address {:?}", address);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Set account name for an address
+    pub fn set_account_name(&mut self, address: Address, name: &[u8]) -> Result<()> {
+        let key = self.account_key(&address); // Reuse account_key helper (21-byte with 0x41 prefix)
+
+        tracing::debug!("Setting account name for address {:?}, key: {}, name_len: {}",
+                       address, hex::encode(&key), name.len());
+
+        // Validate name length (1 <= len <= 32 bytes to match java-tron constraints)
+        if name.is_empty() {
+            return Err(anyhow::anyhow!("Account name cannot be empty"));
+        }
+        if name.len() > 32 {
+            return Err(anyhow::anyhow!("Account name cannot exceed 32 bytes, got {}", name.len()));
+        }
+
+        // Validate UTF-8 encoding (optional policy)
+        match std::str::from_utf8(name) {
+            Ok(name_str) => {
+                tracing::debug!("Account name is valid UTF-8: {}", name_str);
+            },
+            Err(e) => {
+                tracing::warn!("Account name contains invalid UTF-8: {}, allowing raw bytes", e);
+                // Continue with raw bytes - some chains may allow arbitrary bytes
+            }
+        }
+
+        self.storage_engine.put(self.account_name_database(), &key, name)?;
+
+        tracing::info!("Successfully stored account name for address {:?}, length: {}", address, name.len());
+        Ok(())
     }
 }
 
@@ -1272,22 +1337,93 @@ mod tests {
             // Add the specific example
             ("TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ", "0x0B53CE4AA6F0C2F3C849F11F682702EC99622E2E"),
         ];
-        
+
         for (tron_addr, evm_hex) in test_cases {
             // Parse expected EVM address
             let expected_evm = Address::from_slice(&hex::decode(&evm_hex[2..]).expect("Invalid hex"));
-            
+
             // Test Tron -> EVM conversion
             let parsed_evm = from_tron_address(tron_addr).expect("Failed to parse Tron address");
             assert_eq!(parsed_evm, expected_evm, "Tron->EVM conversion failed");
-            
+
             // Test EVM -> Tron conversion
             let converted_tron = to_tron_address(&expected_evm);
             assert_eq!(converted_tron, tron_addr, "EVM->Tron conversion failed");
-            
+
             // Test full round-trip
             let roundtrip_evm = from_tron_address(&converted_tron).expect("Round-trip failed");
             assert_eq!(roundtrip_evm, expected_evm, "Round-trip conversion failed");
         }
+    }
+
+    #[test]
+    fn test_account_name_storage() {
+        let storage = InMemoryStorageAdapter::new();
+        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let mut adapter = StorageModuleAdapter::new(storage_engine);
+
+        let test_address = Address::from([1u8; 20]);
+        let test_name = b"TestAccount";
+
+        // Test setting and getting account name
+        assert!(adapter.set_account_name(test_address, test_name).is_ok());
+
+        let retrieved_name = adapter.get_account_name(&test_address).unwrap();
+        assert_eq!(retrieved_name, Some("TestAccount".to_string()));
+
+        // Test non-existent account name
+        let non_existent_address = Address::from([2u8; 20]);
+        let no_name = adapter.get_account_name(&non_existent_address).unwrap();
+        assert_eq!(no_name, None);
+    }
+
+    #[test]
+    fn test_account_name_validation() {
+        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let mut adapter = StorageModuleAdapter::new(storage_engine);
+
+        let test_address = Address::from([1u8; 20]);
+
+        // Test empty name (should fail)
+        let empty_name = b"";
+        assert!(adapter.set_account_name(test_address, empty_name).is_err());
+
+        // Test name too long (should fail)
+        let long_name = b"ThisIsAVeryLongAccountNameThatExceedsTheThirtyTwoByteLimitAndShouldFail";
+        assert!(adapter.set_account_name(test_address, long_name).is_err());
+
+        // Test valid name length
+        let valid_name = b"ValidAccountName";
+        assert!(adapter.set_account_name(test_address, valid_name).is_ok());
+
+        // Test maximum length name (32 bytes)
+        let max_length_name = b"ThisIsExactlyThirtyTwoBytesLong!";
+        let another_address = Address::from([2u8; 20]);
+        assert_eq!(max_length_name.len(), 32);
+        assert!(adapter.set_account_name(another_address, max_length_name).is_ok());
+    }
+
+    #[test]
+    fn test_account_name_utf8_handling() {
+        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let mut adapter = StorageModuleAdapter::new(storage_engine);
+
+        let test_address = Address::from([1u8; 20]);
+
+        // Test valid UTF-8 name
+        let utf8_name = "ValidUTF8Name".as_bytes();
+        assert!(adapter.set_account_name(test_address, utf8_name).is_ok());
+
+        let retrieved_name = adapter.get_account_name(&test_address).unwrap();
+        assert_eq!(retrieved_name, Some("ValidUTF8Name".to_string()));
+
+        // Test non-UTF-8 bytes (should store but warn)
+        let non_utf8_address = Address::from([2u8; 20]);
+        let non_utf8_name = &[0xFF, 0xFE, 0xFD, 0xFC]; // Invalid UTF-8 sequence
+        assert!(adapter.set_account_name(non_utf8_address, non_utf8_name).is_ok());
+
+        // Should fail to decode as UTF-8 but the setting should have succeeded
+        let result = adapter.get_account_name(&non_utf8_address);
+        assert!(result.is_err()); // Should error when trying to decode invalid UTF-8
     }
 }
