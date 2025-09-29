@@ -444,28 +444,43 @@ impl StorageModuleAdapter {
         }
     }
 
-    /// Get SupportBlackHoleOptimization dynamic property
-    /// Default value: true (burn optimization enabled to match embedded defaults at target heights)
+    /// Get Black Hole Optimization dynamic property (parity with Java)
+    /// Java stores this as a long under key "ALLOW_BLACKHOLE_OPTIMIZATION".
+    /// When this flag is 1, the node BURNS fees (optimization enabled).
+    /// When 0, the node CREDITS the blackhole account.
+    /// Default: false (credit blackhole) to match early-chain behavior when key is absent.
     pub fn support_black_hole_optimization(&self) -> Result<bool> {
-        let key = b"SUPPORT_BLACK_HOLE_OPTIMIZATION";
+        // Parity key with java-tron DynamicPropertiesStore
+        let key = b"ALLOW_BLACKHOLE_OPTIMIZATION";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                if !data.is_empty() {
+                // Java writes a long; interpret big-endian u64 when length >= 8.
+                if data.len() >= 8 {
+                    let val = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val != 0)
+                } else if !data.is_empty() {
+                    // Fallback: treat first byte as boolean
                     Ok(data[0] != 0)
                 } else {
-                    // Default enabled when value not present
-                    Ok(true)
+                    // Empty value → treat as disabled (credit blackhole)
+                    Ok(false)
                 }
             },
             None => {
-                // Default enabled when key not present
-                Ok(true)
+                // Absent key → default to disabled (credit blackhole) for early heights
+                Ok(false)
             }
         }
     }
 
     /// Get blackhole address (if crediting instead of burning)
-    /// Returns the configured blackhole address or None if using burn mode
+    /// Returns:
+    /// - The configured dynamic property value when present (20 raw bytes)
+    /// - Otherwise, a sane mainnet default (TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy)
+    ///   to match java-tron's AccountStore.getBlackhole() behavior.
     pub fn get_blackhole_address(&self) -> Result<Option<Address>> {
         let key = b"BLACK_HOLE_ADDRESS";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
@@ -475,12 +490,24 @@ impl StorageModuleAdapter {
                     addr_bytes.copy_from_slice(&data[0..20]);
                     Ok(Some(Address::from(addr_bytes)))
                 } else {
-                    Ok(None) // No blackhole address configured - use burn mode
+                    // Invalid or empty value: fall back to default
+                    Ok(Self::default_blackhole_address())
                 }
             },
             None => {
-                Ok(None) // No blackhole address configured - use burn mode
+                // Not configured in dynamic properties - use sane network default
+                Ok(Self::default_blackhole_address())
             }
+        }
+    }
+
+    /// Default blackhole address (mainnet): TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy
+    /// Provided as 20-byte EVM address wrapped in revm_primitives::Address.
+    fn default_blackhole_address() -> Option<Address> {
+        // Use common address utility to decode TRON Base58
+        match tron_backend_common::from_tron_address("TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy") {
+            Ok(bytes20) => Some(Address::from(bytes20)),
+            Err(_) => None,
         }
     }
 
