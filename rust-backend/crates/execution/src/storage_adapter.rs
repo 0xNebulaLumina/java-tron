@@ -87,6 +87,57 @@ impl WitnessInfo {
     }
 }
 
+/// TRON Freeze record - tracks frozen balance for resource acquisition
+#[derive(Debug, Clone)]
+pub struct FreezeRecord {
+    pub frozen_amount: u64,        // Total frozen TRX in SUN
+    pub expiration_timestamp: i64, // Milliseconds since epoch
+}
+
+impl FreezeRecord {
+    pub fn new(frozen_amount: u64, expiration_timestamp: i64) -> Self {
+        Self {
+            frozen_amount,
+            expiration_timestamp,
+        }
+    }
+
+    /// Serialize freeze record to bytes for storage
+    pub fn serialize(&self) -> Vec<u8> {
+        // Format: [frozen_amount(8)] + [expiration_timestamp(8)]
+        let mut result = Vec::with_capacity(16);
+
+        // Add frozen amount (8 bytes, big-endian)
+        result.extend_from_slice(&self.frozen_amount.to_be_bytes());
+
+        // Add expiration timestamp (8 bytes, big-endian)
+        result.extend_from_slice(&self.expiration_timestamp.to_be_bytes());
+
+        result
+    }
+
+    /// Deserialize freeze record from bytes
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        if data.len() < 16 {
+            return Err(anyhow::anyhow!("Insufficient data for freeze record"));
+        }
+
+        // Read frozen amount (8 bytes)
+        let frozen_amount = u64::from_be_bytes([
+            data[0], data[1], data[2], data[3],
+            data[4], data[5], data[6], data[7]
+        ]);
+
+        // Read expiration timestamp (8 bytes)
+        let expiration_timestamp = i64::from_be_bytes([
+            data[8], data[9], data[10], data[11],
+            data[12], data[13], data[14], data[15]
+        ]);
+
+        Ok(FreezeRecord::new(frozen_amount, expiration_timestamp))
+    }
+}
+
 /// Storage adapter trait for different storage backends
 pub trait StorageAdapter: Send + Sync {
     /// Get account information
@@ -235,6 +286,21 @@ impl StorageModuleAdapter {
         let mut key = Vec::with_capacity(21);
         key.push(0x41); // Tron address prefix
         key.extend_from_slice(address.as_slice()); // 20-byte address
+        key
+    }
+
+    /// Get the appropriate database name for freeze records
+    fn freeze_records_database(&self) -> &str {
+        "freeze-records"
+    }
+
+    /// Convert Address and FreezeResource to storage key for freeze records
+    /// Format: 21-byte tron address (0x41 + 20-byte) + 1-byte resource type
+    fn freeze_record_key(&self, address: &Address, resource: u8) -> Vec<u8> {
+        let mut key = Vec::with_capacity(22);
+        key.push(0x41); // Tron address prefix
+        key.extend_from_slice(address.as_slice()); // 20-byte address
+        key.push(resource); // Resource type (0=BANDWIDTH, 1=ENERGY, 2=TRON_POWER)
         key
     }
 
@@ -562,6 +628,67 @@ impl StorageModuleAdapter {
             Some(_) => Ok(true),
             None => Ok(false),
         }
+    }
+
+    /// Get freeze record for an address and resource type
+    /// resource: 0=BANDWIDTH, 1=ENERGY, 2=TRON_POWER
+    pub fn get_freeze_record(&self, address: &Address, resource: u8) -> Result<Option<FreezeRecord>> {
+        let key = self.freeze_record_key(address, resource);
+        tracing::debug!("Getting freeze record for address {:?}, resource {}, key: {}",
+                       address, resource, hex::encode(&key));
+
+        match self.storage_engine.get(self.freeze_records_database(), &key)? {
+            Some(data) => {
+                let record = FreezeRecord::deserialize(&data)?;
+                tracing::debug!("Found freeze record: amount={}, expiration={}",
+                               record.frozen_amount, record.expiration_timestamp);
+                Ok(Some(record))
+            },
+            None => {
+                tracing::debug!("No freeze record found");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store freeze record for an address and resource type
+    pub fn set_freeze_record(&self, address: Address, resource: u8, record: &FreezeRecord) -> Result<()> {
+        let key = self.freeze_record_key(&address, resource);
+        let data = record.serialize();
+
+        tracing::debug!("Storing freeze record for address {:?}, resource {}, key: {}, amount={}, expiration={}",
+                       address, resource, hex::encode(&key), record.frozen_amount, record.expiration_timestamp);
+
+        self.storage_engine.put(self.freeze_records_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Add to existing freeze amount (convenience method)
+    /// If no record exists, creates a new one
+    pub fn add_freeze_amount(&self, address: Address, resource: u8, amount: u64, expiration: i64) -> Result<()> {
+        let mut record = self.get_freeze_record(&address, resource)?
+            .unwrap_or(FreezeRecord::new(0, 0));
+
+        // Add to frozen amount
+        record.frozen_amount = record.frozen_amount.checked_add(amount)
+            .ok_or_else(|| anyhow::anyhow!("Freeze amount overflow"))?;
+
+        // Update expiration to later of existing or new
+        record.expiration_timestamp = record.expiration_timestamp.max(expiration);
+
+        self.set_freeze_record(address, resource, &record)?;
+        Ok(())
+    }
+
+    /// Remove freeze record (for unfreeze operations)
+    pub fn remove_freeze_record(&self, address: &Address, resource: u8) -> Result<()> {
+        let key = self.freeze_record_key(address, resource);
+
+        tracing::debug!("Removing freeze record for address {:?}, resource {}, key: {}",
+                       address, resource, hex::encode(&key));
+
+        self.storage_engine.delete(self.freeze_records_database(), &key)?;
+        Ok(())
     }
 
     /// Get account name for an address

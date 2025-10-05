@@ -811,12 +811,12 @@ impl BackendService {
 
     /// Execute a FREEZE_BALANCE_CONTRACT
     /// Freezes TRX balance to gain resources (BANDWIDTH or ENERGY)
-    /// Phase 1: Parity-first - only balance delta, no resource ledger yet
+    /// Phase 2: Balance delta + resource ledger persistence
     fn execute_freeze_balance_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
         transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
@@ -872,7 +872,24 @@ impl BackendService {
         storage_adapter.set_account(transaction.from, new_owner.clone())
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
-        // Emit exactly one state change for CSV parity
+        // Phase 2: Persist freeze record
+        // Calculate expiration timestamp (milliseconds since epoch)
+        let duration_millis = params.frozen_duration as u64 * 86400 * 1000; // days to milliseconds
+        let expiration_timestamp = (context.block_timestamp + duration_millis) as i64;
+
+        debug!("Freeze record: amount={}, expiration={}, resource={:?}",
+               freeze_amount, expiration_timestamp, params.resource);
+
+        // Add to freeze ledger (aggregates if previous freeze exists)
+        storage_adapter.add_freeze_amount(
+            transaction.from,
+            params.resource as u8,
+            freeze_amount,
+            expiration_timestamp
+        ).map_err(|e| format!("Failed to persist freeze record: {}", e))?;
+
+        // Emit exactly one state change for CSV parity (Phase 1 behavior)
+        // Note: freeze ledger changes are not emitted to maintain CSV compatibility
         let state_changes = vec![
             TronStateChange::AccountChange {
                 address: transaction.from,
@@ -884,7 +901,7 @@ impl BackendService {
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("FreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}",
+        debug!("FreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true",
                bandwidth_used);
 
         Ok(TronExecutionResult {
