@@ -11,6 +11,50 @@ use revm_primitives::hex;
 use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, StorageAdapter};
 use crate::backend::*;
 
+/// FreezeBalance contract parameters
+#[derive(Debug, Clone)]
+struct FreezeParams {
+    frozen_balance: i64,
+    frozen_duration: u32,
+    resource: FreezeResource,
+}
+
+/// Resource type for freeze/unfreeze operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FreezeResource {
+    Bandwidth = 0,
+    Energy = 1,
+    TronPower = 2,
+}
+
+/// Read a protobuf varint from a byte slice
+/// Returns (value, bytes_read)
+fn read_varint(data: &[u8]) -> Result<(u64, usize), String> {
+    let mut result: u64 = 0;
+    let mut shift = 0;
+    let mut pos = 0;
+
+    loop {
+        if pos >= data.len() {
+            return Err("Unexpected end of varint".to_string());
+        }
+
+        let byte = data[pos];
+        pos += 1;
+
+        result |= ((byte & 0x7F) as u64) << shift;
+
+        if (byte & 0x80) == 0 {
+            return Ok((result, pos));
+        }
+
+        shift += 7;
+        if shift >= 64 {
+            return Err("Varint too long".to_string());
+        }
+    }
+}
+
 pub struct BackendService {
     module_manager: ModuleManager,
     start_time: SystemTime,
@@ -235,6 +279,13 @@ impl BackendService {
             Some(tron_backend_execution::TronContractType::AccountUpdateContract) => {
                 debug!("Executing ACCOUNT_UPDATE_CONTRACT");
                 self.execute_account_update_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::FreezeBalanceContract) => {
+                if !remote_config.freeze_balance_enabled {
+                    return Err("FREEZE_BALANCE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing FREEZE_BALANCE_CONTRACT");
+                self.execute_freeze_balance_contract(storage_adapter, transaction, context)
             },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
@@ -758,6 +809,193 @@ impl BackendService {
         })
     }
 
+    /// Execute a FREEZE_BALANCE_CONTRACT
+    /// Freezes TRX balance to gain resources (BANDWIDTH or ENERGY)
+    /// Phase 1: Parity-first - only balance delta, no resource ledger yet
+    fn execute_freeze_balance_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::{TronExecutionResult, TronStateChange};
+
+        // Parse freeze parameters from transaction data
+        let params = Self::parse_freeze_balance_params(&transaction.data)?;
+
+        info!("FreezeBalance owner={} amount={} resource={:?} duration={}",
+              tron_backend_common::to_tron_address(&transaction.from),
+              params.frozen_balance,
+              params.resource,
+              params.frozen_duration);
+
+        // Load owner account
+        let owner_account = storage_adapter.get_account(&transaction.from)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .unwrap_or_default();
+
+        debug!("Owner account loaded: balance={}, nonce={}",
+               owner_account.balance, owner_account.nonce);
+
+        // Validation: amount > 0
+        if params.frozen_balance == 0 {
+            warn!("Freeze amount must be greater than zero");
+            return Err("Freeze amount must be greater than zero".to_string());
+        }
+
+        // Validation: duration > 0
+        if params.frozen_duration == 0 {
+            warn!("Freeze duration must be greater than zero");
+            return Err("Freeze duration must be greater than zero".to_string());
+        }
+
+        // Convert frozen_balance from i64 to u64 for balance arithmetic
+        let freeze_amount = params.frozen_balance as u64;
+
+        // Validation: owner.balance >= amount
+        let owner_balance_u64 = owner_account.balance.try_into()
+            .unwrap_or(u64::MAX);
+
+        if owner_balance_u64 < freeze_amount {
+            warn!("Insufficient balance: have {}, need {}", owner_balance_u64, freeze_amount);
+            return Err(format!("Insufficient balance: have {}, need {}",
+                             owner_balance_u64, freeze_amount));
+        }
+
+        // Compute new owner account with reduced balance
+        let mut new_owner = owner_account.clone();
+        new_owner.balance = revm_primitives::U256::from(owner_balance_u64 - freeze_amount);
+
+        debug!("Balance change: {} -> {}", owner_account.balance, new_owner.balance);
+
+        // Persist new owner account
+        storage_adapter.set_account(transaction.from, new_owner.clone())
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+        // Emit exactly one state change for CSV parity
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: transaction.from,
+                old_account: Some(owner_account),
+                new_account: Some(new_owner),
+            }
+        ];
+
+        // Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("FreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}",
+               bandwidth_used);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: vec![],
+            error: None,
+        })
+    }
+
+    /// Parse FreezeBalanceContract parameters from protobuf-encoded data
+    ///
+    /// FreezeBalanceContract protobuf structure:
+    /// - owner_address: bytes (field 1) - we get this from transaction.from
+    /// - frozen_balance: int64 (field 2)
+    /// - frozen_duration: int64 (field 3)
+    /// - resource: ResourceCode enum (field 10)
+    /// - receiver_address: bytes (field 15) - optional, Phase 1 ignores
+    fn parse_freeze_balance_params(data: &revm_primitives::Bytes) -> Result<FreezeParams, String> {
+        if data.is_empty() {
+            return Err("FreezeBalance params cannot be empty".to_string());
+        }
+
+        // Simple protobuf parser for the specific fields we need
+        // Protobuf wire format: tag (field_number << 3 | wire_type)
+        // int64 uses wire_type 0 (varint)
+        // bytes uses wire_type 2 (length-delimited)
+
+        let mut frozen_balance: Option<i64> = None;
+        let mut frozen_duration: Option<i64> = None;
+        let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
+
+        let mut pos = 0;
+        while pos < data.len() {
+            // Read tag
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos = pos + new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                1 => {
+                    // owner_address (bytes) - skip, we use transaction.from
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                },
+                2 => {
+                    // frozen_balance (int64)
+                    if wire_type != 0 { return Err("Invalid wire type for frozen_balance".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    frozen_balance = Some(value as i64);
+                    pos = pos + new_pos;
+                },
+                3 => {
+                    // frozen_duration (int64)
+                    if wire_type != 0 { return Err("Invalid wire type for frozen_duration".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    frozen_duration = Some(value as i64);
+                    pos = pos + new_pos;
+                },
+                10 => {
+                    // resource (enum ResourceCode)
+                    if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    resource = match value {
+                        0 => FreezeResource::Bandwidth,
+                        1 => FreezeResource::Energy,
+                        2 => FreezeResource::TronPower,
+                        _ => return Err(format!("Invalid resource code: {}", value)),
+                    };
+                    pos = pos + new_pos;
+                },
+                15 => {
+                    // receiver_address (bytes) - Phase 1: ignore
+                    if wire_type != 2 { return Err("Invalid wire type for receiver_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                },
+                _ => {
+                    // Unknown field - skip
+                    match wire_type {
+                        0 => {
+                            let (_, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos;
+                        },
+                        2 => {
+                            let (len, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos + len as usize;
+                        },
+                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                    }
+                }
+            }
+        }
+
+        // Validate required fields
+        let frozen_balance = frozen_balance.ok_or("Missing frozen_balance field")?;
+        let frozen_duration = frozen_duration.ok_or("Missing frozen_duration field")?;
+
+        Ok(FreezeParams {
+            frozen_balance,
+            frozen_duration: frozen_duration as u32,
+            resource,
+        })
+    }
+
     /// Calculate bandwidth usage for a transaction based on its serialized size
     fn calculate_bandwidth_usage(transaction: &TronTransaction) -> u64 {
         // Approximate bandwidth calculation based on transaction fields
@@ -1057,6 +1295,250 @@ mod tests {
         // Verify original name is still there
         let stored_name = storage_adapter.get_account_name(&owner_address).unwrap();
         assert_eq!(stored_name, Some("FirstName".to_string()));
+    }
+
+    // Helper function for tests to encode varint
+    fn encode_varint(buf: &mut Vec<u8>, mut value: u64) {
+        loop {
+            let mut byte = (value & 0x7F) as u8;
+            value >>= 7;
+            if value != 0 {
+                byte |= 0x80;
+            }
+            buf.push(byte);
+            if value == 0 {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn test_freeze_balance_success_basic() {
+        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
+
+        // Create test setup
+        let owner_address = Address::from([1u8; 20]);
+        let initial_balance = 50_000_000u64; // 50 TRX
+        let freeze_amount = 1_000_000i64; // 1 TRX
+
+        // Setup storage with initial account
+        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let owner_account = AccountInfo {
+            balance: U256::from(initial_balance),
+            nonce: 0,
+            code_hash: revm::primitives::B256::ZERO,
+            code: None,
+        };
+        storage_adapter.set_account(owner_address, owner_account.clone()).unwrap();
+
+        // Build FreezeBalance protobuf data
+        // Field 2: frozen_balance (varint)
+        // Field 3: frozen_duration (varint)
+        // Field 10: resource (varint)
+        let mut proto_data = Vec::new();
+        // frozen_balance = 1_000_000 (field 2, wire_type 0)
+        proto_data.push((2 << 3) | 0); // tag for field 2
+        encode_varint(&mut proto_data, freeze_amount as u64);
+        // frozen_duration = 3 days (field 3, wire_type 0)
+        proto_data.push((3 << 3) | 0); // tag for field 3
+        encode_varint(&mut proto_data, 3);
+        // resource = BANDWIDTH (0) (field 10, wire_type 0)
+        proto_data.push((10 << 3) | 0); // tag for field 10
+        encode_varint(&mut proto_data, 0);
+
+        let transaction = TronTransaction {
+            from: owner_address,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from(proto_data),
+            gas_limit: 0,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
+                asset_id: None,
+            },
+        };
+
+        let context = TronExecutionContext {
+            block_number: 2142,
+            block_timestamp: 1000000,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 0,
+            chain_id: 1,
+            energy_price: 0,
+            bandwidth_price: 0,
+        };
+
+        // Create service with freeze_balance enabled
+        let mut module_manager = ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(ExecutionConfig {
+            remote: RemoteExecutionConfig {
+                freeze_balance_enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        module_manager.register("execution", Box::new(exec_module));
+
+        let service = BackendService::new(module_manager);
+
+        // Execute
+        let result = service.execute_freeze_balance_contract(&mut storage_adapter, &transaction, &context);
+
+        // Assertions
+        assert!(result.is_ok(), "FreezeBalance should succeed: {:?}", result.err());
+        let exec_result = result.unwrap();
+
+        assert!(exec_result.success);
+        assert_eq!(exec_result.energy_used, 0);
+        assert_eq!(exec_result.state_changes.len(), 1);
+        assert!(exec_result.logs.is_empty());
+
+        // Verify balance decreased
+        match &exec_result.state_changes[0] {
+            tron_backend_execution::TronStateChange::AccountChange { address, old_account, new_account } => {
+                assert_eq!(*address, owner_address);
+                assert_eq!(old_account.as_ref().unwrap().balance, U256::from(initial_balance));
+                assert_eq!(new_account.as_ref().unwrap().balance, U256::from(initial_balance - freeze_amount as u64));
+            },
+            _ => panic!("Expected AccountChange"),
+        }
+    }
+
+    #[test]
+    fn test_freeze_balance_insufficient_balance() {
+        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
+
+        let owner_address = Address::from([1u8; 20]);
+        let initial_balance = 100u64; // Very small balance
+        let freeze_amount = 1_000_000i64; // Try to freeze more than we have
+
+        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let owner_account = AccountInfo {
+            balance: U256::from(initial_balance),
+            nonce: 0,
+            code_hash: revm::primitives::B256::ZERO,
+            code: None,
+        };
+        storage_adapter.set_account(owner_address, owner_account).unwrap();
+
+        // Build protobuf
+        let mut proto_data = Vec::new();
+        proto_data.push((2 << 3) | 0);
+        encode_varint(&mut proto_data, freeze_amount as u64);
+        proto_data.push((3 << 3) | 0);
+        encode_varint(&mut proto_data, 3);
+        proto_data.push((10 << 3) | 0);
+        encode_varint(&mut proto_data, 0);
+
+        let transaction = TronTransaction {
+            from: owner_address,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from(proto_data),
+            gas_limit: 0,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
+                asset_id: None,
+            },
+        };
+
+        let context = TronExecutionContext {
+            block_number: 1,
+            block_timestamp: 1000000,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 0,
+            chain_id: 1,
+            energy_price: 0,
+            bandwidth_price: 0,
+        };
+
+        let mut module_manager = ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(ExecutionConfig {
+            remote: RemoteExecutionConfig {
+                freeze_balance_enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        module_manager.register("execution", Box::new(exec_module));
+
+        let service = BackendService::new(module_manager);
+
+        // Execute - should fail
+        let result = service.execute_freeze_balance_contract(&mut storage_adapter, &transaction, &context);
+        assert!(result.is_err(), "Should fail with insufficient balance");
+        assert!(result.unwrap_err().contains("Insufficient balance"));
+    }
+
+    #[test]
+    fn test_freeze_balance_bad_params() {
+        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
+
+        let owner_address = Address::from([1u8; 20]);
+        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let owner_account = AccountInfo {
+            balance: U256::from(1_000_000u64),
+            nonce: 0,
+            code_hash: revm::primitives::B256::ZERO,
+            code: None,
+        };
+        storage_adapter.set_account(owner_address, owner_account).unwrap();
+
+        // Empty data
+        let transaction = TronTransaction {
+            from: owner_address,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas_limit: 0,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
+                asset_id: None,
+            },
+        };
+
+        let context = TronExecutionContext {
+            block_number: 1,
+            block_timestamp: 1000000,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 0,
+            chain_id: 1,
+            energy_price: 0,
+            bandwidth_price: 0,
+        };
+
+        let mut module_manager = ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(ExecutionConfig {
+            remote: RemoteExecutionConfig {
+                freeze_balance_enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        module_manager.register("execution", Box::new(exec_module));
+
+        let service = BackendService::new(module_manager);
+
+        let result = service.execute_freeze_balance_contract(&mut storage_adapter, &transaction, &context);
+        assert!(result.is_err(), "Should fail with empty params");
     }
 
     #[test]
