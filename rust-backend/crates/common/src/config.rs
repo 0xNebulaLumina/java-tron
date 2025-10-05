@@ -83,6 +83,11 @@ pub struct RemoteExecutionConfig {
     pub vote_witness_enabled: bool,
     /// Enable TRC-10 transfers (requires additional storage support)
     pub trc10_enabled: bool,
+    /// Enable FREEZE_BALANCE_CONTRACT execution
+    pub freeze_balance_enabled: bool,
+    /// Emit storage changes for freeze ledger (EXPERIMENTAL - may affect CSV output)
+    /// Default: false to maintain CSV parity with Phase 1
+    pub emit_freeze_ledger_changes: bool,
     /// Emit storage changes for witness/vote data (may affect CSV output)
     pub emit_storage_changes: bool,
 }
@@ -197,6 +202,16 @@ impl Config {
         builder = builder.set_default("execution.fees.experimental_vm_blackhole_credit", false)?;
         // non_vm_blackhole_credit_flat is Option<u64>, leave unset for None default
 
+        // Remote execution configuration defaults
+        builder = builder.set_default("execution.remote.system_enabled", true)?;
+        builder = builder.set_default("execution.remote.witness_create_enabled", true)?;
+        builder = builder.set_default("execution.remote.witness_update_enabled", false)?;
+        builder = builder.set_default("execution.remote.vote_witness_enabled", false)?;
+        builder = builder.set_default("execution.remote.trc10_enabled", false)?;
+        builder = builder.set_default("execution.remote.freeze_balance_enabled", false)?;
+        builder = builder.set_default("execution.remote.emit_freeze_ledger_changes", false)?;
+        builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -210,6 +225,8 @@ impl Default for RemoteExecutionConfig {
             witness_update_enabled: false,
             vote_witness_enabled: false,
             trc10_enabled: false,
+            freeze_balance_enabled: false, // Default false until validated
+            emit_freeze_ledger_changes: false, // Default false for CSV parity
             emit_storage_changes: false,
         }
     }

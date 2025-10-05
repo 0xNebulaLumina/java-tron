@@ -17,6 +17,7 @@ import org.tron.core.exception.VMIllegalException;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
+import org.tron.protos.contract.BalanceContract.FreezeBalanceContract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
@@ -74,6 +75,12 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             return ExecutionProgramResult.fromExecutionResult(
                 convertExecuteTransactionResponse(response));
 
+          } catch (UnsupportedOperationException | IllegalArgumentException e) {
+            logger.warn(
+                "Remote execution not supported for transaction {}: {}",
+                context.getTrxCap().getTransactionId(),
+                e.getMessage());
+            throw e;
           } catch (Exception e) {
             logger.error("Remote execution failed", e);
             // Create a failed ExecutionProgramResult
@@ -332,6 +339,20 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           contractType = tron.backend.BackendOuterClass.ContractType.TRIGGER_SMART_CONTRACT;
           break;
 
+        case FreezeBalanceContract:
+          FreezeBalanceContract freezeContract =
+              contractParameter.unpack(FreezeBalanceContract.class);
+          toAddress = new byte[0];
+          data = freezeContract.toByteArray();
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.FREEZE_BALANCE_CONTRACT;
+          logger.debug(
+              "Mapped FreezeBalanceContract to remote request; owner={}, amount={}, duration={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              freezeContract.getFrozenBalance(),
+              freezeContract.getFrozenDuration());
+          break;
+
         case WitnessCreateContract:
           WitnessCreateContract witnessCreateContract =
               contractParameter.unpack(WitnessCreateContract.class);
@@ -434,31 +455,11 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           .setContext(contextBuilder.build())
           .build();
 
+    } catch (UnsupportedOperationException | IllegalArgumentException e) {
+      throw e;
     } catch (Exception e) {
       logger.error("Failed to build ExecuteTransactionRequest", e);
-      // Fallback to minimal request to avoid complete failure
-      return ExecuteTransactionRequest.newBuilder()
-          .setTransaction(
-              TronTransaction.newBuilder()
-                  .setFrom(ByteString.copyFrom(new byte[20]))
-                  .setTo(ByteString.copyFrom(new byte[20]))
-                  .setValue(ByteString.copyFrom(new byte[32]))
-                  .setData(ByteString.copyFrom(new byte[0]))
-                  .setEnergyLimit(1000000)
-                  .setEnergyPrice(1)
-                  .setNonce(0)
-                  .setTxKind(TxKind.NON_VM) // Default to non-VM for fallback case
-                  .build())
-          .setContext(
-              ExecutionContext.newBuilder()
-                  .setBlockNumber(0)
-                  .setBlockTimestamp(System.currentTimeMillis())
-                  .setBlockHash(ByteString.copyFrom(new byte[32]))
-                  .setCoinbase(ByteString.copyFrom(new byte[20]))
-                  .setEnergyLimit(1000000)
-                  .setEnergyPrice(1)
-                  .build())
-          .build();
+      throw new RuntimeException("Failed to build ExecuteTransactionRequest", e);
     }
   }
 

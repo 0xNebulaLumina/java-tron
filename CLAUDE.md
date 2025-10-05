@@ -1,6 +1,9 @@
 # CLAUDE.md
 
 
+
++ During you interaction with the user, if you find anything reusable in this project (e.g. version of a library, model name), especially about a fix to a mistake you made or a correction you received, you should take note in the `Lessons` section in the `CLAUDE.md` file so you will not make the same mistake again. 
+
 + During you interaction with the user, if you find anything reusable in this project (e.g. version of a library, model name), especially about a fix to a mistake you made or a correction you received, you should take note in the `Lessons` section in the `CLAUDE.md` file so you will not make the same mistake again. 
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -226,4 +229,11 @@ Format: `<type>(<scope>): <subject>`
 - When deserializing data from remote services, always handle variable-length data gracefully
 - Account creation in state sync must use the balance from the deserialized data, not default to zero
 - Comprehensive logging is essential for debugging state synchronization issues between different systems
- - The flow from Rust → Protobuf → Java requires careful attention to serialization formats at each step
+- The flow from Rust → Protobuf → Java requires careful attention to serialization formats at each step
+- **Manual Protobuf Parsing in Rust**: For simple protobuf messages with few fields, manual wire-format parsing using varint decoding is viable and avoids additional dependencies. Implement `read_varint()` helper and parse fields by tag number. Wire types: 0=varint, 2=length-delimited. This approach works well for Tron system contracts like FreezeBalanceContract.
+- **System Contract Implementation Pattern**: When adding new system contract handlers in Rust: (1) Add enum variant to TronContractType, (2) Add config flag to RemoteExecutionConfig with default=false, (3) Add match arm in execute_non_vm_contract with config gate, (4) Implement handler with proper validation/logging/state changes, (5) Emit single AccountChange for CSV parity. Follow existing AccountUpdateContract pattern.
+- **Test Infrastructure Limitations**: The Rust test infrastructure has pre-existing issues with mock storage creation (StorageEngine::new_mock doesn't exist). Tests should focus on logic correctness; integration tests require actual storage setup. Unit test compilation errors in existing code don't block library compilation.
+- **Config Documentation**: Always document new config flags in both the struct definition (common/src/config.rs) and the config.toml file with clear comments about purpose, defaults, and rollout implications.
+- **Resource Ledger Storage Pattern**: For freeze/unfreeze ledgers, use compact binary serialization: 8-byte amount (big-endian) + 8-byte expiration timestamp (big-endian) = 16 bytes total. Storage key format: `{0x41}{20-byte address}{resource_type_u8}` (22 bytes). This matches Tron's address prefix convention and allows per-resource tracking. Use `checked_add()` for overflow protection when aggregating amounts.
+- **Timestamp Handling**: Java-tron uses milliseconds since epoch for timestamps (i64). When calculating expiration: `expiration = (block_timestamp_u64 + duration_days * 86400 * 1000) as i64`. Always verify timestamp type mismatches between u64 and i64.
+- **CSV Parity with Ledger Updates**: When adding resource ledger persistence, maintain CSV parity by NOT emitting StorageChanges for freeze records by default. Use a config flag (`emit_freeze_ledger_changes: false`) to gate ledger emissions. This allows Phase 2 implementation without breaking Phase 1 CSV compatibility.
