@@ -72,5 +72,10 @@ vote_witness_enabled = false    # Disabled until implemented
 # TRC-10 transfers (requires additional storage support)
 trc10_enabled = false
 
+# FreezeBalanceContract execution (Phase 1: balance delta only, no resource ledger)
+# Set to true to enable remote execution of FreezeBalanceContract
+# Default: false for safe rollout - falls back to Java embedded execution when disabled
+freeze_balance_enabled = false
+
 # Emit storage changes for witness/vote data (may affect CSV output)
 emit_storage_changes = false 

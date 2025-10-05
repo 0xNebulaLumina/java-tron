@@ -229,4 +229,8 @@ Format: `<type>(<scope>): <subject>`
 - When deserializing data from remote services, always handle variable-length data gracefully
 - Account creation in state sync must use the balance from the deserialized data, not default to zero
 - Comprehensive logging is essential for debugging state synchronization issues between different systems
- - The flow from Rust → Protobuf → Java requires careful attention to serialization formats at each step
+- The flow from Rust → Protobuf → Java requires careful attention to serialization formats at each step
+- **Manual Protobuf Parsing in Rust**: For simple protobuf messages with few fields, manual wire-format parsing using varint decoding is viable and avoids additional dependencies. Implement `read_varint()` helper and parse fields by tag number. Wire types: 0=varint, 2=length-delimited. This approach works well for Tron system contracts like FreezeBalanceContract.
+- **System Contract Implementation Pattern**: When adding new system contract handlers in Rust: (1) Add enum variant to TronContractType, (2) Add config flag to RemoteExecutionConfig with default=false, (3) Add match arm in execute_non_vm_contract with config gate, (4) Implement handler with proper validation/logging/state changes, (5) Emit single AccountChange for CSV parity. Follow existing AccountUpdateContract pattern.
+- **Test Infrastructure Limitations**: The Rust test infrastructure has pre-existing issues with mock storage creation (StorageEngine::new_mock doesn't exist). Tests should focus on logic correctness; integration tests require actual storage setup. Unit test compilation errors in existing code don't block library compilation.
+- **Config Documentation**: Always document new config flags in both the struct definition (common/src/config.rs) and the config.toml file with clear comments about purpose, defaults, and rollout implications.

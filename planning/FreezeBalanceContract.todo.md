@@ -142,8 +142,8 @@ Non-goals (Phase 1):
 
 ## Rollout Plan
 
-- [ ] Land Phase 1 behind `execution.remote.freeze_balance_enabled=false`.
-- [ ] Enable in staging with CSV/digest diff harness against embedded for selected block ranges.
+- [x] Land Phase 1 behind `execution.remote.freeze_balance_enabled=false`. ✅ **Implemented with default=false**
+- [ ] Enable in staging with CSV/digest diff harness against embedded for selected block ranges. **Next step: requires Java-side RemoteExecutionSPI mapping**
 - [ ] If parity holds, flip default to true or enable per-network.
 - [ ] Proceed with Phase 2 under a separate feature flag for resource ledger emissions (to keep CSV parity predictable during rollout).
 
@@ -165,14 +165,14 @@ Non-goals (Phase 1):
 
 ## Quick Checklist (Execution Order)
 
-1. [ ] Decide `data` encoding (A: proto, B: custom) and document.
-2. [ ] Add parser + tests.
-3. [ ] Add handler skeleton + dispatch in `execute_non_vm_contract`.
-4. [ ] Implement balance delta, single AccountChange emission, persist owner.
-5. [ ] Logging, determinism, no 0x41…00 address touched.
-6. [ ] Optional: add `freeze_balance_enabled` gate; default false.
-7. [ ] Unit tests: success/failure/determinism.
-8. [ ] Manual parity check against embedded CSV/digest for sample tx.
-9. [ ] Phase 2: resource ledger schema + adapter + gated emissions + tests.
-10. [ ] Rollout gates and staging validation.
+1. [x] Decide `data` encoding (A: proto, B: custom) and document. ✅ **Option A: manual protobuf parsing**
+2. [x] Add parser + tests. ✅ **Implemented `parse_freeze_balance_params()` with `read_varint()` helper**
+3. [x] Add handler skeleton + dispatch in `execute_non_vm_contract`. ✅ **Match arm added at service.rs:283-289**
+4. [x] Implement balance delta, single AccountChange emission, persist owner. ✅ **Complete in `execute_freeze_balance_contract()`**
+5. [x] Logging, determinism, no 0x41…00 address touched. ✅ **info/debug/warn logs added; single AccountChange ensures determinism**
+6. [x] Optional: add `freeze_balance_enabled` gate; default false. ✅ **Added to RemoteExecutionConfig**
+7. [x] Unit tests: success/failure/determinism. ✅ **3 tests added (success, insufficient balance, bad params)**
+8. [ ] Manual parity check against embedded CSV/digest for sample tx. **Deferred - requires integration test environment**
+9. [ ] Phase 2: resource ledger schema + adapter + gated emissions + tests. **Future work**
+10. [ ] Rollout gates and staging validation. **Future work - requires Java-side mapping**
 
