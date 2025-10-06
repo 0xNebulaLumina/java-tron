@@ -138,6 +138,346 @@ impl FreezeRecord {
     }
 }
 
+/// TRON Vote - single vote entry (vote_address, vote_count)
+#[derive(Debug, Clone)]
+pub struct Vote {
+    pub vote_address: Address, // 20-byte witness address
+    pub vote_count: u64,       // Number of votes
+}
+
+impl Vote {
+    pub fn new(vote_address: Address, vote_count: u64) -> Self {
+        Self {
+            vote_address,
+            vote_count,
+        }
+    }
+
+    /// Serialize Vote to protobuf format
+    /// message Vote {
+    ///   bytes vote_address = 1;  // field 1, length-delimited
+    ///   int64 vote_count = 2;    // field 2, varint
+    /// }
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Field 1: vote_address (length-delimited, 21 bytes with 0x41 prefix)
+        let mut tron_address = Vec::with_capacity(21);
+        tron_address.push(0x41); // Tron address prefix
+        tron_address.extend_from_slice(self.vote_address.as_slice());
+
+        data.push(0x0a); // field 1, wire type 2 (length-delimited)
+        Self::write_varint(&mut data, tron_address.len() as u64);
+        data.extend_from_slice(&tron_address);
+
+        // Field 2: vote_count (varint)
+        data.push(0x10); // field 2, wire type 0 (varint)
+        Self::write_varint(&mut data, self.vote_count);
+
+        data
+    }
+
+    /// Deserialize Vote from protobuf format
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        let mut pos = 0;
+        let mut vote_address: Option<Address> = None;
+        let mut vote_count: Option<u64> = None;
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, new_pos) = Self::read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => { // vote_address (length-delimited)
+                    let (length, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos;
+                    if pos + length as usize > data.len() {
+                        return Err(anyhow::anyhow!("Invalid vote_address length"));
+                    }
+                    let addr_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    // Remove 0x41 prefix if present
+                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                        &addr_bytes[1..]
+                    } else if addr_bytes.len() == 20 {
+                        addr_bytes
+                    } else {
+                        return Err(anyhow::anyhow!("Invalid vote_address length: {}", addr_bytes.len()));
+                    };
+
+                    let mut addr = [0u8; 20];
+                    addr.copy_from_slice(evm_addr);
+                    vote_address = Some(Address::from(addr));
+                },
+                (2, 0) => { // vote_count (varint)
+                    let (count, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos;
+                    vote_count = Some(count);
+                },
+                _ => {
+                    // Skip unknown field
+                    pos = Self::skip_field(data, pos, wire_type)?;
+                }
+            }
+        }
+
+        Ok(Vote::new(
+            vote_address.ok_or_else(|| anyhow::anyhow!("Missing vote_address"))?,
+            vote_count.ok_or_else(|| anyhow::anyhow!("Missing vote_count"))?,
+        ))
+    }
+
+    fn write_varint(output: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            output.push(((value & 0x7F) | 0x80) as u8);
+            value >>= 7;
+        }
+        output.push(value as u8);
+    }
+
+    fn read_varint(data: &[u8], mut pos: usize) -> Result<(u64, usize)> {
+        let mut result = 0u64;
+        let mut shift = 0;
+
+        while pos < data.len() {
+            let byte = data[pos];
+            pos += 1;
+
+            result |= ((byte & 0x7F) as u64) << shift;
+
+            if (byte & 0x80) == 0 {
+                return Ok((result, pos));
+            }
+
+            shift += 7;
+            if shift >= 64 {
+                return Err(anyhow::anyhow!("Varint too long"));
+            }
+        }
+
+        Err(anyhow::anyhow!("Unexpected end of data while reading varint"))
+    }
+
+    fn skip_field(data: &[u8], pos: usize, wire_type: u64) -> Result<usize> {
+        match wire_type {
+            0 => { // Varint
+                let (_, new_pos) = Self::read_varint(data, pos)?;
+                Ok(new_pos)
+            },
+            1 => { // 64-bit
+                Ok(pos + 8)
+            },
+            2 => { // Length-delimited
+                let (length, new_pos) = Self::read_varint(data, pos)?;
+                Ok(new_pos + length as usize)
+            },
+            5 => { // 32-bit
+                Ok(pos + 4)
+            },
+            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type))
+        }
+    }
+}
+
+/// TRON VotesRecord - tracks voting history for an account
+/// Equivalent to VotesCapsule in java-tron
+#[derive(Debug, Clone)]
+pub struct VotesRecord {
+    pub address: Address,         // 20-byte account address
+    pub old_votes: Vec<Vote>,     // Previous votes
+    pub new_votes: Vec<Vote>,     // Current votes
+}
+
+impl VotesRecord {
+    pub fn new(address: Address, old_votes: Vec<Vote>, new_votes: Vec<Vote>) -> Self {
+        Self {
+            address,
+            old_votes,
+            new_votes,
+        }
+    }
+
+    /// Create empty VotesRecord
+    pub fn empty(address: Address) -> Self {
+        Self::new(address, Vec::new(), Vec::new())
+    }
+
+    /// Clear new_votes
+    pub fn clear_new_votes(&mut self) {
+        self.new_votes.clear();
+    }
+
+    /// Add a new vote
+    pub fn add_new_vote(&mut self, vote_address: Address, vote_count: u64) {
+        self.new_votes.push(Vote::new(vote_address, vote_count));
+    }
+
+    /// Serialize VotesRecord to protobuf format
+    /// message Votes {
+    ///   bytes address = 1;           // field 1, length-delimited
+    ///   repeated Vote old_votes = 2; // field 2, length-delimited
+    ///   repeated Vote new_votes = 3; // field 3, length-delimited
+    /// }
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Field 1: address (length-delimited, 21 bytes with 0x41 prefix)
+        let mut tron_address = Vec::with_capacity(21);
+        tron_address.push(0x41); // Tron address prefix
+        tron_address.extend_from_slice(self.address.as_slice());
+
+        data.push(0x0a); // field 1, wire type 2 (length-delimited)
+        Self::write_varint(&mut data, tron_address.len() as u64);
+        data.extend_from_slice(&tron_address);
+
+        // Field 2: old_votes (repeated, each is length-delimited)
+        for vote in &self.old_votes {
+            let vote_bytes = vote.serialize();
+            data.push(0x12); // field 2, wire type 2 (length-delimited)
+            Self::write_varint(&mut data, vote_bytes.len() as u64);
+            data.extend_from_slice(&vote_bytes);
+        }
+
+        // Field 3: new_votes (repeated, each is length-delimited)
+        for vote in &self.new_votes {
+            let vote_bytes = vote.serialize();
+            data.push(0x1a); // field 3, wire type 2 (length-delimited)
+            Self::write_varint(&mut data, vote_bytes.len() as u64);
+            data.extend_from_slice(&vote_bytes);
+        }
+
+        data
+    }
+
+    /// Deserialize VotesRecord from protobuf format
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        let mut pos = 0;
+        let mut address: Option<Address> = None;
+        let mut old_votes = Vec::new();
+        let mut new_votes = Vec::new();
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, new_pos) = Self::read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => { // address (length-delimited)
+                    let (length, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos;
+                    if pos + length as usize > data.len() {
+                        return Err(anyhow::anyhow!("Invalid address length"));
+                    }
+                    let addr_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    // Remove 0x41 prefix if present
+                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                        &addr_bytes[1..]
+                    } else if addr_bytes.len() == 20 {
+                        addr_bytes
+                    } else {
+                        return Err(anyhow::anyhow!("Invalid address length: {}", addr_bytes.len()));
+                    };
+
+                    let mut addr = [0u8; 20];
+                    addr.copy_from_slice(evm_addr);
+                    address = Some(Address::from(addr));
+                },
+                (2, 2) => { // old_votes (length-delimited)
+                    let (length, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos;
+                    if pos + length as usize > data.len() {
+                        return Err(anyhow::anyhow!("Invalid old_votes length"));
+                    }
+                    let vote_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+                    old_votes.push(Vote::deserialize(vote_bytes)?);
+                },
+                (3, 2) => { // new_votes (length-delimited)
+                    let (length, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos;
+                    if pos + length as usize > data.len() {
+                        return Err(anyhow::anyhow!("Invalid new_votes length"));
+                    }
+                    let vote_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+                    new_votes.push(Vote::deserialize(vote_bytes)?);
+                },
+                _ => {
+                    // Skip unknown field
+                    pos = Self::skip_field(data, pos, wire_type)?;
+                }
+            }
+        }
+
+        Ok(VotesRecord::new(
+            address.ok_or_else(|| anyhow::anyhow!("Missing address"))?,
+            old_votes,
+            new_votes,
+        ))
+    }
+
+    fn write_varint(output: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            output.push(((value & 0x7F) | 0x80) as u8);
+            value >>= 7;
+        }
+        output.push(value as u8);
+    }
+
+    fn read_varint(data: &[u8], mut pos: usize) -> Result<(u64, usize)> {
+        let mut result = 0u64;
+        let mut shift = 0;
+
+        while pos < data.len() {
+            let byte = data[pos];
+            pos += 1;
+
+            result |= ((byte & 0x7F) as u64) << shift;
+
+            if (byte & 0x80) == 0 {
+                return Ok((result, pos));
+            }
+
+            shift += 7;
+            if shift >= 64 {
+                return Err(anyhow::anyhow!("Varint too long"));
+            }
+        }
+
+        Err(anyhow::anyhow!("Unexpected end of data while reading varint"))
+    }
+
+    fn skip_field(data: &[u8], pos: usize, wire_type: u64) -> Result<usize> {
+        match wire_type {
+            0 => { // Varint
+                let (_, new_pos) = Self::read_varint(data, pos)?;
+                Ok(new_pos)
+            },
+            1 => { // 64-bit
+                Ok(pos + 8)
+            },
+            2 => { // Length-delimited
+                let (length, new_pos) = Self::read_varint(data, pos)?;
+                Ok(new_pos + length as usize)
+            },
+            5 => { // 32-bit
+                Ok(pos + 4)
+            },
+            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type))
+        }
+    }
+}
+
 /// Storage adapter trait for different storage backends
 pub trait StorageAdapter: Send + Sync {
     /// Get account information
@@ -266,6 +606,11 @@ impl StorageModuleAdapter {
         "witness"
     }
 
+    /// Get the appropriate database name for votes store
+    fn votes_database(&self) -> &str {
+        "votes"
+    }
+
     /// Convert Address to storage key for accounts (matching java-tron format)
     /// Java-tron stores accounts using 21-byte addresses with 0x41 prefix
     /// REVM uses 20-byte addresses, so we need to add the 0x41 prefix
@@ -283,6 +628,14 @@ impl StorageModuleAdapter {
 
     /// Convert Address to storage key for witness store (21-byte address with 0x41 prefix)
     fn witness_key(&self, address: &Address) -> Vec<u8> {
+        let mut key = Vec::with_capacity(21);
+        key.push(0x41); // Tron address prefix
+        key.extend_from_slice(address.as_slice()); // 20-byte address
+        key
+    }
+
+    /// Convert Address to storage key for votes store (21-byte address with 0x41 prefix)
+    fn votes_key(&self, address: &Address) -> Vec<u8> {
         let mut key = Vec::with_capacity(21);
         key.push(0x41); // Tron address prefix
         key.extend_from_slice(address.as_slice()); // 20-byte address
@@ -547,6 +900,56 @@ impl StorageModuleAdapter {
         }
     }
 
+    /// Get AllowNewResourceModel dynamic property
+    /// Determines whether to use new resource model for tron power calculation
+    /// Default: true (enabled)
+    pub fn support_allow_new_resource_model(&self) -> Result<bool> {
+        let key = b"ALLOW_NEW_RESOURCE_MODEL";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val != 0)
+                } else if !data.is_empty() {
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(true) // Default enabled
+                }
+            },
+            None => {
+                Ok(true) // Default enabled
+            }
+        }
+    }
+
+    /// Get UnfreezeDelay dynamic property
+    /// Returns true if unfreeze delay is enabled (UNFREEZE_DELAY_DAYS > 0)
+    /// Default: false (no delay)
+    pub fn support_unfreeze_delay(&self) -> Result<bool> {
+        let key = b"UNFREEZE_DELAY_DAYS";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val > 0)
+                } else if !data.is_empty() {
+                    Ok(data[0] > 0)
+                } else {
+                    Ok(false) // Default no delay
+                }
+            },
+            None => {
+                Ok(false) // Default no delay
+            }
+        }
+    }
+
     /// Get blackhole address (if crediting instead of burning)
     /// Returns:
     /// - The configured dynamic property value when present (20 raw bytes)
@@ -630,6 +1033,46 @@ impl StorageModuleAdapter {
         }
     }
 
+    /// Get votes record for an address
+    pub fn get_votes(&self, address: &Address) -> Result<Option<VotesRecord>> {
+        let key = self.votes_key(address);
+        tracing::debug!("Getting votes for address {:?}, key: {}",
+                       address, hex::encode(&key));
+
+        match self.storage_engine.get(self.votes_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found votes data, length: {}", data.len());
+                match VotesRecord::deserialize(&data) {
+                    Ok(votes) => {
+                        tracing::debug!("Successfully deserialized votes - old_votes: {}, new_votes: {}",
+                                       votes.old_votes.len(), votes.new_votes.len());
+                        Ok(Some(votes))
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to deserialize votes data: {}", e);
+                        Ok(None) // Return None instead of error for corrupted data
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("No votes found for address {:?}", address);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store votes record
+    pub fn set_votes(&self, address: Address, votes: &VotesRecord) -> Result<()> {
+        let key = self.votes_key(&address);
+        let data = votes.serialize();
+
+        tracing::debug!("Storing votes for address {:?}, key: {}, old_votes: {}, new_votes: {}",
+                       address, hex::encode(&key), votes.old_votes.len(), votes.new_votes.len());
+
+        self.storage_engine.put(self.votes_database(), &key, &data)?;
+        Ok(())
+    }
+
     /// Get freeze record for an address and resource type
     /// resource: 0=BANDWIDTH, 1=ENERGY, 2=TRON_POWER
     pub fn get_freeze_record(&self, address: &Address, resource: u8) -> Result<Option<FreezeRecord>> {
@@ -689,6 +1132,35 @@ impl StorageModuleAdapter {
 
         self.storage_engine.delete(self.freeze_records_database(), &key)?;
         Ok(())
+    }
+
+    /// Get tron power for an address in SUN
+    /// Phase 1: Uses freeze ledger TRON_POWER (resource=2) only
+    /// Phase 2 TODO: Parse Account protobuf and compute getAllTronPower() exactly
+    pub fn get_tron_power_in_sun(&self, address: &Address, _new_model: bool) -> Result<u64> {
+        // Phase 1: Simple implementation using freeze ledger TRON_POWER only
+        // Resource type 2 = TRON_POWER
+        const TRON_POWER_RESOURCE: u8 = 2;
+
+        match self.get_freeze_record(address, TRON_POWER_RESOURCE)? {
+            Some(record) => {
+                tracing::debug!("Found TRON_POWER freeze record for {:?}: amount={} SUN",
+                               address, record.frozen_amount);
+                Ok(record.frozen_amount)
+            },
+            None => {
+                tracing::debug!("No TRON_POWER freeze record for {:?}, returning 0",
+                               address);
+                Ok(0)
+            }
+        }
+
+        // Phase 2 TODO: Implement full getAllTronPower() parity
+        // - Parse Account protobuf from "account" DB
+        // - Read oldTronPower field
+        // - Read frozen V1/V2 balances
+        // - Compute getAllTronPower() per AccountCapsule logic
+        // - Use new_model flag to determine getTronPower() vs getAllTronPower()
     }
 
     /// Get account name for an address

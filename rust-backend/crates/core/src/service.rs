@@ -27,6 +27,10 @@ enum FreezeResource {
     TronPower = 2,
 }
 
+/// Vote witness contract constants
+const MAX_VOTE_NUMBER: usize = 30;
+const TRX_PRECISION: u64 = 1_000_000; // 1 TRX = 1,000,000 SUN
+
 /// Read a protobuf varint from a byte slice
 /// Returns (value, bytes_read)
 fn read_varint(data: &[u8]) -> Result<(u64, usize), String> {
@@ -688,22 +692,322 @@ impl BackendService {
         Err("WITNESS_UPDATE_CONTRACT not yet implemented".to_string())
     }
 
+    /// Parse VoteWitnessContract from protobuf bytes
+    /// message VoteWitnessContract {
+    ///   bytes owner_address = 1;     // field 1 (informational, use transaction.from)
+    ///   repeated Vote votes = 2;     // field 2
+    ///   bool support = 3;            // field 3 (not used)
+    /// }
+    /// message Vote {
+    ///   bytes vote_address = 1;      // field 1
+    ///   int64 vote_count = 2;        // field 2
+    /// }
+    fn parse_vote_witness_contract(data: &[u8]) -> Result<Vec<(revm::primitives::Address, u64)>, String> {
+        use revm::primitives::Address;
+
+        let mut votes = Vec::new();
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => { // owner_address (length-delimited) - skip, use transaction.from
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                },
+                (2, 2) => { // votes (length-delimited, repeated)
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read vote length: {}", e))?;
+                    pos += bytes_read;
+
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid vote data length".to_string());
+                    }
+
+                    let vote_data = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    // Parse Vote message
+                    let (vote_address, vote_count) = Self::parse_vote(vote_data)?;
+                    votes.push((vote_address, vote_count));
+                },
+                (3, 0) => { // support (bool, varint) - not used, skip
+                    let (_, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read support: {}", e))?;
+                    pos += bytes_read;
+                },
+                _ => {
+                    // Skip unknown field
+                    pos = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                }
+            }
+        }
+
+        Ok(votes)
+    }
+
+    /// Parse a single Vote message from protobuf bytes
+    fn parse_vote(data: &[u8]) -> Result<(revm::primitives::Address, u64), String> {
+        use revm::primitives::Address;
+
+        let mut vote_address: Option<Address> = None;
+        let mut vote_count: Option<u64> = None;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read vote field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => { // vote_address (length-delimited)
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read vote_address length: {}", e))?;
+                    pos += bytes_read;
+
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid vote_address length".to_string());
+                    }
+
+                    let addr_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    // Remove 0x41 prefix if present (21-byte Tron address → 20-byte EVM address)
+                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                        &addr_bytes[1..]
+                    } else if addr_bytes.len() == 20 {
+                        addr_bytes
+                    } else {
+                        return Err(format!("Invalid vote_address length: {}", addr_bytes.len()));
+                    };
+
+                    if evm_addr.len() != 20 {
+                        return Err(format!("Invalid EVM address length: {}", evm_addr.len()));
+                    }
+
+                    let mut addr = [0u8; 20];
+                    addr.copy_from_slice(evm_addr);
+                    vote_address = Some(Address::from(addr));
+                },
+                (2, 0) => { // vote_count (varint)
+                    let (count, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read vote_count: {}", e))?;
+                    pos += bytes_read;
+                    vote_count = Some(count);
+                },
+                _ => {
+                    // Skip unknown field
+                    let new_pos = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip vote field: {}", e))?;
+                    pos = new_pos;
+                }
+            }
+        }
+
+        Ok((
+            vote_address.ok_or_else(|| "Missing vote_address".to_string())?,
+            vote_count.ok_or_else(|| "Missing vote_count".to_string())?,
+        ))
+    }
+
+    /// Skip a protobuf field based on wire type
+    fn skip_protobuf_field(data: &[u8], wire_type: u64) -> Result<usize, String> {
+        match wire_type {
+            0 => { // Varint
+                let (_, bytes_read) = read_varint(data)?;
+                Ok(bytes_read)
+            },
+            1 => { // 64-bit
+                Ok(8)
+            },
+            2 => { // Length-delimited
+                let (length, bytes_read) = read_varint(data)?;
+                Ok(bytes_read + length as usize)
+            },
+            5 => { // 32-bit
+                Ok(4)
+            },
+            _ => Err(format!("Unknown wire type: {}", wire_type))
+        }
+    }
+
     /// Execute a VOTE_WITNESS_CONTRACT
     /// Handles witness voting with tally updates
     fn execute_vote_witness_contract(
         &self,
-        _storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
-        _transaction: &TronTransaction,
+        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        // TODO: Implement vote witness logic
-        // - Validate voter account and witness targets
-        // - Update vote mappings and witness tallies
-        // - Handle vote power calculations
-        // - Emit account and storage changes for vote data
+        use tron_backend_execution::{TronExecutionResult, TronStateChange, VotesRecord, Vote};
 
-        warn!("VOTE_WITNESS_CONTRACT not yet implemented - falling back to Java");
-        Err("VOTE_WITNESS_CONTRACT not yet implemented".to_string())
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        info!("VoteWitness owner={} vote_count=?",
+              owner_tron);
+
+        // 1. Parse VoteWitnessContract from transaction data
+        let votes = Self::parse_vote_witness_contract(&transaction.data)
+            .map_err(|e| format!("Failed to parse VoteWitnessContract: {}", e))?;
+
+        info!("Parsed {} votes from VoteWitnessContract", votes.len());
+
+        // 2. Validate votes count
+        if votes.is_empty() {
+            warn!("VoteNumber must more than 0");
+            return Err("VoteNumber must more than 0".to_string());
+        }
+
+        if votes.len() > MAX_VOTE_NUMBER {
+            warn!("VoteNumber more than maxVoteNumber {}", MAX_VOTE_NUMBER);
+            return Err(format!("VoteNumber more than maxVoteNumber {}", MAX_VOTE_NUMBER));
+        }
+
+        // 3. Validate each vote and compute total
+        let mut sum_trx: u64 = 0;
+        for (vote_address, vote_count) in &votes {
+            // Validate vote_count > 0
+            if *vote_count == 0 {
+                warn!("vote count must be greater than 0");
+                return Err("vote count must be greater than 0".to_string());
+            }
+
+            // Validate vote_address is valid (21 bytes with 0x41 prefix)
+            let vote_address_tron = tron_backend_common::to_tron_address(vote_address);
+
+            // Validate account exists
+            match storage_adapter.get_account(vote_address) {
+                Ok(Some(_)) => {
+                    debug!("Account {} exists", vote_address_tron);
+                },
+                Ok(None) => {
+                    warn!("account {} not exist", vote_address_tron);
+                    return Err(format!("account {} not exist", vote_address_tron));
+                },
+                Err(e) => {
+                    error!("Failed to get account {}: {}", vote_address_tron, e);
+                    return Err(format!("Failed to get account {}: {}", vote_address_tron, e));
+                }
+            }
+
+            // Validate witness exists
+            match storage_adapter.get_witness(vote_address) {
+                Ok(Some(_)) => {
+                    debug!("Witness {} exists", vote_address_tron);
+                },
+                Ok(None) => {
+                    warn!("Witness {} not exist", vote_address_tron);
+                    return Err(format!("Witness {} not exist", vote_address_tron));
+                },
+                Err(e) => {
+                    error!("Failed to get witness {}: {}", vote_address_tron, e);
+                    return Err(format!("Failed to get witness {}: {}", vote_address_tron, e));
+                }
+            }
+
+            // Add to sum
+            sum_trx = sum_trx.checked_add(*vote_count)
+                .ok_or_else(|| "Vote count overflow".to_string())?;
+        }
+
+        // 4. Convert sum to SUN and check against tron power
+        let sum_sun = sum_trx.checked_mul(TRX_PRECISION)
+            .ok_or_else(|| "Vote sum overflow when converting to SUN".to_string())?;
+
+        // Get resource model flag
+        let new_model = storage_adapter.support_allow_new_resource_model()
+            .map_err(|e| format!("Failed to get resource model flag: {}", e))?;
+
+        // Get tron power
+        let tron_power_sun = storage_adapter.get_tron_power_in_sun(&owner, new_model)
+            .map_err(|e| format!("Failed to get tron power: {}", e))?;
+
+        info!("VoteWitness owner={} sum={} TRX ({} SUN), tronPower={} SUN, new_model={}",
+              owner_tron, sum_trx, sum_sun, tron_power_sun, new_model);
+
+        if sum_sun > tron_power_sun {
+            warn!("The total number of votes[{}] is greater than the tronPower[{}]",
+                  sum_sun, tron_power_sun);
+            return Err(format!("The total number of votes[{}] is greater than the tronPower[{}]",
+                              sum_sun, tron_power_sun));
+        }
+
+        // 5. Phase 1: Skip withdrawReward (log only)
+        info!("Skipping withdrawReward for {} (Phase 1 - delegation not yet ported)", owner_tron);
+
+        // 6. Load or create VotesRecord
+        let mut votes_record = match storage_adapter.get_votes(&owner) {
+            Ok(Some(record)) => {
+                info!("Found existing votes for {}: old_votes={}, new_votes={}",
+                      owner_tron, record.old_votes.len(), record.new_votes.len());
+                // Update old_votes to current new_votes
+                VotesRecord::new(owner, record.new_votes.clone(), Vec::new())
+            },
+            Ok(None) => {
+                info!("No existing votes for {}, creating new record", owner_tron);
+                VotesRecord::empty(owner)
+            },
+            Err(e) => {
+                error!("Failed to get votes for {}: {}", owner_tron, e);
+                return Err(format!("Failed to get votes: {}", e));
+            }
+        };
+
+        // 7. Clear new_votes and add new votes
+        votes_record.clear_new_votes();
+        for (vote_address, vote_count) in votes {
+            votes_record.add_new_vote(vote_address, vote_count);
+        }
+
+        // 8. Persist votes record
+        storage_adapter.set_votes(owner, &votes_record)
+            .map_err(|e| format!("Failed to set votes: {}", e))?;
+
+        info!("Successfully stored votes for {}: old_votes={}, new_votes={}",
+              owner_tron, votes_record.old_votes.len(), votes_record.new_votes.len());
+
+        // 9. Build result with CSV parity
+        // Get owner account for state change
+        let old_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?;
+
+        // Create state changes (exactly one AccountChange for owner, old==new for CSV parity)
+        let mut state_changes = Vec::new();
+        state_changes.push(TronStateChange::AccountChange {
+            address: owner,
+            old_account: old_account.clone(),
+            new_account: old_account,
+        });
+
+        // Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        info!("VoteWitness completed: owner={}, votes={}, state_changes={}, bandwidth={}",
+              owner_tron, votes_record.new_votes.len(), state_changes.len(), bandwidth_used);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0, // System contracts use 0 energy
+            bandwidth_used,
+            logs: Vec::new(), // No logs for voting
+            state_changes,
+            error: None,
+        })
     }
 
     /// Execute an ACCOUNT_UPDATE_CONTRACT

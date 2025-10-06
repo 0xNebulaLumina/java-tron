@@ -100,34 +100,34 @@ Feature flags:
 
 ## TODOs — Phase 1 (MVP, actuator-accurate core)
 
-[ ] Core dispatch (already present): confirm `execute_non_vm_contract()` branches to `execute_vote_witness_contract()` when `contract_type=VoteWitnessContract`.
-[ ] Implement `execute_vote_witness_contract()` in `rust-backend/crates/core/src/service.rs`:
-  - [ ] Parse `VoteWitnessContract` bytes from `transaction.data` into `(votes: Vec<(Address, u64)>, owner=transaction.from)`.
-  - [ ] Validate:
-    - [ ] `votes.len() > 0 && votes.len() <= 30`.
-    - [ ] Each `vote_count > 0`.
-    - [ ] Each `vote_address` is a valid Tron address (21 bytes, 0x41 prefix) and exists as an account (`get_account`) and as a witness (`get_witness`).
-    - [ ] Sum TRX vote counts, multiply by `TRX_PRECISION=1_000_000` using checked math.
-    - [ ] `sum_sun <= tron_power_sun(owner)`, using resource model flag.
-  - [ ] Execution:
-    - [ ] (Phase 1) Log skip for `withdrawReward` to avoid delegation dependency.
-    - [ ] Create/update `VotesRecord` for owner: set `old_votes` to previous `new_votes` (or empty if none), `clear_new_votes`, append new votes, and persist to `votes` DB.
-    - [ ] (Optional in P1) Do not mutate `Account` votes list (defer to Phase 2 for full parity).
-  - [ ] Result: success, `energy_used=0`, `bandwidth_used`, one `AccountChange` (owner old==new), no logs.
+[x] Core dispatch (already present): confirm `execute_non_vm_contract()` branches to `execute_vote_witness_contract()` when `contract_type=VoteWitnessContract`.
+[x] Implement `execute_vote_witness_contract()` in `rust-backend/crates/core/src/service.rs`:
+  - [x] Parse `VoteWitnessContract` bytes from `transaction.data` into `(votes: Vec<(Address, u64)>, owner=transaction.from)`.
+  - [x] Validate:
+    - [x] `votes.len() > 0 && votes.len() <= 30`.
+    - [x] Each `vote_count > 0`.
+    - [x] Each `vote_address` is a valid Tron address (21 bytes, 0x41 prefix) and exists as an account (`get_account`) and as a witness (`get_witness`).
+    - [x] Sum TRX vote counts, multiply by `TRX_PRECISION=1_000_000` using checked math.
+    - [x] `sum_sun <= tron_power_sun(owner)`, using resource model flag.
+  - [x] Execution:
+    - [x] (Phase 1) Log skip for `withdrawReward` to avoid delegation dependency.
+    - [x] Create/update `VotesRecord` for owner: set `old_votes` to previous `new_votes` (or empty if none), `clear_new_votes`, append new votes, and persist to `votes` DB.
+    - [x] (Optional in P1) Do not mutate `Account` votes list (defer to Phase 2 for full parity).
+  - [x] Result: success, `energy_used=0`, `bandwidth_used`, one `AccountChange` (owner old==new), no logs.
 
-[ ] Add `VotesRecord` helpers in `rust-backend/crates/execution/src/storage_adapter.rs`:
-  - [ ] `votes_database() -> &str` returns "votes".
-  - [ ] `votes_key(&Address) -> Vec<u8>` returns 21-byte Tron address key.
-  - [ ] `get_votes(&Address) -> Result<Option<VotesRecord>>`.
-  - [ ] `set_votes(Address, &VotesRecord) -> Result<()>`.
-  - [ ] `VotesRecord` struct with `address: Address`, `old_votes: Vec<(Address,u64)>`, `new_votes: Vec<(Address,u64)>` and exact protobuf serialize/deserialize.
+[x] Add `VotesRecord` helpers in `rust-backend/crates/execution/src/storage_adapter.rs`:
+  - [x] `votes_database() -> &str` returns "votes".
+  - [x] `votes_key(&Address) -> Vec<u8>` returns 21-byte Tron address key.
+  - [x] `get_votes(&Address) -> Result<Option<VotesRecord>>`.
+  - [x] `set_votes(Address, &VotesRecord) -> Result<()>`.
+  - [x] `VotesRecord` struct with `address: Address`, `old_votes: Vec<(Address,u64)>`, `new_votes: Vec<(Address,u64)>` and exact protobuf serialize/deserialize.
 
-[ ] Dynamic properties helpers (read-only):
-  - [ ] `support_allow_new_resource_model() -> Result<bool>` (key: `ALLOW_NEW_RESOURCE_MODEL`).
-  - [ ] (optional) `support_unfreeze_delay() -> Result<bool>` (key: `UNFREEZE_DELAY_DAYS` > 0) for completeness.
+[x] Dynamic properties helpers (read-only):
+  - [x] `support_allow_new_resource_model() -> Result<bool>` (key: `ALLOW_NEW_RESOURCE_MODEL`).
+  - [x] (optional) `support_unfreeze_delay() -> Result<bool>` (key: `UNFREEZE_DELAY_DAYS` > 0) for completeness.
 
-[ ] Tron power computation (minimum viable for tests):
-  - [ ] `get_tron_power_in_sun(address, new_model: bool) -> Result<u64>` using freeze ledger TRON_POWER (resource=2) via `get_freeze_record()`; default to 0 when absent.
+[x] Tron power computation (minimum viable for tests):
+  - [x] `get_tron_power_in_sun(address, new_model: bool) -> Result<u64>` using freeze ledger TRON_POWER (resource=2) via `get_freeze_record()`; default to 0 when absent.
 
 [ ] Tests (Rust): add to `rust-backend/crates/core/src/tests.rs`:
   - [ ] `test_vote_witness_success_basic` (seed witness entries and freeze ledger; expect success, 0 energy, 1 account change, votes persisted).
@@ -136,9 +136,9 @@ Feature flags:
   - [ ] `test_vote_witness_missing_witness` (non-existent witness → error message).
   - [ ] `test_vote_witness_over_power` (sum exceeds tronPower → error message).
 
-[ ] Config & flags:
-  - [ ] Ensure `execution.remote.vote_witness_enabled` is read (default false in `common/config.rs`, overridden by `rust-backend/config.toml`).
-  - [ ] Keep `emit_storage_changes=false` to avoid CSV drift.
+[x] Config & flags:
+  - [x] Ensure `execution.remote.vote_witness_enabled` is read (default false in `common/config.rs`, overridden by `rust-backend/config.toml`).
+  - [x] Keep `emit_storage_changes=false` to avoid CSV drift.
 
 Deliverable acceptance for Phase 1:
 - Energy 0, 1 deterministic account change, votes DB updated, actuator-accurate validation and messages, flag-gated.
