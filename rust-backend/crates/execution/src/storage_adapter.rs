@@ -21,30 +21,8 @@ impl WitnessInfo {
         }
     }
 
-    /// Serialize witness info to bytes for storage - legacy custom format
-    pub fn serialize(&self) -> Vec<u8> {
-        // Format: [address(20)] + [url_length(4)] + [url(variable)] + [vote_count(8)]
-        let url_bytes = self.url.as_bytes();
-        let mut result = Vec::with_capacity(20 + 4 + url_bytes.len() + 8);
-
-        // Add address (20 bytes)
-        result.extend_from_slice(self.address.as_slice());
-
-        // Add URL length (4 bytes, big-endian)
-        let url_len = url_bytes.len() as u32;
-        result.extend_from_slice(&url_len.to_be_bytes());
-
-        // Add URL bytes
-        result.extend_from_slice(url_bytes);
-
-        // Add vote count (8 bytes, big-endian)
-        result.extend_from_slice(&self.vote_count.to_be_bytes());
-
-        result
-    }
-
     /// Serialize witness info to Java-compatible protobuf format
-    pub fn serialize_protobuf(&self) -> Vec<u8> {
+    pub fn serialize(&self) -> Vec<u8> {
         use prost::Message;
         use crate::protocol::Witness;
 
@@ -74,52 +52,9 @@ impl WitnessInfo {
         witness.encode_to_vec()
     }
 
-    /// Deserialize witness info from bytes - legacy custom format
-    pub fn deserialize(data: &[u8]) -> Result<Self> {
-        if data.len() < 32 { // Minimum: 20 (address) + 4 (url_len) + 0 (url) + 8 (vote_count)
-            return Err(anyhow::anyhow!("Insufficient data for witness info"));
-        }
-
-        let mut offset = 0;
-
-        // Read address (20 bytes)
-        let mut addr_bytes = [0u8; 20];
-        addr_bytes.copy_from_slice(&data[offset..offset + 20]);
-        let address = Address::from(addr_bytes);
-        offset += 20;
-
-        // Read URL length (4 bytes)
-        if offset + 4 > data.len() {
-            return Err(anyhow::anyhow!("Cannot read URL length"));
-        }
-        let url_len = u32::from_be_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
-        ]) as usize;
-        offset += 4;
-
-        // Read URL bytes
-        if offset + url_len > data.len() {
-            return Err(anyhow::anyhow!("Cannot read URL data"));
-        }
-        let url = String::from_utf8(data[offset..offset + url_len].to_vec())
-            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in witness URL: {}", e))?;
-        offset += url_len;
-
-        // Read vote count (8 bytes)
-        if offset + 8 > data.len() {
-            return Err(anyhow::anyhow!("Cannot read vote count"));
-        }
-        let vote_count = u64::from_be_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7]
-        ]);
-
-        Ok(WitnessInfo::new(address, url, vote_count))
-    }
-
     /// Deserialize witness info from Java protobuf format
     /// Returns WitnessInfo if successful, otherwise returns error for fallback
-    pub fn deserialize_protobuf(data: &[u8]) -> Result<Self> {
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
         use prost::Message;
         use crate::protocol::Witness;
 
@@ -1143,7 +1078,7 @@ impl StorageModuleAdapter {
                 tracing::debug!("Found witness data, length: {}", data.len());
 
                 // Step 1: Try protobuf decode (Java-compatible format)
-                match WitnessInfo::deserialize_protobuf(&data) {
+                match WitnessInfo::deserialize(&data) {
                     Ok(witness) => {
                         tracing::debug!("Decoded witness as Protocol.Witness (protobuf) - URL: {}, votes: {}",
                                        witness.url, witness.vote_count);
@@ -1151,19 +1086,7 @@ impl StorageModuleAdapter {
                     },
                     Err(e) => {
                         tracing::debug!("Protobuf decode failed ({}), trying legacy format", e);
-                    }
-                }
-
-                // Step 2: Fall back to legacy custom deserializer
-                match WitnessInfo::deserialize(&data) {
-                    Ok(witness) => {
-                        tracing::debug!("Decoded witness as legacy (custom) format - URL: {}, votes: {}",
-                                       witness.url, witness.vote_count);
-                        Ok(Some(witness))
-                    },
-                    Err(e) => {
-                        tracing::error!("Failed to decode witness in both protobuf and legacy formats: {}", e);
-                        Ok(None) // Return None instead of error for corrupted data
+                        Ok(None)
                     }
                 }
             },
@@ -1179,7 +1102,7 @@ impl StorageModuleAdapter {
     pub fn put_witness(&self, witness: &WitnessInfo) -> Result<()> {
         let key = self.witness_key(&witness.address);
         // Use protobuf encoding for Java compatibility
-        let data = witness.serialize_protobuf();
+        let data = witness.serialize();
 
         tracing::debug!("Storing witness (protobuf format) for address {:?}, key: {}, URL: {}, votes: {}",
                        witness.address, hex::encode(&key), witness.url, witness.vote_count);
@@ -2220,11 +2143,11 @@ mod tests {
         };
 
         // Encode as protobuf
-        let protobuf_data = witness_info.serialize_protobuf();
+        let protobuf_data = witness_info.serialize();
         assert!(!protobuf_data.is_empty(), "Protobuf data should not be empty");
 
         // Decode protobuf
-        let decoded = WitnessInfo::deserialize_protobuf(&protobuf_data)
+        let decoded = WitnessInfo::deserialize(&protobuf_data)
             .expect("Protobuf decode should succeed");
 
         assert_eq!(decoded.address, witness_info.address);
@@ -2269,7 +2192,7 @@ mod tests {
         let legacy_data = witness_info.serialize();
 
         // Try protobuf decode first (should fail)
-        assert!(WitnessInfo::deserialize_protobuf(&legacy_data).is_err(),
+        assert!(WitnessInfo::deserialize(&legacy_data).is_err(),
                 "Protobuf decode of legacy data should fail");
 
         // Legacy decode should succeed
@@ -2302,7 +2225,7 @@ mod tests {
         };
         let data_21 = witness_21.encode_to_vec();
 
-        let decoded_21 = WitnessInfo::deserialize_protobuf(&data_21)
+        let decoded_21 = WitnessInfo::deserialize(&data_21)
             .expect("Should decode 21-byte TRON address");
         assert_eq!(decoded_21.address, Address::from([0x12; 20]));
 
@@ -2320,7 +2243,7 @@ mod tests {
         };
         let data_20 = witness_20.encode_to_vec();
 
-        let decoded_20 = WitnessInfo::deserialize_protobuf(&data_20)
+        let decoded_20 = WitnessInfo::deserialize(&data_20)
             .expect("Should decode 20-byte address");
         assert_eq!(decoded_20.address, Address::from([0x34; 20]));
     }
@@ -2344,7 +2267,7 @@ mod tests {
         let data = witness.encode_to_vec();
 
         // Should fail on negative vote count
-        assert!(WitnessInfo::deserialize_protobuf(&data).is_err(),
+        assert!(WitnessInfo::deserialize(&data).is_err(),
                 "Should reject negative voteCount");
     }
 
@@ -2367,7 +2290,7 @@ mod tests {
         let data = witness.encode_to_vec();
 
         // Should fail on invalid address length
-        assert!(WitnessInfo::deserialize_protobuf(&data).is_err(),
+        assert!(WitnessInfo::deserialize(&data).is_err(),
                 "Should reject invalid address length");
     }
 
@@ -2382,8 +2305,8 @@ mod tests {
         };
 
         // Protobuf roundtrip
-        let protobuf_data = witness_info.serialize_protobuf();
-        let decoded_pb = WitnessInfo::deserialize_protobuf(&protobuf_data)
+        let protobuf_data = witness_info.serialize();
+        let decoded_pb = WitnessInfo::deserialize(&protobuf_data)
             .expect("Should decode empty URL from protobuf");
         assert_eq!(decoded_pb.url, "");
 
