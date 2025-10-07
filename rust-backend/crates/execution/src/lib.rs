@@ -7,6 +7,11 @@ use async_trait::async_trait;
 
 use tron_backend_common::{Module, ModuleHealth, ExecutionConfig};
 
+// Include generated protobuf code for Witness
+pub mod protocol {
+    include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
+}
+
 // Re-export key types for external use
 pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, TronContractType, TxMetadata};
 pub use precompiles::TronPrecompiles;

@@ -3122,6 +3122,8 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "primitive-types",
+ "prost",
+ "prost-build",
  "revm",
  "revm-interpreter",
  "revm-precompile",
