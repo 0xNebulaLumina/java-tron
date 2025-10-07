@@ -575,11 +575,23 @@ pub trait StorageAdapter: Send + Sync {
 }
 
 /// In-memory storage adapter for testing
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InMemoryStorageAdapter {
     accounts: HashMap<Address, AccountInfo>,
     codes: HashMap<Address, Bytecode>,
     storage: HashMap<(Address, U256), U256>,
+    freeze_records: std::sync::Arc<std::sync::RwLock<HashMap<(Address, u8), FreezeRecord>>>,
+}
+
+impl Clone for InMemoryStorageAdapter {
+    fn clone(&self) -> Self {
+        Self {
+            accounts: self.accounts.clone(),
+            codes: self.codes.clone(),
+            storage: self.storage.clone(),
+            freeze_records: self.freeze_records.clone(),
+        }
+    }
 }
 
 impl InMemoryStorageAdapter {
@@ -588,7 +600,69 @@ impl InMemoryStorageAdapter {
             accounts: HashMap::new(),
             codes: HashMap::new(),
             storage: HashMap::new(),
+            freeze_records: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Get freeze record for an address and resource
+    pub fn get_freeze_record(&self, address: &Address, resource: u8) -> Result<Option<FreezeRecord>> {
+        Ok(self.freeze_records.read().unwrap().get(&(*address, resource)).cloned())
+    }
+
+    /// Set freeze record for an address and resource
+    pub fn set_freeze_record(&self, address: &Address, resource: u8, frozen_amount: u64, expiration_timestamp: i64) -> Result<()> {
+        let record = FreezeRecord {
+            frozen_amount,
+            expiration_timestamp,
+        };
+        self.freeze_records.write().unwrap().insert((*address, resource), record);
+        Ok(())
+    }
+
+    /// Get tron power for an address in SUN
+    pub fn get_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
+        // Resource types as defined in Tron protocol
+        const BANDWIDTH: u8 = 0;
+        const ENERGY: u8 = 1;
+        const TRON_POWER: u8 = 2;
+
+        let mut total: u64 = 0;
+        let mut bandwidth_amount: u64 = 0;
+        let mut energy_amount: u64 = 0;
+        let mut tron_power_amount: u64 = 0;
+
+        // Sum frozen amounts across all three resource types
+        for resource in [BANDWIDTH, ENERGY, TRON_POWER] {
+            if let Some(record) = self.get_freeze_record(address, resource)? {
+                let amount = record.frozen_amount;
+                total = total.checked_add(amount)
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "Tron power overflow when adding resource {} amount {} to total {}",
+                        resource, amount, total
+                    ))?;
+
+                // Track per-resource amounts for logging
+                match resource {
+                    BANDWIDTH => bandwidth_amount = amount,
+                    ENERGY => energy_amount = amount,
+                    TRON_POWER => tron_power_amount = amount,
+                    _ => {}
+                }
+            }
+        }
+
+        // Log the computation with all relevant details
+        tracing::info!(
+            address = ?address,
+            new_model = new_model,
+            bandwidth = bandwidth_amount,
+            energy = energy_amount,
+            tron_power_legacy = tron_power_amount,
+            total = total,
+            "Computed tron power from freeze ledger (in-memory)"
+        );
+
+        Ok(total)
     }
 }
 
@@ -1224,32 +1298,50 @@ impl StorageModuleAdapter {
     }
 
     /// Get tron power for an address in SUN
-    /// Phase 1: Uses freeze ledger TRON_POWER (resource=2) only
-    /// Phase 2 TODO: Parse Account protobuf and compute getAllTronPower() exactly
-    pub fn get_tron_power_in_sun(&self, address: &Address, _new_model: bool) -> Result<u64> {
-        // Phase 1: Simple implementation using freeze ledger TRON_POWER only
-        // Resource type 2 = TRON_POWER
-        const TRON_POWER_RESOURCE: u8 = 2;
+    /// Sums frozen amounts across BANDWIDTH (0), ENERGY (1), and TRON_POWER (2) resources
+    pub fn get_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
+        // Resource types as defined in Tron protocol
+        const BANDWIDTH: u8 = 0;
+        const ENERGY: u8 = 1;
+        const TRON_POWER: u8 = 2;
 
-        match self.get_freeze_record(address, TRON_POWER_RESOURCE)? {
-            Some(record) => {
-                tracing::debug!("Found TRON_POWER freeze record for {:?}: amount={} SUN",
-                               address, record.frozen_amount);
-                Ok(record.frozen_amount)
-            },
-            None => {
-                tracing::debug!("No TRON_POWER freeze record for {:?}, returning 0",
-                               address);
-                Ok(0)
+        let mut total: u64 = 0;
+        let mut bandwidth_amount: u64 = 0;
+        let mut energy_amount: u64 = 0;
+        let mut tron_power_amount: u64 = 0;
+
+        // Sum frozen amounts across all three resource types
+        for resource in [BANDWIDTH, ENERGY, TRON_POWER] {
+            if let Some(record) = self.get_freeze_record(address, resource)? {
+                let amount = record.frozen_amount;
+                total = total.checked_add(amount)
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "Tron power overflow when adding resource {} amount {} to total {}",
+                        resource, amount, total
+                    ))?;
+
+                // Track per-resource amounts for logging
+                match resource {
+                    BANDWIDTH => bandwidth_amount = amount,
+                    ENERGY => energy_amount = amount,
+                    TRON_POWER => tron_power_amount = amount,
+                    _ => {}
+                }
             }
         }
 
-        // Phase 2 TODO: Implement full getAllTronPower() parity
-        // - Parse Account protobuf from "account" DB
-        // - Read oldTronPower field
-        // - Read frozen V1/V2 balances
-        // - Compute getAllTronPower() per AccountCapsule logic
-        // - Use new_model flag to determine getTronPower() vs getAllTronPower()
+        // Log the computation with all relevant details
+        tracing::info!(
+            address = ?address,
+            new_model = new_model,
+            bandwidth = bandwidth_amount,
+            energy = energy_amount,
+            tron_power_legacy = tron_power_amount,
+            total = total,
+            "Computed tron power from freeze ledger"
+        );
+
+        Ok(total)
     }
 
     /// Get account name for an address
@@ -2300,5 +2392,113 @@ mod tests {
         let decoded_legacy = WitnessInfo::deserialize(&legacy_data)
             .expect("Should decode empty URL from legacy");
         assert_eq!(decoded_legacy.url, "");
+    }
+
+    // Tron power computation tests
+
+    #[test]
+    fn test_tron_power_bandwidth_only() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xab; 20]);
+
+        // Set freeze record for BANDWIDTH (resource=0)
+        storage.set_freeze_record(&address, 0, 1_000_000, 1000000000)
+            .expect("Should set freeze record");
+
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 1_000_000, "Expected power from bandwidth only");
+    }
+
+    #[test]
+    fn test_tron_power_energy_only() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xbc; 20]);
+
+        // Set freeze record for ENERGY (resource=1)
+        storage.set_freeze_record(&address, 1, 2_000_000, 1000000000)
+            .expect("Should set freeze record");
+
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 2_000_000, "Expected power from energy only");
+    }
+
+    #[test]
+    fn test_tron_power_sum_bw_energy() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xcd; 20]);
+
+        // Set freeze records for both BANDWIDTH and ENERGY
+        storage.set_freeze_record(&address, 0, 1_000_000, 1000000000)
+            .expect("Should set bandwidth freeze");
+        storage.set_freeze_record(&address, 1, 2_000_000, 1000000000)
+            .expect("Should set energy freeze");
+
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 3_000_000, "Expected sum of bandwidth + energy");
+    }
+
+    #[test]
+    fn test_tron_power_includes_tron_power_legacy() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xde; 20]);
+
+        // Set freeze record for TRON_POWER (resource=2) only
+        storage.set_freeze_record(&address, 2, 500_000, 1000000000)
+            .expect("Should set tron_power freeze");
+
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 500_000, "Expected power from legacy tron_power");
+    }
+
+    #[test]
+    fn test_tron_power_all_three() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xef; 20]);
+
+        // Set freeze records for all three resources
+        storage.set_freeze_record(&address, 0, 1_000_000, 1000000000)
+            .expect("Should set bandwidth freeze");
+        storage.set_freeze_record(&address, 1, 2_000_000, 1000000000)
+            .expect("Should set energy freeze");
+        storage.set_freeze_record(&address, 2, 500_000, 1000000000)
+            .expect("Should set tron_power freeze");
+
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 3_500_000, "Expected sum of all three resources");
+    }
+
+    #[test]
+    fn test_tron_power_overflow_protection() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xf0; 20]);
+
+        // Set freeze records that would overflow u64
+        let near_max = u64::MAX - 100_000;
+        storage.set_freeze_record(&address, 0, near_max, 1000000000)
+            .expect("Should set bandwidth freeze");
+        storage.set_freeze_record(&address, 1, 200_000, 1000000000)
+            .expect("Should set energy freeze");
+
+        // Should return error due to overflow
+        let result = storage.get_tron_power_in_sun(&address, false);
+        assert!(result.is_err(), "Expected overflow error");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("overflow"), "Error should mention overflow");
+    }
+
+    #[test]
+    fn test_tron_power_no_freeze_records() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xa1; 20]);
+
+        // No freeze records set
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 0, "Expected zero power when no freeze records");
     }
 }
