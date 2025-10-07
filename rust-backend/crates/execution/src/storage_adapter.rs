@@ -21,67 +21,74 @@ impl WitnessInfo {
         }
     }
 
-    /// Serialize witness info to bytes for storage
+    /// Serialize witness info to Java-compatible protobuf format
     pub fn serialize(&self) -> Vec<u8> {
-        // Format: [address(20)] + [url_length(4)] + [url(variable)] + [vote_count(8)]
-        let url_bytes = self.url.as_bytes();
-        let mut result = Vec::with_capacity(20 + 4 + url_bytes.len() + 8);
+        use prost::Message;
+        use crate::protocol::Witness;
 
-        // Add address (20 bytes)
-        result.extend_from_slice(self.address.as_slice());
+        // Build TRON address (21 bytes: 0x41 prefix + 20-byte address)
+        let mut tron_address = Vec::with_capacity(21);
+        tron_address.push(0x41); // TRON address prefix
+        tron_address.extend_from_slice(self.address.as_slice());
 
-        // Add URL length (4 bytes, big-endian)
-        let url_len = url_bytes.len() as u32;
-        result.extend_from_slice(&url_len.to_be_bytes());
+        // Convert vote_count to i64 (panic if exceeds i64::MAX)
+        let vote_count_i64 = self.vote_count.try_into()
+            .expect("vote_count exceeds i64::MAX");
 
-        // Add URL bytes
-        result.extend_from_slice(url_bytes);
+        // Build protobuf Witness message
+        let witness = Witness {
+            address: tron_address,
+            vote_count: vote_count_i64,
+            pub_key: vec![], // Empty, not used in current implementation
+            url: self.url.clone(),
+            total_produced: 0, // Default
+            total_missed: 0,   // Default
+            latest_block_num: 0, // Default
+            latest_slot_num: 0,  // Default
+            is_jobs: true, // Set to true for parity with Java genesis writes
+        };
 
-        // Add vote count (8 bytes, big-endian)
-        result.extend_from_slice(&self.vote_count.to_be_bytes());
-
-        result
+        // Encode to bytes
+        witness.encode_to_vec()
     }
 
-    /// Deserialize witness info from bytes
+    /// Deserialize witness info from Java protobuf format
+    /// Returns WitnessInfo if successful, otherwise returns error for fallback
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        if data.len() < 32 { // Minimum: 20 (address) + 4 (url_len) + 0 (url) + 8 (vote_count)
-            return Err(anyhow::anyhow!("Insufficient data for witness info"));
-        }
+        use prost::Message;
+        use crate::protocol::Witness;
 
-        let mut offset = 0;
+        // Try to decode as protocol.Witness protobuf
+        let witness = Witness::decode(data)
+            .map_err(|e| anyhow::anyhow!("Protobuf decode failed: {}", e))?;
 
-        // Read address (20 bytes)
-        let mut addr_bytes = [0u8; 20];
-        addr_bytes.copy_from_slice(&data[offset..offset + 20]);
-        let address = Address::from(addr_bytes);
-        offset += 20;
+        // Extract and validate address
+        let address = if witness.address.len() == 21 && witness.address[0] == 0x41 {
+            // TRON format: 21 bytes with 0x41 prefix, strip prefix for 20-byte address
+            let mut addr_bytes = [0u8; 20];
+            addr_bytes.copy_from_slice(&witness.address[1..21]);
+            Address::from(addr_bytes)
+        } else if witness.address.len() == 20 {
+            // Already 20-byte format
+            let mut addr_bytes = [0u8; 20];
+            addr_bytes.copy_from_slice(&witness.address[..20]);
+            Address::from(addr_bytes)
+        } else {
+            return Err(anyhow::anyhow!(
+                "Invalid address length in protobuf: {} (expected 20 or 21)",
+                witness.address.len()
+            ));
+        };
 
-        // Read URL length (4 bytes)
-        if offset + 4 > data.len() {
-            return Err(anyhow::anyhow!("Cannot read URL length"));
-        }
-        let url_len = u32::from_be_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
-        ]) as usize;
-        offset += 4;
+        // Extract URL (string field)
+        let url = witness.url;
 
-        // Read URL bytes
-        if offset + url_len > data.len() {
-            return Err(anyhow::anyhow!("Cannot read URL data"));
-        }
-        let url = String::from_utf8(data[offset..offset + url_len].to_vec())
-            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in witness URL: {}", e))?;
-        offset += url_len;
-
-        // Read vote count (8 bytes)
-        if offset + 8 > data.len() {
-            return Err(anyhow::anyhow!("Cannot read vote count"));
-        }
-        let vote_count = u64::from_be_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-            data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7]
-        ]);
+        // Extract voteCount (int64 -> u64)
+        let vote_count = if witness.vote_count < 0 {
+            return Err(anyhow::anyhow!("Negative voteCount in protobuf: {}", witness.vote_count));
+        } else {
+            witness.vote_count as u64
+        };
 
         Ok(WitnessInfo::new(address, url, vote_count))
     }
@@ -138,6 +145,346 @@ impl FreezeRecord {
     }
 }
 
+/// TRON Vote - single vote entry (vote_address, vote_count)
+#[derive(Debug, Clone)]
+pub struct Vote {
+    pub vote_address: Address, // 20-byte witness address
+    pub vote_count: u64,       // Number of votes
+}
+
+impl Vote {
+    pub fn new(vote_address: Address, vote_count: u64) -> Self {
+        Self {
+            vote_address,
+            vote_count,
+        }
+    }
+
+    /// Serialize Vote to protobuf format
+    /// message Vote {
+    ///   bytes vote_address = 1;  // field 1, length-delimited
+    ///   int64 vote_count = 2;    // field 2, varint
+    /// }
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Field 1: vote_address (length-delimited, 21 bytes with 0x41 prefix)
+        let mut tron_address = Vec::with_capacity(21);
+        tron_address.push(0x41); // Tron address prefix
+        tron_address.extend_from_slice(self.vote_address.as_slice());
+
+        data.push(0x0a); // field 1, wire type 2 (length-delimited)
+        Self::write_varint(&mut data, tron_address.len() as u64);
+        data.extend_from_slice(&tron_address);
+
+        // Field 2: vote_count (varint)
+        data.push(0x10); // field 2, wire type 0 (varint)
+        Self::write_varint(&mut data, self.vote_count);
+
+        data
+    }
+
+    /// Deserialize Vote from protobuf format
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        let mut pos = 0;
+        let mut vote_address: Option<Address> = None;
+        let mut vote_count: Option<u64> = None;
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, new_pos) = Self::read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => { // vote_address (length-delimited)
+                    let (length, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos;
+                    if pos + length as usize > data.len() {
+                        return Err(anyhow::anyhow!("Invalid vote_address length"));
+                    }
+                    let addr_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    // Remove 0x41 prefix if present
+                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                        &addr_bytes[1..]
+                    } else if addr_bytes.len() == 20 {
+                        addr_bytes
+                    } else {
+                        return Err(anyhow::anyhow!("Invalid vote_address length: {}", addr_bytes.len()));
+                    };
+
+                    let mut addr = [0u8; 20];
+                    addr.copy_from_slice(evm_addr);
+                    vote_address = Some(Address::from(addr));
+                },
+                (2, 0) => { // vote_count (varint)
+                    let (count, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos;
+                    vote_count = Some(count);
+                },
+                _ => {
+                    // Skip unknown field
+                    pos = Self::skip_field(data, pos, wire_type)?;
+                }
+            }
+        }
+
+        Ok(Vote::new(
+            vote_address.ok_or_else(|| anyhow::anyhow!("Missing vote_address"))?,
+            vote_count.ok_or_else(|| anyhow::anyhow!("Missing vote_count"))?,
+        ))
+    }
+
+    fn write_varint(output: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            output.push(((value & 0x7F) | 0x80) as u8);
+            value >>= 7;
+        }
+        output.push(value as u8);
+    }
+
+    fn read_varint(data: &[u8], mut pos: usize) -> Result<(u64, usize)> {
+        let mut result = 0u64;
+        let mut shift = 0;
+
+        while pos < data.len() {
+            let byte = data[pos];
+            pos += 1;
+
+            result |= ((byte & 0x7F) as u64) << shift;
+
+            if (byte & 0x80) == 0 {
+                return Ok((result, pos));
+            }
+
+            shift += 7;
+            if shift >= 64 {
+                return Err(anyhow::anyhow!("Varint too long"));
+            }
+        }
+
+        Err(anyhow::anyhow!("Unexpected end of data while reading varint"))
+    }
+
+    fn skip_field(data: &[u8], pos: usize, wire_type: u64) -> Result<usize> {
+        match wire_type {
+            0 => { // Varint
+                let (_, new_pos) = Self::read_varint(data, pos)?;
+                Ok(new_pos)
+            },
+            1 => { // 64-bit
+                Ok(pos + 8)
+            },
+            2 => { // Length-delimited
+                let (length, new_pos) = Self::read_varint(data, pos)?;
+                Ok(new_pos + length as usize)
+            },
+            5 => { // 32-bit
+                Ok(pos + 4)
+            },
+            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type))
+        }
+    }
+}
+
+/// TRON VotesRecord - tracks voting history for an account
+/// Equivalent to VotesCapsule in java-tron
+#[derive(Debug, Clone)]
+pub struct VotesRecord {
+    pub address: Address,         // 20-byte account address
+    pub old_votes: Vec<Vote>,     // Previous votes
+    pub new_votes: Vec<Vote>,     // Current votes
+}
+
+impl VotesRecord {
+    pub fn new(address: Address, old_votes: Vec<Vote>, new_votes: Vec<Vote>) -> Self {
+        Self {
+            address,
+            old_votes,
+            new_votes,
+        }
+    }
+
+    /// Create empty VotesRecord
+    pub fn empty(address: Address) -> Self {
+        Self::new(address, Vec::new(), Vec::new())
+    }
+
+    /// Clear new_votes
+    pub fn clear_new_votes(&mut self) {
+        self.new_votes.clear();
+    }
+
+    /// Add a new vote
+    pub fn add_new_vote(&mut self, vote_address: Address, vote_count: u64) {
+        self.new_votes.push(Vote::new(vote_address, vote_count));
+    }
+
+    /// Serialize VotesRecord to protobuf format
+    /// message Votes {
+    ///   bytes address = 1;           // field 1, length-delimited
+    ///   repeated Vote old_votes = 2; // field 2, length-delimited
+    ///   repeated Vote new_votes = 3; // field 3, length-delimited
+    /// }
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Field 1: address (length-delimited, 21 bytes with 0x41 prefix)
+        let mut tron_address = Vec::with_capacity(21);
+        tron_address.push(0x41); // Tron address prefix
+        tron_address.extend_from_slice(self.address.as_slice());
+
+        data.push(0x0a); // field 1, wire type 2 (length-delimited)
+        Self::write_varint(&mut data, tron_address.len() as u64);
+        data.extend_from_slice(&tron_address);
+
+        // Field 2: old_votes (repeated, each is length-delimited)
+        for vote in &self.old_votes {
+            let vote_bytes = vote.serialize();
+            data.push(0x12); // field 2, wire type 2 (length-delimited)
+            Self::write_varint(&mut data, vote_bytes.len() as u64);
+            data.extend_from_slice(&vote_bytes);
+        }
+
+        // Field 3: new_votes (repeated, each is length-delimited)
+        for vote in &self.new_votes {
+            let vote_bytes = vote.serialize();
+            data.push(0x1a); // field 3, wire type 2 (length-delimited)
+            Self::write_varint(&mut data, vote_bytes.len() as u64);
+            data.extend_from_slice(&vote_bytes);
+        }
+
+        data
+    }
+
+    /// Deserialize VotesRecord from protobuf format
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        let mut pos = 0;
+        let mut address: Option<Address> = None;
+        let mut old_votes = Vec::new();
+        let mut new_votes = Vec::new();
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, new_pos) = Self::read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => { // address (length-delimited)
+                    let (length, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos;
+                    if pos + length as usize > data.len() {
+                        return Err(anyhow::anyhow!("Invalid address length"));
+                    }
+                    let addr_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    // Remove 0x41 prefix if present
+                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                        &addr_bytes[1..]
+                    } else if addr_bytes.len() == 20 {
+                        addr_bytes
+                    } else {
+                        return Err(anyhow::anyhow!("Invalid address length: {}", addr_bytes.len()));
+                    };
+
+                    let mut addr = [0u8; 20];
+                    addr.copy_from_slice(evm_addr);
+                    address = Some(Address::from(addr));
+                },
+                (2, 2) => { // old_votes (length-delimited)
+                    let (length, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos;
+                    if pos + length as usize > data.len() {
+                        return Err(anyhow::anyhow!("Invalid old_votes length"));
+                    }
+                    let vote_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+                    old_votes.push(Vote::deserialize(vote_bytes)?);
+                },
+                (3, 2) => { // new_votes (length-delimited)
+                    let (length, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos;
+                    if pos + length as usize > data.len() {
+                        return Err(anyhow::anyhow!("Invalid new_votes length"));
+                    }
+                    let vote_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+                    new_votes.push(Vote::deserialize(vote_bytes)?);
+                },
+                _ => {
+                    // Skip unknown field
+                    pos = Self::skip_field(data, pos, wire_type)?;
+                }
+            }
+        }
+
+        Ok(VotesRecord::new(
+            address.ok_or_else(|| anyhow::anyhow!("Missing address"))?,
+            old_votes,
+            new_votes,
+        ))
+    }
+
+    fn write_varint(output: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            output.push(((value & 0x7F) | 0x80) as u8);
+            value >>= 7;
+        }
+        output.push(value as u8);
+    }
+
+    fn read_varint(data: &[u8], mut pos: usize) -> Result<(u64, usize)> {
+        let mut result = 0u64;
+        let mut shift = 0;
+
+        while pos < data.len() {
+            let byte = data[pos];
+            pos += 1;
+
+            result |= ((byte & 0x7F) as u64) << shift;
+
+            if (byte & 0x80) == 0 {
+                return Ok((result, pos));
+            }
+
+            shift += 7;
+            if shift >= 64 {
+                return Err(anyhow::anyhow!("Varint too long"));
+            }
+        }
+
+        Err(anyhow::anyhow!("Unexpected end of data while reading varint"))
+    }
+
+    fn skip_field(data: &[u8], pos: usize, wire_type: u64) -> Result<usize> {
+        match wire_type {
+            0 => { // Varint
+                let (_, new_pos) = Self::read_varint(data, pos)?;
+                Ok(new_pos)
+            },
+            1 => { // 64-bit
+                Ok(pos + 8)
+            },
+            2 => { // Length-delimited
+                let (length, new_pos) = Self::read_varint(data, pos)?;
+                Ok(new_pos + length as usize)
+            },
+            5 => { // 32-bit
+                Ok(pos + 4)
+            },
+            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type))
+        }
+    }
+}
+
 /// Storage adapter trait for different storage backends
 pub trait StorageAdapter: Send + Sync {
     /// Get account information
@@ -163,11 +510,23 @@ pub trait StorageAdapter: Send + Sync {
 }
 
 /// In-memory storage adapter for testing
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InMemoryStorageAdapter {
     accounts: HashMap<Address, AccountInfo>,
     codes: HashMap<Address, Bytecode>,
     storage: HashMap<(Address, U256), U256>,
+    freeze_records: std::sync::Arc<std::sync::RwLock<HashMap<(Address, u8), FreezeRecord>>>,
+}
+
+impl Clone for InMemoryStorageAdapter {
+    fn clone(&self) -> Self {
+        Self {
+            accounts: self.accounts.clone(),
+            codes: self.codes.clone(),
+            storage: self.storage.clone(),
+            freeze_records: self.freeze_records.clone(),
+        }
+    }
 }
 
 impl InMemoryStorageAdapter {
@@ -176,7 +535,69 @@ impl InMemoryStorageAdapter {
             accounts: HashMap::new(),
             codes: HashMap::new(),
             storage: HashMap::new(),
+            freeze_records: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Get freeze record for an address and resource
+    pub fn get_freeze_record(&self, address: &Address, resource: u8) -> Result<Option<FreezeRecord>> {
+        Ok(self.freeze_records.read().unwrap().get(&(*address, resource)).cloned())
+    }
+
+    /// Set freeze record for an address and resource
+    pub fn set_freeze_record(&self, address: &Address, resource: u8, frozen_amount: u64, expiration_timestamp: i64) -> Result<()> {
+        let record = FreezeRecord {
+            frozen_amount,
+            expiration_timestamp,
+        };
+        self.freeze_records.write().unwrap().insert((*address, resource), record);
+        Ok(())
+    }
+
+    /// Get tron power for an address in SUN
+    pub fn get_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
+        // Resource types as defined in Tron protocol
+        const BANDWIDTH: u8 = 0;
+        const ENERGY: u8 = 1;
+        const TRON_POWER: u8 = 2;
+
+        let mut total: u64 = 0;
+        let mut bandwidth_amount: u64 = 0;
+        let mut energy_amount: u64 = 0;
+        let mut tron_power_amount: u64 = 0;
+
+        // Sum frozen amounts across all three resource types
+        for resource in [BANDWIDTH, ENERGY, TRON_POWER] {
+            if let Some(record) = self.get_freeze_record(address, resource)? {
+                let amount = record.frozen_amount;
+                total = total.checked_add(amount)
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "Tron power overflow when adding resource {} amount {} to total {}",
+                        resource, amount, total
+                    ))?;
+
+                // Track per-resource amounts for logging
+                match resource {
+                    BANDWIDTH => bandwidth_amount = amount,
+                    ENERGY => energy_amount = amount,
+                    TRON_POWER => tron_power_amount = amount,
+                    _ => {}
+                }
+            }
+        }
+
+        // Log the computation with all relevant details
+        tracing::info!(
+            address = ?address,
+            new_model = new_model,
+            bandwidth = bandwidth_amount,
+            energy = energy_amount,
+            tron_power_legacy = tron_power_amount,
+            total = total,
+            "Computed tron power from freeze ledger (in-memory)"
+        );
+
+        Ok(total)
     }
 }
 
@@ -266,6 +687,11 @@ impl StorageModuleAdapter {
         "witness"
     }
 
+    /// Get the appropriate database name for votes store
+    fn votes_database(&self) -> &str {
+        "votes"
+    }
+
     /// Convert Address to storage key for accounts (matching java-tron format)
     /// Java-tron stores accounts using 21-byte addresses with 0x41 prefix
     /// REVM uses 20-byte addresses, so we need to add the 0x41 prefix
@@ -283,6 +709,14 @@ impl StorageModuleAdapter {
 
     /// Convert Address to storage key for witness store (21-byte address with 0x41 prefix)
     fn witness_key(&self, address: &Address) -> Vec<u8> {
+        let mut key = Vec::with_capacity(21);
+        key.push(0x41); // Tron address prefix
+        key.extend_from_slice(address.as_slice()); // 20-byte address
+        key
+    }
+
+    /// Convert Address to storage key for votes store (21-byte address with 0x41 prefix)
+    fn votes_key(&self, address: &Address) -> Vec<u8> {
         let mut key = Vec::with_capacity(21);
         key.push(0x41); // Tron address prefix
         key.extend_from_slice(address.as_slice()); // 20-byte address
@@ -547,6 +981,56 @@ impl StorageModuleAdapter {
         }
     }
 
+    /// Get AllowNewResourceModel dynamic property
+    /// Determines whether to use new resource model for tron power calculation
+    /// Default: true (enabled)
+    pub fn support_allow_new_resource_model(&self) -> Result<bool> {
+        let key = b"ALLOW_NEW_RESOURCE_MODEL";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val != 0)
+                } else if !data.is_empty() {
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(true) // Default enabled
+                }
+            },
+            None => {
+                Ok(true) // Default enabled
+            }
+        }
+    }
+
+    /// Get UnfreezeDelay dynamic property
+    /// Returns true if unfreeze delay is enabled (UNFREEZE_DELAY_DAYS > 0)
+    /// Default: false (no delay)
+    pub fn support_unfreeze_delay(&self) -> Result<bool> {
+        let key = b"UNFREEZE_DELAY_DAYS";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val > 0)
+                } else if !data.is_empty() {
+                    Ok(data[0] > 0)
+                } else {
+                    Ok(false) // Default no delay
+                }
+            },
+            None => {
+                Ok(false) // Default no delay
+            }
+        }
+    }
+
     /// Get blackhole address (if crediting instead of burning)
     /// Returns:
     /// - The configured dynamic property value when present (20 raw bytes)
@@ -583,6 +1067,7 @@ impl StorageModuleAdapter {
     }
 
     /// Get witness information by address
+    /// Uses dual-decoder: tries protobuf first (Java format), falls back to legacy custom format
     pub fn get_witness(&self, address: &Address) -> Result<Option<WitnessInfo>> {
         let key = self.witness_key(address);
         tracing::debug!("Getting witness for address {:?}, key: {}",
@@ -591,15 +1076,17 @@ impl StorageModuleAdapter {
         match self.storage_engine.get(self.witness_database(), &key)? {
             Some(data) => {
                 tracing::debug!("Found witness data, length: {}", data.len());
+
+                // Step 1: Try protobuf decode (Java-compatible format)
                 match WitnessInfo::deserialize(&data) {
                     Ok(witness) => {
-                        tracing::debug!("Successfully deserialized witness - URL: {}, votes: {}",
+                        tracing::debug!("Decoded witness as Protocol.Witness (protobuf) - URL: {}, votes: {}",
                                        witness.url, witness.vote_count);
-                        Ok(Some(witness))
+                        return Ok(Some(witness));
                     },
                     Err(e) => {
-                        tracing::error!("Failed to deserialize witness data: {}", e);
-                        Ok(None) // Return None instead of error for corrupted data
+                        tracing::debug!("Protobuf decode failed ({}), trying legacy format", e);
+                        Ok(None)
                     }
                 }
             },
@@ -611,11 +1098,13 @@ impl StorageModuleAdapter {
     }
 
     /// Store witness information
+    /// Uses protobuf encoding by default for Java compatibility
     pub fn put_witness(&self, witness: &WitnessInfo) -> Result<()> {
         let key = self.witness_key(&witness.address);
+        // Use protobuf encoding for Java compatibility
         let data = witness.serialize();
 
-        tracing::debug!("Storing witness for address {:?}, key: {}, URL: {}, votes: {}",
+        tracing::debug!("Storing witness (protobuf format) for address {:?}, key: {}, URL: {}, votes: {}",
                        witness.address, hex::encode(&key), witness.url, witness.vote_count);
 
         self.storage_engine.put(self.witness_database(), &key, &data)?;
@@ -628,6 +1117,46 @@ impl StorageModuleAdapter {
             Some(_) => Ok(true),
             None => Ok(false),
         }
+    }
+
+    /// Get votes record for an address
+    pub fn get_votes(&self, address: &Address) -> Result<Option<VotesRecord>> {
+        let key = self.votes_key(address);
+        tracing::debug!("Getting votes for address {:?}, key: {}",
+                       address, hex::encode(&key));
+
+        match self.storage_engine.get(self.votes_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found votes data, length: {}", data.len());
+                match VotesRecord::deserialize(&data) {
+                    Ok(votes) => {
+                        tracing::debug!("Successfully deserialized votes - old_votes: {}, new_votes: {}",
+                                       votes.old_votes.len(), votes.new_votes.len());
+                        Ok(Some(votes))
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to deserialize votes data: {}", e);
+                        Ok(None) // Return None instead of error for corrupted data
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("No votes found for address {:?}", address);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store votes record
+    pub fn set_votes(&self, address: Address, votes: &VotesRecord) -> Result<()> {
+        let key = self.votes_key(&address);
+        let data = votes.serialize();
+
+        tracing::debug!("Storing votes for address {:?}, key: {}, old_votes: {}, new_votes: {}",
+                       address, hex::encode(&key), votes.old_votes.len(), votes.new_votes.len());
+
+        self.storage_engine.put(self.votes_database(), &key, &data)?;
+        Ok(())
     }
 
     /// Get freeze record for an address and resource type
@@ -689,6 +1218,53 @@ impl StorageModuleAdapter {
 
         self.storage_engine.delete(self.freeze_records_database(), &key)?;
         Ok(())
+    }
+
+    /// Get tron power for an address in SUN
+    /// Sums frozen amounts across BANDWIDTH (0), ENERGY (1), and TRON_POWER (2) resources
+    pub fn get_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
+        // Resource types as defined in Tron protocol
+        const BANDWIDTH: u8 = 0;
+        const ENERGY: u8 = 1;
+        const TRON_POWER: u8 = 2;
+
+        let mut total: u64 = 0;
+        let mut bandwidth_amount: u64 = 0;
+        let mut energy_amount: u64 = 0;
+        let mut tron_power_amount: u64 = 0;
+
+        // Sum frozen amounts across all three resource types
+        for resource in [BANDWIDTH, ENERGY, TRON_POWER] {
+            if let Some(record) = self.get_freeze_record(address, resource)? {
+                let amount = record.frozen_amount;
+                total = total.checked_add(amount)
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "Tron power overflow when adding resource {} amount {} to total {}",
+                        resource, amount, total
+                    ))?;
+
+                // Track per-resource amounts for logging
+                match resource {
+                    BANDWIDTH => bandwidth_amount = amount,
+                    ENERGY => energy_amount = amount,
+                    TRON_POWER => tron_power_amount = amount,
+                    _ => {}
+                }
+            }
+        }
+
+        // Log the computation with all relevant details
+        tracing::info!(
+            address = ?address,
+            new_model = new_model,
+            bandwidth = bandwidth_amount,
+            energy = energy_amount,
+            tron_power_legacy = tron_power_amount,
+            total = total,
+            "Computed tron power from freeze ledger"
+        );
+
+        Ok(total)
     }
 
     /// Get account name for an address
@@ -1552,5 +2128,300 @@ mod tests {
         // Should fail to decode as UTF-8 but the setting should have succeeded
         let result = adapter.get_account_name(&non_utf8_address);
         assert!(result.is_err()); // Should error when trying to decode invalid UTF-8
+    }
+
+    #[test]
+    fn test_witness_protobuf_encode_decode() {
+        // Test protobuf encoding and decoding roundtrip
+        let address = Address::from([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                                      0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                                      0x12, 0x34, 0x56, 0x78]);
+        let witness_info = WitnessInfo {
+            address,
+            url: "https://test-witness.com".to_string(),
+            vote_count: 1000,
+        };
+
+        // Encode as protobuf
+        let protobuf_data = witness_info.serialize();
+        assert!(!protobuf_data.is_empty(), "Protobuf data should not be empty");
+
+        // Decode protobuf
+        let decoded = WitnessInfo::deserialize(&protobuf_data)
+            .expect("Protobuf decode should succeed");
+
+        assert_eq!(decoded.address, witness_info.address);
+        assert_eq!(decoded.url, witness_info.url);
+        assert_eq!(decoded.vote_count, witness_info.vote_count);
+    }
+
+    #[test]
+    fn test_witness_legacy_encode_decode() {
+        // Test legacy encoding and decoding roundtrip
+        let address = Address::from([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                                      0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                                      0x12, 0x34, 0x56, 0x78]);
+        let witness_info = WitnessInfo {
+            address,
+            url: "https://legacy-witness.com".to_string(),
+            vote_count: 2000,
+        };
+
+        // Encode as legacy
+        let legacy_data = witness_info.serialize();
+        assert!(!legacy_data.is_empty(), "Legacy data should not be empty");
+
+        // Decode legacy
+        let decoded = WitnessInfo::deserialize(&legacy_data)
+            .expect("Legacy decode should succeed");
+
+        assert_eq!(decoded.address, witness_info.address);
+        assert_eq!(decoded.url, witness_info.url);
+        assert_eq!(decoded.vote_count, witness_info.vote_count);
+    }
+
+    #[test]
+    fn test_witness_protobuf_fallback_to_legacy() {
+        // Create legacy format data
+        let address = Address::from([0xab; 20]);
+        let witness_info = WitnessInfo {
+            address,
+            url: "fallback-test".to_string(),
+            vote_count: 500,
+        };
+        let legacy_data = witness_info.serialize();
+
+        // Try protobuf decode first (should fail)
+        assert!(WitnessInfo::deserialize(&legacy_data).is_err(),
+                "Protobuf decode of legacy data should fail");
+
+        // Legacy decode should succeed
+        let decoded = WitnessInfo::deserialize(&legacy_data)
+            .expect("Legacy decode should succeed");
+        assert_eq!(decoded.address, witness_info.address);
+        assert_eq!(decoded.url, witness_info.url);
+        assert_eq!(decoded.vote_count, witness_info.vote_count);
+    }
+
+    #[test]
+    fn test_witness_protobuf_address_formats() {
+        use prost::Message;
+        use crate::protocol::Witness;
+
+        // Test 21-byte TRON address (0x41 prefix)
+        let mut tron_addr_21 = vec![0x41];
+        tron_addr_21.extend_from_slice(&[0x12; 20]);
+
+        let witness_21 = Witness {
+            address: tron_addr_21.clone(),
+            vote_count: 100,
+            url: "test".to_string(),
+            pub_key: vec![],
+            total_produced: 0,
+            total_missed: 0,
+            latest_block_num: 0,
+            latest_slot_num: 0,
+            is_jobs: true,
+        };
+        let data_21 = witness_21.encode_to_vec();
+
+        let decoded_21 = WitnessInfo::deserialize(&data_21)
+            .expect("Should decode 21-byte TRON address");
+        assert_eq!(decoded_21.address, Address::from([0x12; 20]));
+
+        // Test 20-byte address (no prefix)
+        let witness_20 = Witness {
+            address: vec![0x34; 20],
+            vote_count: 200,
+            url: "test".to_string(),
+            pub_key: vec![],
+            total_produced: 0,
+            total_missed: 0,
+            latest_block_num: 0,
+            latest_slot_num: 0,
+            is_jobs: true,
+        };
+        let data_20 = witness_20.encode_to_vec();
+
+        let decoded_20 = WitnessInfo::deserialize(&data_20)
+            .expect("Should decode 20-byte address");
+        assert_eq!(decoded_20.address, Address::from([0x34; 20]));
+    }
+
+    #[test]
+    fn test_witness_protobuf_negative_vote_count() {
+        use prost::Message;
+        use crate::protocol::Witness;
+
+        let witness = Witness {
+            address: vec![0x41; 21],
+            vote_count: -100, // Negative vote count
+            url: "test".to_string(),
+            pub_key: vec![],
+            total_produced: 0,
+            total_missed: 0,
+            latest_block_num: 0,
+            latest_slot_num: 0,
+            is_jobs: true,
+        };
+        let data = witness.encode_to_vec();
+
+        // Should fail on negative vote count
+        assert!(WitnessInfo::deserialize(&data).is_err(),
+                "Should reject negative voteCount");
+    }
+
+    #[test]
+    fn test_witness_protobuf_invalid_address_length() {
+        use prost::Message;
+        use crate::protocol::Witness;
+
+        let witness = Witness {
+            address: vec![0x41; 19], // Invalid length
+            vote_count: 100,
+            url: "test".to_string(),
+            pub_key: vec![],
+            total_produced: 0,
+            total_missed: 0,
+            latest_block_num: 0,
+            latest_slot_num: 0,
+            is_jobs: true,
+        };
+        let data = witness.encode_to_vec();
+
+        // Should fail on invalid address length
+        assert!(WitnessInfo::deserialize(&data).is_err(),
+                "Should reject invalid address length");
+    }
+
+    #[test]
+    fn test_witness_empty_url() {
+        // Test that empty URLs are allowed
+        let address = Address::from([0xcd; 20]);
+        let witness_info = WitnessInfo {
+            address,
+            url: "".to_string(), // Empty URL
+            vote_count: 0,
+        };
+
+        // Protobuf roundtrip
+        let protobuf_data = witness_info.serialize();
+        let decoded_pb = WitnessInfo::deserialize(&protobuf_data)
+            .expect("Should decode empty URL from protobuf");
+        assert_eq!(decoded_pb.url, "");
+
+        // Legacy roundtrip
+        let legacy_data = witness_info.serialize();
+        let decoded_legacy = WitnessInfo::deserialize(&legacy_data)
+            .expect("Should decode empty URL from legacy");
+        assert_eq!(decoded_legacy.url, "");
+    }
+
+    // Tron power computation tests
+
+    #[test]
+    fn test_tron_power_bandwidth_only() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xab; 20]);
+
+        // Set freeze record for BANDWIDTH (resource=0)
+        storage.set_freeze_record(&address, 0, 1_000_000, 1000000000)
+            .expect("Should set freeze record");
+
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 1_000_000, "Expected power from bandwidth only");
+    }
+
+    #[test]
+    fn test_tron_power_energy_only() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xbc; 20]);
+
+        // Set freeze record for ENERGY (resource=1)
+        storage.set_freeze_record(&address, 1, 2_000_000, 1000000000)
+            .expect("Should set freeze record");
+
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 2_000_000, "Expected power from energy only");
+    }
+
+    #[test]
+    fn test_tron_power_sum_bw_energy() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xcd; 20]);
+
+        // Set freeze records for both BANDWIDTH and ENERGY
+        storage.set_freeze_record(&address, 0, 1_000_000, 1000000000)
+            .expect("Should set bandwidth freeze");
+        storage.set_freeze_record(&address, 1, 2_000_000, 1000000000)
+            .expect("Should set energy freeze");
+
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 3_000_000, "Expected sum of bandwidth + energy");
+    }
+
+    #[test]
+    fn test_tron_power_includes_tron_power_legacy() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xde; 20]);
+
+        // Set freeze record for TRON_POWER (resource=2) only
+        storage.set_freeze_record(&address, 2, 500_000, 1000000000)
+            .expect("Should set tron_power freeze");
+
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 500_000, "Expected power from legacy tron_power");
+    }
+
+    #[test]
+    fn test_tron_power_all_three() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xef; 20]);
+
+        // Set freeze records for all three resources
+        storage.set_freeze_record(&address, 0, 1_000_000, 1000000000)
+            .expect("Should set bandwidth freeze");
+        storage.set_freeze_record(&address, 1, 2_000_000, 1000000000)
+            .expect("Should set energy freeze");
+        storage.set_freeze_record(&address, 2, 500_000, 1000000000)
+            .expect("Should set tron_power freeze");
+
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 3_500_000, "Expected sum of all three resources");
+    }
+
+    #[test]
+    fn test_tron_power_overflow_protection() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xf0; 20]);
+
+        // Set freeze records that would overflow u64
+        let near_max = u64::MAX - 100_000;
+        storage.set_freeze_record(&address, 0, near_max, 1000000000)
+            .expect("Should set bandwidth freeze");
+        storage.set_freeze_record(&address, 1, 200_000, 1000000000)
+            .expect("Should set energy freeze");
+
+        // Should return error due to overflow
+        let result = storage.get_tron_power_in_sun(&address, false);
+        assert!(result.is_err(), "Expected overflow error");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("overflow"), "Error should mention overflow");
+    }
+
+    #[test]
+    fn test_tron_power_no_freeze_records() {
+        let storage = InMemoryStorageAdapter::new();
+        let address = Address::from([0xa1; 20]);
+
+        // No freeze records set
+        let power = storage.get_tron_power_in_sun(&address, false)
+            .expect("Should compute tron power");
+        assert_eq!(power, 0, "Expected zero power when no freeze records");
     }
 }

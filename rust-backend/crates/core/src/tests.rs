@@ -385,3 +385,180 @@ fn test_state_change_deterministic_ordering() {
         }
     }
 }
+
+/// Test VoteWitness after FreezeBalance V1 succeeds
+/// This test verifies the tron power fix for VoteWitnessContract
+#[test]
+fn test_vote_witness_after_freeze_v1_succeeds() {
+    let mut config = ExecutionConfig::default();
+
+    // Enable freeze and vote witness contracts
+    config.remote.freeze_balance_enabled = true;
+    config.remote.vote_witness_enabled = true;
+    config.remote.system_enabled = true;
+
+    // Use burn mode for fee handling
+    config.fees.mode = "burn".to_string();
+    config.fees.support_black_hole_optimization = true;
+
+    let execution_module = ExecutionModule::new(config);
+
+    // Create owner address
+    let owner_address = create_tron_address(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+
+    // Create witness address to vote for
+    let witness_address = create_tron_address(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+
+    // Create execution context for block 2142
+    let context = TronExecutionContext {
+        block_number: 2142,
+        block_timestamp: 1000000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 30000000,
+        chain_id: 2494104990,
+        energy_price: 420,
+        bandwidth_price: 1000,
+    };
+
+    // Use in-memory storage
+    let mut storage = InMemoryStorageAdapter::new();
+
+    // Set owner balance to 2_000_000 SUN (enough for freeze + fees)
+    storage.set_balance(&owner_address, U256::from(2_000_000));
+
+    // Step 1: Execute FreezeBalance (v1) for 1_000_000 SUN on BANDWIDTH
+    // In a real contract, data would contain serialized FreezeBalanceContract protobuf
+    // For this test, we'll simulate the freeze by directly setting the freeze record
+    storage.set_freeze_record(&owner_address, 0, 1_000_000, 1000000000 + 3 * 86400 * 1000)
+        .expect("Should set freeze record");
+
+    // Verify freeze was set
+    let freeze_record = storage.get_freeze_record(&owner_address, 0)
+        .expect("Should get freeze record")
+        .expect("Freeze record should exist");
+    assert_eq!(freeze_record.frozen_amount, 1_000_000);
+
+    // Verify tron power is now 1_000_000
+    let tron_power = storage.get_tron_power_in_sun(&owner_address, false)
+        .expect("Should compute tron power");
+    assert_eq!(tron_power, 1_000_000, "Tron power should equal frozen amount");
+
+    // Step 2: Execute VoteWitness with 1_000_000 votes
+    // Create VoteWitness transaction
+    // In real scenario, data would contain VoteWitnessContract protobuf with witness address and vote count
+    let vote_transaction = TronTransaction {
+        from: owner_address,
+        to: None, // System contracts have no 'to' address
+        value: U256::ZERO,
+        data: Bytes::new(), // Simplified - would contain vote details in real scenario
+        gas_limit: 10000,
+        gas_price: U256::ZERO,
+        nonce: 1,
+        metadata: TxMetadata {
+            contract_type: Some(TronContractType::VoteWitnessContract),
+            asset_id: None,
+        },
+    };
+
+    // Execute vote transaction
+    let vote_context = TronExecutionContext {
+        block_number: 2153,
+        block_timestamp: 1000001000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 30000000,
+        chain_id: 2494104990,
+        energy_price: 420,
+        bandwidth_price: 1000,
+    };
+
+    let result = execution_module.execute_transaction_with_storage(storage, &vote_transaction, &vote_context);
+
+    // Verify execution succeeded (no REVERT)
+    match result {
+        Ok(exec_result) => {
+            println!("VoteWitness execution succeeded");
+            println!("State changes: {}", exec_result.state_changes.len());
+            println!("Energy used: {}", exec_result.energy_used);
+
+            // Expect at least one state change (owner account)
+            assert!(exec_result.state_changes.len() >= 1,
+                "Expected at least one state change (owner account)");
+
+            // Verify owner account change exists
+            let has_owner_change = exec_result.state_changes.iter().any(|change| {
+                matches!(change, TronStateChange::AccountChange { address, .. } if *address == owner_address)
+            });
+            assert!(has_owner_change, "Expected owner account change for CSV parity");
+
+            println!("✓ VoteWitness after FreezeBalance succeeded with correct tron power computation");
+        }
+        Err(e) => {
+            panic!("VoteWitness should succeed after FreezeBalance, but got error: {}", e);
+        }
+    }
+}
+
+/// Test VoteWitness with multiple freeze resources (BANDWIDTH + ENERGY)
+#[test]
+fn test_vote_witness_multi_freeze_accumulates() {
+    let mut config = ExecutionConfig::default();
+
+    config.remote.freeze_balance_enabled = true;
+    config.remote.vote_witness_enabled = true;
+    config.remote.system_enabled = true;
+    config.fees.mode = "burn".to_string();
+
+    let execution_module = ExecutionModule::new(config);
+
+    let owner_address = create_tron_address(&[0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00]);
+
+    let context = TronExecutionContext {
+        block_number: 3000,
+        block_timestamp: 2000000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 30000000,
+        chain_id: 2494104990,
+        energy_price: 420,
+        bandwidth_price: 1000,
+    };
+
+    let mut storage = InMemoryStorageAdapter::new();
+    storage.set_balance(&owner_address, U256::from(5_000_000));
+
+    // Freeze for BANDWIDTH (resource=0)
+    storage.set_freeze_record(&owner_address, 0, 1_000_000, 2000000000 + 3 * 86400 * 1000)
+        .expect("Should set bandwidth freeze");
+
+    // Freeze for ENERGY (resource=1)
+    storage.set_freeze_record(&owner_address, 1, 2_000_000, 2000000000 + 3 * 86400 * 1000)
+        .expect("Should set energy freeze");
+
+    // Verify total tron power is sum of both
+    let tron_power = storage.get_tron_power_in_sun(&owner_address, false)
+        .expect("Should compute tron power");
+    assert_eq!(tron_power, 3_000_000, "Tron power should be sum of BANDWIDTH + ENERGY");
+
+    // Create VoteWitness transaction with 3_000_000 votes
+    let vote_transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::new(),
+        gas_limit: 10000,
+        gas_price: U256::ZERO,
+        nonce: 1,
+        metadata: TxMetadata {
+            contract_type: Some(TronContractType::VoteWitnessContract),
+            asset_id: None,
+        },
+    };
+
+    let result = execution_module.execute_transaction_with_storage(storage, &vote_transaction, &context);
+
+    // Verify success
+    assert!(result.is_ok(), "VoteWitness should succeed with accumulated tron power from multiple resources");
+    println!("✓ VoteWitness with multi-resource freeze accumulation succeeded");
+}

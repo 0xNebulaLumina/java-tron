@@ -7,10 +7,15 @@ use async_trait::async_trait;
 
 use tron_backend_common::{Module, ModuleHealth, ExecutionConfig};
 
+// Include generated protobuf code for Witness
+pub mod protocol {
+    include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
+}
+
 // Re-export key types for external use
 pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, TronContractType, TxMetadata};
 pub use precompiles::TronPrecompiles;
-pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageModuleAdapter, StorageAdapterDatabase, StateChangeRecord, WitnessInfo, FreezeRecord};
+pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageModuleAdapter, StorageAdapterDatabase, StateChangeRecord, WitnessInfo, FreezeRecord, VotesRecord, Vote};
 
 mod tron_evm;
 mod precompiles;

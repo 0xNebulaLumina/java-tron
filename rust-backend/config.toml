@@ -67,7 +67,7 @@ system_enabled = true
 # Specific contract type flags
 witness_create_enabled = true
 witness_update_enabled = false  # Disabled until implemented
-vote_witness_enabled = false    # Disabled until implemented
+vote_witness_enabled = true
 
 # TRC-10 transfers (requires additional storage support)
 trc10_enabled = false

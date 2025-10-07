@@ -32,9 +32,15 @@ bs58 = "0.5"
 once_cell = "1.19"
 parking_lot = "0.12"
 
+# Protobuf for Java compatibility
+prost = "0.12"
+
 # Internal dependencies
 tron-backend-common = { path = "../common" }
 tron-backend-storage = { path = "../storage" }
+
+[build-dependencies]
+prost-build = "0.12"
 
 [dev-dependencies]
 hex = "0.4" 
