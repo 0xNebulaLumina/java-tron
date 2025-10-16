@@ -17,6 +17,25 @@ pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecution
 pub use precompiles::TronPrecompiles;
 pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageModuleAdapter, StorageAdapterDatabase, StateChangeRecord, WitnessInfo, FreezeRecord, VotesRecord, Vote};
 
+// Phase B: Introduce new naming aliases (preferred names going forward)
+// See planning/storage_adapter_namings.planning.md for rationale
+
+/// **Preferred name**: Minimal EVM-facing state interface.
+/// This is the new recommended name for `StorageAdapter`.
+pub use storage_adapter::StorageAdapter as EvmStateStore;
+
+/// **Preferred name**: In-memory implementation for tests and local execution.
+/// This is the new recommended name for `InMemoryStorageAdapter`.
+pub use storage_adapter::InMemoryStorageAdapter as InMemoryEvmStateStore;
+
+/// **Preferred name**: Persistent implementation backed by the storage engine.
+/// This is the new recommended name for `StorageModuleAdapter`.
+pub use storage_adapter::StorageModuleAdapter as EngineBackedEvmStateStore;
+
+/// **Preferred name**: REVM Database wrapper over an EVM state store.
+/// This is the new recommended name for `StorageAdapterDatabase`.
+pub use storage_adapter::StorageAdapterDatabase as EvmStateDatabase;
+
 mod tron_evm;
 mod precompiles;
 mod storage_adapter;

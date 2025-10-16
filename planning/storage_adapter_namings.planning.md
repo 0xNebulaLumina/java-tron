@@ -69,6 +69,29 @@ Summary
 
 ---
 
+## Decision Record (Phase A Complete)
+
+**Date**: 2025-10-16
+**Status**: Approved - Aliases Ready for Implementation
+
+**Final Naming Choices**:
+- Trait: `StorageAdapter` → `EvmStateStore` (minimal EVM-facing state interface)
+- In-memory impl: `InMemoryStorageAdapter` → `InMemoryEvmStateStore` (test/memory version)
+- Persistent impl: `StorageModuleAdapter` → `EngineBackedEvmStateStore` (clearly engine/db-backed)
+- REVM wrapper: `StorageAdapterDatabase<S>` → `EvmStateDatabase<S>` (Database impl over EvmStateStore)
+
+**Method Naming**:
+- `set_freeze_record` → `put_freeze_record` (align with `put_witness`, upsert semantics)
+- `get_tron_power_in_sun` → `compute_tron_power_in_sun` (reflects computation from ledger)
+
+**Validation**:
+- No collision detected with other crate exports
+- Confirmed locations in storage_adapter.rs: trait at L489, InMemory at L514, StorageModule at L649, Database at L1471
+
+**Next Steps**: Implement Phase B - introduce public re-export aliases
+
+---
+
 think harder.
 
 no need to start implementing/fixing, do you think you could suggest better namings to reflect their relationship?

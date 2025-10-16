@@ -63,9 +63,10 @@ Added 4 new methods:
    - Retrieves freeze record for owner + resource
    - Returns None if no freeze exists
 
-2. **`set_freeze_record(address, resource, record)`**
+2. **`put_freeze_record(address, resource, record)`** (preferred) / `set_freeze_record` (legacy)
    - Stores/updates freeze record
    - Overwrites existing record
+   - **Note:** `put_freeze_record` is the preferred name (aligns with `put_witness`)
 
 3. **`add_freeze_amount(address, resource, amount, expiration)`**
    - **Convenience method** for freeze operations

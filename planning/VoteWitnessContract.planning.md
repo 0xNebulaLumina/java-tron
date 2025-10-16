@@ -37,7 +37,7 @@ Data Model & Storage Additions
     - support_unfreeze_delay() via key "UNFREEZE_DELAY_DAYS" > 0.
     - File: rust-backend/crates/execution/src/storage_adapter.rs: add methods next to existing getters (around 460+).
 - Tron Power calculator:
-    - Provide helper get_tron_power_in_sun(address, new_model: bool) -> Result<u64>.
+    - Provide helper compute_tron_power_in_sun(address, new_model: bool) -> Result<u64> (preferred) / get_tron_power_in_sun (legacy).
     - Phase 1: sum TRON_POWER from freeze ledger (resource = 2) via get_freeze_record/add_freeze_amount; treat that as total voting power in SUN.
     - Phase 2 (parity): incorporate “oldTronPower” semantics and frozen V1/V2 fields by parsing Account protobuf; compute getAllTronPower() parity per chainbase/src/main/java/org/tron/core/capsule/
     AccountCapsule.java: getAllTronPower and related helpers (around 1080+).
@@ -65,7 +65,7 @@ Parsing & Validation
     - sum = Σ(vote_count) in TRX units; convert to SUN by sum * TRX_PRECISION (1_000_000; common/src/main/java/org/tron/core/config/Parameter.java:81) via checked math.
     - tronPower check:
         - new_model = support_allow_new_resource_model()
-        - tronPowerSUN = get_tron_power_in_sun(owner, new_model)
+        - tronPowerSUN = compute_tron_power_in_sun(owner, new_model)
         - Require sum*TRX_PRECISION <= tronPowerSUN; otherwise fail.
 
 Notes:

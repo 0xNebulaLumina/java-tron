@@ -599,6 +599,21 @@ impl InMemoryStorageAdapter {
 
         Ok(total)
     }
+
+    // Phase C: Method alias shims (preferred names going forward)
+    // See planning/storage_adapter_namings.planning.md for rationale
+
+    /// **Preferred name**: Store freeze record (upsert semantics, aligns with `put_witness`).
+    /// Delegates to `set_freeze_record`. Use this method in new code.
+    pub fn put_freeze_record(&self, address: &Address, resource: u8, frozen_amount: u64, expiration_timestamp: i64) -> Result<()> {
+        self.set_freeze_record(address, resource, frozen_amount, expiration_timestamp)
+    }
+
+    /// **Preferred name**: Compute tron power from ledger (reflects computation rather than "get").
+    /// Delegates to `get_tron_power_in_sun`. Use this method in new code.
+    pub fn compute_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
+        self.get_tron_power_in_sun(address, new_model)
+    }
 }
 
 impl StorageAdapter for InMemoryStorageAdapter {
@@ -1325,6 +1340,21 @@ impl StorageModuleAdapter {
 
         tracing::info!("Successfully stored account name for address {:?}, length: {}", address, name.len());
         Ok(())
+    }
+
+    // Phase C: Method alias shims (preferred names going forward)
+    // See planning/storage_adapter_namings.planning.md for rationale
+
+    /// **Preferred name**: Store freeze record (upsert semantics, aligns with `put_witness`).
+    /// Delegates to `set_freeze_record`. Use this method in new code.
+    pub fn put_freeze_record(&self, address: Address, resource: u8, record: &FreezeRecord) -> Result<()> {
+        self.set_freeze_record(address, resource, record)
+    }
+
+    /// **Preferred name**: Compute tron power from ledger (reflects computation rather than "get").
+    /// Delegates to `get_tron_power_in_sun`. Use this method in new code.
+    pub fn compute_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
+        self.get_tron_power_in_sun(address, new_model)
     }
 }
 

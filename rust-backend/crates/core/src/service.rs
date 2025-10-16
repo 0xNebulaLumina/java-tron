@@ -932,9 +932,9 @@ impl BackendService {
         let new_model = storage_adapter.support_allow_new_resource_model()
             .map_err(|e| format!("Failed to get resource model flag: {}", e))?;
 
-        // Get tron power
-        let tron_power_sun = storage_adapter.get_tron_power_in_sun(&owner, new_model)
-            .map_err(|e| format!("Failed to get tron power: {}", e))?;
+        // Get tron power (using preferred method name)
+        let tron_power_sun = storage_adapter.compute_tron_power_in_sun(&owner, new_model)
+            .map_err(|e| format!("Failed to compute tron power: {}", e))?;
 
         info!("VoteWitness owner={} sum={} TRX ({} SUN), tronPower={} SUN, new_model={}",
               owner_tron, sum_trx, sum_sun, tron_power_sun, new_model);
