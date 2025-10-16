@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use tron_backend_common::{ModuleManager, HealthStatus, from_tron_address};
 use revm_primitives::hex;
-use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, StorageAdapter};
+use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, EvmStateStore};
 use crate::backend::*;
 
 /// FreezeBalance contract parameters
@@ -110,7 +110,7 @@ impl BackendService {
     }
     
     /// Detect if a transaction is likely a non-VM transaction based on heuristics
-    fn is_likely_non_vm_transaction(&self, tx: &TronTransaction, storage_adapter: &tron_backend_execution::StorageModuleAdapter) -> bool {
+    fn is_likely_non_vm_transaction(&self, tx: &TronTransaction, storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore) -> bool {
         // Non-VM heuristic: empty data AND to address has no code
         if !tx.data.is_empty() {
             return false; // Has data, likely VM transaction
@@ -229,7 +229,7 @@ impl BackendService {
     /// Routes to specific handlers based on TRON contract type
     fn execute_non_vm_contract(
         &self,
-        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -307,7 +307,7 @@ impl BackendService {
     /// Handles TRON value transfer with proper fee accounting
     fn execute_transfer_contract(
         &self,
-        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -507,7 +507,7 @@ impl BackendService {
     /// Creates a new witness account with proper validation and state changes
     fn execute_witness_create_contract(
         &self,
-        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -678,7 +678,7 @@ impl BackendService {
     /// Updates witness URL and other parameters
     fn execute_witness_update_contract(
         &self,
-        _storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        _storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         _transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -848,7 +848,7 @@ impl BackendService {
     /// Handles witness voting with tally updates
     fn execute_vote_witness_contract(
         &self,
-        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -1014,7 +1014,7 @@ impl BackendService {
     /// Updates the account name for a given address with proper validation and CSV parity
     fn execute_account_update_contract(
         &self,
-        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -1118,7 +1118,7 @@ impl BackendService {
     /// Phase 2: Balance delta + resource ledger persistence
     fn execute_freeze_balance_contract(
         &self,
-        storage_adapter: &mut tron_backend_execution::StorageModuleAdapter,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
@@ -1381,13 +1381,13 @@ mod tests {
     
     #[test]
     fn test_account_update_contract_happy_path() {
-        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
         use revm_primitives::{Address, Bytes, U256, AccountInfo};
         use tron_backend_common::{ExecutionConfig, ExecutionFeeConfig};
 
         // Create mock storage and service
         let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
         let config = ExecutionConfig {
             fee_config: ExecutionFeeConfig::default(),
             // Add other required config fields...
@@ -1462,13 +1462,13 @@ mod tests {
 
     #[test]
     fn test_account_update_contract_validations() {
-        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
         use revm_primitives::{Address, Bytes, U256, AccountInfo};
         use tron_backend_common::{ExecutionConfig, ExecutionFeeConfig};
 
         // Create mock storage and service
         let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
         let config = ExecutionConfig {
             fee_config: ExecutionFeeConfig::default(),
         };
@@ -1545,13 +1545,13 @@ mod tests {
 
     #[test]
     fn test_account_update_contract_duplicate_set() {
-        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
         use revm_primitives::{Address, Bytes, U256, AccountInfo};
         use tron_backend_common::{ExecutionConfig, ExecutionFeeConfig};
 
         // Create mock storage and service
         let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
         let config = ExecutionConfig {
             fee_config: ExecutionFeeConfig::default(),
         };
@@ -1635,7 +1635,7 @@ mod tests {
 
     #[test]
     fn test_freeze_balance_success_basic() {
-        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
         use revm_primitives::{Address, Bytes, U256, AccountInfo};
         use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
 
@@ -1646,7 +1646,7 @@ mod tests {
 
         // Setup storage with initial account
         let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
         let owner_account = AccountInfo {
             balance: U256::from(initial_balance),
             nonce: 0,
@@ -1733,7 +1733,7 @@ mod tests {
 
     #[test]
     fn test_freeze_balance_insufficient_balance() {
-        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
         use revm_primitives::{Address, Bytes, U256, AccountInfo};
         use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
 
@@ -1742,7 +1742,7 @@ mod tests {
         let freeze_amount = 1_000_000i64; // Try to freeze more than we have
 
         let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
         let owner_account = AccountInfo {
             balance: U256::from(initial_balance),
             nonce: 0,
@@ -1805,13 +1805,13 @@ mod tests {
 
     #[test]
     fn test_freeze_balance_bad_params() {
-        use tron_backend_execution::{StorageModuleAdapter, TronTransaction, TronExecutionContext, TxMetadata};
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
         use revm_primitives::{Address, Bytes, U256, AccountInfo};
         use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
 
         let owner_address = Address::from([1u8; 20]);
         let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut storage_adapter = StorageModuleAdapter::new(storage_engine);
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
         let owner_account = AccountInfo {
             balance: U256::from(1_000_000u64),
             nonce: 0,
@@ -2980,7 +2980,7 @@ impl crate::backend::backend_server::Backend for BackendService {
         
         // Get the storage engine and create a unified storage adapter
         let storage_engine = self.get_storage_engine()?;
-        let mut storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
+        let mut storage_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
             storage_engine.clone(),
         );
 
@@ -3113,7 +3113,7 @@ impl crate::backend::backend_server::Backend for BackendService {
 
         // Get the storage engine and create a unified storage adapter
         let storage_engine = self.get_storage_engine()?;
-        let storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
+        let storage_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
             storage_engine.clone(),
         );
 
@@ -3181,7 +3181,7 @@ impl crate::backend::backend_server::Backend for BackendService {
 
         // Get the storage engine and create a unified storage adapter
         let storage_engine = self.get_storage_engine()?;
-        let storage_adapter = tron_backend_execution::StorageModuleAdapter::new(
+        let storage_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
             storage_engine.clone(),
         );
 

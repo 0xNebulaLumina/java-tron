@@ -1,7 +1,7 @@
 # Storage Adapter Naming Refactor — Detailed TODOs
 
 Owner: Rust Backend Team
-Status: **Phase A-F Complete** ✅ (Aliases + Method Shims + Docs Ready; Phases E-G deferred)
+Status: **ALL PHASES COMPLETE** ✅ (Full source-level rename with deprecation warnings)
 Last Updated: 2025-10-16
 Scope: Clarify and align naming around the EVM state storage interface and its implementations; add forward-compatible aliases, then migrate usages with minimal churn.
 
@@ -13,10 +13,11 @@ Scope: Clarify and align naming around the EVM state storage interface and its i
 - ✅ Phase C: Method alias shims added (put_freeze_record, compute_tron_power_in_sun)
 - ✅ Phase D: Production code migrated (service.rs now uses compute_tron_power_in_sun)
 - ✅ Phase F: Documentation updated (planning docs, FREEZE_BALANCE_PHASE2_SUMMARY.md, VoteWitnessContract.planning.md)
+- ✅ Phase G: Full source-level rename complete (all types renamed, legacy aliases with deprecation warnings)
 
 **Next Steps (Future PRs):**
-- Phase E: Add deprecation warnings behind feature flag (when ready for migration push)
-- Phase G: Full rename of source identifiers (after one release cycle with aliases)
+- Phase E: Can enable deprecation warnings more prominently (already have deprecated attributes in place)
+- Phase H: Remove legacy aliases after deprecation period (1-2 releases)
 
 ---
 
@@ -104,12 +105,16 @@ Optional (later PR): introduce a TRON-specific helper trait (doc-only now):
   - [x] Any references in `planning/VoteWitnessContract*.md` and `core` service comments.
 - [ ] Add a short section in `README.md` (rust-backend subproject) or `docs/` summarizing the new naming scheme and migration notes (deferred - can add when README is created).
 
-### Phase G — Full Rename (follow-up release)
-- [ ] Replace source identifiers (not just re-exports):
-  - [ ] Rename type definitions: `StorageAdapter` → `EvmStateStore` (actual item rename), `InMemoryStorageAdapter` → `InMemoryEvmStateStore`, `StorageModuleAdapter` → `EngineBackedEvmStateStore`, `StorageAdapterDatabase` → `EvmStateDatabase`.
-  - [ ] Migrate all internal imports and use sites to the new identifiers.
-- [ ] Keep old re-exports for at least one release cycle with deprecation.
-- [ ] Release notes: highlight rename and deprecation timeline.
+### Phase G — Full Rename (follow-up release) ✅
+- [x] Replace source identifiers (not just re-exports):
+  - [x] Rename type definitions: `StorageAdapter` → `EvmStateStore` (actual item rename), `InMemoryStorageAdapter` → `InMemoryEvmStateStore`, `StorageModuleAdapter` → `EngineBackedEvmStateStore`, `StorageAdapterDatabase` → `EvmStateDatabase`.
+  - [x] Migrate all internal imports and use sites to the new identifiers.
+- [x] Keep old re-exports for at least one release cycle with deprecation.
+- [x] Release notes: highlight rename and deprecation timeline (documented in planning/*.md).
+- [x] All trait implementations updated (Clone impl, Database impl, DatabaseCommit impl)
+- [x] All generic bounds updated (lib.rs, tron_evm.rs, service.rs)
+- [x] All instantiations updated (tests, production code)
+- [x] Build verified: `cargo build --release` succeeds
 
 ---
 
