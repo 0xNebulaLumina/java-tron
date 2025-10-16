@@ -485,8 +485,10 @@ impl VotesRecord {
     }
 }
 
-/// Storage adapter trait for different storage backends
-pub trait StorageAdapter: Send + Sync {
+/// Minimal EVM-facing state interface for account, code, and storage operations.
+/// Provides the essential read/write operations needed by the EVM execution engine.
+/// Implemented by in-memory stores (testing) and engine-backed stores (production).
+pub trait EvmStateStore: Send + Sync {
     /// Get account information
     fn get_account(&self, address: &Address) -> Result<Option<AccountInfo>>;
     
@@ -509,16 +511,17 @@ pub trait StorageAdapter: Send + Sync {
     fn remove_account(&mut self, address: &Address) -> Result<()>;
 }
 
-/// In-memory storage adapter for testing
+/// In-memory implementation of EVM state store for testing and local execution.
+/// Provides a HashMap-backed storage that doesn't persist to disk.
 #[derive(Debug)]
-pub struct InMemoryStorageAdapter {
+pub struct InMemoryEvmStateStore {
     accounts: HashMap<Address, AccountInfo>,
     codes: HashMap<Address, Bytecode>,
     storage: HashMap<(Address, U256), U256>,
     freeze_records: std::sync::Arc<std::sync::RwLock<HashMap<(Address, u8), FreezeRecord>>>,
 }
 
-impl Clone for InMemoryStorageAdapter {
+impl Clone for InMemoryEvmStateStore {
     fn clone(&self) -> Self {
         Self {
             accounts: self.accounts.clone(),
@@ -529,7 +532,7 @@ impl Clone for InMemoryStorageAdapter {
     }
 }
 
-impl InMemoryStorageAdapter {
+impl InMemoryEvmStateStore {
     pub fn new() -> Self {
         Self {
             accounts: HashMap::new(),
@@ -599,9 +602,24 @@ impl InMemoryStorageAdapter {
 
         Ok(total)
     }
+
+    // Phase C: Method alias shims (preferred names going forward)
+    // See planning/storage_adapter_namings.planning.md for rationale
+
+    /// **Preferred name**: Store freeze record (upsert semantics, aligns with `put_witness`).
+    /// Delegates to `set_freeze_record`. Use this method in new code.
+    pub fn put_freeze_record(&self, address: &Address, resource: u8, frozen_amount: u64, expiration_timestamp: i64) -> Result<()> {
+        self.set_freeze_record(address, resource, frozen_amount, expiration_timestamp)
+    }
+
+    /// **Preferred name**: Compute tron power from ledger (reflects computation rather than "get").
+    /// Delegates to `get_tron_power_in_sun`. Use this method in new code.
+    pub fn compute_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
+        self.get_tron_power_in_sun(address, new_model)
+    }
 }
 
-impl StorageAdapter for InMemoryStorageAdapter {
+impl EvmStateStore for InMemoryEvmStateStore {
     fn get_account(&self, address: &Address) -> Result<Option<AccountInfo>> {
         Ok(self.accounts.get(address).cloned())
     }
@@ -644,13 +662,14 @@ impl StorageAdapter for InMemoryStorageAdapter {
     }
 }
 
-/// Multi-database unified storage adapter that routes data to appropriate databases
-/// This matches java-tron's database organization while providing a unified interface for EVM execution
-pub struct StorageModuleAdapter {
+/// Persistent implementation of EVM state store backed by the storage engine.
+/// Routes data to appropriate RocksDB databases matching java-tron's organization
+/// while providing a unified interface for EVM execution.
+pub struct EngineBackedEvmStateStore {
     storage_engine: StorageEngine,
 }
 
-impl StorageModuleAdapter {
+impl EngineBackedEvmStateStore {
     pub fn new(storage_engine: StorageEngine) -> Self {
         Self {
             storage_engine,
@@ -1326,9 +1345,24 @@ impl StorageModuleAdapter {
         tracing::info!("Successfully stored account name for address {:?}, length: {}", address, name.len());
         Ok(())
     }
+
+    // Phase C: Method alias shims (preferred names going forward)
+    // See planning/storage_adapter_namings.planning.md for rationale
+
+    /// **Preferred name**: Store freeze record (upsert semantics, aligns with `put_witness`).
+    /// Delegates to `set_freeze_record`. Use this method in new code.
+    pub fn put_freeze_record(&self, address: Address, resource: u8, record: &FreezeRecord) -> Result<()> {
+        self.set_freeze_record(address, resource, record)
+    }
+
+    /// **Preferred name**: Compute tron power from ledger (reflects computation rather than "get").
+    /// Delegates to `get_tron_power_in_sun`. Use this method in new code.
+    pub fn compute_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
+        self.get_tron_power_in_sun(address, new_model)
+    }
 }
 
-impl StorageAdapter for StorageModuleAdapter {
+impl EvmStateStore for EngineBackedEvmStateStore {
     fn get_account(&self, address: &Address) -> Result<Option<AccountInfo>> {
         let key = self.account_key(address);
         // Convert to Tron format address for debugging consistency with Java logs
@@ -1467,8 +1501,9 @@ pub enum StateChangeRecord {
     },
 }
 
-/// Database adapter that implements REVM's Database trait
-pub struct StorageAdapterDatabase<S: StorageAdapter> {
+/// REVM Database wrapper over an EVM state store.
+/// Provides caching and state tracking for transaction execution.
+pub struct EvmStateDatabase<S: EvmStateStore> {
     storage: S,
     // Cache for performance
     account_cache: HashMap<Address, Option<AccountInfo>>,
@@ -1487,7 +1522,7 @@ pub struct StorageAdapterDatabase<S: StorageAdapter> {
     snapshot_hooks: Vec<SnapshotHook>,
 }
 
-impl<S: StorageAdapter> StorageAdapterDatabase<S> {
+impl<S: EvmStateStore> EvmStateDatabase<S> {
     pub fn new(storage: S) -> Self {
         Self {
             storage,
@@ -1579,7 +1614,7 @@ impl<S: StorageAdapter> StorageAdapterDatabase<S> {
     }
 }
 
-impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
+impl<S: EvmStateStore> Database for EvmStateDatabase<S> {
     type Error = anyhow::Error;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -1679,7 +1714,7 @@ impl<S: StorageAdapter> Database for StorageAdapterDatabase<S> {
     }
 }
 
-impl<S: StorageAdapter> DatabaseCommit for StorageAdapterDatabase<S> {
+impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
     fn commit(&mut self, changes: HashMap<Address, Account>) {
         for (address, account) in changes {
             // Mark account as modified for shadow verification
@@ -1929,7 +1964,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_hooks() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let mut db = StorageAdapterDatabase::new(storage);
 
         // Track modified accounts via hook
@@ -1969,7 +2004,7 @@ mod tests {
 
     #[test]
     fn test_modified_accounts_tracking() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let mut db = StorageAdapterDatabase::new(storage);
 
         let addr1 = Address::from([1u8; 20]);
@@ -1994,7 +2029,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_revert_clears_modified_accounts() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let mut db = StorageAdapterDatabase::new(storage);
 
         let test_address = Address::from([1u8; 20]);
@@ -2061,7 +2096,7 @@ mod tests {
 
     #[test]
     fn test_account_name_storage() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let storage_engine = tron_backend_storage::StorageEngine::new_mock();
         let mut adapter = StorageModuleAdapter::new(storage_engine);
 
@@ -2321,7 +2356,7 @@ mod tests {
 
     #[test]
     fn test_tron_power_bandwidth_only() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let address = Address::from([0xab; 20]);
 
         // Set freeze record for BANDWIDTH (resource=0)
@@ -2335,7 +2370,7 @@ mod tests {
 
     #[test]
     fn test_tron_power_energy_only() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let address = Address::from([0xbc; 20]);
 
         // Set freeze record for ENERGY (resource=1)
@@ -2349,7 +2384,7 @@ mod tests {
 
     #[test]
     fn test_tron_power_sum_bw_energy() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let address = Address::from([0xcd; 20]);
 
         // Set freeze records for both BANDWIDTH and ENERGY
@@ -2365,7 +2400,7 @@ mod tests {
 
     #[test]
     fn test_tron_power_includes_tron_power_legacy() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let address = Address::from([0xde; 20]);
 
         // Set freeze record for TRON_POWER (resource=2) only
@@ -2379,7 +2414,7 @@ mod tests {
 
     #[test]
     fn test_tron_power_all_three() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let address = Address::from([0xef; 20]);
 
         // Set freeze records for all three resources
@@ -2397,7 +2432,7 @@ mod tests {
 
     #[test]
     fn test_tron_power_overflow_protection() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let address = Address::from([0xf0; 20]);
 
         // Set freeze records that would overflow u64
@@ -2416,7 +2451,7 @@ mod tests {
 
     #[test]
     fn test_tron_power_no_freeze_records() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         let address = Address::from([0xa1; 20]);
 
         // No freeze records set

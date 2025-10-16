@@ -8,7 +8,7 @@ use revm::{
 
 use tron_backend_common::ExecutionConfig;
 use crate::precompiles::TronPrecompiles;
-use crate::storage_adapter::{StorageAdapterDatabase, StorageAdapter};
+use crate::storage_adapter::{EvmStateDatabase, EvmStateStore};
 
 // Tron-specific transaction and execution types
 
@@ -390,9 +390,9 @@ where
     }
 }
 
-// Specialized implementation for StorageAdapterDatabase
-impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S>> {
-    /// Extract state changes from StorageAdapterDatabase after execution
+// Specialized implementation for EvmStateDatabase
+impl<S: EvmStateStore + Send + Sync + 'static> TronEvm<EvmStateDatabase<S>> {
+    /// Extract state changes from EvmStateDatabase after execution
     pub fn extract_state_changes_from_db(&mut self) -> Vec<TronStateChange> {
         let db = &mut self.evm.context.evm.db;
         let state_records = db.get_state_change_records();

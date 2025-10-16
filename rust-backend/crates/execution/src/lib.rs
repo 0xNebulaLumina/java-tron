@@ -15,7 +15,7 @@ pub mod protocol {
 // Re-export key types for external use
 pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, TronContractType, TxMetadata};
 pub use precompiles::TronPrecompiles;
-pub use storage_adapter::{StorageAdapter, InMemoryStorageAdapter, StorageModuleAdapter, StorageAdapterDatabase, StateChangeRecord, WitnessInfo, FreezeRecord, VotesRecord, Vote};
+pub use storage_adapter::{EvmStateStore, InMemoryEvmStateStore, EngineBackedEvmStateStore, EvmStateDatabase, StateChangeRecord, WitnessInfo, FreezeRecord, VotesRecord, Vote};
 
 mod tron_evm;
 mod precompiles;
@@ -39,38 +39,38 @@ impl ExecutionModule {
     }
 
     /// Execute a transaction using the provided storage adapter
-    pub fn execute_transaction_with_storage<S: StorageAdapter + 'static>(
+    pub fn execute_transaction_with_storage<S: EvmStateStore + 'static>(
         &self,
         storage: S,
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
-        let database = StorageAdapterDatabase::new(storage);
+        let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new(database, &self.config)?;
         // Use the new state tracking method
         evm.execute_transaction_with_state_tracking(tx, context)
     }
 
     /// Call a contract without state changes
-    pub fn call_contract_with_storage<S: StorageAdapter + 'static>(
+    pub fn call_contract_with_storage<S: EvmStateStore + 'static>(
         &self,
         storage: S,
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
-        let database = StorageAdapterDatabase::new(storage);
+        let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new(database, &self.config)?;
         evm.call_contract(tx, context)
     }
 
     /// Estimate energy usage for a transaction
-    pub fn estimate_energy_with_storage<S: StorageAdapter + 'static>(
+    pub fn estimate_energy_with_storage<S: EvmStateStore + 'static>(
         &self,
         storage: S,
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<u64> {
-        let database = StorageAdapterDatabase::new(storage);
+        let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new(database, &self.config)?;
         evm.estimate_energy(tx, context)
     }
@@ -81,7 +81,7 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         self.execute_transaction_with_storage(storage, tx, context)
     }
 
@@ -91,7 +91,7 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         self.call_contract_with_storage(storage, tx, context)
     }
 
@@ -101,18 +101,18 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<u64> {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
         self.estimate_energy_with_storage(storage, tx, context)
     }
 }
 
 /// ExecutionModule with a specific storage adapter type
-pub struct ExecutionModuleWithStorage<S: StorageAdapter + 'static> {
+pub struct ExecutionModuleWithStorage<S: EvmStateStore + 'static> {
     module: ExecutionModule,
     storage: Arc<RwLock<S>>,
 }
 
-impl<S: StorageAdapter + 'static> ExecutionModuleWithStorage<S> {
+impl<S: EvmStateStore + 'static> ExecutionModuleWithStorage<S> {
     pub fn new(config: ExecutionConfig, storage: S) -> Self {
         Self {
             module: ExecutionModule::new(config),
@@ -127,7 +127,7 @@ impl<S: StorageAdapter + 'static> ExecutionModuleWithStorage<S> {
     ) -> Result<TronExecutionResult> {
         // For now, we'll create a new storage adapter for each transaction
         // In a real implementation, we'd need to handle concurrent access properly
-        let storage = InMemoryStorageAdapter::new(); // Placeholder
+        let storage = InMemoryEvmStateStore::new(); // Placeholder
         self.module.execute_transaction_with_storage(storage, tx, context)
     }
 
@@ -136,7 +136,7 @@ impl<S: StorageAdapter + 'static> ExecutionModuleWithStorage<S> {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
-        let storage = InMemoryStorageAdapter::new(); // Placeholder
+        let storage = InMemoryEvmStateStore::new(); // Placeholder
         self.module.call_contract_with_storage(storage, tx, context)
     }
 
@@ -145,7 +145,7 @@ impl<S: StorageAdapter + 'static> ExecutionModuleWithStorage<S> {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<u64> {
-        let storage = InMemoryStorageAdapter::new(); // Placeholder
+        let storage = InMemoryEvmStateStore::new(); // Placeholder
         self.module.estimate_energy_with_storage(storage, tx, context)
     }
 }
@@ -184,8 +184,8 @@ impl Module for ExecutionModule {
         }
         
         // Test EVM creation with dummy storage
-        let storage = InMemoryStorageAdapter::new();
-        let database = StorageAdapterDatabase::new(storage);
+        let storage = InMemoryEvmStateStore::new();
+        let database = EvmStateDatabase::new(storage);
         let _evm = TronEvm::new(database, &self.config)?;
         
         info!("Execution module started successfully");
@@ -205,8 +205,8 @@ impl Module for ExecutionModule {
         }
         
         // Test EVM creation
-        let storage = InMemoryStorageAdapter::new();
-        let database = StorageAdapterDatabase::new(storage);
+        let storage = InMemoryEvmStateStore::new();
+        let database = EvmStateDatabase::new(storage);
         match TronEvm::new(database, &self.config) {
             Ok(_) => ModuleHealth::healthy(),
             Err(e) => ModuleHealth::unhealthy(&format!("EVM creation failed: {}", e)),
@@ -350,7 +350,7 @@ mod tests {
 #[cfg(test)]
 mod witness_tests {
     use super::*;
-    use crate::storage_adapter::{InMemoryStorageAdapter, StorageModuleAdapter, WitnessInfo};
+    use crate::storage_adapter::{InMemoryEvmStateStore, EngineBackedEvmStateStore, WitnessInfo};
     use revm_primitives::{Address, U256, Bytes};
 
     /// Test contract type parsing and metadata extraction
@@ -414,7 +414,7 @@ mod witness_tests {
     /// Test witness store operations (conceptual test)
     #[test]
     fn test_witness_store_operations() {
-        let _storage = InMemoryStorageAdapter::new();
+        let _storage = InMemoryEvmStateStore::new();
         let address = Address::from_slice(&[0x41; 20]);
 
         // Create witness info for testing serialization
@@ -438,7 +438,7 @@ mod witness_tests {
     /// Test dynamic properties with default values
     #[test]
     fn test_dynamic_properties_defaults() {
-        let storage = InMemoryStorageAdapter::new();
+        let storage = InMemoryEvmStateStore::new();
 
         // Test default values that should exist in storage adapter
         // Note: InMemoryStorageAdapter may not implement all dynamic property methods
@@ -509,7 +509,7 @@ mod witness_tests {
     /// Test witness creation validation
     #[test]
     fn test_witness_create_validation() {
-        let _storage = InMemoryStorageAdapter::new();
+        let _storage = InMemoryEvmStateStore::new();
         let _owner_address = Address::from_slice(&[0x41; 20]);
 
         // Test URL validation

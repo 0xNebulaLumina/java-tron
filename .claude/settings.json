@@ -6,8 +6,11 @@
     "deny": [
       "Read(**/.env*)",
       "Edit(**/.env*)",
-      "Write(**/.env*)",
-      "Bash(**:.env*)"
+      "Write(**/.env*)"
+    ],
+    "defaultMode": "acceptEdits",
+    "additionalDirectories": [
+      "/tmp"
     ]
   },
   "statusLine": {
