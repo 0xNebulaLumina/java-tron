@@ -12,24 +12,10 @@ pub mod protocol {
     include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
 }
 
-// Re-export key types for external use (new names)
+// Re-export key types for external use
 pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, TronContractType, TxMetadata};
 pub use precompiles::TronPrecompiles;
 pub use storage_adapter::{EvmStateStore, InMemoryEvmStateStore, EngineBackedEvmStateStore, EvmStateDatabase, StateChangeRecord, WitnessInfo, FreezeRecord, VotesRecord, Vote};
-
-// Phase G: Legacy aliases for backward compatibility
-// These allow existing code to continue using old names while we migrate
-#[deprecated(since = "0.2.0", note = "Use `EvmStateStore` instead")]
-pub use storage_adapter::EvmStateStore as StorageAdapter;
-
-#[deprecated(since = "0.2.0", note = "Use `InMemoryEvmStateStore` instead")]
-pub use storage_adapter::InMemoryEvmStateStore as InMemoryStorageAdapter;
-
-#[deprecated(since = "0.2.0", note = "Use `EngineBackedEvmStateStore` instead")]
-pub use storage_adapter::EngineBackedEvmStateStore as StorageModuleAdapter;
-
-#[deprecated(since = "0.2.0", note = "Use `EvmStateDatabase` instead")]
-pub use storage_adapter::EvmStateDatabase as StorageAdapterDatabase;
 
 mod tron_evm;
 mod precompiles;
