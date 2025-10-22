@@ -373,10 +373,10 @@ impl BackendService {
             old_account: Some(sender_account),
             new_account: Some(new_sender_account.clone()),
         });
-        // Persist sender account update
-        storage_adapter
-            .set_account(transaction.from, new_sender_account.clone())
-            .map_err(|e| format!("Failed to persist sender account: {}", e))?;
+        // Do NOT persist here. The java-tron node applies state changes to its own
+        // AccountStore to preserve TRON-specific resource fields (bandwidth/energy).
+        // Persisting minimal accounts here would overwrite those fields, causing
+        // bandwidth mis-accounting and CSV digest mismatches.
         
         // Update recipient account: balance += value
         let new_recipient_balance = recipient_account.balance + transaction.value;
@@ -399,10 +399,8 @@ impl BackendService {
             old_account: old_recipient_account,
             new_account: Some(new_recipient_account.clone()),
         });
-        // Persist recipient account update
-        storage_adapter
-            .set_account(to_address, new_recipient_account.clone())
-            .map_err(|e| format!("Failed to persist recipient account: {}", e))?;
+        // Do NOT persist here for the same reason as the sender: let the java-tron
+        // runtime apply the state change so resource fields remain intact.
         
         // Handle fee based on configuration (only if fee_amount > 0)
         if fee_amount > 0 {

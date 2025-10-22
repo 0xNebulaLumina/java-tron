@@ -128,7 +128,7 @@ public class BandwidthProcessor extends ResourceProcessor {
         bytesSize += Constant.MAX_RESULT_SIZE_IN_TX;
       }
 
-      logger.debug("TxId {}, bandwidth cost: {}.", trx.getTransactionId(), bytesSize);
+      logger.info("TxId {}, bandwidth bytes: {}.", trx.getTransactionId(), bytesSize);
       trace.setNetBill(bytesSize, 0);
       byte[] address = TransactionCapsule.getOwner(contract);
       AccountCapsule accountCapsule = chainBaseManager.getAccountStore().get(address);
@@ -149,24 +149,50 @@ public class BandwidthProcessor extends ResourceProcessor {
                 trx.getTransactionId(), createAccountBytesSize, maxCreateAccountTxSize));
           }
         }
+        // if (logger.isDebugEnabled()) {
+        if (true) {
+          logger.info("TxId {} owner {} path=CREATE_ACCOUNT bytes={}",
+              trx.getTransactionId(), StringUtil.encode58Check(address), bytesSize);
+        }
         consumeForCreateNewAccount(accountCapsule, bytesSize, now, trace);
         continue;
       }
 
       if (contract.getType() == TransferAssetContract && useAssetAccountNet(contract,
           accountCapsule, now, bytesSize)) {
+        // if (logger.isDebugEnabled()) {
+        if (true) {
+          logger.info("TxId {} owner {} path=ASSET_NET bytes={}",
+              trx.getTransactionId(), StringUtil.encode58Check(address), bytesSize);
+        }
         continue;
       }
 
       if (useAccountNet(accountCapsule, bytesSize, now)) {
+        // if (logger.isDebugEnabled()) {
+        if (true) {
+          logger.info("TxId {} owner {} path=ACCOUNT_NET bytes={}",
+              trx.getTransactionId(), StringUtil.encode58Check(address), bytesSize);
+        }
         continue;
       }
 
       if (useFreeNet(accountCapsule, bytesSize, now)) {
+        // if (logger.isDebugEnabled()) {
+        if (true) {
+          logger.info("TxId {} owner {} path=FREE_NET bytes={}",
+              trx.getTransactionId(), StringUtil.encode58Check(address), bytesSize);
+        }
         continue;
       }
 
       if (useTransactionFee(accountCapsule, bytesSize, trace)) {
+        // if (logger.isDebugEnabled()) {
+        if (true) {
+          long fee = chainBaseManager.getDynamicPropertiesStore().getTransactionFee() * bytesSize;
+          logger.info("TxId {} owner {} path=FEE ({} SUN) bytes={}",
+              trx.getTransactionId(), StringUtil.encode58Check(address), fee, bytesSize);
+        }
         continue;
       }
 
@@ -197,12 +223,29 @@ public class BandwidthProcessor extends ResourceProcessor {
     boolean ret = consumeBandwidthForCreateNewAccount(accountCapsule, bytes, now, trace);
 
     if (!ret) {
+      long fee = chainBaseManager.getDynamicPropertiesStore().getCreateAccountFee();
+      // if (logger.isDebugEnabled()) {
+      if (true) {
+        logger.info("CreateNewAccount bandwidth insufficient: owner={}, bytes={}, fee={} SUN",
+            StringUtil.encode58Check(accountCapsule.createDbKey()), bytes, fee);
+      }
       ret = consumeFeeForCreateNewAccount(accountCapsule, trace);
       if (!ret) {
         throw new AccountResourceInsufficientException(String.format(
             "account [%s] has insufficient bandwidth[%d] and balance[%d] to create new account",
             StringUtil.encode58Check(accountCapsule.createDbKey()), bytes,
             chainBaseManager.getDynamicPropertiesStore().getCreateAccountFee()));
+      }
+      // if (logger.isDebugEnabled()) {
+      if (true) {
+        logger.info("Tx create-account used FEE: owner={}, fee={} SUN, bytes={}",
+            StringUtil.encode58Check(accountCapsule.createDbKey()), fee, bytes);
+      }
+    } else {
+      // if (logger.isDebugEnabled()) {
+      if (true) {
+        logger.info("Tx create-account used BANDWIDTH: owner={}, bytes={}",
+            StringUtil.encode58Check(accountCapsule.createDbKey()), bytes);
       }
     }
   }
@@ -216,6 +259,23 @@ public class BandwidthProcessor extends ResourceProcessor {
     long netUsage = accountCapsule.getNetUsage();
     long latestConsumeTime = accountCapsule.getLatestConsumeTime();
     long netLimit = calculateGlobalNetLimit(accountCapsule);
+    // Instrument resource inputs for CREATE_ACCOUNT decision
+    try {
+      long freeNetLimitDbg = chainBaseManager.getDynamicPropertiesStore().getFreeNetLimit();
+      long publicNetLimitDbg = chainBaseManager.getDynamicPropertiesStore().getPublicNetLimit();
+      long publicNetUsageDbg = chainBaseManager.getDynamicPropertiesStore().getPublicNetUsage();
+      long publicNetTimeDbg = chainBaseManager.getDynamicPropertiesStore().getPublicNetTime();
+      long freeNetUsageDbg = accountCapsule.getFreeNetUsage();
+      long latestConsumeFreeTimeDbg = accountCapsule.getLatestConsumeFreeTime();
+      logger.info(
+          "CREATE_ACCOUNT inputs: owner={}, bytes={}, rate={}, nowSlot={}, netLimit={}, netUsage={}, latestConsumeTime={}, freeNetLimit={}, freeNetUsage={}, latestConsumeFreeTime={}, publicNetLimit={}, publicNetUsage={}, publicNetTime={}",
+          StringUtil.encode58Check(accountCapsule.createDbKey()), bytes, createNewAccountBandwidthRatio,
+          now, netLimit, netUsage, latestConsumeTime,
+          freeNetLimitDbg, freeNetUsageDbg, latestConsumeFreeTimeDbg,
+          publicNetLimitDbg, publicNetUsageDbg, publicNetTimeDbg);
+    } catch (Exception e) {
+      logger.debug("CREATE_ACCOUNT inputs logging failed: {}", e.getMessage());
+    }
     long newNetUsage;
     if (!dynamicPropertiesStore.supportUnfreezeDelay()) {
       newNetUsage = increase(netUsage, 0, latestConsumeTime, now);
@@ -225,6 +285,9 @@ public class BandwidthProcessor extends ResourceProcessor {
     }
 
     long netCost = bytes * createNewAccountBandwidthRatio;
+    logger.info(
+        "CREATE_ACCOUNT windowed: owner={}, newNetUsage={}, netCost={}, available={} (netLimit - newNetUsage)",
+        StringUtil.encode58Check(accountCapsule.createDbKey()), newNetUsage, netCost, (netLimit - newNetUsage));
     if (netCost <= (netLimit - newNetUsage)) {
       long latestOperationTime = chainBaseManager.getHeadBlockTimeStamp();
       if (!dynamicPropertiesStore.supportUnfreezeDelay()) {
@@ -485,9 +548,9 @@ public class BandwidthProcessor extends ResourceProcessor {
 
 
     if (bytes > (netLimit - newNetUsage)) {
-      logger.debug("Net usage is running out, now use free net usage."
-              + " Bytes: {}, netLimit: {}, newNetUsage: {}.",
-          bytes, netLimit, newNetUsage);
+      logger.info(
+          "ACCOUNT_NET insufficient: owner={}, bytes={}, netLimit={}, netUsage(old)={}, newNetUsage={}, available={}",
+          StringUtil.encode58Check(accountCapsule.createDbKey()), bytes, netLimit, netUsage, newNetUsage, (netLimit - newNetUsage));
       return false;
     }
 
@@ -516,9 +579,13 @@ public class BandwidthProcessor extends ResourceProcessor {
     long newFreeNetUsage = increase(freeNetUsage, 0, latestConsumeFreeTime, now);
 
     if (bytes > (freeNetLimit - newFreeNetUsage)) {
-      logger.debug("Free net usage is running out."
-              + " Bytes: {}, freeNetLimit: {}, newFreeNetUsage: {}.",
-          bytes, freeNetLimit, newFreeNetUsage);
+      long publicNetLimit = chainBaseManager.getDynamicPropertiesStore().getPublicNetLimit();
+      long publicNetUsage = chainBaseManager.getDynamicPropertiesStore().getPublicNetUsage();
+      long publicNetTime = chainBaseManager.getDynamicPropertiesStore().getPublicNetTime();
+      logger.info(
+          "FREE_NET insufficient: owner={}, bytes={}, freeNetLimit={}, newFreeNetUsage={}, available={}, publicNetLimit={}, publicNetUsage(new)={}, publicNetTime(now)={}",
+          StringUtil.encode58Check(accountCapsule.createDbKey()), bytes, freeNetLimit, newFreeNetUsage,
+          (freeNetLimit - newFreeNetUsage), publicNetLimit, increase(publicNetUsage, 0, publicNetTime, now), now);
       return false;
     }
 
@@ -529,9 +596,10 @@ public class BandwidthProcessor extends ResourceProcessor {
     long newPublicNetUsage = increase(publicNetUsage, 0, publicNetTime, now);
 
     if (bytes > (publicNetLimit - newPublicNetUsage)) {
-      logger.debug("Free public net usage is running out."
-              + " Bytes: {}, publicNetLimit: {}, newPublicNetUsage: {}.",
-          bytes, publicNetLimit, newPublicNetUsage);
+      logger.info(
+          "PUBLIC_NET insufficient: owner={}, bytes={}, publicNetLimit={}, newPublicNetUsage={}, available={}",
+          StringUtil.encode58Check(accountCapsule.createDbKey()), bytes, publicNetLimit, newPublicNetUsage,
+          (publicNetLimit - newPublicNetUsage));
       return false;
     }
 
