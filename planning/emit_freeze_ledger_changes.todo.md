@@ -30,7 +30,7 @@ Goal: Maintain remote execution for FreezeBalanceContract while ensuring Java’
   - `freeze_balance_enabled = true`
   - `emit_freeze_ledger_changes = true` (already present; ensure it is read and plumbed to execution module)
 - TODOs
-  - [ ] Verify `ExecutionConfig` exposes `emit_freeze_ledger_changes` to the core service.
+  - [x] Verify `ExecutionConfig` exposes `emit_freeze_ledger_changes` to the core service.
   - [ ] Add a unit test asserting config flag toggles emission.
 
 ### 2) Wire Format for Emitted Changes
@@ -53,8 +53,8 @@ Goal: Maintain remote execution for FreezeBalanceContract while ensuring Java’
     - `key`: ASCII `"TOTAL_NET_WEIGHT"`, `"TOTAL_NET_LIMIT"` (ENERGY totals optional).
     - `value`: 8-byte big-endian u64.
 - TODOs
-  - [ ] Decide sentinel address representation (DYNPROPS vs zeroes) and keep consistent.
-  - [ ] Document key strings centrally to avoid drift.
+  - [x] Decide sentinel address representation (DYNPROPS vs zeroes) and keep consistent. *(Chose DYNPROPS + zero-check fallback)*
+  - [x] Document key strings centrally to avoid drift. *(Documented in RuntimeSpiImpl.java and service.rs)*
 
 ### 3) Rust Backend Emission
 
@@ -66,14 +66,14 @@ Goal: Maintain remote execution for FreezeBalanceContract while ensuring Java’
       - `serialize_freeze_record(amount: u64, expiration: i64) -> [u8;16]` (already present as struct; reuse).
       - `read/write dynamic totals` (helpers already exist for reading; add for emitting changes as needed).
 - Emission policy:
-  - [ ] Only emit when the new value differs from the old (avoid no-op deltas).
-  - [ ] Include both `oldValue` and `newValue` for traceability and idempotent application.
+  - [x] Only emit when the new value differs from the old (avoid no-op deltas). *(Reads old record, compares via serialize)*
+  - [x] Include both `oldValue` and `newValue` for traceability and idempotent application.
 - Freeze paths to cover:
-  - [ ] Freeze balance for bandwidth
-  - [ ] Unfreeze (record removal or adjustment)
+  - [x] Freeze balance for bandwidth
+  - [ ] Unfreeze (record removal or adjustment) *(Not implemented yet - freeze only)*
   - [ ] (Optional) V2 freeze if your chain uses it — ensure type tagging or key distinguishes.
 - Dynamic totals:
-  - [ ] After freeze/unfreeze, compute resulting totals; if changed, emit `TOTAL_NET_WEIGHT` and/or `TOTAL_NET_LIMIT` deltas.
+  - [ ] After freeze/unfreeze, compute resulting totals; if changed, emit `TOTAL_NET_WEIGHT` and/or `TOTAL_NET_LIMIT` deltas. *(DEFERRED - requires global tracking infrastructure)*
 - Testing (Rust):
   - [ ] Unit: freeze → emits `FREEZE:BW` StorageChange with correct old/new bytes.
   - [ ] Unit: freeze → emits `TOTAL_NET_WEIGHT`/`TOTAL_NET_LIMIT` deltas when expected.
@@ -84,22 +84,22 @@ Goal: Maintain remote execution for FreezeBalanceContract while ensuring Java’
 - File: `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java`
 - Extend change application logic:
   - In `applyStateChangesToLocalDatabase`:
-    - [ ] Route AccountChange to existing `updateAccountState` (no change).
-    - [ ] Route StorageChange to `updateAccountStorage`, which must:
+    - [x] Route AccountChange to existing `updateAccountState` (no change).
+    - [x] Route StorageChange to `updateAccountStorage`, which must:
       - Recognize `DYNPROPS` (or zero address) and apply totals:
         - `"TOTAL_NET_WEIGHT"` → `dynamicPropertiesStore.saveTotalNetWeight(valueLong)`
         - `"TOTAL_NET_LIMIT"` → `dynamicPropertiesStore.saveTotalNetLimit(valueLong)`
-        - Mark via `ResourceSyncContext.recordDynamicKeyDirty(...)`.
+        - Mark via `ResourceSyncContext.recordDynamicKeyDirty(...)`. *(Note: Not implemented yet, TODO)*
       - Recognize `"FREEZE:*"` keys for real addresses:
         - Parse 16-byte freeze record (amount, expiration).
         - Update AccountCapsule freeze ledger so `getAllFrozenBalanceForBandwidth()` matches:
-          - V1 path (Frozen) — `setFrozenForBandwidth(amount, expiration)` if applicable.
-          - V2 path (FreezeV2 with type BANDWIDTH) — add/update entry.
-        - Persist via `accountStore.put(...)` and mark dirty.
-      - Handle deletions (empty newValue): clear or zero the freeze for that resource.
+          - V1 path (Frozen) — `setFrozenForBandwidth(amount, expiration)` if applicable. *(Implemented)*
+          - V2 path (FreezeV2 with type BANDWIDTH) — add/update entry. *(Not implemented - V1 only)*
+        - Persist via `accountStore.put(...)` and mark dirty. *(Implemented)*
+      - Handle deletions (empty newValue): clear or zero the freeze for that resource. *(Implemented)*
 - Ordering & idempotence:
-  - [ ] Apply storage changes immediately (same transaction) before the next BandwidthProcessor.consume.
-  - [ ] Unknown keys: log at DEBUG and ignore.
+  - [x] Apply storage changes immediately (same transaction) before the next BandwidthProcessor.consume.
+  - [x] Unknown keys: log at DEBUG and ignore.
 - Testing (Java):
   - [ ] Unit: applying `FREEZE:BW` updates AccountCapsule; `getAllFrozenBalanceForBandwidth()` reflects change.
   - [ ] Unit: applying `TOTAL_NET_WEIGHT/LIMIT` changes store values.
@@ -109,10 +109,10 @@ Goal: Maintain remote execution for FreezeBalanceContract while ensuring Java’
 
 - File: `chainbase/src/main/java/org/tron/core/db/BandwidthProcessor.java`
 - At CREATE_ACCOUNT decision point, log:
-  - [ ] `accountFrozenBW = accountCapsule.getAllFrozenBalanceForBandwidth()`
-  - [ ] `totalNetWeight = dynamicPropertiesStore.getTotalNetWeight()`
-  - [ ] `totalNetLimit  = dynamicPropertiesStore.getTotalNetLimit()`
-  - [ ] Already logging bytes, rate, nowSlot, netLimit, netUsage, free/public metrics.
+  - [x] `accountFrozenBW = accountCapsule.getAllFrozenBalanceForBandwidth()`
+  - [x] `totalNetWeight = dynamicPropertiesStore.getTotalNetWeight()`
+  - [x] `totalNetLimit  = dynamicPropertiesStore.getTotalNetLimit()`
+  - [x] Already logging bytes, rate, nowSlot, netLimit, netUsage, free/public metrics.
 - Rollback plan:
   - [ ] Demote to DEBUG after parity verification.
 

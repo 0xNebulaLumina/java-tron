@@ -288,21 +288,232 @@ public class RuntimeSpiImpl implements Runtime {
 
   /**
    * Update account storage in the local database.
+   * Handles freeze ledger records and dynamic properties from remote execution.
    */
   private void updateAccountStorage(byte[] address, byte[] key, byte[] newValue,
                                    ChainBaseManager chainBaseManager,
                                    TransactionContext context) {
     try {
-      // Account storage updates would go here
-      // This is more complex and depends on how Account storage is managed
-      logger.debug("Account storage update for address: {}, key: {}", 
-          address, key);
-      // TODO: Implement account storage synchronization if needed
-      
+      // Decode the key to check if it's a special freeze/dynamic property key
+      String keyStr = decodeStorageKey(key);
+
+      logger.debug("Processing storage update - address: {}, key decoded: '{}', value length: {}",
+          org.tron.common.utils.ByteArray.toHexString(address),
+          keyStr,
+          newValue != null ? newValue.length : 0);
+
+      // Handle freeze ledger records (FREEZE:BW, FREEZE:EN, FREEZE:TP)
+      if (keyStr.startsWith("FREEZE:")) {
+        applyFreezeRecord(address, keyStr, newValue, chainBaseManager);
+        return;
+      }
+
+      // Handle dynamic properties (DYNPROPS sentinel address)
+      if (isSentinelDynPropsAddress(address)) {
+        applyDynamicProperty(keyStr, newValue, chainBaseManager);
+        return;
+      }
+
+      // Handle contract storage slots (standard EVM storage)
+      logger.debug("Standard contract storage update for address: {}, key: {}",
+          org.tron.common.utils.ByteArray.toHexString(address),
+          org.tron.common.utils.ByteArray.toHexString(key));
+      // TODO: Implement contract storage synchronization if needed
+
     } catch (Exception e) {
-      logger.warn("Failed to update account storage for address: {}, key: {}, error: {}", 
-          address, key, e.getMessage());
+      logger.error("Failed to update account storage for address: {}, key: {}, error: {}",
+          org.tron.common.utils.ByteArray.toHexString(address),
+          org.tron.common.utils.ByteArray.toHexString(key),
+          e.getMessage(), e);
     }
+  }
+
+  /**
+   * Apply a freeze record to an account's freeze ledger.
+   * Format: FREEZE:BW (bandwidth), FREEZE:EN (energy), FREEZE:TP (tron power)
+   * Value: 16 bytes = [amount(8 bytes big-endian)] + [expiration(8 bytes big-endian)]
+   */
+  private void applyFreezeRecord(byte[] address, String freezeKey, byte[] newValue,
+                                ChainBaseManager chainBaseManager) {
+    String addressStr = org.tron.common.utils.StringUtil.encode58Check(address);
+
+    logger.info("Applying freeze record for account: {}, key: {}, value length: {}",
+        addressStr, freezeKey, newValue != null ? newValue.length : 0);
+
+    // Get or create account
+    AccountCapsule accountCapsule = chainBaseManager.getAccountStore().get(address);
+    if (accountCapsule == null) {
+      logger.warn("Account does not exist for freeze record: {}", addressStr);
+      // Optionally create account with default balance
+      accountCapsule = new AccountCapsule(com.google.protobuf.ByteString.copyFrom(address),
+          org.tron.protos.Protocol.AccountType.Normal);
+    }
+
+    // Handle deletion (empty newValue)
+    if (newValue == null || newValue.length == 0) {
+      logger.info("Clearing freeze record for account: {}, resource: {}", addressStr, freezeKey);
+      // Set frozen balance to 0
+      if (freezeKey.equals("FREEZE:BW")) {
+        accountCapsule.setFrozenForBandwidth(0, 0);
+      } else if (freezeKey.equals("FREEZE:EN")) {
+        accountCapsule.setFrozenForEnergy(0, 0);
+      } else if (freezeKey.equals("FREEZE:TP")) {
+        accountCapsule.setFrozenForTronPower(0, 0);
+      }
+    } else {
+      // Parse freeze record: 16 bytes = amount(8) + expiration(8)
+      if (newValue.length < 16) {
+        logger.error("Invalid freeze record length: {} bytes, expected 16", newValue.length);
+        return;
+      }
+
+      // Extract amount (first 8 bytes, big-endian)
+      long amount = 0;
+      for (int i = 0; i < 8; i++) {
+        amount = (amount << 8) | (newValue[i] & 0xFF);
+      }
+
+      // Extract expiration (next 8 bytes, big-endian, signed i64)
+      long expiration = 0;
+      for (int i = 8; i < 16; i++) {
+        expiration = (expiration << 8) | (newValue[i] & 0xFF);
+      }
+
+      logger.info("Parsed freeze record: amount={} SUN, expiration={} ms, resource={}",
+          amount, expiration, freezeKey);
+
+      // Apply freeze to account based on resource type
+      if (freezeKey.equals("FREEZE:BW")) {
+        accountCapsule.setFrozenForBandwidth(amount, expiration);
+        logger.info("Set frozen bandwidth for {}: amount={}, expiration={}",
+            addressStr, amount, expiration);
+      } else if (freezeKey.equals("FREEZE:EN")) {
+        accountCapsule.setFrozenForEnergy(amount, expiration);
+        logger.info("Set frozen energy for {}: amount={}, expiration={}",
+            addressStr, amount, expiration);
+      } else if (freezeKey.equals("FREEZE:TP")) {
+        accountCapsule.setFrozenForTronPower(amount, expiration);
+        logger.info("Set frozen tron power for {}: amount={}, expiration={}",
+            addressStr, amount, expiration);
+      }
+    }
+
+    // Persist updated account
+    chainBaseManager.getAccountStore().put(address, accountCapsule);
+    logger.info("Successfully applied freeze record for account: {}", addressStr);
+  }
+
+  /**
+   * Apply a dynamic property update.
+   * Handles TOTAL_NET_WEIGHT, TOTAL_NET_LIMIT, etc.
+   */
+  private void applyDynamicProperty(String propertyKey, byte[] newValue,
+                                   ChainBaseManager chainBaseManager) {
+    logger.info("Applying dynamic property: key={}, value length={}",
+        propertyKey, newValue != null ? newValue.length : 0);
+
+    // Handle deletion (empty newValue)
+    if (newValue == null || newValue.length == 0) {
+      logger.info("Clearing dynamic property: {}", propertyKey);
+      // For now, we don't delete dynamic properties
+      return;
+    }
+
+    // Parse value as u64 (8 bytes, big-endian)
+    if (newValue.length < 8) {
+      logger.error("Invalid dynamic property value length: {} bytes, expected 8", newValue.length);
+      return;
+    }
+
+    long value = 0;
+    for (int i = 0; i < 8; i++) {
+      value = (value << 8) | (newValue[i] & 0xFF);
+    }
+
+    logger.info("Parsed dynamic property: {}={}", propertyKey, value);
+
+    // Apply to DynamicPropertiesStore
+    if (propertyKey.equals("TOTAL_NET_WEIGHT")) {
+      chainBaseManager.getDynamicPropertiesStore().saveTotalNetWeight(value);
+      logger.info("Set TOTAL_NET_WEIGHT to {}", value);
+    } else if (propertyKey.equals("TOTAL_NET_LIMIT")) {
+      chainBaseManager.getDynamicPropertiesStore().saveTotalNetLimit(value);
+      logger.info("Set TOTAL_NET_LIMIT to {}", value);
+    } else if (propertyKey.equals("TOTAL_ENERGY_WEIGHT")) {
+      chainBaseManager.getDynamicPropertiesStore().saveTotalEnergyWeight(value);
+      logger.info("Set TOTAL_ENERGY_WEIGHT to {}", value);
+    } else if (propertyKey.equals("TOTAL_ENERGY_LIMIT")) {
+      // Note: Check if this method exists in DynamicPropertiesStore
+      logger.info("TOTAL_ENERGY_LIMIT update requested but may not be supported yet");
+    } else {
+      logger.warn("Unknown dynamic property key: {}", propertyKey);
+    }
+  }
+
+  /**
+   * Decode a storage key from U256 bytes to a string.
+   * The key may be ASCII padded to 32 bytes (right-aligned).
+   */
+  private String decodeStorageKey(byte[] key) {
+    if (key == null || key.length == 0) {
+      return "";
+    }
+
+    // Find the first non-zero byte (skip leading padding)
+    int start = 0;
+    while (start < key.length && key[start] == 0) {
+      start++;
+    }
+
+    if (start >= key.length) {
+      return ""; // All zeros
+    }
+
+    // Extract the non-zero portion
+    byte[] keyBytes = new byte[key.length - start];
+    System.arraycopy(key, start, keyBytes, 0, keyBytes.length);
+
+    // Try to decode as ASCII
+    try {
+      String decoded = new String(keyBytes, java.nio.charset.StandardCharsets.US_ASCII);
+      // Check if it's printable ASCII
+      if (decoded.matches("^[\\x20-\\x7E]+$")) {
+        return decoded;
+      }
+    } catch (Exception e) {
+      // Not ASCII, return hex representation
+    }
+
+    // Return hex if not ASCII
+    return org.tron.common.utils.ByteArray.toHexString(keyBytes);
+  }
+
+  /**
+   * Check if an address is the sentinel DYNPROPS address.
+   * Could be ASCII "DYNPROPS" or 21-byte all-zeros.
+   */
+  private boolean isSentinelDynPropsAddress(byte[] address) {
+    if (address == null) {
+      return false;
+    }
+
+    // Check if it's ASCII "DYNPROPS" (padded)
+    String addressStr = decodeStorageKey(address);
+    if (addressStr.equals("DYNPROPS")) {
+      return true;
+    }
+
+    // Check if it's all zeros (21 bytes)
+    if (address.length == 21) {
+      for (byte b : address) {
+        if (b != 0) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    return false;
   }
 
   /**

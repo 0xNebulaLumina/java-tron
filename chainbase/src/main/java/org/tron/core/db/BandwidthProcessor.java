@@ -267,12 +267,17 @@ public class BandwidthProcessor extends ResourceProcessor {
       long publicNetTimeDbg = chainBaseManager.getDynamicPropertiesStore().getPublicNetTime();
       long freeNetUsageDbg = accountCapsule.getFreeNetUsage();
       long latestConsumeFreeTimeDbg = accountCapsule.getLatestConsumeFreeTime();
+      // PHASE 3: Add freeze ledger and dynamic totals diagnostics
+      long accountFrozenBW = accountCapsule.getAllFrozenBalanceForBandwidth();
+      long totalNetWeight = chainBaseManager.getDynamicPropertiesStore().getTotalNetWeight();
+      long totalNetLimit = chainBaseManager.getDynamicPropertiesStore().getTotalNetLimit();
       logger.info(
-          "CREATE_ACCOUNT inputs: owner={}, bytes={}, rate={}, nowSlot={}, netLimit={}, netUsage={}, latestConsumeTime={}, freeNetLimit={}, freeNetUsage={}, latestConsumeFreeTime={}, publicNetLimit={}, publicNetUsage={}, publicNetTime={}",
+          "CREATE_ACCOUNT inputs: owner={}, bytes={}, rate={}, nowSlot={}, netLimit={}, netUsage={}, latestConsumeTime={}, freeNetLimit={}, freeNetUsage={}, latestConsumeFreeTime={}, publicNetLimit={}, publicNetUsage={}, publicNetTime={}, accountFrozenBW={}, totalNetWeight={}, totalNetLimit={}",
           StringUtil.encode58Check(accountCapsule.createDbKey()), bytes, createNewAccountBandwidthRatio,
           now, netLimit, netUsage, latestConsumeTime,
           freeNetLimitDbg, freeNetUsageDbg, latestConsumeFreeTimeDbg,
-          publicNetLimitDbg, publicNetUsageDbg, publicNetTimeDbg);
+          publicNetLimitDbg, publicNetUsageDbg, publicNetTimeDbg,
+          accountFrozenBW, totalNetWeight, totalNetLimit);
     } catch (Exception e) {
       logger.debug("CREATE_ACCOUNT inputs logging failed: {}", e.getMessage());
     }

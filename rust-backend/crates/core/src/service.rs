@@ -1114,6 +1114,7 @@ impl BackendService {
     /// Execute a FREEZE_BALANCE_CONTRACT
     /// Freezes TRX balance to gain resources (BANDWIDTH or ENERGY)
     /// Phase 2: Balance delta + resource ledger persistence
+    /// Phase 3: Optional emission of freeze ledger and dynamic totals changes
     fn execute_freeze_balance_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
@@ -1164,6 +1165,18 @@ impl BackendService {
                              owner_balance_u64, freeze_amount));
         }
 
+        // Get execution config to check emission flags
+        let execution_config = self.get_execution_config()?;
+        let emit_freeze_ledger_changes = execution_config.remote.emit_freeze_ledger_changes;
+
+        // Read old freeze record if we need to emit changes
+        let old_freeze_record = if emit_freeze_ledger_changes {
+            storage_adapter.get_freeze_record(&transaction.from, params.resource as u8)
+                .map_err(|e| format!("Failed to read old freeze record: {}", e))?
+        } else {
+            None
+        };
+
         // Compute new owner account with reduced balance
         let mut new_owner = owner_account.clone();
         new_owner.balance = revm_primitives::U256::from(owner_balance_u64 - freeze_amount);
@@ -1190,9 +1203,16 @@ impl BackendService {
             expiration_timestamp
         ).map_err(|e| format!("Failed to persist freeze record: {}", e))?;
 
-        // Emit exactly one state change for CSV parity (Phase 1 behavior)
-        // Note: freeze ledger changes are not emitted to maintain CSV compatibility
-        let state_changes = vec![
+        // Read new freeze record after update if we need to emit changes
+        let new_freeze_record = if emit_freeze_ledger_changes {
+            storage_adapter.get_freeze_record(&transaction.from, params.resource as u8)
+                .map_err(|e| format!("Failed to read new freeze record: {}", e))?
+        } else {
+            None
+        };
+
+        // Build state changes
+        let mut state_changes = vec![
             TronStateChange::AccountChange {
                 address: transaction.from,
                 old_account: Some(owner_account),
@@ -1200,11 +1220,59 @@ impl BackendService {
             }
         ];
 
+        // Phase 3: Optionally emit freeze ledger storage changes
+        if emit_freeze_ledger_changes {
+            // Emit freeze record storage change
+            let freeze_key = match params.resource {
+                FreezeResource::Bandwidth => b"FREEZE:BW".to_vec(),
+                FreezeResource::Energy => b"FREEZE:EN".to_vec(),
+                FreezeResource::TronPower => b"FREEZE:TP".to_vec(),
+            };
+
+            let old_freeze_value = old_freeze_record.map(|r| revm_primitives::Bytes::from(r.serialize())).unwrap_or_default();
+            let new_freeze_value = new_freeze_record.map(|r| revm_primitives::Bytes::from(r.serialize())).unwrap_or_default();
+
+            // Convert key to U256 (pad bytes to 32 bytes for U256 compatibility)
+            let mut key_bytes = [0u8; 32];
+            let freeze_key_len = freeze_key.len().min(32);
+            key_bytes[32-freeze_key_len..].copy_from_slice(&freeze_key[..freeze_key_len]);
+            let freeze_key_u256 = revm_primitives::U256::from_be_bytes(key_bytes);
+
+            // Convert values to U256 (pad to 32 bytes)
+            let mut old_value_bytes = [0u8; 32];
+            if old_freeze_value.len() > 0 {
+                let len = old_freeze_value.len().min(32);
+                old_value_bytes[32-len..].copy_from_slice(&old_freeze_value[..len]);
+            }
+            let old_value_u256 = revm_primitives::U256::from_be_bytes(old_value_bytes);
+
+            let mut new_value_bytes = [0u8; 32];
+            if new_freeze_value.len() > 0 {
+                let len = new_freeze_value.len().min(32);
+                new_value_bytes[32-len..].copy_from_slice(&new_freeze_value[..len]);
+            }
+            let new_value_u256 = revm_primitives::U256::from_be_bytes(new_value_bytes);
+
+            state_changes.push(TronStateChange::StorageChange {
+                address: transaction.from,
+                key: freeze_key_u256,
+                old_value: old_value_u256,
+                new_value: new_value_u256,
+            });
+
+            debug!("Emitted freeze ledger storage change: key={}, old={}, new={}",
+                   hex::encode(&freeze_key), hex::encode(&old_freeze_value), hex::encode(&new_freeze_value));
+
+            // TODO: Emit dynamic totals (TOTAL_NET_WEIGHT, TOTAL_NET_LIMIT) storage changes
+            // This requires tracking global dynamic properties in the storage adapter
+            // For now, we emit only freeze ledger changes
+        }
+
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("FreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true",
-               bandwidth_used);
+        debug!("FreezeBalance completed successfully: state_changes={}, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, emission_enabled={}",
+               state_changes.len(), bandwidth_used, emit_freeze_ledger_changes);
 
         Ok(TronExecutionResult {
             success: true,
