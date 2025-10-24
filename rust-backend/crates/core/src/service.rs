@@ -703,8 +703,6 @@ impl BackendService {
     ///   int64 vote_count = 2;        // field 2
     /// }
     fn parse_vote_witness_contract(data: &[u8]) -> Result<Vec<(revm::primitives::Address, u64)>, String> {
-        use revm::primitives::Address;
-
         let mut votes = Vec::new();
         let mut pos = 0;
 
@@ -852,7 +850,7 @@ impl BackendService {
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        use tron_backend_execution::{TronExecutionResult, TronStateChange, VotesRecord, Vote};
+        use tron_backend_execution::{TronExecutionResult, TronStateChange, VotesRecord};
 
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
@@ -3548,6 +3546,17 @@ impl BackendService {
                             nonce: acc_info.nonce,
                             code_hash: code_hash_bytes,
                             code: code_bytes,
+                            // Optional resource usage fields (AEXT) - not available from EVM state
+                            net_usage: None,
+                            free_net_usage: None,
+                            energy_usage: None,
+                            latest_consume_time: None,
+                            latest_consume_free_time: None,
+                            latest_consume_time_for_energy: None,
+                            net_window_size: None,
+                            net_window_optimized: None,
+                            energy_window_size: None,
+                            energy_window_optimized: None,
                         }
                     };
 
