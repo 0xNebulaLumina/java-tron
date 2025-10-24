@@ -14,6 +14,9 @@ import org.tron.core.execution.spi.ExecutionSpiFactory;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.Protocol.Account;
 
+import static org.tron.protos.contract.Common.ResourceCode.BANDWIDTH;
+import static org.tron.protos.contract.Common.ResourceCode.ENERGY;
+
 /**
  * ExecutionSPI-aware Runtime implementation that maintains the existing Runtime interface while
  * delegating execution to the configured ExecutionSPI implementation (EMBEDDED, REMOTE, or SHADOW).
@@ -263,10 +266,57 @@ public class RuntimeSpiImpl implements Runtime {
       // Note: Getting/Setting contract code in TRON requires different mechanisms than just accessing AccountCapsule
       // This would typically involve ContractStore and other TRON-specific storage
       if (accountInfo.code != null && accountInfo.code.length > 0) {
-        logger.debug("Account {} has contract code: {} bytes, codeHash: {}", 
-                    addressStr, accountInfo.code.length, 
+        logger.debug("Account {} has contract code: {} bytes, codeHash: {}",
+                    addressStr, accountInfo.code.length,
                     org.tron.common.utils.ByteArray.toHexString(accountInfo.codeHash));
         // TODO: Handle contract code storage if needed
+      }
+
+      // Apply resource usage fields from AEXT tail if present
+      if (accountInfo.hasResourceUsage()) {
+        logger.debug("Applying AEXT resource usage fields for account: {}", addressStr);
+
+        // Set usage fields
+        if (accountInfo.netUsage != null) {
+          accountCapsule.setNetUsage(accountInfo.netUsage);
+        }
+        if (accountInfo.freeNetUsage != null) {
+          accountCapsule.setFreeNetUsage(accountInfo.freeNetUsage);
+        }
+        if (accountInfo.energyUsage != null) {
+          accountCapsule.setEnergyUsage(accountInfo.energyUsage);
+        }
+
+        // Set timing fields
+        if (accountInfo.latestConsumeTime != null) {
+          accountCapsule.setLatestConsumeTime(accountInfo.latestConsumeTime);
+        }
+        if (accountInfo.latestConsumeFreeTime != null) {
+          accountCapsule.setLatestConsumeFreeTime(accountInfo.latestConsumeFreeTime);
+        }
+        if (accountInfo.latestConsumeTimeForEnergy != null) {
+          accountCapsule.setLatestConsumeTimeForEnergy(accountInfo.latestConsumeTimeForEnergy);
+        }
+
+        // Set window size and optimization flags
+        if (accountInfo.netWindowSize != null) {
+          accountCapsule.setNewWindowSize(BANDWIDTH, accountInfo.netWindowSize);
+        }
+        if (accountInfo.energyWindowSize != null) {
+          accountCapsule.setNewWindowSize(ENERGY, accountInfo.energyWindowSize);
+        }
+        if (accountInfo.netWindowOptimized != null) {
+          accountCapsule.setWindowOptimized(BANDWIDTH, accountInfo.netWindowOptimized);
+        }
+        if (accountInfo.energyWindowOptimized != null) {
+          accountCapsule.setWindowOptimized(ENERGY, accountInfo.energyWindowOptimized);
+        }
+
+        logger.debug("Applied resource usage to account {}: netUsage={}, freeNetUsage={}, energyUsage={}, times=[{},{},{}], windows=[{},{}], optimized=[{},{}]",
+                     addressStr, accountInfo.netUsage, accountInfo.freeNetUsage, accountInfo.energyUsage,
+                     accountInfo.latestConsumeTime, accountInfo.latestConsumeFreeTime, accountInfo.latestConsumeTimeForEnergy,
+                     accountInfo.netWindowSize, accountInfo.energyWindowSize,
+                     accountInfo.netWindowOptimized, accountInfo.energyWindowOptimized);
       }
 
       // Store the updated account
@@ -336,18 +386,53 @@ public class RuntimeSpiImpl implements Runtime {
 
   /**
    * Simple AccountInfo class to hold deserialized account information.
+   * Extended to support AEXT (Account EXTension) resource usage fields.
    */
   private static class AccountInfo {
     public final long balance;
     public final long nonce;
     public final byte[] codeHash;
     public final byte[] code;
-    
+
+    // AEXT v1 resource usage fields (optional, null if not present)
+    public final Long netUsage;
+    public final Long freeNetUsage;
+    public final Long energyUsage;
+    public final Long latestConsumeTime;
+    public final Long latestConsumeFreeTime;
+    public final Long latestConsumeTimeForEnergy;
+    public final Long netWindowSize;
+    public final Long energyWindowSize;
+    public final Boolean netWindowOptimized;
+    public final Boolean energyWindowOptimized;
+
     public AccountInfo(long balance, long nonce, byte[] codeHash, byte[] code) {
+      this(balance, nonce, codeHash, code, null, null, null, null, null, null, null, null, null, null);
+    }
+
+    public AccountInfo(long balance, long nonce, byte[] codeHash, byte[] code,
+                       Long netUsage, Long freeNetUsage, Long energyUsage,
+                       Long latestConsumeTime, Long latestConsumeFreeTime, Long latestConsumeTimeForEnergy,
+                       Long netWindowSize, Long energyWindowSize,
+                       Boolean netWindowOptimized, Boolean energyWindowOptimized) {
       this.balance = balance;
       this.nonce = nonce;
       this.codeHash = codeHash != null ? codeHash : new byte[0];
       this.code = code != null ? code : new byte[0];
+      this.netUsage = netUsage;
+      this.freeNetUsage = freeNetUsage;
+      this.energyUsage = energyUsage;
+      this.latestConsumeTime = latestConsumeTime;
+      this.latestConsumeFreeTime = latestConsumeFreeTime;
+      this.latestConsumeTimeForEnergy = latestConsumeTimeForEnergy;
+      this.netWindowSize = netWindowSize;
+      this.energyWindowSize = energyWindowSize;
+      this.netWindowOptimized = netWindowOptimized;
+      this.energyWindowOptimized = energyWindowOptimized;
+    }
+
+    public boolean hasResourceUsage() {
+      return netUsage != null;
     }
   }
 
@@ -400,20 +485,102 @@ public class RuntimeSpiImpl implements Runtime {
               codeLength = (codeLength << 8) | (data[offset + i] & 0xFF);
             }
             offset += 4;
-            
+
             // Extract code (variable length)
             if (codeLength > 0 && data.length >= offset + codeLength) {
               code = new byte[codeLength];
               System.arraycopy(data, offset, code, 0, codeLength);
+              offset += codeLength;
             }
           }
         }
       }
-      
-      logger.debug("Deserialized AccountInfo - balance: {}, nonce: {}, codeHash length: {}, code length: {}", 
-                   balance, nonce, codeHash.length, code.length);
-      
-      return new AccountInfo(balance, nonce, codeHash, code);
+
+      // Try to parse optional AEXT (Account EXTension) tail for resource usage
+      Long netUsage = null, freeNetUsage = null, energyUsage = null;
+      Long latestConsumeTime = null, latestConsumeFreeTime = null, latestConsumeTimeForEnergy = null;
+      Long netWindowSize = null, energyWindowSize = null;
+      Boolean netWindowOptimized = null, energyWindowOptimized = null;
+
+      if (offset + 4 <= data.length) {
+        // Check for AEXT magic: 0x41 0x45 0x58 0x54 ("AEXT")
+        if (data[offset] == 0x41 && data[offset + 1] == 0x45 &&
+            data[offset + 2] == 0x58 && data[offset + 3] == 0x54) {
+          offset += 4;
+
+          try {
+            // Read version (u16 big-endian)
+            if (offset + 2 > data.length) {
+              logger.warn("AEXT tail truncated at version field");
+            } else {
+              int version = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
+              offset += 2;
+
+              if (version != 1) {
+                logger.warn("AEXT version {} not supported, skipping tail", version);
+              } else {
+                // Read length (u16 big-endian)
+                if (offset + 2 > data.length) {
+                  logger.warn("AEXT tail truncated at length field");
+                } else {
+                  int payloadLength = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
+                  offset += 2;
+
+                  if (offset + payloadLength > data.length) {
+                    logger.warn("AEXT payload length {} exceeds remaining data {}", payloadLength, data.length - offset);
+                  } else {
+                    // Parse AEXT v1 payload (all big-endian i64 except booleans)
+                    int payloadOffset = offset;
+
+                    // Helper to read i64 big-endian
+                    java.util.function.Function<Integer, Long> readI64 = (off) -> {
+                      long val = 0;
+                      for (int i = 0; i < 8; i++) {
+                        val = (val << 8) | (data[off + i] & 0xFF);
+                      }
+                      return val;
+                    };
+
+                    if (payloadLength >= 68) { // Minimum payload size: 8*8 + 1 + 1 + 2 = 68 + 2 = 70 with padding
+                      netUsage = readI64.apply(payloadOffset);
+                      freeNetUsage = readI64.apply(payloadOffset + 8);
+                      energyUsage = readI64.apply(payloadOffset + 16);
+                      latestConsumeTime = readI64.apply(payloadOffset + 24);
+                      latestConsumeFreeTime = readI64.apply(payloadOffset + 32);
+                      latestConsumeTimeForEnergy = readI64.apply(payloadOffset + 40);
+                      netWindowSize = readI64.apply(payloadOffset + 48);
+                      energyWindowSize = readI64.apply(payloadOffset + 56);
+                      netWindowOptimized = data[payloadOffset + 64] != 0;
+                      energyWindowOptimized = data[payloadOffset + 65] != 0;
+                      // Reserved/padding bytes at payloadOffset + 66, 67 are ignored
+
+                      logger.debug("Parsed AEXT v1: netUsage={}, freeNetUsage={}, energyUsage={}, times=[{},{},{}], windows=[{},{}], optimized=[{},{}]",
+                                   netUsage, freeNetUsage, energyUsage,
+                                   latestConsumeTime, latestConsumeFreeTime, latestConsumeTimeForEnergy,
+                                   netWindowSize, energyWindowSize,
+                                   netWindowOptimized, energyWindowOptimized);
+                    } else {
+                      logger.warn("AEXT payload length {} too short for v1 (expected >= 68)", payloadLength);
+                    }
+                  }
+                }
+              }
+            }
+          } catch (Exception e) {
+            logger.warn("Failed to parse AEXT tail: {}", e.getMessage());
+            // Continue without resource usage fields
+          }
+        }
+      }
+
+      logger.debug("Deserialized AccountInfo - balance: {}, nonce: {}, codeHash length: {}, code length: {}, hasResourceUsage: {}",
+                   balance, nonce, codeHash.length, code.length, (netUsage != null));
+
+      return new AccountInfo(balance, nonce, codeHash, code,
+                             netUsage, freeNetUsage, energyUsage,
+                             latestConsumeTime, latestConsumeFreeTime, latestConsumeTimeForEnergy,
+                             netWindowSize, energyWindowSize,
+                             netWindowOptimized, energyWindowOptimized);
       
     } catch (Exception e) {
       logger.warn("Failed to deserialize AccountInfo from {} bytes: {}", data.length, e.getMessage());

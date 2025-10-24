@@ -472,34 +472,35 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     return result;
   }
 
-  /** 
+  /**
    * Serialize AccountInfo to byte array for state synchronization.
    * Format: [balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]
+   *         + optional [AEXT tail] for resource usage (when proto fields are present)
    */
   private byte[] serializeAccountInfo(tron.backend.BackendOuterClass.AccountInfo accountInfo) {
     if (accountInfo == null) {
       return new byte[0]; // Empty for null account (creation/deletion cases)
     }
-    
+
     try {
       // Extract account info components
       byte[] balance = accountInfo.getBalance().toByteArray();
       long nonce = accountInfo.getNonce();
       byte[] codeHash = accountInfo.getCodeHash().toByteArray();
       byte[] code = accountInfo.getCode().toByteArray();
-      
+
       // Ensure balance is 32 bytes (pad with zeros if needed)
       byte[] paddedBalance = new byte[32];
       if (balance.length > 0) {
         System.arraycopy(balance, 0, paddedBalance, Math.max(0, 32 - balance.length), Math.min(balance.length, 32));
       }
-      
+
       // Convert nonce to 8 bytes (big-endian)
       byte[] nonceBytes = new byte[8];
       for (int i = 7; i >= 0; i--) {
         nonceBytes[7 - i] = (byte) (nonce >>> (i * 8));
       }
-      
+
       // Ensure code hash is 32 bytes and normalize empty-code hash to KECCAK_EMPTY
       byte[] paddedCodeHash = new byte[32];
       boolean codeIsEmpty = (code == null || code.length == 0);
@@ -516,43 +517,135 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         // Overwrite with canonical empty-code hash
         System.arraycopy(KECCAK_EMPTY, 0, paddedCodeHash, 0, 32);
       }
-      
+
       // Code length as 4 bytes (big-endian)
       byte[] codeLengthBytes = new byte[4];
       int codeLength = code.length;
       for (int i = 3; i >= 0; i--) {
         codeLengthBytes[3 - i] = (byte) (codeLength >>> (i * 8));
       }
-      
+
+      // Check if AEXT tail should be appended (based on property and proto field presence)
+      boolean includeResourceUsage = Boolean.parseBoolean(
+          System.getProperty("remote.exec.accountinfo.resources.enabled", "true"));
+      byte[] aextTail = null;
+
+      // Check if proto has any resource usage fields set (non-zero or explicitly set)
+      // In proto3, fields with default values (0, false) are considered "not set"
+      // We check if at least netUsage is non-zero as a signal that resource data is available
+      if (includeResourceUsage && accountInfo.getNetUsage() != 0) {
+        try {
+          aextTail = serializeAextTailFromProto(accountInfo);
+          logger.debug("Appending AEXT tail ({} bytes) from proto resource fields", aextTail.length);
+        } catch (Exception e) {
+          logger.warn("Failed to serialize AEXT tail from proto, falling back to base format: {}", e.getMessage());
+          // Continue with base format only
+        }
+      }
+
+      // Calculate total size
+      int baseSize = 32 + 8 + 32 + 4 + code.length;
+      int totalSize = baseSize + (aextTail != null ? aextTail.length : 0);
+
       // Combine all components
-      byte[] result = new byte[32 + 8 + 32 + 4 + code.length];
+      byte[] result = new byte[totalSize];
       int offset = 0;
-      
+
       System.arraycopy(paddedBalance, 0, result, offset, 32);
       offset += 32;
-      
+
       System.arraycopy(nonceBytes, 0, result, offset, 8);
       offset += 8;
-      
+
       System.arraycopy(paddedCodeHash, 0, result, offset, 32);
       offset += 32;
-      
+
       System.arraycopy(codeLengthBytes, 0, result, offset, 4);
       offset += 4;
-      
+
       if (code.length > 0) {
         System.arraycopy(code, 0, result, offset, code.length);
+        offset += code.length;
       }
-      
-      logger.debug("Serialized AccountInfo: balance={} bytes, nonce={}, codeHash={} bytes, code={} bytes, total={} bytes",
-          balance.length, nonce, codeHash.length, code.length, result.length);
-      
+
+      // Append AEXT tail if present
+      if (aextTail != null && aextTail.length > 0) {
+        System.arraycopy(aextTail, 0, result, offset, aextTail.length);
+      }
+
+      logger.debug("Serialized AccountInfo: balance={} bytes, nonce={}, codeHash={} bytes, code={} bytes, aext={} bytes, total={} bytes",
+          balance.length, nonce, codeHash.length, code.length, (aextTail != null ? aextTail.length : 0), result.length);
+
       return result;
-      
+
     } catch (Exception e) {
       logger.error("Failed to serialize AccountInfo", e);
       return new byte[0]; // Return empty array on error
     }
+  }
+
+  /**
+   * Serialize AEXT (Account EXTension) v1 tail from proto AccountInfo resource fields.
+   * Format: magic(4) + version(2) + length(2) + payload(68)
+   * Total: 76 bytes
+   */
+  private byte[] serializeAextTailFromProto(tron.backend.BackendOuterClass.AccountInfo accountInfo) {
+    // AEXT v1 payload size: 8*8 (i64 fields) + 1 + 1 (booleans) + 2 (padding) = 68 bytes
+    int payloadSize = 68;
+    int totalSize = 4 + 2 + 2 + payloadSize; // magic + version + length + payload = 76 bytes
+    byte[] result = new byte[totalSize];
+    int offset = 0;
+
+    // Magic: "AEXT" (0x41 0x45 0x58 0x54)
+    result[offset++] = 0x41; // 'A'
+    result[offset++] = 0x45; // 'E'
+    result[offset++] = 0x58; // 'X'
+    result[offset++] = 0x54; // 'T'
+
+    // Version: 1 (u16 big-endian)
+    result[offset++] = 0x00;
+    result[offset++] = 0x01;
+
+    // Length: 68 (u16 big-endian)
+    result[offset++] = 0x00;
+    result[offset++] = 0x44; // 0x44 = 68 in decimal
+
+    // Payload: resource usage fields from proto (all i64 big-endian except booleans)
+    offset = writeI64BigEndian(result, offset, accountInfo.getNetUsage());
+    offset = writeI64BigEndian(result, offset, accountInfo.getFreeNetUsage());
+    offset = writeI64BigEndian(result, offset, accountInfo.getEnergyUsage());
+    offset = writeI64BigEndian(result, offset, accountInfo.getLatestConsumeTime());
+    offset = writeI64BigEndian(result, offset, accountInfo.getLatestConsumeFreeTime());
+    offset = writeI64BigEndian(result, offset, accountInfo.getLatestConsumeTimeForEnergy());
+    offset = writeI64BigEndian(result, offset, accountInfo.getNetWindowSize());
+    offset = writeI64BigEndian(result, offset, accountInfo.getEnergyWindowSize());
+
+    // Booleans
+    result[offset++] = (byte) (accountInfo.getNetWindowOptimized() ? 0x01 : 0x00);
+    result[offset++] = (byte) (accountInfo.getEnergyWindowOptimized() ? 0x01 : 0x00);
+
+    // Reserved/padding (2 bytes)
+    result[offset++] = 0x00;
+    result[offset++] = 0x00;
+
+    logger.debug("Serialized AEXT v1 from proto: netUsage={}, freeNetUsage={}, energyUsage={}, times=[{},{},{}], windows=[{},{}], optimized=[{},{}]",
+                 accountInfo.getNetUsage(), accountInfo.getFreeNetUsage(), accountInfo.getEnergyUsage(),
+                 accountInfo.getLatestConsumeTime(), accountInfo.getLatestConsumeFreeTime(), accountInfo.getLatestConsumeTimeForEnergy(),
+                 accountInfo.getNetWindowSize(), accountInfo.getEnergyWindowSize(),
+                 accountInfo.getNetWindowOptimized(), accountInfo.getEnergyWindowOptimized());
+
+    return result;
+  }
+
+  /**
+   * Write an i64 value in big-endian format to the byte array.
+   * Returns the new offset after writing.
+   */
+  private int writeI64BigEndian(byte[] buffer, int offset, long value) {
+    for (int i = 7; i >= 0; i--) {
+      buffer[offset++] = (byte) (value >>> (i * 8));
+    }
+    return offset;
   }
 
   /** Convert ExecuteTransactionResponse to ExecutionResult. */

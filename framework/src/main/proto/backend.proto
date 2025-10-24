@@ -593,6 +593,19 @@ message AccountInfo {
   uint64 nonce = 3;
   bytes code_hash = 4;      // 32-byte hash of the code
   bytes code = 5;           // Contract bytecode (empty for EOAs)
+
+  // Optional resource usage fields (AEXT extension)
+  // When present, these are serialized to AEXT tail format in Java
+  int64 net_usage = 6;
+  int64 free_net_usage = 7;
+  int64 energy_usage = 8;
+  int64 latest_consume_time = 9;
+  int64 latest_consume_free_time = 10;
+  int64 latest_consume_time_for_energy = 11;
+  int64 net_window_size = 12;
+  bool net_window_optimized = 13;
+  int64 energy_window_size = 14;
+  bool energy_window_optimized = 15;
 }
 
 // Storage slot change within a contract

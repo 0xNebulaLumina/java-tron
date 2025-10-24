@@ -69,26 +69,27 @@ This keeps older backends and logs valid; newer Java can parse/emit AEXT without
 ### 1) Deserialization: parse AEXT and apply to AccountCapsule
 File: `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java`
 
-- [ ] Update `deserializeAccountInfo(byte[] data)`:
+- [x] Update `deserializeAccountInfo(byte[] data)`:
   - After base parsing finishes, if `offset + 4 <= data.length` and `data[offset..offset+4] == 'A','E','X','T'`, then parse tail:
     - Read version (u16 BE); if != 1, skip with warning.
     - Read length (u16 BE); ensure `offset + length <= data.length`.
     - Parse payload fields in listed order; on any bounds error → log warn and ignore tail.
   - Return `AccountInfo` extended to carry parsed resource fields (introduce fields in nested class or a new record type).
-- [ ] Update `updateAccountState(...)` to set resource usage fields on `AccountCapsule` if present:
+- [x] Update `updateAccountState(...)` to set resource usage fields on `AccountCapsule` if present:
   - Usage: `setNetUsage`, `setFreeNetUsage`, `setEnergyUsage`
   - Times: `setLatestConsumeTime`, `setLatestConsumeFreeTime`, `setLatestConsumeTimeForEnergy`
   - Window: `setNewWindowSize(BANDWIDTH, netWindowSize)`, `setWindowOptimized(BANDWIDTH, netWindowOptimized)` and same for ENERGY
   - Ensure null‑safety: only apply when tail present.
-- [ ] Logging: add concise debug of tail detection and values; warn on malformed tails; do not throw.
+- [x] Logging: add concise debug of tail detection and values; warn on malformed tails; do not throw.
 
 Open Decision: which window size getter to mirror
-- [ ] Decide and document whether tail carries `getWindowSize()` (logical) or `getWindowSizeV2()` (precision‑scaled). For parity and simplicity, use `getWindowSize()` logical units; record decision in this doc and in code comments.
+- [x] Decide and document whether tail carries `getWindowSize()` (logical) or `getWindowSizeV2()` (precision‑scaled). For parity and simplicity, use `getWindowSize()` logical units; record decision in this doc and in code comments.
+  - **Decision**: Use `getWindowSize(BANDWIDTH|ENERGY)` for logical units as documented in code comments.
 
 ### 2) Embedded journal: append AEXT in account change serialization
 File: `framework/src/main/java/org/tron/core/execution/reporting/StateChangeJournal.java`
 
-- [ ] Update `serializeAccountInfo(AccountCapsule account)`:
+- [x] Update `serializeAccountInfo(AccountCapsule account)`:
   - Keep current base buffer creation unchanged.
   - Compute AEXT payload from AccountCapsule via getters:
     - netUsage, freeNetUsage, energyUsage
@@ -97,12 +98,12 @@ File: `framework/src/main/java/org/tron/core/execution/reporting/StateChangeJour
     - netWindowOptimized = `getWindowOptimized(BANDWIDTH)`, energyWindowOptimized = `getWindowOptimized(ENERGY)`
   - Append magic/version/length (BE) and payload to the base buffer.
   - Add system property gate (default true): `-Dremote.exec.accountinfo.resources.enabled=true`. When false, do not append tail.
-- [ ] Add defensive try/catch with warn logs on serialization issues; return base buffer if tail build fails.
+- [x] Add defensive try/catch with warn logs on serialization issues; return base buffer if tail build fails.
 
 ### 3) Remote response bridge: optionally append AEXT based on proto
 File: `framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java`
 
-- [ ] Update `serializeAccountInfo(tron.backend.BackendOuterClass.AccountInfo accountInfo)`:
+- [x] Update `serializeAccountInfo(tron.backend.BackendOuterClass.AccountInfo accountInfo)`:
   - Keep base serialization path intact.
   - Tail emission:
     - Short‑term: only append tail if the proto adds and populates resource fields (see Proto Changes). Otherwise omit; do not synthesize values.
@@ -121,7 +122,7 @@ File: `framework/src/main/proto/backend.proto`
 
 Extend `message AccountInfo` to include optional resource usage fields. All new fields must be optional (proto3 presence via non‑zero defaults or wrapper types is acceptable). Proposed fields and tags:
 
-- [ ] Add (after existing 1..5):
+- [x] Add (after existing 1..5):
   - `int64 net_usage = 6;`
   - `int64 free_net_usage = 7;`
   - `int64 energy_usage = 8;`
@@ -134,8 +135,8 @@ Extend `message AccountInfo` to include optional resource usage fields. All new 
   - `bool energy_window_optimized = 15;`
 
 Build/regen:
-- [ ] Rebuild Java (gradle) and Rust (cargo); ensure tonic stubs are regenerated (Rust uses `rust-backend/crates/core/build.rs`).
-- [ ] Document field semantics in proto comments.
+- [x] Rebuild Java (gradle) and Rust (cargo); ensure tonic stubs are regenerated (Rust uses `rust-backend/crates/core/build.rs`).
+- [x] Document field semantics in proto comments.
 
 
 ## Rust Backend Changes (Staged)
