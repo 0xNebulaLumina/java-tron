@@ -596,16 +596,16 @@ message AccountInfo {
 
   // Optional resource usage fields (AEXT extension)
   // When present, these are serialized to AEXT tail format in Java
-  int64 net_usage = 6;
-  int64 free_net_usage = 7;
-  int64 energy_usage = 8;
-  int64 latest_consume_time = 9;
-  int64 latest_consume_free_time = 10;
-  int64 latest_consume_time_for_energy = 11;
-  int64 net_window_size = 12;
-  bool net_window_optimized = 13;
-  int64 energy_window_size = 14;
-  bool energy_window_optimized = 15;
+  optional int64 net_usage = 6;
+  optional int64 free_net_usage = 7;
+  optional int64 energy_usage = 8;
+  optional int64 latest_consume_time = 9;
+  optional int64 latest_consume_free_time = 10;
+  optional int64 latest_consume_time_for_energy = 11;
+  optional int64 net_window_size = 12;
+  optional bool net_window_optimized = 13;
+  optional int64 energy_window_size = 14;
+  optional bool energy_window_optimized = 15;
 }
 
 // Storage slot change within a contract

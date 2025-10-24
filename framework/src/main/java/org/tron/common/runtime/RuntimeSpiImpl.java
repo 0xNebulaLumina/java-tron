@@ -541,7 +541,7 @@ public class RuntimeSpiImpl implements Runtime {
                       return val;
                     };
 
-                    if (payloadLength >= 68) { // Minimum payload size: 8*8 + 1 + 1 + 2 = 68 + 2 = 70 with padding
+                    if (payloadLength >= 68) { // Minimum payload size: 8*8 (64) + 1 + 1 + 2 = 68
                       netUsage = readI64.apply(payloadOffset);
                       freeNetUsage = readI64.apply(payloadOffset + 8);
                       energyUsage = readI64.apply(payloadOffset + 16);

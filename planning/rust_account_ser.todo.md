@@ -230,7 +230,7 @@ Phase 2 (enrichment paths – optional):
   10. energyWindowOptimized (1)
   11. reserved/padding (2)
 
-Total payload bytes: 8*8 + 2 + 2 = 68 + 4 = 72 bytes (length=72). Header adds 8 bytes → tail total 80 bytes.
+Total payload bytes: 8*8 + 1 + 1 + 2 = 64 + 4 = 68 bytes (length=68). Header adds 8 bytes → tail total 76 bytes.
 
 
 ## Appendix B — Compatibility Matrix
@@ -246,4 +246,3 @@ Total payload bytes: 8*8 + 2 + 2 = 68 + 4 = 72 bytes (length=72). Header adds 8 
 3. Proto field additions (no backend usage yet) and builds
 4. Rust population of fields (optional) + tests
 5. Enable in CI scenarios validating parity
-

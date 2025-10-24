@@ -530,10 +530,20 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           System.getProperty("remote.exec.accountinfo.resources.enabled", "true"));
       byte[] aextTail = null;
 
-      // Check if proto has any resource usage fields set (non-zero or explicitly set)
-      // In proto3, fields with default values (0, false) are considered "not set"
-      // We check if at least netUsage is non-zero as a signal that resource data is available
-      if (includeResourceUsage && accountInfo.getNetUsage() != 0) {
+      // Check presence of any optional resource field; append AEXT only if present
+      boolean hasResourceFields =
+          accountInfo.hasNetUsage()
+              || accountInfo.hasFreeNetUsage()
+              || accountInfo.hasEnergyUsage()
+              || accountInfo.hasLatestConsumeTime()
+              || accountInfo.hasLatestConsumeFreeTime()
+              || accountInfo.hasLatestConsumeTimeForEnergy()
+              || accountInfo.hasNetWindowSize()
+              || accountInfo.hasNetWindowOptimized()
+              || accountInfo.hasEnergyWindowSize()
+              || accountInfo.hasEnergyWindowOptimized();
+
+      if (includeResourceUsage && hasResourceFields) {
         try {
           aextTail = serializeAextTailFromProto(accountInfo);
           logger.debug("Appending AEXT tail ({} bytes) from proto resource fields", aextTail.length);
