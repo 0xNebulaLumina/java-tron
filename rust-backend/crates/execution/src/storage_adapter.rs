@@ -2798,6 +2798,206 @@ mod tests {
             .expect("Should compute tron power");
         assert_eq!(power, 0, "Expected zero power when no freeze records");
     }
+
+    // ResourceTracker Tests
+
+    #[test]
+    fn test_resource_tracker_increase_no_time_delta() {
+        // When now == lastTime, no recovery should occur
+        let new_usage = ResourceTracker::increase(100, 50, 1000, 1000, 28800);
+        assert_eq!(new_usage, 150, "No recovery when time delta is 0");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_partial_recovery() {
+        // lastUsage=1000, usage=200, lastTime=0, now=14400, windowSize=28800
+        // Time delta = 14400 (half the window)
+        // Recovery = 1000 * 14400 / 28800 = 500
+        // New usage = max(0, 1000 - 500) + 200 = 500 + 200 = 700
+        let new_usage = ResourceTracker::increase(1000, 200, 0, 14400, 28800);
+        assert_eq!(new_usage, 700, "Half window should recover half usage");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_full_recovery() {
+        // lastUsage=1000, usage=200, lastTime=0, now=28800, windowSize=28800
+        // Time delta = 28800 (full window)
+        // Recovery = 1000 (full recovery)
+        // New usage = max(0, 1000 - 1000) + 200 = 0 + 200 = 200
+        let new_usage = ResourceTracker::increase(1000, 200, 0, 28800, 28800);
+        assert_eq!(new_usage, 200, "Full window should fully recover");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_beyond_window() {
+        // Time delta exceeds window - should fully recover
+        let new_usage = ResourceTracker::increase(1000, 200, 0, 50000, 28800);
+        assert_eq!(new_usage, 200, "Beyond window should fully recover");
+    }
+
+    #[test]
+    fn test_resource_tracker_recovery_zero_usage() {
+        // Recovery with zero last usage
+        let new_usage = ResourceTracker::recovery(0, 0, 14400, 28800);
+        assert_eq!(new_usage, 0, "Recovery of zero usage should be zero");
+    }
+
+    #[test]
+    fn test_resource_tracker_recovery_half_window() {
+        // lastUsage=1000, lastTime=0, now=14400, windowSize=28800
+        // Should recover to 500
+        let recovered = ResourceTracker::recovery(1000, 0, 14400, 28800);
+        assert_eq!(recovered, 500, "Half window recovery");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_zero_window() {
+        // When windowSize is 0, should just return the usage
+        let new_usage = ResourceTracker::increase(1000, 200, 0, 14400, 0);
+        assert_eq!(new_usage, 200, "Zero window should return usage only");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_negative_time_delta() {
+        // When now < lastTime, should not recover
+        let new_usage = ResourceTracker::increase(1000, 200, 5000, 4000, 28800);
+        assert_eq!(new_usage, 1200, "Negative time delta should not recover");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_overflow_protection() {
+        // Test with very large values to ensure no overflow
+        let new_usage = ResourceTracker::increase(i64::MAX / 2, 100, 0, 100, 28800);
+        // Should not panic and should return a reasonable value
+        assert!(new_usage > 0, "Should handle large values without overflow");
+    }
+
+    #[test]
+    fn test_resource_tracker_track_bandwidth_free_net_path() {
+        use crate::storage_adapter::{ResourceTracker, AccountAext, BandwidthPath};
+
+        let owner = Address::from([0xab; 20]);
+        let current_aext = AccountAext::with_defaults();
+        let free_net_limit = 5000i64;
+        let bytes_used = 212i64;
+        let now = 1000i64;
+
+        let result = ResourceTracker::track_bandwidth(
+            &owner,
+            bytes_used,
+            now,
+            &current_aext,
+            free_net_limit,
+        );
+
+        assert!(result.is_ok(), "Track bandwidth should succeed");
+        let (path, before, after) = result.unwrap();
+
+        assert_eq!(path, BandwidthPath::FreeNet, "Should use FREE_NET path");
+        assert_eq!(before.free_net_usage, 0, "Before should have zero free_net_usage");
+        assert_eq!(after.free_net_usage, 212, "After should have 212 free_net_usage");
+        assert_eq!(after.latest_consume_free_time, 1000, "Should update consume time");
+    }
+
+    #[test]
+    fn test_resource_tracker_track_bandwidth_with_existing_usage() {
+        use crate::storage_adapter::{ResourceTracker, AccountAext, BandwidthPath};
+
+        let owner = Address::from([0xcd; 20]);
+        let mut current_aext = AccountAext::with_defaults();
+        current_aext.free_net_usage = 1000;
+        current_aext.latest_consume_free_time = 0;
+
+        let free_net_limit = 5000i64;
+        let bytes_used = 212i64;
+        let now = 14400i64; // Half window
+
+        let result = ResourceTracker::track_bandwidth(
+            &owner,
+            bytes_used,
+            now,
+            &current_aext,
+            free_net_limit,
+        );
+
+        assert!(result.is_ok(), "Track bandwidth should succeed");
+        let (path, before, after) = result.unwrap();
+
+        assert_eq!(path, BandwidthPath::FreeNet, "Should use FREE_NET path");
+        // Before: recovered from 1000 by half = 500
+        assert_eq!(before.free_net_usage, 500, "Before should have recovered to 500");
+        // After: 500 + 212 = 712
+        assert_eq!(after.free_net_usage, 712, "After should have 712 free_net_usage");
+    }
+
+    #[test]
+    fn test_resource_tracker_track_bandwidth_exceeds_limit() {
+        use crate::storage_adapter::{ResourceTracker, AccountAext, BandwidthPath};
+
+        let owner = Address::from([0xef; 20]);
+        let mut current_aext = AccountAext::with_defaults();
+        current_aext.free_net_usage = 4900; // Close to limit
+        current_aext.latest_consume_free_time = 0;
+
+        let free_net_limit = 5000i64;
+        let bytes_used = 500i64; // Would exceed limit
+        let now = 100i64; // Small time delta
+
+        let result = ResourceTracker::track_bandwidth(
+            &owner,
+            bytes_used,
+            now,
+            &current_aext,
+            free_net_limit,
+        );
+
+        assert!(result.is_ok(), "Track bandwidth should succeed");
+        let (path, _before, _after) = result.unwrap();
+
+        // Should fall back to FEE when FREE_NET is insufficient
+        assert_eq!(path, BandwidthPath::Fee, "Should use FEE path when limit exceeded");
+    }
+
+    #[test]
+    fn test_account_aext_serialization_roundtrip() {
+        let aext = AccountAext {
+            net_usage: 100,
+            free_net_usage: 200,
+            energy_usage: 0,
+            latest_consume_time: 1000,
+            latest_consume_free_time: 2000,
+            latest_consume_time_for_energy: 0,
+            net_window_size: 28800,
+            net_window_optimized: false,
+            energy_window_size: 28800,
+            energy_window_optimized: false,
+        };
+
+        let serialized = aext.serialize();
+        assert_eq!(serialized.len(), 82, "Serialized size should be 82 bytes");
+
+        let deserialized = AccountAext::deserialize(&serialized)
+            .expect("Should deserialize");
+
+        assert_eq!(deserialized.net_usage, 100);
+        assert_eq!(deserialized.free_net_usage, 200);
+        assert_eq!(deserialized.latest_consume_time, 1000);
+        assert_eq!(deserialized.latest_consume_free_time, 2000);
+        assert_eq!(deserialized.net_window_size, 28800);
+        assert_eq!(deserialized.net_window_optimized, false);
+    }
+
+    #[test]
+    fn test_account_aext_with_defaults() {
+        let aext = AccountAext::with_defaults();
+
+        assert_eq!(aext.net_usage, 0);
+        assert_eq!(aext.free_net_usage, 0);
+        assert_eq!(aext.net_window_size, 28800);
+        assert_eq!(aext.energy_window_size, 28800);
+        assert_eq!(aext.net_window_optimized, false);
+        assert_eq!(aext.energy_window_optimized, false);
+    }
 }
 
 /// Resource Tracker for bandwidth and energy accounting

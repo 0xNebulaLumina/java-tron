@@ -309,20 +309,56 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing TRANSFER_CONTRACT: from={:?}, to={:?}, value={}",
                transaction.from, transaction.to, transaction.value);
 
         let execution_config = self.get_execution_config()?;
         let fee_config = &execution_config.fees;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         // For TRANSFER_CONTRACT specifically, we need the 'to' address
         let to_address = transaction.to.ok_or("TRANSFER_CONTRACT must have 'to' address")?;
-        
+
         // Calculate bandwidth used based on transaction payload size
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
-        
+
+        // Track AEXT for bandwidth if in tracked mode
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for sender (or initialize with defaults)
+            let current_aext = storage_adapter.get_account_aext(&transaction.from)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter.get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &transaction.from,
+                bandwidth_used as i64,
+                context.block_number as i64, // Use block number as "now"
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter.set_account_aext(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
+
+            debug!("AEXT tracked for transfer: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                   transaction.from, path, before_aext.net_usage, after_aext.net_usage,
+                   before_aext.free_net_usage, after_aext.free_net_usage);
+        }
+
         // Start with empty state changes
         let mut state_changes = Vec::new();
         
@@ -489,9 +525,9 @@ impl BackendService {
             }
         });
         
-        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, fee: {} SUN, state_changes: {}", 
+        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, fee: {} SUN, state_changes: {}",
                bandwidth_used, fee_amount, state_changes.len());
-        
+
         Ok(TronExecutionResult {
             success: true,
             return_data: revm_primitives::Bytes::new(), // No return data for value transfers
@@ -500,7 +536,7 @@ impl BackendService {
             state_changes,
             logs: Vec::new(), // No logs for value transfers
             error: None,
-            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
+            aext_map, // Populated with tracked AEXT if mode is "tracked"
         })
     }
 
@@ -510,9 +546,12 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing WITNESS_CREATE_CONTRACT for address {:?}", transaction.from);
+
+        let execution_config = self.get_execution_config()?;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         // Extract URL from transaction data
         // For WitnessCreateContract, the data contains the URL bytes
@@ -655,6 +694,41 @@ impl BackendService {
         // 11. Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
+        // Track AEXT for bandwidth if in tracked mode
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for owner (or initialize with defaults)
+            let current_aext = storage_adapter.get_account_aext(&transaction.from)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter.get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &transaction.from,
+                bandwidth_used as i64,
+                context.block_number as i64, // Use block number as "now"
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter.set_account_aext(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
+
+            debug!("AEXT tracked for witness_create: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                   transaction.from, path, before_aext.net_usage, after_aext.net_usage,
+                   before_aext.free_net_usage, after_aext.free_net_usage);
+        }
+
         let owner_tron = revm_primitives::hex::encode(Self::add_tron_address_prefix(&transaction.from));
         info!(
             "WitnessCreate completed: cost={} SUN, state_changes={}, owner={}, fee_dest={}",
@@ -672,7 +746,7 @@ impl BackendService {
             logs: Vec::new(), // No logs for witness creation
             state_changes,
             error: None,
-            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
+            aext_map, // Populated with tracked AEXT if mode is "tracked"
         })
     }
 
@@ -850,9 +924,12 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange, VotesRecord};
+
+        let execution_config = self.get_execution_config()?;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
@@ -996,6 +1073,41 @@ impl BackendService {
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
+        // Track AEXT for bandwidth if in tracked mode
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for owner (or initialize with defaults)
+            let current_aext = storage_adapter.get_account_aext(&owner)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter.get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &owner,
+                bandwidth_used as i64,
+                context.block_number as i64, // Use block number as "now"
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter.set_account_aext(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
+
+            debug!("AEXT tracked for vote_witness: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                   owner, path, before_aext.net_usage, after_aext.net_usage,
+                   before_aext.free_net_usage, after_aext.free_net_usage);
+        }
+
         info!("VoteWitness completed: owner={}, votes={}, state_changes={}, bandwidth={}",
               owner_tron, votes_record.new_votes.len(), state_changes.len(), bandwidth_used);
 
@@ -1007,7 +1119,7 @@ impl BackendService {
             logs: Vec::new(), // No logs for voting
             state_changes,
             error: None,
-            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
+            aext_map, // Populated with tracked AEXT if mode is "tracked"
         })
     }
 
@@ -3521,7 +3633,8 @@ impl BackendService {
                         .unwrap_or("none");
 
                     // Helper function to convert AccountInfo to protobuf
-                    let convert_account_info = |addr: &revm::primitives::Address, acc_info: &revm::primitives::AccountInfo| {
+                    // is_old: true for old_account, false for new_account
+                    let convert_account_info = |addr: &revm::primitives::Address, acc_info: &revm::primitives::AccountInfo, is_old: bool| {
                         // Ensure EOAs (no code) serialize with empty code bytes.
                         let code_bytes: Vec<u8> = match acc_info.code.as_ref() {
                             None => Vec::new(),
@@ -3573,9 +3686,26 @@ impl BackendService {
                                 (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
                                  Some(28800), Some(false), Some(28800), Some(false))
                             },
+                            "tracked" if is_eoa => {
+                                // Populate with real values from resource tracking
+                                // Look up address in aext_map
+                                if let Some((before_aext, after_aext)) = result.aext_map.get(addr) {
+                                    // Use before_aext for old_account, after_aext for new_account
+                                    let aext = if is_old { before_aext } else { after_aext };
+
+                                    (Some(aext.net_usage), Some(aext.free_net_usage), Some(aext.energy_usage),
+                                     Some(aext.latest_consume_time), Some(aext.latest_consume_free_time),
+                                     Some(aext.latest_consume_time_for_energy), Some(aext.net_window_size),
+                                     Some(aext.net_window_optimized), Some(aext.energy_window_size),
+                                     Some(aext.energy_window_optimized))
+                                } else {
+                                    // Address not in aext_map, use defaults
+                                    (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
+                                     Some(28800), Some(false), Some(28800), Some(false))
+                                }
+                            },
                             "tracked" => {
-                                // Future: populate with real values from resource tracking
-                                // For now, treat same as "none"
+                                // Non-EOA contracts in tracked mode: no AEXT
                                 (None, None, None, None, None, None, None, None, None, None)
                             },
                             _ => {
@@ -3608,8 +3738,8 @@ impl BackendService {
                         }
                     };
 
-                    let old_account_proto = old_account.as_ref().map(|acc| convert_account_info(address, acc));
-                    let new_account_proto = new_account.as_ref().map(|acc| convert_account_info(address, acc));
+                    let old_account_proto = old_account.as_ref().map(|acc| convert_account_info(address, acc, true));
+                    let new_account_proto = new_account.as_ref().map(|acc| convert_account_info(address, acc, false));
                     
                     StateChange {
                         change: Some(crate::backend::state_change::Change::AccountChange(
