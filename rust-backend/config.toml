@@ -91,9 +91,9 @@ emit_storage_changes = false
 # Modes:
 #   - "none": All resource fields set to None (current behavior, remote omits AEXT tail)
 #   - "zeros": Set Some(0)/false for EOAs (enables AEXT presence parity with embedded)
-#   - "defaults": Set window sizes to 1800, other fields to 0/false for EOAs (matches embedded defaults exactly)
+#   - "defaults": Set window sizes to 28800, other fields to 0/false for EOAs (matches embedded defaults exactly)
 #   - "tracked": Some(real values) when backend supports resource metrics (future)
 # Default: "none" for backward compatibility
-# Recommendation: Set to "defaults" for full CSV digest parity with embedded (matches window size defaults)
+# Recommendation: Set to "defaults" for full CSV digest parity with embedded (matches 28800 window size defaults)
 # This ensures Java RemoteExecutionSPI appends the AEXT tail with correct default values
 accountinfo_aext_mode = "defaults" 

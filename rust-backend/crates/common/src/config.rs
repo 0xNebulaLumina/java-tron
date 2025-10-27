@@ -94,7 +94,7 @@ pub struct RemoteExecutionConfig {
     /// Controls how AEXT tail (76 bytes of resource usage fields) is populated
     /// - "none": All resource fields set to None (current behavior, remote omits AEXT)
     /// - "zeros": Set Some(0)/false for EOAs (enables AEXT presence parity with embedded)
-    /// - "defaults": Set window sizes to 1800, other fields to 0/false for EOAs (matches embedded defaults exactly)
+    /// - "defaults": Set window sizes to 28800, other fields to 0/false for EOAs (matches embedded defaults exactly)
     /// - "tracked": Some(real values) when backend supports resource metrics (future)
     /// Default: "none" for backward compatibility; set to "defaults" for full CSV parity with embedded
     pub accountinfo_aext_mode: String,

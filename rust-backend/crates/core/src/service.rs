@@ -3561,12 +3561,12 @@ impl BackendService {
                             },
                             "defaults" if is_eoa => {
                                 // For EOAs in "defaults" mode, match embedded Java-Tron defaults:
-                                // - net_window_size = 1800 (0x0708)
-                                // - energy_window_size = 1800 (0x0708)
+                                // - net_window_size = 28800 (0x7080)
+                                // - energy_window_size = 28800 (0x7080)
                                 // - All other fields zero/false
                                 // This ensures byte-level AEXT tail parity with embedded CSVs
                                 (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
-                                 Some(1800), Some(false), Some(1800), Some(false))
+                                 Some(28800), Some(false), Some(28800), Some(false))
                             },
                             "tracked" => {
                                 // Future: populate with real values from resource tracking
