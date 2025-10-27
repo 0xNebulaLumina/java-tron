@@ -3028,9 +3028,15 @@ impl crate::backend::backend_server::Backend for BackendService {
     // Execution operations (delegated to execution module)
     async fn execute_transaction(&self, request: Request<ExecuteTransactionRequest>) -> Result<Response<ExecuteTransactionResponse>, Status> {
         debug!("Execute transaction request: {:?}", request.get_ref());
-        
+
         let req = request.get_ref();
-        
+
+        // Parse pre-execution AEXT snapshots for hybrid mode
+        let pre_exec_aext_map = self.parse_pre_execution_aext(&req.pre_execution_aext);
+        if !pre_exec_aext_map.is_empty() {
+            debug!("Parsed {} pre-execution AEXT snapshots for hybrid mode", pre_exec_aext_map.len());
+        }
+
         // Get the execution module
         let execution_module = self.get_execution_module()?;
         
@@ -3151,9 +3157,9 @@ impl crate::backend::backend_server::Backend for BackendService {
         // Handle execution result
         match execution_result {
             Ok(result) => {
-                info!("Transaction executed successfully - energy_used: {}, bandwidth_used: {}", 
+                info!("Transaction executed successfully - energy_used: {}, bandwidth_used: {}",
                       result.energy_used, result.bandwidth_used);
-                let response = self.convert_execution_result_to_protobuf(result);
+                let response = self.convert_execution_result_to_protobuf(result, &pre_exec_aext_map);
                 Ok(Response::new(response))
             }
             Err(e) => {
@@ -3428,6 +3434,53 @@ impl BackendService {
         }
     }
     
+    /// Parse pre-execution AEXT snapshots from the gRPC request into a HashMap.
+    /// Converts Tron 21-byte addresses (0x41 prefix) to 20-byte EVM addresses for lookup.
+    fn parse_pre_execution_aext(
+        &self,
+        snapshots: &[crate::backend::AccountAextSnapshot]
+    ) -> std::collections::HashMap<revm::primitives::Address, AccountAext> {
+        let mut map = std::collections::HashMap::new();
+
+        for snapshot in snapshots {
+            // Strip Tron 0x41 prefix to get 20-byte address
+            match Self::strip_tron_address_prefix(&snapshot.address) {
+                Ok(addr_bytes) => {
+                    let address = revm::primitives::Address::from_slice(addr_bytes);
+
+                    // Extract AEXT fields from protobuf
+                    if let Some(aext_proto) = &snapshot.aext {
+                        debug!("Parsed pre-exec AEXT for address {}: net_usage={}, free_net_usage={}, energy_usage={}",
+                               hex::encode(&snapshot.address),
+                               aext_proto.net_usage,
+                               aext_proto.free_net_usage,
+                               aext_proto.energy_usage);
+
+                        let aext = AccountAext {
+                            net_usage: aext_proto.net_usage,
+                            free_net_usage: aext_proto.free_net_usage,
+                            energy_usage: aext_proto.energy_usage,
+                            latest_consume_time: aext_proto.latest_consume_time,
+                            latest_consume_free_time: aext_proto.latest_consume_free_time,
+                            latest_consume_time_for_energy: aext_proto.latest_consume_time_for_energy,
+                            net_window_size: aext_proto.net_window_size,
+                            net_window_optimized: aext_proto.net_window_optimized,
+                            energy_window_size: aext_proto.energy_window_size,
+                            energy_window_optimized: aext_proto.energy_window_optimized,
+                        };
+
+                        map.insert(address, aext);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to parse address from pre-exec AEXT snapshot: {}", e);
+                }
+            }
+        }
+
+        map
+    }
+
     fn add_tron_address_prefix(address: &revm_primitives::Address) -> Vec<u8> {
         let mut result = Vec::with_capacity(21);
         result.push(0x41); // Add Tron address prefix
@@ -3596,7 +3649,11 @@ impl BackendService {
         })
     }
 
-    fn convert_execution_result_to_protobuf(&self, result: TronExecutionResult) -> ExecuteTransactionResponse {
+    fn convert_execution_result_to_protobuf(
+        &self,
+        result: TronExecutionResult,
+        pre_exec_aext: &std::collections::HashMap<revm::primitives::Address, AccountAext>
+    ) -> ExecuteTransactionResponse {
         let status = if result.success {
             execution_result::Status::Success
         } else {
@@ -3672,6 +3729,23 @@ impl BackendService {
                              latest_consume_free_time, latest_consume_time_for_energy,
                              net_window_size, net_window_optimized, energy_window_size,
                              energy_window_optimized) = match aext_mode {
+                            "hybrid" if is_eoa => {
+                                // Hybrid mode: prefer pre-provided AEXT from Java, fallback to defaults
+                                if let Some(aext) = pre_exec_aext.get(addr) {
+                                    debug!("Using pre-exec AEXT for address {} in hybrid mode", hex::encode(Self::add_tron_address_prefix(addr)));
+                                    // Use the same AEXT for both old and new (unchanged fields)
+                                    (Some(aext.net_usage), Some(aext.free_net_usage), Some(aext.energy_usage),
+                                     Some(aext.latest_consume_time), Some(aext.latest_consume_free_time),
+                                     Some(aext.latest_consume_time_for_energy), Some(aext.net_window_size),
+                                     Some(aext.net_window_optimized), Some(aext.energy_window_size),
+                                     Some(aext.energy_window_optimized))
+                                } else {
+                                    // Not provided, fall back to defaults
+                                    debug!("No pre-exec AEXT for address {}, using defaults in hybrid mode", hex::encode(Self::add_tron_address_prefix(addr)));
+                                    (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
+                                     Some(28800), Some(false), Some(28800), Some(false))
+                                }
+                            },
                             "zeros" if is_eoa => {
                                 // For EOAs in "zeros" mode, populate all fields with zero/false
                                 (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
@@ -3706,6 +3780,10 @@ impl BackendService {
                             },
                             "tracked" => {
                                 // Non-EOA contracts in tracked mode: no AEXT
+                                (None, None, None, None, None, None, None, None, None, None)
+                            },
+                            "hybrid" => {
+                                // Non-EOA contracts in hybrid mode: no AEXT
                                 (None, None, None, None, None, None, None, None, None, None)
                             },
                             _ => {

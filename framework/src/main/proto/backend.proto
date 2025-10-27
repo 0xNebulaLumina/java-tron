@@ -454,11 +454,35 @@ message RestoreDatabaseResponse {
   string error_message = 2;
 }
 
+// Account AEXT (resource usage extension) for pre-execution snapshot
+// Captures Java's view of account resource state before execution
+message AccountAext {
+  int64 net_usage = 1;
+  int64 free_net_usage = 2;
+  int64 energy_usage = 3;
+  int64 latest_consume_time = 4;
+  int64 latest_consume_free_time = 5;
+  int64 latest_consume_time_for_energy = 6;
+  int64 net_window_size = 7;
+  bool net_window_optimized = 8;
+  int64 energy_window_size = 9;
+  bool energy_window_optimized = 10;
+}
+
+// Snapshot of an account's AEXT state at a specific address
+message AccountAextSnapshot {
+  bytes address = 1;  // 21-byte Tron address (0x41 prefix + 20 bytes)
+  AccountAext aext = 2;
+}
+
 // Execution Messages (preserved from original backend.proto)
 message ExecuteTransactionRequest {
   // Note: database field removed - execution uses unified storage context
   TronTransaction transaction = 1;
   ExecutionContext context = 2;
+  // Pre-execution AEXT snapshots for hybrid mode
+  // Java provides these to ensure AccountInfo serialization matches embedded behavior
+  repeated AccountAextSnapshot pre_execution_aext = 3;
 }
 
 message ExecuteTransactionResponse {

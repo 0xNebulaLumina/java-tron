@@ -3,11 +3,14 @@ package org.tron.core.execution.spi;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.tron.common.client.ExecutionGrpcClient;
+import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.db.TransactionContext;
@@ -19,6 +22,7 @@ import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
 import org.tron.protos.contract.BalanceContract.FreezeBalanceContract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
+import org.tron.protos.contract.Common.ResourceCode;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
@@ -450,9 +454,13 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               .setEnergyLimit(energyLimit)
               .setEnergyPrice(energyPrice);
 
+      // Collect pre-execution AEXT snapshots for hybrid mode
+      List<AccountAextSnapshot> preExecAextList = collectPreExecutionAext(context, fromAddress, toAddress, contract.getType());
+
       return ExecuteTransactionRequest.newBuilder()
           .setTransaction(txBuilder.build())
           .setContext(contextBuilder.build())
+          .addAllPreExecutionAext(preExecAextList)
           .build();
 
     } catch (UnsupportedOperationException | IllegalArgumentException e) {
@@ -768,5 +776,118 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         logs,
         protoResult.getErrorMessage(),
         protoResult.getBandwidthUsed());
+  }
+
+  /**
+   * Collect pre-execution AEXT snapshots for addresses involved in the transaction.
+   * This allows the Rust backend to echo Java's AEXT values in state changes for parity.
+   *
+   * @param context Transaction context with access to stores
+   * @param fromAddress Transaction sender address
+   * @param toAddress Transaction recipient address (may be empty for some contracts)
+   * @param contractType The type of contract being executed
+   * @return List of AEXT snapshots for relevant addresses
+   */
+  private List<AccountAextSnapshot> collectPreExecutionAext(
+      TransactionContext context, byte[] fromAddress, byte[] toAddress, Transaction.Contract.ContractType contractType) {
+
+    List<AccountAextSnapshot> snapshots = new ArrayList<>();
+
+    // Check if AEXT collection is enabled
+    boolean enabled = Boolean.parseBoolean(
+        System.getProperty("remote.exec.preexec.aext.enabled", "true"));
+
+    if (!enabled) {
+      logger.debug("Pre-execution AEXT collection disabled");
+      return snapshots;
+    }
+
+    // Collect addresses to snapshot
+    Set<byte[]> addressesToSnapshot = new HashSet<>();
+
+    // Always include owner/from address
+    if (fromAddress != null && fromAddress.length > 0) {
+      addressesToSnapshot.add(fromAddress);
+    }
+
+    // Include recipient/to address for relevant contract types
+    if (toAddress != null && toAddress.length > 0) {
+      switch (contractType) {
+        case TransferContract:
+        case TransferAssetContract:
+          addressesToSnapshot.add(toAddress);
+          break;
+        default:
+          // For other contracts, toAddress might be zero or empty
+          break;
+      }
+    }
+
+    // Get AccountStore from context
+    try {
+      if (context.getStoreFactory() == null ||
+          context.getStoreFactory().getChainBaseManager() == null) {
+        logger.warn("StoreFactory or ChainBaseManager not available for AEXT collection");
+        return snapshots;
+      }
+
+      org.tron.core.store.AccountStore accountStore = context.getStoreFactory().getChainBaseManager().getAccountStore();
+      if (accountStore == null) {
+        logger.warn("AccountStore not available for AEXT collection");
+        return snapshots;
+      }
+
+      // Collect AEXT for each address
+      for (byte[] address : addressesToSnapshot) {
+        try {
+          AccountCapsule account = accountStore.get(address);
+          if (account == null) {
+            logger.debug("Account not found for AEXT snapshot: {}",
+                org.tron.common.utils.ByteArray.toHexString(address));
+            continue;
+          }
+
+          // Build AccountAext message
+          AccountAext.Builder aextBuilder = AccountAext.newBuilder()
+              .setNetUsage(account.getNetUsage())
+              .setFreeNetUsage(account.getFreeNetUsage())
+              .setEnergyUsage(account.getEnergyUsage())
+              .setLatestConsumeTime(account.getLatestConsumeTime())
+              .setLatestConsumeFreeTime(account.getLatestConsumeFreeTime())
+              .setLatestConsumeTimeForEnergy(account.getLatestConsumeTimeForEnergy())
+              .setNetWindowSize(account.getWindowSize(ResourceCode.BANDWIDTH))
+              .setNetWindowOptimized(account.getWindowOptimized(ResourceCode.BANDWIDTH))
+              .setEnergyWindowSize(account.getWindowSize(ResourceCode.ENERGY))
+              .setEnergyWindowOptimized(account.getWindowOptimized(ResourceCode.ENERGY));
+
+          // Build snapshot
+          AccountAextSnapshot snapshot = AccountAextSnapshot.newBuilder()
+              .setAddress(ByteString.copyFrom(address))
+              .setAext(aextBuilder.build())
+              .build();
+
+          snapshots.add(snapshot);
+
+          logger.debug("Collected AEXT snapshot for address {}: netUsage={}, freeNetUsage={}, energyUsage={}",
+              org.tron.common.utils.ByteArray.toHexString(address),
+              account.getNetUsage(),
+              account.getFreeNetUsage(),
+              account.getEnergyUsage());
+
+        } catch (Exception e) {
+          logger.warn("Failed to collect AEXT for address {}: {}",
+              org.tron.common.utils.ByteArray.toHexString(address),
+              e.getMessage());
+        }
+      }
+
+      logger.debug("Collected {} AEXT snapshots for contract type {}",
+          snapshots.size(), contractType.name());
+
+    } catch (Exception e) {
+      logger.error("Failed to collect pre-execution AEXT snapshots", e);
+    }
+
+    return snapshots;
   }
 }
