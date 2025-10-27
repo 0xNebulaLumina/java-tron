@@ -3509,6 +3509,12 @@ impl BackendService {
                     }
                 },
                 TronStateChange::AccountChange { address, old_account, new_account } => {
+                    // Get AEXT mode from config
+                    let aext_mode = self.get_execution_config()
+                        .ok()
+                        .and_then(|cfg| Some(cfg.remote.accountinfo_aext_mode.as_str()))
+                        .unwrap_or("none");
+
                     // Helper function to convert AccountInfo to protobuf
                     let convert_account_info = |addr: &revm::primitives::Address, acc_info: &revm::primitives::AccountInfo| {
                         // Ensure EOAs (no code) serialize with empty code bytes.
@@ -3540,23 +3546,50 @@ impl BackendService {
                             acc_info.code_hash.as_slice().to_vec()
                         };
 
+                        // Determine if this is an EOA (empty code)
+                        let is_eoa = code_bytes.is_empty();
+
+                        // Populate AEXT fields based on mode
+                        let (net_usage, free_net_usage, energy_usage, latest_consume_time,
+                             latest_consume_free_time, latest_consume_time_for_energy,
+                             net_window_size, net_window_optimized, energy_window_size,
+                             energy_window_optimized) = match aext_mode {
+                            "zeros" if is_eoa => {
+                                // For EOAs in "zeros" mode, populate all fields with zero/false
+                                (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
+                                 Some(0), Some(false), Some(0), Some(false))
+                            },
+                            "tracked" => {
+                                // Future: populate with real values from resource tracking
+                                // For now, treat same as "none"
+                                (None, None, None, None, None, None, None, None, None, None)
+                            },
+                            _ => {
+                                // "none" or unknown: leave all fields as None (current behavior)
+                                (None, None, None, None, None, None, None, None, None, None)
+                            }
+                        };
+
+                        debug!("AccountInfo AEXT presence: mode={}, is_eoa={}, address={}",
+                               aext_mode, is_eoa, hex::encode(Self::add_tron_address_prefix(addr)));
+
                         crate::backend::AccountInfo {
                             address: Self::add_tron_address_prefix(addr),
                             balance: acc_info.balance.to_be_bytes::<32>().to_vec(),
                             nonce: acc_info.nonce,
                             code_hash: code_hash_bytes,
                             code: code_bytes,
-                            // Optional resource usage fields (AEXT) - not available from EVM state
-                            net_usage: None,
-                            free_net_usage: None,
-                            energy_usage: None,
-                            latest_consume_time: None,
-                            latest_consume_free_time: None,
-                            latest_consume_time_for_energy: None,
-                            net_window_size: None,
-                            net_window_optimized: None,
-                            energy_window_size: None,
-                            energy_window_optimized: None,
+                            // Optional resource usage fields (AEXT) - populated based on mode
+                            net_usage,
+                            free_net_usage,
+                            energy_usage,
+                            latest_consume_time,
+                            latest_consume_free_time,
+                            latest_consume_time_for_energy,
+                            net_window_size,
+                            net_window_optimized,
+                            energy_window_size,
+                            energy_window_optimized,
                         }
                     };
 

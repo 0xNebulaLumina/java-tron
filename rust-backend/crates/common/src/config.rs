@@ -90,6 +90,13 @@ pub struct RemoteExecutionConfig {
     pub emit_freeze_ledger_changes: bool,
     /// Emit storage changes for witness/vote data (may affect CSV output)
     pub emit_storage_changes: bool,
+    /// AEXT (Account EXTension) presence mode for AccountInfo serialization
+    /// Controls how AEXT tail (76 bytes of resource usage fields) is populated
+    /// - "none": All resource fields set to None (current behavior, remote omits AEXT)
+    /// - "zeros": Set Some(0)/false for EOAs (enables AEXT presence parity with embedded)
+    /// - "tracked": Some(real values) when backend supports resource metrics (future)
+    /// Default: "none" for backward compatibility; set to "zeros" to match embedded AEXT shape
+    pub accountinfo_aext_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,6 +218,7 @@ impl Config {
         builder = builder.set_default("execution.remote.freeze_balance_enabled", false)?;
         builder = builder.set_default("execution.remote.emit_freeze_ledger_changes", false)?;
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
+        builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -228,6 +236,7 @@ impl Default for RemoteExecutionConfig {
             freeze_balance_enabled: false, // Default false until validated
             emit_freeze_ledger_changes: false, // Default false for CSV parity
             emit_storage_changes: false,
+            accountinfo_aext_mode: "none".to_string(), // Default to current behavior
         }
     }
 } 

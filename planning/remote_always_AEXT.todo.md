@@ -1,5 +1,28 @@
 Remote AEXT Presence Parity — Backend TODO
 
+## ✅ IMPLEMENTATION COMPLETED (2025-10-27)
+
+All required TODOs have been implemented. The Rust backend now supports configurable AEXT presence mode.
+
+### Changes Made:
+1. **Config Support**: Added `accountinfo_aext_mode` config field to `RemoteExecutionConfig` (rust-backend/crates/common/src/config.rs:99)
+2. **Backend Logic**: Updated `convert_account_info` closure to populate AEXT fields based on mode (rust-backend/crates/core/src/service.rs:3513-3594)
+3. **Logging**: Added debug logging per account and startup logging for AEXT mode (rust-backend/src/main.rs:51)
+4. **Documentation**: Documented config in config.toml with detailed comments (rust-backend/config.toml:89-98)
+5. **Build Verified**: Successfully built with `cargo build --release`
+
+### Usage:
+- Set `execution.remote.accountinfo_aext_mode = "zeros"` in config.toml to enable AEXT presence parity
+- Default is "none" for backward compatibility
+- Logs show "AccountInfo AEXT mode: {mode}" at startup
+
+### Next Steps:
+- Run integration tests to verify CSV parity with embedded mode
+- Monitor Java RemoteExecutionSPI logs for "Appending AEXT tail" messages
+- Consider enabling "zeros" mode in production after validation
+
+---
+
 Summary
 - Objective: Make the Rust backend always emit the AccountInfo AEXT tail for EOAs by populating proto optional resource fields with zero/false values so Java’s RemoteExecutionSPI appends AEXT consistently.
 - Outcome: Remote path produces AccountInfo bytes with an AEXT tail (76 bytes) per account change where applicable, aligning the shape of serialized account changes with embedded and improving cross‑mode comparability.
@@ -33,35 +56,35 @@ Design Overview
 - Backward compatibility: Default can remain “none” initially; enable “zeros” in tests/experiments to validate.
 
 Detailed TODOs
-1) Backend conversion changes (required)
+1) Backend conversion changes (required) ✅ COMPLETED
    - File: rust-backend/crates/core/src/service.rs
    - Location: convert_execution_result_to_protobuf → match TronStateChange::AccountChange → closure convert_account_info (around lines 3520–3560).
    - Steps:
-     - Keep existing code_bytes normalization and KECCAK_EMPTY behavior.
-     - Compute is_eoa = code_bytes.is_empty().
-     - If is_eoa, populate all resource fields as present with zeros/false:
-       - net_usage: Some(0)
-       - free_net_usage: Some(0)
-       - energy_usage: Some(0)
-       - latest_consume_time: Some(0)
-       - latest_consume_free_time: Some(0)
-       - latest_consume_time_for_energy: Some(0)
-       - net_window_size: Some(0)
-       - net_window_optimized: Some(false)
-       - energy_window_size: Some(0)
-       - energy_window_optimized: Some(false)
-     - Apply the same fill for both old_account_proto and new_account_proto.
-     - Add a debug log summarizing: address, is_eoa, aext_mode=“zeros”.
+     ✅ Keep existing code_bytes normalization and KECCAK_EMPTY behavior.
+     ✅ Compute is_eoa = code_bytes.is_empty().
+     ✅ If is_eoa, populate all resource fields as present with zeros/false:
+       ✅ net_usage: Some(0)
+       ✅ free_net_usage: Some(0)
+       ✅ energy_usage: Some(0)
+       ✅ latest_consume_time: Some(0)
+       ✅ latest_consume_free_time: Some(0)
+       ✅ latest_consume_time_for_energy: Some(0)
+       ✅ net_window_size: Some(0)
+       ✅ net_window_optimized: Some(false)
+       ✅ energy_window_size: Some(0)
+       ✅ energy_window_optimized: Some(false)
+     ✅ Apply the same fill for both old_account_proto and new_account_proto.
+     ✅ Add a debug log summarizing: address, is_eoa, aext_mode="zeros".
 
 2) Optional: Unconditional presence for all accounts (nice to have)
    - Rationale: Avoid presence differences between EOA vs contracts; guarantees every AccountInfo has AEXT tail, making payload shape fully uniform.
    - Change: Ignore is_eoa and always set Some(0)/false for all accounts.
 
-3) Optional: Config knob (future-proofing)
+3) Optional: Config knob (future-proofing) ✅ COMPLETED
    - File: rust-backend/config.toml
-   - Add execution.remote.accountinfo_aext_mode = "none" | "zeros" | "tracked" (default: none)
-   - Wire into service.rs to choose behavior in convert_account_info.
-   - Modes:
+   ✅ Add execution.remote.accountinfo_aext_mode = "none" | "zeros" | "tracked" (default: none)
+   ✅ Wire into service.rs to choose behavior in convert_account_info.
+   ✅ Modes:
      - none: all None (current behavior)
      - zeros: Some(0)/false (this plan)
      - tracked: Some(real values) when backend supports resource metrics (future)
@@ -77,10 +100,10 @@ Detailed TODOs
    - Regression check:
      - Ensure no change to execution status, energy, return data, or storage slot changes.
 
-5) Observability
-   - Add debug log in service.rs when constructing AccountInfo:
-     - “AccountInfo AEXT presence: mode=zeros, is_eoa=true/false, address=<base58>”.
-   - Consider a one-time startup log printing the configured AEXT mode.
+5) Observability ✅ COMPLETED
+   ✅ Add debug log in service.rs when constructing AccountInfo:
+     - "AccountInfo AEXT presence: mode=zeros, is_eoa=true/false, address=<base58>".
+   ✅ Consider a one-time startup log printing the configured AEXT mode.
 
 6) Documentation
    - Keep this TODO file as the canonical implementation plan.

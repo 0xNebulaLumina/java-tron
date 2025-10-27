@@ -84,4 +84,15 @@ freeze_balance_enabled = true
 emit_freeze_ledger_changes = false
 
 # Emit storage changes for witness/vote data (may affect CSV output)
-emit_storage_changes = false 
+emit_storage_changes = false
+
+# AEXT (Account EXTension) presence mode for AccountInfo serialization
+# Controls how the 76-byte AEXT tail (resource usage fields) is populated in proto AccountInfo
+# Modes:
+#   - "none": All resource fields set to None (current behavior, remote omits AEXT tail)
+#   - "zeros": Set Some(0)/false for EOAs (enables AEXT presence parity with embedded)
+#   - "tracked": Some(real values) when backend supports resource metrics (future)
+# Default: "none" for backward compatibility
+# Recommendation: Set to "zeros" to align remote AccountInfo serialization with embedded (304 vs 152 hex chars)
+# This ensures Java RemoteExecutionSPI appends the AEXT tail, improving CSV comparability
+accountinfo_aext_mode = "zeros" 

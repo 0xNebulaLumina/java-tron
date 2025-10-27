@@ -47,6 +47,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     module_manager.start_all().await?;
     info!("All modules started successfully");
 
+    // Log AEXT configuration mode
+    info!("AccountInfo AEXT mode: {}", config.execution.remote.accountinfo_aext_mode);
+
     // Create the backend service
     let backend_service = BackendService::new(module_manager);
 
