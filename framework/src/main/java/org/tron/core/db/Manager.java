@@ -52,6 +52,7 @@ import org.tron.api.GrpcAPI.TransactionInfoList;
 import org.tron.core.execution.reporting.ExecutionCsvLogger;
 import org.tron.core.execution.reporting.ExecutionCsvRecord;
 import org.tron.core.execution.reporting.ExecutionCsvRecordBuilder;
+import org.tron.core.execution.reporting.JournalPreseedUtil;
 import org.tron.core.execution.reporting.StateChangeJournalRegistry;
 import org.tron.core.execution.reporting.StateChangeRecorderBridge;
 import org.tron.core.db.StateChangeRecorderContext;
@@ -1557,6 +1558,7 @@ public class Manager {
     trace.init(blockCap, eventPluginLoaded);
     StateChangeJournalRegistry.initializeForCurrentTransaction();
     StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
+    JournalPreseedUtil.tryPreseedAfterResource(trace);
     trace.checkIsConstant();
     trace.exec();
 
@@ -1567,6 +1569,7 @@ public class Manager {
         StateChangeJournalRegistry.clearForCurrentTransaction();
         StateChangeJournalRegistry.initializeForCurrentTransaction();
         StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
+        JournalPreseedUtil.tryPreseedAfterResource(trace);
         trace.checkIsConstant();
         trace.exec();
         trace.setResult();
