@@ -176,6 +176,9 @@ pub struct TronExecutionResult {
     pub logs: Vec<revm::primitives::Log>,
     pub state_changes: Vec<TronStateChange>,
     pub error: Option<String>,
+    /// AEXT sidecar: per-address resource tracking (before, after) for tracked mode
+    /// Key: address, Value: (AextBefore, AextAfter)
+    pub aext_map: std::collections::HashMap<revm::primitives::Address, (crate::storage_adapter::AccountAext, crate::storage_adapter::AccountAext)>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -300,6 +303,7 @@ where
                     logs,
                     state_changes: vec![], // Will be populated by caller
                     error: None,
+                    aext_map: std::collections::HashMap::new(), // Will be populated by caller for tracked mode
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -311,6 +315,7 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some("Transaction reverted".to_string()),
+                    aext_map: std::collections::HashMap::new(),
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -322,6 +327,7 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some(format!("Transaction halted: {:?}", reason)),
+                    aext_map: std::collections::HashMap::new(),
                 })
             }
         }
@@ -347,6 +353,7 @@ where
                     logs,
                     state_changes: vec![], // Calls don't modify state
                     error: None,
+                    aext_map: std::collections::HashMap::new(),
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -358,6 +365,7 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some("Call reverted".to_string()),
+                    aext_map: std::collections::HashMap::new(),
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -369,6 +377,7 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some(format!("Call halted: {:?}", reason)),
+                    aext_map: std::collections::HashMap::new(),
                 })
             }
         }

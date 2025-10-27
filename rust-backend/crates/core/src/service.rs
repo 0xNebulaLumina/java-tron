@@ -500,6 +500,7 @@ impl BackendService {
             state_changes,
             logs: Vec::new(), // No logs for value transfers
             error: None,
+            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
         })
     }
 
@@ -671,6 +672,7 @@ impl BackendService {
             logs: Vec::new(), // No logs for witness creation
             state_changes,
             error: None,
+            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
         })
     }
 
@@ -1005,6 +1007,7 @@ impl BackendService {
             logs: Vec::new(), // No logs for voting
             state_changes,
             error: None,
+            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
         })
     }
 
@@ -1108,6 +1111,7 @@ impl BackendService {
             state_changes,      // Exactly one account-level change
             logs: vec![],       // No logs for account update
             error: None,
+            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
         })
     }
 
@@ -1214,6 +1218,7 @@ impl BackendService {
             state_changes,
             logs: vec![],
             error: None,
+            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
         })
     }
 
