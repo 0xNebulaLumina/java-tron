@@ -145,6 +145,125 @@ impl FreezeRecord {
     }
 }
 
+/// TRON Account AEXT (Account EXTension) - resource tracking fields
+/// Mirrors Java's AccountInfo optional resource fields for bandwidth and energy tracking
+#[derive(Debug, Clone, Default)]
+pub struct AccountAext {
+    /// Net (bandwidth) usage with windowed decay
+    pub net_usage: i64,
+    /// Free net usage with windowed decay
+    pub free_net_usage: i64,
+    /// Energy usage with windowed decay (Phase 2)
+    pub energy_usage: i64,
+    /// Latest consume time for ACCOUNT_NET (slot/block number)
+    pub latest_consume_time: i64,
+    /// Latest consume time for FREE_NET (slot/block number)
+    pub latest_consume_free_time: i64,
+    /// Latest consume time for energy (Phase 2)
+    pub latest_consume_time_for_energy: i64,
+    /// Net window size (default 28800 for EOAs)
+    pub net_window_size: i64,
+    /// Net window optimized flag (default false)
+    pub net_window_optimized: bool,
+    /// Energy window size (default 28800 for EOAs)
+    pub energy_window_size: i64,
+    /// Energy window optimized flag (default false)
+    pub energy_window_optimized: bool,
+}
+
+impl AccountAext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create with default window sizes (28800 for both net and energy)
+    pub fn with_defaults() -> Self {
+        Self {
+            net_usage: 0,
+            free_net_usage: 0,
+            energy_usage: 0,
+            latest_consume_time: 0,
+            latest_consume_free_time: 0,
+            latest_consume_time_for_energy: 0,
+            net_window_size: 28800,
+            net_window_optimized: false,
+            energy_window_size: 28800,
+            energy_window_optimized: false,
+        }
+    }
+
+    /// Serialize AccountAext to bytes for storage
+    /// Format: 10 fields, each 8 bytes + 2 bool flags = 82 bytes total
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut result = Vec::with_capacity(82);
+
+        // Serialize all i64 fields (8 bytes each, big-endian)
+        result.extend_from_slice(&self.net_usage.to_be_bytes());
+        result.extend_from_slice(&self.free_net_usage.to_be_bytes());
+        result.extend_from_slice(&self.energy_usage.to_be_bytes());
+        result.extend_from_slice(&self.latest_consume_time.to_be_bytes());
+        result.extend_from_slice(&self.latest_consume_free_time.to_be_bytes());
+        result.extend_from_slice(&self.latest_consume_time_for_energy.to_be_bytes());
+        result.extend_from_slice(&self.net_window_size.to_be_bytes());
+        result.extend_from_slice(&self.energy_window_size.to_be_bytes());
+
+        // Serialize bool flags (1 byte each)
+        result.push(if self.net_window_optimized { 1 } else { 0 });
+        result.push(if self.energy_window_optimized { 1 } else { 0 });
+
+        result
+    }
+
+    /// Deserialize AccountAext from bytes
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        if data.len() < 82 {
+            return Err(anyhow::anyhow!(
+                "Insufficient data for AccountAext: expected 82 bytes, got {}",
+                data.len()
+            ));
+        }
+
+        let mut pos = 0;
+
+        // Helper to read i64
+        let read_i64 = |data: &[u8], pos: &mut usize| -> i64 {
+            let value = i64::from_be_bytes([
+                data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3],
+                data[*pos + 4], data[*pos + 5], data[*pos + 6], data[*pos + 7],
+            ]);
+            *pos += 8;
+            value
+        };
+
+        let net_usage = read_i64(data, &mut pos);
+        let free_net_usage = read_i64(data, &mut pos);
+        let energy_usage = read_i64(data, &mut pos);
+        let latest_consume_time = read_i64(data, &mut pos);
+        let latest_consume_free_time = read_i64(data, &mut pos);
+        let latest_consume_time_for_energy = read_i64(data, &mut pos);
+        let net_window_size = read_i64(data, &mut pos);
+        let energy_window_size = read_i64(data, &mut pos);
+
+        // Read bool flags
+        let net_window_optimized = data[pos] != 0;
+        pos += 1;
+        let energy_window_optimized = data[pos] != 0;
+
+        Ok(Self {
+            net_usage,
+            free_net_usage,
+            energy_usage,
+            latest_consume_time,
+            latest_consume_free_time,
+            latest_consume_time_for_energy,
+            net_window_size,
+            net_window_optimized,
+            energy_window_size,
+            energy_window_optimized,
+        })
+    }
+}
+
 /// TRON Vote - single vote entry (vote_address, vote_count)
 #[derive(Debug, Clone)]
 pub struct Vote {
@@ -519,6 +638,7 @@ pub struct InMemoryEvmStateStore {
     codes: HashMap<Address, Bytecode>,
     storage: HashMap<(Address, U256), U256>,
     freeze_records: std::sync::Arc<std::sync::RwLock<HashMap<(Address, u8), FreezeRecord>>>,
+    account_aext: std::sync::Arc<std::sync::RwLock<HashMap<Address, AccountAext>>>,
 }
 
 impl Clone for InMemoryEvmStateStore {
@@ -528,6 +648,7 @@ impl Clone for InMemoryEvmStateStore {
             codes: self.codes.clone(),
             storage: self.storage.clone(),
             freeze_records: self.freeze_records.clone(),
+            account_aext: self.account_aext.clone(),
         }
     }
 }
@@ -539,6 +660,7 @@ impl InMemoryEvmStateStore {
             codes: HashMap::new(),
             storage: HashMap::new(),
             freeze_records: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
+            account_aext: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
         }
     }
 
@@ -601,6 +723,28 @@ impl InMemoryEvmStateStore {
         );
 
         Ok(total)
+    }
+
+    /// Get account AEXT (resource tracking fields) for an address
+    pub fn get_account_aext(&self, address: &Address) -> Result<Option<AccountAext>> {
+        Ok(self.account_aext.read().unwrap().get(address).cloned())
+    }
+
+    /// Set account AEXT (resource tracking fields) for an address
+    pub fn set_account_aext(&self, address: &Address, aext: AccountAext) -> Result<()> {
+        self.account_aext.write().unwrap().insert(*address, aext);
+        Ok(())
+    }
+
+    /// Get or initialize account AEXT with defaults
+    pub fn get_or_init_account_aext(&self, address: &Address) -> Result<AccountAext> {
+        if let Some(aext) = self.get_account_aext(address)? {
+            Ok(aext)
+        } else {
+            let aext = AccountAext::with_defaults();
+            self.set_account_aext(address, aext.clone())?;
+            Ok(aext)
+        }
     }
 
     // Phase C: Method alias shims (preferred names going forward)
@@ -1085,6 +1229,138 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    // Bandwidth and Resource Dynamic Properties for AEXT tracking
+
+    /// Get FREE_NET_LIMIT dynamic property (free bandwidth limit per account)
+    /// Default: 5000 bytes per transaction
+    pub fn get_free_net_limit(&self) -> Result<i64> {
+        let key = b"FREE_NET_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(5000) // Default
+                }
+            },
+            None => Ok(5000) // Default
+        }
+    }
+
+    /// Get PUBLIC_NET_LIMIT dynamic property (total public bandwidth pool)
+    /// Default: 14_400_000_000 bytes
+    pub fn get_public_net_limit(&self) -> Result<i64> {
+        let key = b"PUBLIC_NET_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(14_400_000_000) // Default
+                }
+            },
+            None => Ok(14_400_000_000) // Default
+        }
+    }
+
+    /// Get PUBLIC_NET_USAGE dynamic property (current public bandwidth usage)
+    /// Default: 0
+    pub fn get_public_net_usage(&self) -> Result<i64> {
+        let key = b"PUBLIC_NET_USAGE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Set PUBLIC_NET_USAGE dynamic property
+    pub fn set_public_net_usage(&self, value: i64) -> Result<()> {
+        let key = b"PUBLIC_NET_USAGE";
+        let data = value.to_be_bytes();
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Get PUBLIC_NET_TIME dynamic property (last time public bandwidth was updated)
+    /// Default: 0
+    pub fn get_public_net_time(&self) -> Result<i64> {
+        let key = b"PUBLIC_NET_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Set PUBLIC_NET_TIME dynamic property
+    pub fn set_public_net_time(&self, value: i64) -> Result<()> {
+        let key = b"PUBLIC_NET_TIME";
+        let data = value.to_be_bytes();
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Get TOTAL_NET_WEIGHT dynamic property (total frozen for bandwidth)
+    /// Default: 0
+    pub fn get_total_net_weight(&self) -> Result<i64> {
+        let key = b"TOTAL_NET_WEIGHT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Get TOTAL_NET_LIMIT dynamic property (total bandwidth from frozen balance)
+    /// Default: 43_200_000_000 bytes
+    pub fn get_total_net_limit(&self) -> Result<i64> {
+        let key = b"TOTAL_NET_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(43_200_000_000) // Default
+                }
+            },
+            None => Ok(43_200_000_000) // Default
+        }
+    }
+
     /// Get witness information by address
     /// Uses dual-decoder: tries protobuf first (Java format), falls back to legacy custom format
     pub fn get_witness(&self, address: &Address) -> Result<Option<WitnessInfo>> {
@@ -1344,6 +1620,69 @@ impl EngineBackedEvmStateStore {
 
         tracing::info!("Successfully stored account name for address {:?}, length: {}", address, name.len());
         Ok(())
+    }
+
+    /// Get database name for account resource tracking (AEXT)
+    fn account_aext_database(&self) -> &str {
+        "account-resource"
+    }
+
+    /// Build storage key for account AEXT: 20-byte address
+    fn account_aext_key(&self, address: &Address) -> Vec<u8> {
+        address.as_slice().to_vec()
+    }
+
+    /// Get account AEXT (resource tracking fields) for an address
+    pub fn get_account_aext(&self, address: &Address) -> Result<Option<AccountAext>> {
+        let key = self.account_aext_key(address);
+        tracing::debug!("Getting account AEXT for address {:?}, key: {}",
+                       address, hex::encode(&key));
+
+        match self.storage_engine.get(self.account_aext_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found account AEXT data, length: {}", data.len());
+                match AccountAext::deserialize(&data) {
+                    Ok(aext) => {
+                        tracing::debug!("Successfully deserialized account AEXT - net_usage: {}, free_net_usage: {}, net_window: {}",
+                                       aext.net_usage, aext.free_net_usage, aext.net_window_size);
+                        Ok(Some(aext))
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to deserialize account AEXT data: {}, returning None", e);
+                        Ok(None)
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("No account AEXT found for address {:?}", address);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Set account AEXT (resource tracking fields) for an address
+    pub fn set_account_aext(&self, address: &Address, aext: &AccountAext) -> Result<()> {
+        let key = self.account_aext_key(address);
+        let data = aext.serialize();
+
+        tracing::debug!("Setting account AEXT for address {:?}, net_usage: {}, free_net_usage: {}, net_window: {}",
+                       address, aext.net_usage, aext.free_net_usage, aext.net_window_size);
+
+        self.storage_engine.put(self.account_aext_database(), &key, &data)?;
+
+        tracing::debug!("Successfully stored account AEXT for address {:?}", address);
+        Ok(())
+    }
+
+    /// Get or initialize account AEXT with defaults
+    pub fn get_or_init_account_aext(&self, address: &Address) -> Result<AccountAext> {
+        if let Some(aext) = self.get_account_aext(address)? {
+            Ok(aext)
+        } else {
+            let aext = AccountAext::with_defaults();
+            self.set_account_aext(address, &aext)?;
+            Ok(aext)
+        }
     }
 
     // Phase C: Method alias shims (preferred names going forward)
