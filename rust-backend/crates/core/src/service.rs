@@ -3559,6 +3559,15 @@ impl BackendService {
                                 (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
                                  Some(0), Some(false), Some(0), Some(false))
                             },
+                            "defaults" if is_eoa => {
+                                // For EOAs in "defaults" mode, match embedded Java-Tron defaults:
+                                // - net_window_size = 1800 (0x0708)
+                                // - energy_window_size = 1800 (0x0708)
+                                // - All other fields zero/false
+                                // This ensures byte-level AEXT tail parity with embedded CSVs
+                                (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
+                                 Some(1800), Some(false), Some(1800), Some(false))
+                            },
                             "tracked" => {
                                 // Future: populate with real values from resource tracking
                                 // For now, treat same as "none"
@@ -3570,8 +3579,9 @@ impl BackendService {
                             }
                         };
 
-                        debug!("AccountInfo AEXT presence: mode={}, is_eoa={}, address={}",
-                               aext_mode, is_eoa, hex::encode(Self::add_tron_address_prefix(addr)));
+                        debug!("AccountInfo AEXT presence: mode={}, is_eoa={}, address={}, net_window={:?}, energy_window={:?}",
+                               aext_mode, is_eoa, hex::encode(Self::add_tron_address_prefix(addr)),
+                               net_window_size, energy_window_size);
 
                         crate::backend::AccountInfo {
                             address: Self::add_tron_address_prefix(addr),

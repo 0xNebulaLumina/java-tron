@@ -48,14 +48,14 @@ Detailed TODOs
 
 1) Config Plumbing and Documentation
 
-- [ ] Update rust-backend/crates/common/src/config.rs comments for RemoteExecutionConfig.accountinfo_aext_mode to document the new "defaults" option and its semantics (EOA-only).
-- [ ] Keep builder default as "none" (rust-backend/crates/common/src/config.rs). Do not change the runtime default.
-- [ ] Update rust-backend/config.toml comments (AEXT section) to describe modes: none, zeros, defaults, tracked.
-- [ ] In rust-backend/config.toml, set accountinfo_aext_mode = "defaults" for parity testing in this repo (optional, but recommended during validation).
+- [x] Update rust-backend/crates/common/src/config.rs comments for RemoteExecutionConfig.accountinfo_aext_mode to document the new "defaults" option and its semantics (EOA-only).
+- [x] Keep builder default as "none" (rust-backend/crates/common/src/config.rs). Do not change the runtime default.
+- [x] Update rust-backend/config.toml comments (AEXT section) to describe modes: none, zeros, defaults, tracked.
+- [x] In rust-backend/config.toml, set accountinfo_aext_mode = "defaults" for parity testing in this repo (optional, but recommended during validation).
 
 2) Core Conversion Logic (service.rs)
 
-- [ ] Extend the AEXT population match in rust-backend/crates/core/src/service.rs within the AccountChange conversion closure (convert_account_info) to add:
+- [x] Extend the AEXT population match in rust-backend/crates/core/src/service.rs within the AccountChange conversion closure (convert_account_info) to add:
   - Case "defaults" if is_eoa:
     - net_usage = Some(0)
     - free_net_usage = Some(0)
@@ -68,12 +68,12 @@ Detailed TODOs
     - energy_window_size = Some(1800)
     - energy_window_optimized = Some(false)
   - All non-EOA accounts: fall through to None for all resource fields.
-- [ ] Keep existing branches: "zeros", "tracked", default -> None.
-- [ ] Add a debug log when mode == "defaults" for EOAs to print the selected values to aid traceability.
+- [x] Keep existing branches: "zeros", "tracked", default -> None.
+- [x] Add a debug log when mode == "defaults" for EOAs to print the selected values to aid traceability.
 
 3) Sample Config and Developer Docs
 
-- [ ] rust-backend/config.toml:
+- [x] rust-backend/config.toml:
   - Change accountinfo_aext_mode to "defaults".
   - Update narrative comments to state "defaults" is recommended for CSV parity with embedded, especially for benchmark/verification runs.
 - [ ] If present, update rust-backend/README.md or build.md to describe the new mode and parity guidance.
