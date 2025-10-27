@@ -608,6 +608,9 @@ message ExecutionResult {
   // Tron-specific fields
   int64 bandwidth_used = 8;
   repeated TronResourceUsage resource_usage = 9;
+  // Phase 2: Freeze/resource ledger changes
+  repeated FreezeLedgerChange freeze_changes = 10;
+  repeated GlobalResourceTotalsChange global_resource_changes = 11;
 }
 
 // Account information for account changes
@@ -668,6 +671,31 @@ message TronResourceUsage {
   int64 used = 2;
   int64 total = 3;
   bytes token_id = 4; // for TRC10/TRC20
+}
+
+// Freeze/resource ledger change emission (Phase 2: emit_freeze_ledger_changes)
+// Describes a single freeze or unfreeze operation affecting an owner's resource balance
+message FreezeLedgerChange {
+  enum Resource {
+    BANDWIDTH = 0;
+    ENERGY = 1;
+    TRON_POWER = 2;
+  }
+
+  bytes owner_address = 1;      // 21-byte Tron address (0x41 prefix + 20 bytes)
+  Resource resource = 2;         // Resource type being frozen/unfrozen
+  int64 amount = 3;              // Absolute value after operation (for idempotency)
+  int64 expiration_ms = 4;       // Expiration timestamp in milliseconds since epoch
+  bool v2_model = 5;             // true for V2 model, false for legacy V1
+}
+
+// Global resource totals change (optional, emitted alongside freeze changes)
+// Captures dynamic property updates for total weights and limits
+message GlobalResourceTotalsChange {
+  int64 total_net_weight = 1;    // Total network weight across all accounts
+  int64 total_net_limit = 2;     // Total network bandwidth limit
+  int64 total_energy_weight = 3; // Total energy weight across all accounts
+  int64 total_energy_limit = 4;  // Total energy limit
 }
 
 message CallContractRequest {

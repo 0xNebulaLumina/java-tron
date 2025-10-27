@@ -77,10 +77,14 @@ trc10_enabled = false
 # Default: false for safe rollout - falls back to Java embedded execution when disabled
 freeze_balance_enabled = true
 
-# Emit storage changes for freeze ledger (EXPERIMENTAL)
-# When true, emits StorageChange for freeze records in addition to AccountChange
+# Emit freeze/resource ledger changes in ExecutionResult (Phase 2)
+# When true, emits FreezeLedgerChange messages describing freeze/unfreeze operations
+# These changes are applied to Java's local stores (AccountStore, DynamicPropertiesStore)
+# so BandwidthProcessor sees updated netLimit for subsequent txs in the same block.
 # Default: false to maintain CSV parity with Phase 1 (only AccountChange)
-# WARNING: Enabling may affect state digest - verify embedded behavior first
+# When enabled, Java applies these changes via RuntimeSpiImpl.applyFreezeLedgerChanges()
+# Affects: FreezeBalance, UnfreezeBalance, FreezeBalanceV2, UnfreezeBalanceV2,
+#          DelegateResource, UnDelegateResource, WithdrawExpireUnfreeze, CancelAllUnfreezeV2
 emit_freeze_ledger_changes = false
 
 # Emit storage changes for witness/vote data (may affect CSV output)

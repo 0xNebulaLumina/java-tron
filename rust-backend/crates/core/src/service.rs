@@ -537,6 +537,7 @@ impl BackendService {
             logs: Vec::new(), // No logs for value transfers
             error: None,
             aext_map, // Populated with tracked AEXT if mode is "tracked"
+            freeze_changes: vec![], // Will be populated by freeze-related contracts
         })
     }
 
@@ -747,6 +748,7 @@ impl BackendService {
             state_changes,
             error: None,
             aext_map, // Populated with tracked AEXT if mode is "tracked"
+            freeze_changes: vec![], // Will be populated by freeze-related contracts
         })
     }
 
@@ -1120,6 +1122,7 @@ impl BackendService {
             state_changes,
             error: None,
             aext_map, // Populated with tracked AEXT if mode is "tracked"
+            freeze_changes: vec![], // Will be populated by freeze-related contracts
         })
     }
 
@@ -1224,6 +1227,7 @@ impl BackendService {
             logs: vec![],       // No logs for account update
             error: None,
             aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
+            freeze_changes: vec![], // Will be populated by freeze-related contracts
         })
     }
 
@@ -1331,6 +1335,7 @@ impl BackendService {
             logs: vec![],
             error: None,
             aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
+            freeze_changes: vec![], // TODO: Populate when emit_freeze_ledger_changes is true
         })
     }
 
@@ -3066,6 +3071,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                         error_message: format!("Transaction conversion error: {}", e),
                         bandwidth_used: 0,
                         resource_usage: vec![],
+                        freeze_changes: vec![],
+                        global_resource_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Transaction conversion error: {}", e),
@@ -3092,6 +3099,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                         error_message: format!("Context conversion error: {}", e),
                         bandwidth_used: 0,
                         resource_usage: vec![],
+                        freeze_changes: vec![],
+                        global_resource_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Context conversion error: {}", e),
@@ -3183,6 +3192,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                         error_message: format!("Execution error: {}", e),
                         bandwidth_used: 0,
                         resource_usage: vec![],
+                        freeze_changes: vec![],
+                        global_resource_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Execution error: {}", e),
@@ -3847,6 +3858,8 @@ impl BackendService {
                 error_message: error_message.clone(),
                 bandwidth_used: result.bandwidth_used as i64,
                 resource_usage: vec![], // Not implemented yet
+                freeze_changes: vec![], // Populated when emit_freeze_ledger_changes is true
+                global_resource_changes: vec![], // Populated when emitting global totals
             }),
             success: result.success,
             error_message,
