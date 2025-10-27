@@ -3133,6 +3133,7 @@ dependencies = [
  "serde",
  "sha2",
  "sha3",
+ "tempfile",
  "tokio",
  "tracing",
  "tron-backend-common",

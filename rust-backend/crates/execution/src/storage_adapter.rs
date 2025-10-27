@@ -2304,7 +2304,7 @@ mod tests {
     #[test]
     fn test_snapshot_hooks() {
         let storage = InMemoryEvmStateStore::new();
-        let mut db = StorageAdapterDatabase::new(storage);
+        let mut db = EvmStateDatabase::new(storage);
 
         // Track modified accounts via hook
         let modified_accounts = Arc::new(Mutex::new(Vec::new()));
@@ -2344,7 +2344,7 @@ mod tests {
     #[test]
     fn test_modified_accounts_tracking() {
         let storage = InMemoryEvmStateStore::new();
-        let mut db = StorageAdapterDatabase::new(storage);
+        let mut db = EvmStateDatabase::new(storage);
 
         let addr1 = Address::from([1u8; 20]);
         let addr2 = Address::from([2u8; 20]);
@@ -2369,7 +2369,7 @@ mod tests {
     #[test]
     fn test_snapshot_revert_clears_modified_accounts() {
         let storage = InMemoryEvmStateStore::new();
-        let mut db = StorageAdapterDatabase::new(storage);
+        let mut db = EvmStateDatabase::new(storage);
 
         let test_address = Address::from([1u8; 20]);
 
@@ -2435,9 +2435,10 @@ mod tests {
 
     #[test]
     fn test_account_name_storage() {
-        let storage = InMemoryEvmStateStore::new();
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut adapter = StorageModuleAdapter::new(storage_engine);
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
+            .expect("Failed to create storage engine");
+        let mut adapter = EngineBackedEvmStateStore::new(storage_engine);
 
         let test_address = Address::from([1u8; 20]);
         let test_name = b"TestAccount";
@@ -2456,8 +2457,10 @@ mod tests {
 
     #[test]
     fn test_account_name_validation() {
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut adapter = StorageModuleAdapter::new(storage_engine);
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
+            .expect("Failed to create storage engine");
+        let mut adapter = EngineBackedEvmStateStore::new(storage_engine);
 
         let test_address = Address::from([1u8; 20]);
 
@@ -2482,8 +2485,10 @@ mod tests {
 
     #[test]
     fn test_account_name_utf8_handling() {
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut adapter = StorageModuleAdapter::new(storage_engine);
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
+            .expect("Failed to create storage engine");
+        let mut adapter = EngineBackedEvmStateStore::new(storage_engine);
 
         let test_address = Address::from([1u8; 20]);
 

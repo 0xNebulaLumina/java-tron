@@ -350,7 +350,7 @@ mod tests {
 #[cfg(test)]
 mod witness_tests {
     use super::*;
-    use crate::storage_adapter::{InMemoryEvmStateStore, EngineBackedEvmStateStore, WitnessInfo};
+    use crate::storage_adapter::{InMemoryEvmStateStore, WitnessInfo};
     use revm_primitives::{Address, U256, Bytes};
 
     /// Test contract type parsing and metadata extraction
