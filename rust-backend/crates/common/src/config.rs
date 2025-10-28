@@ -94,6 +94,11 @@ pub struct RemoteExecutionConfig {
     /// Emit storage changes for freeze ledger (EXPERIMENTAL - may affect CSV output)
     /// Default: false to maintain CSV parity with Phase 1
     pub emit_freeze_ledger_changes: bool,
+    /// Emit GlobalResourceTotalsChange alongside freeze/unfreeze operations
+    /// When enabled, backend computes and sends total net/energy weight and limits
+    /// so Java can update DynamicPropertiesStore immediately (fixes FREE_NET vs ACCOUNT_NET divergence)
+    /// Default: false for backward compatibility; enable true for Phase 2 parity runs
+    pub emit_global_resource_changes: bool,
     /// Emit storage changes for witness/vote data (may affect CSV output)
     pub emit_storage_changes: bool,
     /// AEXT (Account EXTension) presence mode for AccountInfo serialization
@@ -227,6 +232,7 @@ impl Config {
         builder = builder.set_default("execution.remote.freeze_balance_v2_enabled", false)?;
         builder = builder.set_default("execution.remote.unfreeze_balance_v2_enabled", false)?;
         builder = builder.set_default("execution.remote.emit_freeze_ledger_changes", false)?;
+        builder = builder.set_default("execution.remote.emit_global_resource_changes", false)?;
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
         builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
 
@@ -248,6 +254,7 @@ impl Default for RemoteExecutionConfig {
             freeze_balance_v2_enabled: false, // Default false until validated
             unfreeze_balance_v2_enabled: false, // Default false until validated
             emit_freeze_ledger_changes: false, // Default false for CSV parity
+            emit_global_resource_changes: false, // Default false for backward compatibility
             emit_storage_changes: false,
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
         }

@@ -1361,6 +1361,66 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Compute total NET weight from all freeze records
+    /// Weight = sum(frozen_amount for resource=BANDWIDTH) / TRX_PRECISION
+    /// TRX_PRECISION = 1_000_000 (matches Java ChainConstant.TRX_PRECISION)
+    /// This scans all freeze records - O(n) operation, suitable for Phase 2 parity
+    pub fn compute_total_net_weight(&self) -> Result<i64> {
+        const TRX_PRECISION: u128 = 1_000_000;
+        const BANDWIDTH_RESOURCE: u8 = 0;
+
+        let mut total_sun: u128 = 0;
+
+        // Scan all freeze records in the database
+        let records = self.storage_engine.prefix_query(self.freeze_records_database(), &[])?;
+
+        for kv in records {
+            // Key format: 0x41 + 20-byte address + 1-byte resource = 22 bytes
+            if kv.key.len() == 22 && kv.key[21] == BANDWIDTH_RESOURCE {
+                // Deserialize freeze record
+                let record = FreezeRecord::deserialize(&kv.value)?;
+                total_sun = total_sun.checked_add(record.frozen_amount as u128)
+                    .ok_or_else(|| anyhow::anyhow!("Overflow computing total net weight"))?;
+            }
+        }
+
+        // Convert to weight: integer division by TRX_PRECISION
+        let weight = (total_sun / TRX_PRECISION) as i64;
+
+        tracing::debug!("Computed total net weight: {} (from {} SUN)", weight, total_sun);
+        Ok(weight)
+    }
+
+    /// Compute total ENERGY weight from all freeze records
+    /// Weight = sum(frozen_amount for resource=ENERGY) / TRX_PRECISION
+    /// TRX_PRECISION = 1_000_000 (matches Java ChainConstant.TRX_PRECISION)
+    /// This scans all freeze records - O(n) operation, suitable for Phase 2 parity
+    pub fn compute_total_energy_weight(&self) -> Result<i64> {
+        const TRX_PRECISION: u128 = 1_000_000;
+        const ENERGY_RESOURCE: u8 = 1;
+
+        let mut total_sun: u128 = 0;
+
+        // Scan all freeze records in the database
+        let records = self.storage_engine.prefix_query(self.freeze_records_database(), &[])?;
+
+        for kv in records {
+            // Key format: 0x41 + 20-byte address + 1-byte resource = 22 bytes
+            if kv.key.len() == 22 && kv.key[21] == ENERGY_RESOURCE {
+                // Deserialize freeze record
+                let record = FreezeRecord::deserialize(&kv.value)?;
+                total_sun = total_sun.checked_add(record.frozen_amount as u128)
+                    .ok_or_else(|| anyhow::anyhow!("Overflow computing total energy weight"))?;
+            }
+        }
+
+        // Convert to weight: integer division by TRX_PRECISION
+        let weight = (total_sun / TRX_PRECISION) as i64;
+
+        tracing::debug!("Computed total energy weight: {} (from {} SUN)", weight, total_sun);
+        Ok(weight)
+    }
+
     /// Get witness information by address
     /// Uses dual-decoder: tries protobuf first (Java format), falls back to legacy custom format
     pub fn get_witness(&self, address: &Address) -> Result<Option<WitnessInfo>> {

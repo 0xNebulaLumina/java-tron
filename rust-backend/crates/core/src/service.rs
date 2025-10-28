@@ -579,6 +579,7 @@ impl BackendService {
             error: None,
             aext_map, // Populated with tracked AEXT if mode is "tracked"
             freeze_changes: vec![], // Will be populated by freeze-related contracts
+            global_resource_changes: vec![], // Not applicable for value transfers
         })
     }
 
@@ -790,6 +791,7 @@ impl BackendService {
             error: None,
             aext_map, // Populated with tracked AEXT if mode is "tracked"
             freeze_changes: vec![], // Will be populated by freeze-related contracts
+            global_resource_changes: vec![], // Not applicable for witness creation
         })
     }
 
@@ -1164,6 +1166,7 @@ impl BackendService {
             error: None,
             aext_map, // Populated with tracked AEXT if mode is "tracked"
             freeze_changes: vec![], // Will be populated by freeze-related contracts
+            global_resource_changes: vec![], // Not applicable for vote witness
         })
     }
 
@@ -1269,6 +1272,7 @@ impl BackendService {
             error: None,
             aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
             freeze_changes: vec![], // Will be populated by freeze-related contracts
+            global_resource_changes: vec![], // Not applicable for account update
         })
     }
 
@@ -1406,11 +1410,42 @@ impl BackendService {
             vec![] // Flag disabled, maintain Phase 1 behavior
         };
 
+        // Phase 2: Emit global resource totals when enabled
+        let emit_global_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_global_resource_changes)
+            .unwrap_or(false);
+
+        let global_resource_changes = if emit_global_changes {
+            // Compute current global totals from all freeze records
+            let total_net_weight = storage_adapter.compute_total_net_weight()
+                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            let total_net_limit = storage_adapter.get_total_net_limit()
+                .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+            let total_energy_weight = storage_adapter.compute_total_energy_weight()
+                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
+            let total_energy_limit = 0i64; // TODO: Add getter when available
+
+            let change = tron_backend_execution::GlobalResourceTotalsChange {
+                total_net_weight,
+                total_net_limit,
+                total_energy_weight,
+                total_energy_limit,
+            };
+
+            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+                  total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled
+        };
+
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("FreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}",
-               bandwidth_used, freeze_changes.len());
+        debug!("FreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}",
+               bandwidth_used, freeze_changes.len(), global_resource_changes.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -1422,6 +1457,7 @@ impl BackendService {
             error: None,
             aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            global_resource_changes, // Populated when emit_global_resource_changes is true
         })
     }
 
@@ -1431,7 +1467,7 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         info!("Executing UNFREEZE_BALANCE_CONTRACT: owner={}, data_len={}",
               tron_backend_common::to_tron_address(&transaction.from),
@@ -1527,11 +1563,42 @@ impl BackendService {
             vec![] // Flag disabled, maintain Phase 1 behavior
         };
 
+        // Phase 2: Emit global resource totals when enabled
+        let emit_global_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_global_resource_changes)
+            .unwrap_or(false);
+
+        let global_resource_changes = if emit_global_changes {
+            // Compute current global totals from all freeze records
+            let total_net_weight = storage_adapter.compute_total_net_weight()
+                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            let total_net_limit = storage_adapter.get_total_net_limit()
+                .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+            let total_energy_weight = storage_adapter.compute_total_energy_weight()
+                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
+            let total_energy_limit = 0i64; // TODO: Add getter when available
+
+            let change = tron_backend_execution::GlobalResourceTotalsChange {
+                total_net_weight,
+                total_net_limit,
+                total_energy_weight,
+                total_energy_limit,
+            };
+
+            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+                  total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled
+        };
+
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("UnfreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}",
-               bandwidth_used, freeze_changes.len());
+        debug!("UnfreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}",
+               bandwidth_used, freeze_changes.len(), global_resource_changes.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -1543,6 +1610,7 @@ impl BackendService {
             error: None,
             aext_map: std::collections::HashMap::new(),
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            global_resource_changes, // Populated when emit_global_resource_changes is true
         })
     }
 
@@ -1739,11 +1807,42 @@ impl BackendService {
             vec![] // Flag disabled, maintain Phase 1 behavior
         };
 
+        // Phase 2: Emit global resource totals when enabled
+        let emit_global_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_global_resource_changes)
+            .unwrap_or(false);
+
+        let global_resource_changes = if emit_global_changes {
+            // Compute current global totals from all freeze records
+            let total_net_weight = storage_adapter.compute_total_net_weight()
+                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            let total_net_limit = storage_adapter.get_total_net_limit()
+                .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+            let total_energy_weight = storage_adapter.compute_total_energy_weight()
+                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
+            let total_energy_limit = 0i64; // TODO: Add getter when available
+
+            let change = tron_backend_execution::GlobalResourceTotalsChange {
+                total_net_weight,
+                total_net_limit,
+                total_energy_weight,
+                total_energy_limit,
+            };
+
+            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+                  total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled
+        };
+
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("FreezeBalanceV2 completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}",
-               bandwidth_used, freeze_changes.len());
+        debug!("FreezeBalanceV2 completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}",
+               bandwidth_used, freeze_changes.len(), global_resource_changes.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -1755,6 +1854,7 @@ impl BackendService {
             error: None,
             aext_map: std::collections::HashMap::new(),
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            global_resource_changes, // Populated when emit_global_resource_changes is true
         })
     }
 
@@ -1764,7 +1864,7 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         info!("Executing UNFREEZE_BALANCE_V2_CONTRACT: owner={}, data_len={}",
               tron_backend_common::to_tron_address(&transaction.from),
@@ -1903,11 +2003,42 @@ impl BackendService {
             vec![] // Flag disabled, maintain Phase 1 behavior
         };
 
+        // Phase 2: Emit global resource totals when enabled
+        let emit_global_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_global_resource_changes)
+            .unwrap_or(false);
+
+        let global_resource_changes = if emit_global_changes {
+            // Compute current global totals from all freeze records
+            let total_net_weight = storage_adapter.compute_total_net_weight()
+                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            let total_net_limit = storage_adapter.get_total_net_limit()
+                .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+            let total_energy_weight = storage_adapter.compute_total_energy_weight()
+                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
+            let total_energy_limit = 0i64; // TODO: Add getter when available
+
+            let change = tron_backend_execution::GlobalResourceTotalsChange {
+                total_net_weight,
+                total_net_limit,
+                total_energy_weight,
+                total_energy_limit,
+            };
+
+            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+                  total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled
+        };
+
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("UnfreezeBalanceV2 completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}",
-               bandwidth_used, freeze_changes.len());
+        debug!("UnfreezeBalanceV2 completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}",
+               bandwidth_used, freeze_changes.len(), global_resource_changes.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -1919,6 +2050,7 @@ impl BackendService {
             error: None,
             aext_map: std::collections::HashMap::new(),
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            global_resource_changes, // Populated when emit_global_resource_changes is true
         })
     }
 
@@ -5177,6 +5309,16 @@ impl BackendService {
             }
         }).collect();
 
+        // Convert global resource totals changes from execution result to protobuf
+        let global_resource_changes: Vec<crate::backend::GlobalResourceTotalsChange> = result.global_resource_changes.iter().map(|change| {
+            crate::backend::GlobalResourceTotalsChange {
+                total_net_weight: change.total_net_weight,
+                total_net_limit: change.total_net_limit,
+                total_energy_weight: change.total_energy_weight,
+                total_energy_limit: change.total_energy_limit,
+            }
+        }).collect();
+
         let error_message = result.error.unwrap_or_default();
 
         ExecuteTransactionResponse {
@@ -5191,7 +5333,7 @@ impl BackendService {
                 bandwidth_used: result.bandwidth_used as i64,
                 resource_usage: vec![], // Not implemented yet
                 freeze_changes, // Converted from TronExecutionResult
-                global_resource_changes: vec![], // Populated when emitting global totals
+                global_resource_changes, // Converted from TronExecutionResult
             }),
             success: result.success,
             error_message,

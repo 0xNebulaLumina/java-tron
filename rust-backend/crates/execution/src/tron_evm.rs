@@ -185,6 +185,17 @@ pub enum FreezeLedgerResource {
     TronPower = 2,
 }
 
+/// Global resource totals snapshot for Phase 2 emission
+/// Sent to Java to update DynamicPropertiesStore TOTAL_NET_WEIGHT/TOTAL_NET_LIMIT/etc
+/// immediately after freeze/unfreeze operations, fixing FREE_NET vs ACCOUNT_NET divergence
+#[derive(Debug, Clone)]
+pub struct GlobalResourceTotalsChange {
+    pub total_net_weight: i64,      // Sum of all BANDWIDTH freezes / TRX_PRECISION
+    pub total_net_limit: i64,       // Current network bandwidth limit (from dynamic props)
+    pub total_energy_weight: i64,   // Sum of all ENERGY freezes / TRX_PRECISION
+    pub total_energy_limit: i64,    // Current energy limit (from dynamic props, or 0 if N/A)
+}
+
 #[derive(Debug, Clone)]
 pub struct TronExecutionResult {
     pub success: bool,
@@ -200,6 +211,11 @@ pub struct TronExecutionResult {
     /// Freeze/resource ledger changes (Phase 2: emit_freeze_ledger_changes)
     /// Emitted when config flag is enabled, for Java-side application
     pub freeze_changes: Vec<FreezeLedgerChange>,
+    /// Global resource totals changes (Phase 2: emit_global_resource_changes)
+    /// Emitted when flag is enabled, for Java to update DynamicPropertiesStore totals
+    /// Fixes FREE_NET vs ACCOUNT_NET divergence by ensuring totalNetWeight/totalNetLimit
+    /// are current before next tx in same block
+    pub global_resource_changes: Vec<GlobalResourceTotalsChange>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -326,6 +342,7 @@ where
                     error: None,
                     aext_map: std::collections::HashMap::new(), // Will be populated by caller for tracked mode
                     freeze_changes: vec![], // Will be populated by contract handlers
+                    global_resource_changes: vec![], // Will be populated by contract handlers
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -339,6 +356,7 @@ where
                     error: Some("Transaction reverted".to_string()),
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -352,6 +370,7 @@ where
                     error: Some(format!("Transaction halted: {:?}", reason)),
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
         }
@@ -379,6 +398,7 @@ where
                     error: None,
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -392,6 +412,7 @@ where
                     error: Some("Call reverted".to_string()),
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -405,6 +426,7 @@ where
                     error: Some(format!("Call halted: {:?}", reason)),
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
         }

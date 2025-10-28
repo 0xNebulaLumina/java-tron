@@ -90,6 +90,16 @@ unfreeze_balance_v2_enabled = true
 #          DelegateResource, UnDelegateResource, WithdrawExpireUnfreeze, CancelAllUnfreezeV2
 emit_freeze_ledger_changes = true
 
+# Emit GlobalResourceTotalsChange alongside freeze/unfreeze operations (Phase 2)
+# When true, backend computes and sends total net/energy weight and limits after each freeze/unfreeze
+# so Java can update DynamicPropertiesStore.totalNetWeight/totalNetLimit immediately.
+# This fixes the FREE_NET vs ACCOUNT_NET divergence where Java's BandwidthProcessor computed netLimit=0
+# because totalNetWeight hadn't been updated yet for freeze operations in the same block.
+# Default: false for backward compatibility; set true for Phase 2 parity runs.
+# When enabled, Java applies these changes via RuntimeSpiImpl.applyGlobalResourceChange()
+# Affects: FreezeBalance, UnfreezeBalance, FreezeBalanceV2, UnfreezeBalanceV2
+emit_global_resource_changes = true
+
 # Emit storage changes for witness/vote data (may affect CSV output)
 emit_storage_changes = false
 
