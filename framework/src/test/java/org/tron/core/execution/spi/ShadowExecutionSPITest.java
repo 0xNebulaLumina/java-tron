@@ -273,12 +273,14 @@ public class ShadowExecutionSPITest {
     return new ExecutionSPI.ExecutionResult(
         true, // success
         new byte[] {0x42}, // returnData
-        1000, // energyUsed
-        100, // energyRefunded
+        1000L, // energyUsed
+        100L, // energyRefunded
         new ArrayList<>(), // stateChanges
         new ArrayList<>(), // logs
         null, // errorMessage
-        50 // bandwidthUsed
+        50L, // bandwidthUsed
+        new ArrayList<>(), // freezeChanges
+        new ArrayList<>() // globalResourceChanges
         );
   }
 
@@ -286,12 +288,14 @@ public class ShadowExecutionSPITest {
     return new ExecutionSPI.ExecutionResult(
         false, // success
         new byte[0], // returnData
-        500, // energyUsed
-        0, // energyRefunded
+        500L, // energyUsed
+        0L, // energyRefunded
         new ArrayList<>(), // stateChanges
         new ArrayList<>(), // logs
         "Execution failed", // errorMessage
-        25 // bandwidthUsed
+        25L, // bandwidthUsed
+        new ArrayList<>(), // freezeChanges
+        new ArrayList<>() // globalResourceChanges
         );
   }
 }
