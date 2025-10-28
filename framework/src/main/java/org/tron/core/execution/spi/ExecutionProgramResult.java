@@ -27,12 +27,17 @@ public class ExecutionProgramResult extends ProgramResult {
   // Additional ExecutionSPI-specific fields
   @Getter @Setter private List<StateChange> stateChanges;
   @Getter @Setter private long bandwidthUsed;
+  // Phase 2: Freeze/resource ledger changes for Java-side application
+  @Getter @Setter private List<ExecutionSPI.FreezeLedgerChange> freezeChanges;
+  @Getter @Setter private List<ExecutionSPI.GlobalResourceTotalsChange> globalResourceChanges;
 
   /** Default constructor creates an empty result. */
   public ExecutionProgramResult() {
     super();
     this.stateChanges = new ArrayList<>();
     this.bandwidthUsed = 0;
+    this.freezeChanges = new ArrayList<>();
+    this.globalResourceChanges = new ArrayList<>();
   }
 
   /**

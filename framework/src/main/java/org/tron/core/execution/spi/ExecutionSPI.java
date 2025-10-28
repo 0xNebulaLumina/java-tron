@@ -254,6 +254,109 @@ public interface ExecutionSPI {
     }
   }
 
+  /**
+   * Freeze/resource ledger change (Phase 2: emit_freeze_ledger_changes).
+   * Describes a single freeze or unfreeze operation affecting an owner's resource balance.
+   */
+  class FreezeLedgerChange {
+    public enum Resource {
+      BANDWIDTH(0),
+      ENERGY(1),
+      TRON_POWER(2);
+
+      private final int value;
+
+      Resource(int value) {
+        this.value = value;
+      }
+
+      public int getValue() {
+        return value;
+      }
+
+      public static Resource fromValue(int value) {
+        for (Resource r : Resource.values()) {
+          if (r.value == value) {
+            return r;
+          }
+        }
+        throw new IllegalArgumentException("Unknown resource value: " + value);
+      }
+    }
+
+    private final byte[] ownerAddress;
+    private final Resource resource;
+    private final long amount;
+    private final long expirationMs;
+    private final boolean v2Model;
+
+    public FreezeLedgerChange(byte[] ownerAddress, Resource resource, long amount,
+                               long expirationMs, boolean v2Model) {
+      this.ownerAddress = ownerAddress;
+      this.resource = resource;
+      this.amount = amount;
+      this.expirationMs = expirationMs;
+      this.v2Model = v2Model;
+    }
+
+    // Getters
+    public byte[] getOwnerAddress() {
+      return ownerAddress;
+    }
+
+    public Resource getResource() {
+      return resource;
+    }
+
+    public long getAmount() {
+      return amount;
+    }
+
+    public long getExpirationMs() {
+      return expirationMs;
+    }
+
+    public boolean isV2Model() {
+      return v2Model;
+    }
+  }
+
+  /**
+   * Global resource totals change (Phase 2: emit_freeze_ledger_changes).
+   * Captures dynamic property updates for total weights and limits.
+   */
+  class GlobalResourceTotalsChange {
+    private final long totalNetWeight;
+    private final long totalNetLimit;
+    private final long totalEnergyWeight;
+    private final long totalEnergyLimit;
+
+    public GlobalResourceTotalsChange(long totalNetWeight, long totalNetLimit,
+                                       long totalEnergyWeight, long totalEnergyLimit) {
+      this.totalNetWeight = totalNetWeight;
+      this.totalNetLimit = totalNetLimit;
+      this.totalEnergyWeight = totalEnergyWeight;
+      this.totalEnergyLimit = totalEnergyLimit;
+    }
+
+    // Getters
+    public long getTotalNetWeight() {
+      return totalNetWeight;
+    }
+
+    public long getTotalNetLimit() {
+      return totalNetLimit;
+    }
+
+    public long getTotalEnergyWeight() {
+      return totalEnergyWeight;
+    }
+
+    public long getTotalEnergyLimit() {
+      return totalEnergyLimit;
+    }
+  }
+
   /** Metrics callback interface. */
   interface MetricsCallback {
     void onMetric(String name, double value);

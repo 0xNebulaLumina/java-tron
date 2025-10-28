@@ -1311,7 +1311,6 @@ impl BackendService {
         ).map_err(|e| format!("Failed to persist freeze record: {}", e))?;
 
         // Emit exactly one state change for CSV parity (Phase 1 behavior)
-        // Note: freeze ledger changes are not emitted to maintain CSV compatibility
         let state_changes = vec![
             TronStateChange::AccountChange {
                 address: transaction.from,
@@ -1320,11 +1319,57 @@ impl BackendService {
             }
         ];
 
+        // Phase 2: Emit freeze ledger changes when enabled
+        // Read the flag from config
+        let emit_freeze_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_freeze_ledger_changes)
+            .unwrap_or(false);
+
+        let freeze_changes = if emit_freeze_changes {
+            // Read back the total frozen amount after aggregation
+            let freeze_record = storage_adapter.get_freeze_record(
+                &transaction.from,
+                params.resource as u8
+            ).map_err(|e| format!("Failed to read freeze record: {}", e))?;
+
+            if let Some(record) = freeze_record {
+                // Map FreezeResource to FreezeLedgerResource
+                use tron_backend_execution::FreezeLedgerResource;
+                let resource = match params.resource {
+                    FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
+                    FreezeResource::Energy => FreezeLedgerResource::Energy,
+                    FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+                };
+
+                let change = tron_backend_execution::FreezeLedgerChange {
+                    owner_address: transaction.from,
+                    resource,
+                    amount: record.frozen_amount as i64, // Absolute total after operation
+                    expiration_ms: record.expiration_timestamp,  // Latest expiration
+                    v2_model: false, // FreezeBalanceContract is V1 model
+                };
+
+                info!("Emitting freeze change: owner={}, resource={:?}, amount={}, expiration={}",
+                      tron_backend_common::to_tron_address(&transaction.from),
+                      resource, record.frozen_amount, record.expiration_timestamp);
+
+                vec![change]
+            } else {
+                // No record found - this shouldn't happen since we just added it
+                warn!("Freeze record not found after add_freeze_amount for owner={}, resource={:?}",
+                      tron_backend_common::to_tron_address(&transaction.from), params.resource);
+                vec![]
+            }
+        } else {
+            vec![] // Flag disabled, maintain Phase 1 behavior
+        };
+
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("FreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true",
-               bandwidth_used);
+        debug!("FreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}",
+               bandwidth_used, freeze_changes.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -1335,7 +1380,7 @@ impl BackendService {
             logs: vec![],
             error: None,
             aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
-            freeze_changes: vec![], // TODO: Populate when emit_freeze_ledger_changes is true
+            freeze_changes, // Populated when emit_freeze_ledger_changes is true
         })
     }
 
@@ -3844,9 +3889,29 @@ impl BackendService {
                 }
             }
         }).collect();
-        
+
+        // Convert freeze changes from execution result to protobuf
+        let freeze_changes: Vec<crate::backend::FreezeLedgerChange> = result.freeze_changes.iter().map(|change| {
+            use crate::backend::freeze_ledger_change::Resource;
+            use tron_backend_execution::FreezeLedgerResource;
+
+            let resource = match change.resource {
+                FreezeLedgerResource::Bandwidth => Resource::Bandwidth,
+                FreezeLedgerResource::Energy => Resource::Energy,
+                FreezeLedgerResource::TronPower => Resource::TronPower,
+            };
+
+            crate::backend::FreezeLedgerChange {
+                owner_address: Self::add_tron_address_prefix(&change.owner_address),
+                resource: resource as i32,
+                amount: change.amount,
+                expiration_ms: change.expiration_ms,
+                v2_model: change.v2_model,
+            }
+        }).collect();
+
         let error_message = result.error.unwrap_or_default();
-        
+
         ExecuteTransactionResponse {
             result: Some(ExecutionResult {
                 status: status as i32,
@@ -3858,7 +3923,7 @@ impl BackendService {
                 error_message: error_message.clone(),
                 bandwidth_used: result.bandwidth_used as i64,
                 resource_usage: vec![], // Not implemented yet
-                freeze_changes: vec![], // Populated when emit_freeze_ledger_changes is true
+                freeze_changes, // Converted from TronExecutionResult
                 global_resource_changes: vec![], // Populated when emitting global totals
             }),
             success: result.success,
