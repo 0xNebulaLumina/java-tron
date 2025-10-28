@@ -47,8 +47,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     module_manager.start_all().await?;
     info!("All modules started successfully");
 
-    // Log AEXT configuration mode
-    info!("AccountInfo AEXT mode: {}", config.execution.remote.accountinfo_aext_mode);
+    // Log remote execution configuration (Phase 2 freeze ledger changes feature)
+    info!("=== Remote Execution Configuration ===");
+    info!("  AccountInfo AEXT mode: {}", config.execution.remote.accountinfo_aext_mode);
+    info!("  Emit freeze ledger changes: {}", config.execution.remote.emit_freeze_ledger_changes);
+    info!("  FreezeBalance V1 enabled: {}", config.execution.remote.freeze_balance_enabled);
+    info!("  UnfreezeBalance V1 enabled: {}", config.execution.remote.unfreeze_balance_enabled);
+    info!("  FreezeBalanceV2 enabled: {}", config.execution.remote.freeze_balance_v2_enabled);
+    info!("  UnfreezeBalanceV2 enabled: {}", config.execution.remote.unfreeze_balance_v2_enabled);
+    info!("======================================");
 
     // Create the backend service
     let backend_service = BackendService::new(module_manager);

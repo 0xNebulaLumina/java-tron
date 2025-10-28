@@ -167,8 +167,21 @@ public class RuntimeSpiImpl implements Runtime {
   /**
    * Apply freeze ledger changes from remote execution to the local Java-Tron database (Phase 2).
    * This ensures BandwidthProcessor sees updated netLimit for subsequent transactions in the same block.
+   * Can be disabled via JVM property: -Dremote.exec.apply.freeze=false for rapid rollback.
    */
   private void applyFreezeLedgerChanges(ExecutionProgramResult result, TransactionContext context) {
+    // Check JVM toggle for rapid rollback
+    // Default is true (apply enabled), can be disabled with -Dremote.exec.apply.freeze=false
+    boolean applyEnabled = Boolean.parseBoolean(
+        System.getProperty("remote.exec.apply.freeze", "true"));
+
+    if (!applyEnabled) {
+      logger.debug("Freeze ledger changes application disabled by JVM property " +
+          "(-Dremote.exec.apply.freeze=false) for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
     // Check for freeze changes
     boolean hasFreezeChanges = result.getFreezeChanges() != null && !result.getFreezeChanges().isEmpty();
     boolean hasGlobalChanges = result.getGlobalResourceChanges() != null && !result.getGlobalResourceChanges().isEmpty();
@@ -245,6 +258,9 @@ public class RuntimeSpiImpl implements Runtime {
       // Store the updated account
       chainBaseManager.getAccountStore().put(ownerAddress, accountCapsule);
 
+      // Mark account as dirty for resource processor synchronization
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(ownerAddress);
+
       logger.debug("Applied freeze change: owner={}, resource={}, amount={}, expiration={}, v2={}",
           addressStr, freezeChange.getResource(), freezeChange.getAmount(),
           freezeChange.getExpirationMs(), freezeChange.isV2Model());
@@ -294,31 +310,80 @@ public class RuntimeSpiImpl implements Runtime {
 
   /**
    * Apply V2 freeze change to account's FrozenV2 list.
+   * Uses absolute semantics: sets the frozen amount to the exact value, not a delta.
+   * This ensures idempotency - applying the same change multiple times yields the same result.
    */
   private void applyFreezeV2Change(AccountCapsule accountCapsule,
                                   ExecutionSPI.FreezeLedgerChange freezeChange,
                                   String addressStr) {
     long amount = freezeChange.getAmount();
+    org.tron.protos.contract.Common.ResourceCode resourceType;
 
-    // Map resource type to corresponding AccountCapsule method
+    // Map resource type to corresponding protobuf ResourceCode
     switch (freezeChange.getResource()) {
       case BANDWIDTH:
-        accountCapsule.addFrozenBalanceForBandwidthV2(amount);
-        logger.debug("Updated V2 frozen bandwidth for {}: amount={}", addressStr, amount);
+        resourceType = org.tron.protos.contract.Common.ResourceCode.BANDWIDTH;
         break;
-
       case ENERGY:
-        accountCapsule.addFrozenBalanceForEnergyV2(amount);
-        logger.debug("Updated V2 frozen energy for {}: amount={}", addressStr, amount);
+        resourceType = org.tron.protos.contract.Common.ResourceCode.ENERGY;
         break;
-
       case TRON_POWER:
-        accountCapsule.addFrozenForTronPowerV2(amount);
-        logger.debug("Updated V2 frozen TronPower for {}: amount={}", addressStr, amount);
+        resourceType = org.tron.protos.contract.Common.ResourceCode.TRON_POWER;
         break;
-
       default:
         logger.warn("Unknown resource type for V2 freeze: {}", freezeChange.getResource());
+        return;
+    }
+
+    // Get current FrozenV2 list and find existing entry for this resource
+    java.util.List<org.tron.protos.Protocol.Account.FreezeV2> frozenV2List =
+        accountCapsule.getFrozenV2List();
+    int existingIndex = -1;
+
+    for (int i = 0; i < frozenV2List.size(); i++) {
+      if (frozenV2List.get(i).getType().equals(resourceType)) {
+        existingIndex = i;
+        break;
+      }
+    }
+
+    if (amount == 0) {
+      // Amount is zero - remove the entry if it exists
+      if (existingIndex >= 0) {
+        // Remove by rebuilding the list without this entry
+        org.tron.protos.Protocol.Account.Builder accountBuilder =
+            accountCapsule.getInstance().toBuilder();
+        accountBuilder.clearFrozenV2();
+        for (int i = 0; i < frozenV2List.size(); i++) {
+          if (i != existingIndex) {
+            accountBuilder.addFrozenV2(frozenV2List.get(i));
+          }
+        }
+        // Update the account capsule with the rebuilt account
+        accountCapsule.setInstance(accountBuilder.build());
+        logger.debug("Removed V2 frozen {} for {} (amount=0)", resourceType, addressStr);
+      } else {
+        logger.debug("No existing V2 frozen {} entry to remove for {}", resourceType, addressStr);
+      }
+    } else {
+      // Amount is non-zero - set absolute value
+      org.tron.protos.Protocol.Account.FreezeV2 newFreezeV2 =
+          org.tron.protos.Protocol.Account.FreezeV2.newBuilder()
+              .setType(resourceType)
+              .setAmount(amount)
+              .build();
+
+      if (existingIndex >= 0) {
+        // Update existing entry with absolute amount
+        accountCapsule.updateFrozenV2List(existingIndex, newFreezeV2);
+        logger.debug("Updated V2 frozen {} for {} to absolute amount: {} (was at index {})",
+            resourceType, addressStr, amount, existingIndex);
+      } else {
+        // Add new entry with absolute amount
+        accountCapsule.addFrozenV2List(newFreezeV2);
+        logger.debug("Added new V2 frozen {} for {} with absolute amount: {}",
+            resourceType, addressStr, amount);
+      }
     }
   }
 
@@ -339,9 +404,16 @@ public class RuntimeSpiImpl implements Runtime {
 
       // Update global totals
       dynamicStore.saveTotalNetWeight(globalChange.getTotalNetWeight());
+      org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("TOTAL_NET_WEIGHT".getBytes());
+
       dynamicStore.saveTotalNetLimit(globalChange.getTotalNetLimit());
+      org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("TOTAL_NET_LIMIT".getBytes());
+
       dynamicStore.saveTotalEnergyWeight(globalChange.getTotalEnergyWeight());
+      org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("TOTAL_ENERGY_WEIGHT".getBytes());
+
       dynamicStore.saveTotalEnergyCurrentLimit(globalChange.getTotalEnergyLimit());
+      org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("TOTAL_ENERGY_CURRENT_LIMIT".getBytes());
 
       logger.info("Applied global resource change: netWeight={}, netLimit={}, energyWeight={}, energyLimit={}",
           globalChange.getTotalNetWeight(), globalChange.getTotalNetLimit(),

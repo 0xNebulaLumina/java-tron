@@ -29,8 +29,8 @@ Proto & Wire (verification-only)
 
 Rust Backend
 - Config & Logging
-  - [ ] On startup, log `remote.emit_freeze_ledger_changes`, `remote.freeze_balance_*_enabled`, and `remote.accountinfo_aext_mode` with module name and version.
-  - [ ] Keep code defaults to `false` for all freeze flags (`crates/common/src/config.rs`); allow overriding via `config.toml`/env.
+  - [x] On startup, log `remote.emit_freeze_ledger_changes`, `remote.freeze_balance_*_enabled`, and `remote.accountinfo_aext_mode` with module name and version.
+  - [x] Keep code defaults to `false` for all freeze flags (`crates/common/src/config.rs`); allow overriding via `config.toml`/env.
 
 - Emission Semantics
   - [ ] Ensure emitted `amount` for V1 is absolute (post-aggregation) and `v2_model=false`.
@@ -59,17 +59,17 @@ Rust Backend
 
 Java Integration
 - RuntimeSpiImpl apply (framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java)
-  - [ ] Add JVM toggle `-Dremote.exec.apply.freeze` (default `true`). If `false`, skip `applyFreezeLedgerChanges()` entirely for rapid rollback.
-  - [ ] V1 absolute set (already correct): continue using `setFrozenForBandwidth(amount, expirationMs)` and `setFrozenForEnergy(amount, expirationMs)`.
-  - [ ] V2 absolute set (fix): replace add* calls with absolute set logic:
+  - [x] Add JVM toggle `-Dremote.exec.apply.freeze` (default `true`). If `false`, skip `applyFreezeLedgerChanges()` entirely for rapid rollback.
+  - [x] V1 absolute set (already correct): continue using `setFrozenForBandwidth(amount, expirationMs)` and `setFrozenForEnergy(amount, expirationMs)`.
+  - [x] V2 absolute set (fix): replace add* calls with absolute set logic:
     - Load current `FrozenV2` entry by resource.
     - If `amount>0`: replace or add entry with `FreezeV2{ type, amount }` using `updateFrozenV2List(...)` or `addFrozenV2List(...)`.
     - If `amount==0`: remove entry or set to 0 consistently (choose removal unless downstream requires presence).
-  - [ ] TRON_POWER V2: use appropriate AccountCapsule helper for TronPower (absolute set behavior mirroring BANDWIDTH/ENERGY logic).
-  - [ ] Dirty marks: after account updates, call `ResourceSyncContext.recordAccountDirty(ownerAddress)`.
-  - [ ] Global totals apply (if present): use `DynamicPropertiesStore.saveTotalNetWeight(...)`, `saveTotalNetLimit(...)`, `saveTotalEnergyWeight(...)`, `saveTotalEnergyCurrentLimit(...)` and mark keys via `ResourceSyncContext.recordDynamicKeyDirty(...)` with the exact key bytes used elsewhere.
-  - [ ] Logging: log owner base58, resource, amount, expiration, v2 flag at debug; warn on unknown resource; no-op cleanly when lists empty.
-  - [ ] Ordering review: ensure freeze changes + state changes apply before the next tx in block. Consider moving freeze apply before or alongside `applyStateChangesToLocalDatabase(...)` (not strictly required if both complete before next tx).
+  - [x] TRON_POWER V2: use appropriate AccountCapsule helper for TronPower (absolute set behavior mirroring BANDWIDTH/ENERGY logic).
+  - [x] Dirty marks: after account updates, call `ResourceSyncContext.recordAccountDirty(ownerAddress)`.
+  - [x] Global totals apply (if present): use `DynamicPropertiesStore.saveTotalNetWeight(...)`, `saveTotalNetLimit(...)`, `saveTotalEnergyWeight(...)`, `saveTotalEnergyCurrentLimit(...)` and mark keys via `ResourceSyncContext.recordDynamicKeyDirty(...)` with the exact key bytes used elsewhere.
+  - [x] Logging: log owner base58, resource, amount, expiration, v2 flag at debug; warn on unknown resource; no-op cleanly when lists empty.
+  - [x] Ordering review: ensure freeze changes + state changes apply before the next tx in block. Consider moving freeze apply before or alongside `applyStateChangesToLocalDatabase(...)` (not strictly required if both complete before next tx).
 
 - RemoteExecutionSPI parse (framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java)
   - [ ] Verify resource enum mapping has a strict default (warn + skip unknowns instead of defaulting to BANDWIDTH silently).
