@@ -85,6 +85,8 @@ pub struct RemoteExecutionConfig {
     pub trc10_enabled: bool,
     /// Enable FREEZE_BALANCE_CONTRACT execution
     pub freeze_balance_enabled: bool,
+    /// Enable UNFREEZE_BALANCE_CONTRACT execution
+    pub unfreeze_balance_enabled: bool,
     /// Emit storage changes for freeze ledger (EXPERIMENTAL - may affect CSV output)
     /// Default: false to maintain CSV parity with Phase 1
     pub emit_freeze_ledger_changes: bool,
@@ -217,6 +219,7 @@ impl Config {
         builder = builder.set_default("execution.remote.vote_witness_enabled", false)?;
         builder = builder.set_default("execution.remote.trc10_enabled", false)?;
         builder = builder.set_default("execution.remote.freeze_balance_enabled", false)?;
+        builder = builder.set_default("execution.remote.unfreeze_balance_enabled", false)?;
         builder = builder.set_default("execution.remote.emit_freeze_ledger_changes", false)?;
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
         builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
@@ -235,6 +238,7 @@ impl Default for RemoteExecutionConfig {
             vote_witness_enabled: false,
             trc10_enabled: false,
             freeze_balance_enabled: false, // Default false until validated
+            unfreeze_balance_enabled: false, // Default false until validated
             emit_freeze_ledger_changes: false, // Default false for CSV parity
             emit_storage_changes: false,
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior

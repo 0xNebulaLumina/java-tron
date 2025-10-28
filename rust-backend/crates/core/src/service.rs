@@ -19,6 +19,12 @@ struct FreezeParams {
     resource: FreezeResource,
 }
 
+/// UnfreezeBalance contract parameters
+#[derive(Debug, Clone)]
+struct UnfreezeParams {
+    resource: FreezeResource,
+}
+
 /// Resource type for freeze/unfreeze operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FreezeResource {
@@ -290,6 +296,13 @@ impl BackendService {
                 }
                 debug!("Executing FREEZE_BALANCE_CONTRACT");
                 self.execute_freeze_balance_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract) => {
+                if !remote_config.unfreeze_balance_enabled {
+                    return Err("UNFREEZE_BALANCE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing UNFREEZE_BALANCE_CONTRACT");
+                self.execute_unfreeze_balance_contract(storage_adapter, transaction, context)
             },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
@@ -1382,6 +1395,195 @@ impl BackendService {
             aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
         })
+    }
+
+    /// Execute an UNFREEZE_BALANCE_CONTRACT (Phase 2: with freeze ledger changes)
+    /// Handles unfreezing balance and emitting FreezeLedgerChange with updated amounts
+    fn execute_unfreeze_balance_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        info!("Executing UNFREEZE_BALANCE_CONTRACT: owner={}, data_len={}",
+              tron_backend_common::to_tron_address(&transaction.from),
+              transaction.data.len());
+
+        // Parse unfreeze parameters from transaction data
+        let params = Self::parse_unfreeze_balance_params(&transaction.data)?;
+
+        debug!("Parsed unfreeze params: resource={:?}", params.resource);
+
+        // Load owner account
+        let owner_account = storage_adapter.get_account(&transaction.from)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or("Account not found for unfreeze operation")?;
+
+        debug!("Owner account loaded: balance={}, nonce={}",
+               owner_account.balance, owner_account.nonce);
+
+        // Get current freeze record to determine amount to unfreeze
+        let freeze_record = storage_adapter.get_freeze_record(
+            &transaction.from,
+            params.resource as u8
+        ).map_err(|e| format!("Failed to read freeze record: {}", e))?;
+
+        let freeze_record = freeze_record.ok_or("No frozen balance found for this resource")?;
+
+        let unfreeze_amount = freeze_record.frozen_amount;
+
+        // Validation: Check if frozen balance exists and can be unfrozen
+        if unfreeze_amount == 0 {
+            return Err("No frozen balance to unfreeze".to_string());
+        }
+
+        // TODO: Check expiration time and unfreeze delay (for now, assume can unfreeze)
+
+        // Compute new owner account with increased balance
+        let mut new_owner = owner_account.clone();
+        let owner_balance_u64: u64 = owner_account.balance.try_into().unwrap_or(u64::MAX);
+        new_owner.balance = revm_primitives::U256::from(
+            owner_balance_u64.checked_add(unfreeze_amount)
+                .ok_or("Balance overflow")?
+        );
+
+        debug!("Balance change: {} -> {}", owner_account.balance, new_owner.balance);
+
+        // Persist new owner account
+        storage_adapter.set_account(transaction.from, new_owner.clone())
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+        // Remove freeze record (full unfreeze)
+        storage_adapter.remove_freeze_record(&transaction.from, params.resource as u8)
+            .map_err(|e| format!("Failed to remove freeze record: {}", e))?;
+
+        debug!("Freeze record removed: amount={}, resource={:?}", unfreeze_amount, params.resource);
+
+        // Emit exactly one state change for CSV parity
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: transaction.from,
+                old_account: Some(owner_account),
+                new_account: Some(new_owner),
+            }
+        ];
+
+        // Phase 2: Emit freeze ledger changes when enabled
+        let emit_freeze_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_freeze_ledger_changes)
+            .unwrap_or(false);
+
+        let freeze_changes = if emit_freeze_changes {
+            // Emit FreezeLedgerChange with amount=0 to indicate full unfreeze
+            use tron_backend_execution::FreezeLedgerResource;
+            let resource = match params.resource {
+                FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
+                FreezeResource::Energy => FreezeLedgerResource::Energy,
+                FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+            };
+
+            let change = tron_backend_execution::FreezeLedgerChange {
+                owner_address: transaction.from,
+                resource,
+                amount: 0, // Zero indicates full unfreeze
+                expiration_ms: 0, // No expiration after unfreeze
+                v2_model: false, // UnfreezeBalanceContract is V1 model
+            };
+
+            info!("Emitting unfreeze change: owner={}, resource={:?}, amount=0 (full unfreeze)",
+                  tron_backend_common::to_tron_address(&transaction.from), resource);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled, maintain Phase 1 behavior
+        };
+
+        // Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("UnfreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}",
+               bandwidth_used, freeze_changes.len());
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes, // Populated when emit_freeze_ledger_changes is true
+        })
+    }
+
+    /// Parse UnfreezeBalanceContract parameters from protobuf-encoded data
+    ///
+    /// UnfreezeBalanceContract protobuf structure:
+    /// - owner_address: bytes (field 1) - we get this from transaction.from
+    /// - resource: ResourceCode enum (field 10)
+    /// - receiver_address: bytes (field 15) - optional, Phase 1 ignores
+    fn parse_unfreeze_balance_params(data: &revm_primitives::Bytes) -> Result<UnfreezeParams, String> {
+        if data.is_empty() {
+            return Err("UnfreezeBalance params cannot be empty".to_string());
+        }
+
+        // Simple protobuf parser for the specific fields we need
+        let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read tag
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos = pos + new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                1 => {
+                    // owner_address (bytes) - skip, we use transaction.from
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                },
+                10 => {
+                    // resource (enum ResourceCode)
+                    if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    resource = match value {
+                        0 => FreezeResource::Bandwidth,
+                        1 => FreezeResource::Energy,
+                        2 => FreezeResource::TronPower,
+                        _ => return Err(format!("Invalid resource code: {}", value)),
+                    };
+                    pos = pos + new_pos;
+                },
+                15 => {
+                    // receiver_address (bytes) - Phase 1: ignore
+                    if wire_type != 2 { return Err("Invalid wire type for receiver_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                },
+                _ => {
+                    // Unknown field - skip
+                    match wire_type {
+                        0 => {
+                            let (_, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos;
+                        },
+                        2 => {
+                            let (len, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos + len as usize;
+                        },
+                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                    }
+                }
+            }
+        }
+
+        Ok(UnfreezeParams { resource })
     }
 
     /// Parse FreezeBalanceContract parameters from protobuf-encoded data
