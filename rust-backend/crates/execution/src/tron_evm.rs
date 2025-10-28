@@ -178,7 +178,7 @@ pub struct FreezeLedgerChange {
     pub v2_model: bool,       // true for V2 model, false for legacy V1
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FreezeLedgerResource {
     Bandwidth = 0,
     Energy = 1,
