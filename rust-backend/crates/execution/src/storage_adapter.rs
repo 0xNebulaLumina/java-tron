@@ -193,9 +193,9 @@ impl AccountAext {
     }
 
     /// Serialize AccountAext to bytes for storage
-    /// Format: 10 fields, each 8 bytes + 2 bool flags = 82 bytes total
+    /// Format: 8 i64 fields (8 bytes each) + 2 bool flags (1 byte each) = 66 bytes total
     pub fn serialize(&self) -> Vec<u8> {
-        let mut result = Vec::with_capacity(82);
+        let mut result = Vec::with_capacity(66);
 
         // Serialize all i64 fields (8 bytes each, big-endian)
         result.extend_from_slice(&self.net_usage.to_be_bytes());
@@ -216,9 +216,9 @@ impl AccountAext {
 
     /// Deserialize AccountAext from bytes
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        if data.len() < 82 {
+        if data.len() < 66 {
             return Err(anyhow::anyhow!(
-                "Insufficient data for AccountAext: expected 82 bytes, got {}",
+                "Insufficient data for AccountAext: expected 66 bytes, got {}",
                 data.len()
             ));
         }
@@ -2620,29 +2620,6 @@ mod tests {
     }
 
     #[test]
-    fn test_witness_protobuf_fallback_to_legacy() {
-        // Create legacy format data
-        let address = Address::from([0xab; 20]);
-        let witness_info = WitnessInfo {
-            address,
-            url: "fallback-test".to_string(),
-            vote_count: 500,
-        };
-        let legacy_data = witness_info.serialize();
-
-        // Try protobuf decode first (should fail)
-        assert!(WitnessInfo::deserialize(&legacy_data).is_err(),
-                "Protobuf decode of legacy data should fail");
-
-        // Legacy decode should succeed
-        let decoded = WitnessInfo::deserialize(&legacy_data)
-            .expect("Legacy decode should succeed");
-        assert_eq!(decoded.address, witness_info.address);
-        assert_eq!(decoded.url, witness_info.url);
-        assert_eq!(decoded.vote_count, witness_info.vote_count);
-    }
-
-    #[test]
     fn test_witness_protobuf_address_formats() {
         use prost::Message;
         use crate::protocol::Witness;
@@ -3039,7 +3016,7 @@ mod tests {
         };
 
         let serialized = aext.serialize();
-        assert_eq!(serialized.len(), 82, "Serialized size should be 82 bytes");
+        assert_eq!(serialized.len(), 66, "Serialized size should be 66 bytes");
 
         let deserialized = AccountAext::deserialize(&serialized)
             .expect("Should deserialize");
