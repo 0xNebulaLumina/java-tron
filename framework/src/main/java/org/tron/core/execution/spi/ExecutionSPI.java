@@ -122,6 +122,8 @@ public interface ExecutionSPI {
     private final List<LogEntry> logs;
     private final String errorMessage;
     private final long bandwidthUsed;
+    private final List<FreezeLedgerChange> freezeChanges;
+    private final List<GlobalResourceTotalsChange> globalResourceChanges;
 
     public ExecutionResult(
         boolean success,
@@ -131,7 +133,9 @@ public interface ExecutionSPI {
         List<StateChange> stateChanges,
         List<LogEntry> logs,
         String errorMessage,
-        long bandwidthUsed) {
+        long bandwidthUsed,
+        List<FreezeLedgerChange> freezeChanges,
+        List<GlobalResourceTotalsChange> globalResourceChanges) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -140,6 +144,8 @@ public interface ExecutionSPI {
       this.logs = logs;
       this.errorMessage = errorMessage;
       this.bandwidthUsed = bandwidthUsed;
+      this.freezeChanges = freezeChanges;
+      this.globalResourceChanges = globalResourceChanges;
     }
 
     // Getters
@@ -173,6 +179,14 @@ public interface ExecutionSPI {
 
     public long getBandwidthUsed() {
       return bandwidthUsed;
+    }
+
+    public List<FreezeLedgerChange> getFreezeChanges() {
+      return freezeChanges;
+    }
+
+    public List<GlobalResourceTotalsChange> getGlobalResourceChanges() {
+      return globalResourceChanges;
     }
   }
 

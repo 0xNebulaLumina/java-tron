@@ -75,6 +75,9 @@ public class RuntimeSpiImpl implements Runtime {
       // Apply state changes to local database for remote execution
       applyStateChangesToLocalDatabase(executionResult, context);
 
+      // Apply freeze ledger changes to local database (Phase 2)
+      applyFreezeLedgerChanges(executionResult, context);
+
       // Since ExecutionProgramResult extends ProgramResult, we can use it directly
       context.setProgramResult(executionResult);
 
@@ -162,9 +165,197 @@ public class RuntimeSpiImpl implements Runtime {
   }
 
   /**
+   * Apply freeze ledger changes from remote execution to the local Java-Tron database (Phase 2).
+   * This ensures BandwidthProcessor sees updated netLimit for subsequent transactions in the same block.
+   */
+  private void applyFreezeLedgerChanges(ExecutionProgramResult result, TransactionContext context) {
+    // Check for freeze changes
+    boolean hasFreezeChanges = result.getFreezeChanges() != null && !result.getFreezeChanges().isEmpty();
+    boolean hasGlobalChanges = result.getGlobalResourceChanges() != null && !result.getGlobalResourceChanges().isEmpty();
+
+    if (!hasFreezeChanges && !hasGlobalChanges) {
+      logger.debug("No freeze ledger changes to apply for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    logger.info("Applying freeze ledger changes to local database for transaction: {} (freeze={}, global={})",
+        context.getTrxCap().getTransactionId(), result.getFreezeChanges().size(),
+        result.getGlobalResourceChanges().size());
+
+    try {
+      ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
+
+      // Apply freeze changes to account store
+      if (hasFreezeChanges) {
+        for (ExecutionSPI.FreezeLedgerChange freezeChange : result.getFreezeChanges()) {
+          applyFreezeLedgerChange(freezeChange, chainBaseManager, context);
+        }
+      }
+
+      // Apply global resource totals to dynamic properties store
+      if (hasGlobalChanges) {
+        for (ExecutionSPI.GlobalResourceTotalsChange globalChange : result.getGlobalResourceChanges()) {
+          applyGlobalResourceChange(globalChange, chainBaseManager, context);
+        }
+      }
+
+      logger.info("Successfully applied freeze ledger changes for transaction: {}",
+          context.getTrxCap().getTransactionId());
+
+    } catch (Exception e) {
+      logger.error("Failed to apply freeze ledger changes for transaction: {}, error: {}",
+          context.getTrxCap().getTransactionId(), e.getMessage(), e);
+      // Don't throw exception - maintain transaction flow
+    }
+  }
+
+  /**
+   * Apply a single freeze ledger change to an account.
+   */
+  private void applyFreezeLedgerChange(ExecutionSPI.FreezeLedgerChange freezeChange,
+                                      ChainBaseManager chainBaseManager,
+                                      TransactionContext context) {
+    try {
+      byte[] ownerAddress = freezeChange.getOwnerAddress();
+      String addressStr = org.tron.common.utils.StringUtil.encode58Check(ownerAddress);
+
+      // Get or create account
+      AccountCapsule accountCapsule = chainBaseManager.getAccountStore().get(ownerAddress);
+      if (accountCapsule == null) {
+        logger.warn("Account not found for freeze change, creating: {}", addressStr);
+        // Create new account
+        Account.Builder accountBuilder = Account.newBuilder()
+            .setAddress(com.google.protobuf.ByteString.copyFrom(ownerAddress))
+            .setBalance(0)
+            .setCreateTime(System.currentTimeMillis())
+            .setType(org.tron.protos.Protocol.AccountType.Normal);
+        accountCapsule = new AccountCapsule(accountBuilder.build());
+      }
+
+      // Apply freeze change based on v2_model flag
+      if (freezeChange.isV2Model()) {
+        // V2 model: Update FrozenV2 list
+        applyFreezeV2Change(accountCapsule, freezeChange, addressStr);
+      } else {
+        // V1 model: Update Frozen field
+        applyFreezeV1Change(accountCapsule, freezeChange, addressStr);
+      }
+
+      // Store the updated account
+      chainBaseManager.getAccountStore().put(ownerAddress, accountCapsule);
+
+      logger.debug("Applied freeze change: owner={}, resource={}, amount={}, expiration={}, v2={}",
+          addressStr, freezeChange.getResource(), freezeChange.getAmount(),
+          freezeChange.getExpirationMs(), freezeChange.isV2Model());
+
+    } catch (Exception e) {
+      logger.error("Failed to apply freeze ledger change for address: {}, error: {}",
+          org.tron.common.utils.StringUtil.encode58Check(freezeChange.getOwnerAddress()),
+          e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Apply V1 freeze change to account's Frozen field.
+   */
+  private void applyFreezeV1Change(AccountCapsule accountCapsule,
+                                  ExecutionSPI.FreezeLedgerChange freezeChange,
+                                  String addressStr) {
+    long amount = freezeChange.getAmount();
+    long expirationMs = freezeChange.getExpirationMs();
+
+    // Map resource type to Tron protocol resource code
+    switch (freezeChange.getResource()) {
+      case BANDWIDTH:
+        // Update frozen balance for bandwidth
+        accountCapsule.setFrozenForBandwidth(amount, expirationMs);
+        logger.debug("Updated V1 frozen bandwidth for {}: amount={}, expiration={}",
+            addressStr, amount, expirationMs);
+        break;
+
+      case ENERGY:
+        // Update frozen balance for energy
+        accountCapsule.setFrozenForEnergy(amount, expirationMs);
+        logger.debug("Updated V1 frozen energy for {}: amount={}, expiration={}",
+            addressStr, amount, expirationMs);
+        break;
+
+      case TRON_POWER:
+        // Tron Power is typically tied to bandwidth in V1
+        logger.warn("TRON_POWER resource in V1 model not directly supported, treating as BANDWIDTH");
+        accountCapsule.setFrozenForBandwidth(amount, expirationMs);
+        break;
+
+      default:
+        logger.warn("Unknown resource type for V1 freeze: {}", freezeChange.getResource());
+    }
+  }
+
+  /**
+   * Apply V2 freeze change to account's FrozenV2 list.
+   */
+  private void applyFreezeV2Change(AccountCapsule accountCapsule,
+                                  ExecutionSPI.FreezeLedgerChange freezeChange,
+                                  String addressStr) {
+    long amount = freezeChange.getAmount();
+
+    // Map resource type to corresponding AccountCapsule method
+    switch (freezeChange.getResource()) {
+      case BANDWIDTH:
+        accountCapsule.addFrozenBalanceForBandwidthV2(amount);
+        logger.debug("Updated V2 frozen bandwidth for {}: amount={}", addressStr, amount);
+        break;
+
+      case ENERGY:
+        accountCapsule.addFrozenBalanceForEnergyV2(amount);
+        logger.debug("Updated V2 frozen energy for {}: amount={}", addressStr, amount);
+        break;
+
+      case TRON_POWER:
+        accountCapsule.addFrozenForTronPowerV2(amount);
+        logger.debug("Updated V2 frozen TronPower for {}: amount={}", addressStr, amount);
+        break;
+
+      default:
+        logger.warn("Unknown resource type for V2 freeze: {}", freezeChange.getResource());
+    }
+  }
+
+  /**
+   * Apply global resource totals change to DynamicPropertiesStore.
+   */
+  private void applyGlobalResourceChange(ExecutionSPI.GlobalResourceTotalsChange globalChange,
+                                        ChainBaseManager chainBaseManager,
+                                        TransactionContext context) {
+    try {
+      org.tron.core.store.DynamicPropertiesStore dynamicStore =
+          chainBaseManager.getDynamicPropertiesStore();
+
+      if (dynamicStore == null) {
+        logger.warn("DynamicPropertiesStore not available for global resource change");
+        return;
+      }
+
+      // Update global totals
+      dynamicStore.saveTotalNetWeight(globalChange.getTotalNetWeight());
+      dynamicStore.saveTotalNetLimit(globalChange.getTotalNetLimit());
+      dynamicStore.saveTotalEnergyWeight(globalChange.getTotalEnergyWeight());
+      dynamicStore.saveTotalEnergyCurrentLimit(globalChange.getTotalEnergyLimit());
+
+      logger.info("Applied global resource change: netWeight={}, netLimit={}, energyWeight={}, energyLimit={}",
+          globalChange.getTotalNetWeight(), globalChange.getTotalNetLimit(),
+          globalChange.getTotalEnergyWeight(), globalChange.getTotalEnergyLimit());
+
+    } catch (Exception e) {
+      logger.error("Failed to apply global resource change, error: {}", e.getMessage(), e);
+    }
+  }
+
+  /**
    * Apply a single state change to the local database.
    */
-  private void applyStateChange(ExecutionSPI.StateChange stateChange, 
+  private void applyStateChange(ExecutionSPI.StateChange stateChange,
                                ChainBaseManager chainBaseManager,
                                TransactionContext context) {
     try {

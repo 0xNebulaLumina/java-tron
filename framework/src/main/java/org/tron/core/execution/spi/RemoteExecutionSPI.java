@@ -677,7 +677,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           new ArrayList<>(), // stateChanges
           new ArrayList<>(), // logs
           response.getErrorMessage(), // errorMessage
-          0 // bandwidthUsed
+          0, // bandwidthUsed
+          new ArrayList<>(), // freezeChanges
+          new ArrayList<>() // globalResourceChanges
           );
     }
 
@@ -757,6 +759,60 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               protoLog.getAddress().toByteArray(), topics, protoLog.getData().toByteArray()));
     }
 
+    // Convert protobuf freeze changes to ExecutionSPI freeze changes (Phase 2)
+    List<FreezeLedgerChange> freezeChanges = new ArrayList<>();
+    for (tron.backend.BackendOuterClass.FreezeLedgerChange protoFreeze : protoResult.getFreezeChangesList()) {
+      // Convert proto Resource enum to ExecutionSPI Resource enum
+      FreezeLedgerChange.Resource resource;
+      switch (protoFreeze.getResource()) {
+        case BANDWIDTH:
+          resource = FreezeLedgerChange.Resource.BANDWIDTH;
+          break;
+        case ENERGY:
+          resource = FreezeLedgerChange.Resource.ENERGY;
+          break;
+        case TRON_POWER:
+          resource = FreezeLedgerChange.Resource.TRON_POWER;
+          break;
+        default:
+          logger.warn("Unknown freeze resource type: {}, defaulting to BANDWIDTH", protoFreeze.getResource());
+          resource = FreezeLedgerChange.Resource.BANDWIDTH;
+          break;
+      }
+
+      FreezeLedgerChange freezeChange = new FreezeLedgerChange(
+          protoFreeze.getOwnerAddress().toByteArray(),
+          resource,
+          protoFreeze.getAmount(),
+          protoFreeze.getExpirationMs(),
+          protoFreeze.getV2Model());
+      freezeChanges.add(freezeChange);
+
+      logger.debug("Parsed freeze change: owner={}, resource={}, amount={}, expiration={}, v2={}",
+          org.tron.common.utils.ByteArray.toHexString(protoFreeze.getOwnerAddress().toByteArray()),
+          resource,
+          protoFreeze.getAmount(),
+          protoFreeze.getExpirationMs(),
+          protoFreeze.getV2Model());
+    }
+
+    // Convert protobuf global resource changes (Phase 2)
+    List<GlobalResourceTotalsChange> globalResourceChanges = new ArrayList<>();
+    for (tron.backend.BackendOuterClass.GlobalResourceTotalsChange protoGlobal : protoResult.getGlobalResourceChangesList()) {
+      GlobalResourceTotalsChange globalChange = new GlobalResourceTotalsChange(
+          protoGlobal.getTotalNetWeight(),
+          protoGlobal.getTotalNetLimit(),
+          protoGlobal.getTotalEnergyWeight(),
+          protoGlobal.getTotalEnergyLimit());
+      globalResourceChanges.add(globalChange);
+
+      logger.debug("Parsed global resource change: netWeight={}, netLimit={}, energyWeight={}, energyLimit={}",
+          protoGlobal.getTotalNetWeight(),
+          protoGlobal.getTotalNetLimit(),
+          protoGlobal.getTotalEnergyWeight(),
+          protoGlobal.getTotalEnergyLimit());
+    }
+
     // Report metrics if callback is registered
     if (metricsCallback != null) {
       metricsCallback.onMetric("remote.energy_used", protoResult.getEnergyUsed());
@@ -765,6 +821,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           protoResult.getStatus() == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS
               ? 1.0
               : 0.0);
+      metricsCallback.onMetric("remote.freeze_changes_count", freezeChanges.size());
     }
 
     return new ExecutionResult(
@@ -775,7 +832,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         stateChanges,
         logs,
         protoResult.getErrorMessage(),
-        protoResult.getBandwidthUsed());
+        protoResult.getBandwidthUsed(),
+        freezeChanges,
+        globalResourceChanges);
   }
 
   /**
