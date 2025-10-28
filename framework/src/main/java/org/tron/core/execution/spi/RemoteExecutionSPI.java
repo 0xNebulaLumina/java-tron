@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Comparator;
 import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -775,9 +776,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           resource = FreezeLedgerChange.Resource.TRON_POWER;
           break;
         default:
-          logger.warn("Unknown freeze resource type: {}, defaulting to BANDWIDTH", protoFreeze.getResource());
-          resource = FreezeLedgerChange.Resource.BANDWIDTH;
-          break;
+          logger.warn("Unknown freeze resource type: {}, skipping entry", protoFreeze.getResource());
+          // Skip unknown resource types to avoid misapplication
+          continue;
       }
 
       FreezeLedgerChange freezeChange = new FreezeLedgerChange(
@@ -811,6 +812,31 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           protoGlobal.getTotalNetLimit(),
           protoGlobal.getTotalEnergyWeight(),
           protoGlobal.getTotalEnergyLimit());
+    }
+
+    // Deterministically order freeze changes: by resource, then by owner address bytes
+    if (freezeChanges.size() > 1) {
+      freezeChanges.sort(new Comparator<FreezeLedgerChange>() {
+        @Override
+        public int compare(FreezeLedgerChange a, FreezeLedgerChange b) {
+          int cmp = Integer.compare(a.getResource().getValue(), b.getResource().getValue());
+          if (cmp != 0) {
+            return cmp;
+          }
+          byte[] aa = a.getOwnerAddress();
+          byte[] bb = b.getOwnerAddress();
+          int min = Math.min(aa != null ? aa.length : 0, bb != null ? bb.length : 0);
+          for (int i = 0; i < min; i++) {
+            int da = aa[i] & 0xFF;
+            int db = bb[i] & 0xFF;
+            if (da != db) {
+              return Integer.compare(da, db);
+            }
+          }
+          // If equal up to min length, shorter array comes first
+          return Integer.compare(aa != null ? aa.length : 0, bb != null ? bb.length : 0);
+        }
+      });
     }
 
     // Report metrics if callback is registered
