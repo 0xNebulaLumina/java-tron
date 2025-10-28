@@ -76,6 +76,9 @@ trc10_enabled = false
 # Set to true to enable remote execution of FreezeBalanceContract
 # Default: false for safe rollout - falls back to Java embedded execution when disabled
 freeze_balance_enabled = true
+unfreeze_balance_enabled = true
+freeze_balance_v2_enabled = true
+unfreeze_balance_v2_enabled = true
 
 # Emit freeze/resource ledger changes in ExecutionResult (Phase 2)
 # When true, emits FreezeLedgerChange messages describing freeze/unfreeze operations
@@ -85,7 +88,7 @@ freeze_balance_enabled = true
 # When enabled, Java applies these changes via RuntimeSpiImpl.applyFreezeLedgerChanges()
 # Affects: FreezeBalance, UnfreezeBalance, FreezeBalanceV2, UnfreezeBalanceV2,
 #          DelegateResource, UnDelegateResource, WithdrawExpireUnfreeze, CancelAllUnfreezeV2
-emit_freeze_ledger_changes = false
+emit_freeze_ledger_changes = true
 
 # Emit storage changes for witness/vote data (may affect CSV output)
 emit_storage_changes = false
