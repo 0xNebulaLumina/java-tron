@@ -1558,7 +1558,7 @@ public class Manager {
     trace.init(blockCap, eventPluginLoaded);
     StateChangeJournalRegistry.initializeForCurrentTransaction();
     StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
-    JournalPreseedUtil.tryPreseedAfterResource(trace);
+    // JournalPreseedUtil.tryPreseedAfterResource(trace);
     trace.checkIsConstant();
     trace.exec();
 
@@ -1569,7 +1569,7 @@ public class Manager {
         StateChangeJournalRegistry.clearForCurrentTransaction();
         StateChangeJournalRegistry.initializeForCurrentTransaction();
         StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
-        JournalPreseedUtil.tryPreseedAfterResource(trace);
+        // JournalPreseedUtil.tryPreseedAfterResource(trace);
         trace.checkIsConstant();
         trace.exec();
         trace.setResult();
