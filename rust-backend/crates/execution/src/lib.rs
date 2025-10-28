@@ -13,9 +13,9 @@ pub mod protocol {
 }
 
 // Re-export key types for external use
-pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, TronContractType, TxMetadata};
+pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, TronContractType, TxMetadata, FreezeLedgerChange, FreezeLedgerResource, GlobalResourceTotalsChange};
 pub use precompiles::TronPrecompiles;
-pub use storage_adapter::{EvmStateStore, InMemoryEvmStateStore, EngineBackedEvmStateStore, EvmStateDatabase, StateChangeRecord, WitnessInfo, FreezeRecord, VotesRecord, Vote};
+pub use storage_adapter::{EvmStateStore, InMemoryEvmStateStore, EngineBackedEvmStateStore, EvmStateDatabase, StateChangeRecord, WitnessInfo, FreezeRecord, VotesRecord, Vote, AccountAext, ResourceTracker, BandwidthPath};
 
 mod tron_evm;
 mod precompiles;
@@ -350,7 +350,7 @@ mod tests {
 #[cfg(test)]
 mod witness_tests {
     use super::*;
-    use crate::storage_adapter::{InMemoryEvmStateStore, EngineBackedEvmStateStore, WitnessInfo};
+    use crate::storage_adapter::{InMemoryEvmStateStore, WitnessInfo};
     use revm_primitives::{Address, U256, Bytes};
 
     /// Test contract type parsing and metadata extraction

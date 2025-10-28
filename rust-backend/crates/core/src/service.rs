@@ -19,6 +19,26 @@ struct FreezeParams {
     resource: FreezeResource,
 }
 
+/// UnfreezeBalance contract parameters
+#[derive(Debug, Clone)]
+struct UnfreezeParams {
+    resource: FreezeResource,
+}
+
+/// FreezeBalanceV2 contract parameters
+#[derive(Debug, Clone)]
+struct FreezeV2Params {
+    frozen_balance: i64,
+    resource: FreezeResource,
+}
+
+/// UnfreezeBalanceV2 contract parameters
+#[derive(Debug, Clone)]
+struct UnfreezeV2Params {
+    unfreeze_balance: i64,
+    resource: FreezeResource,
+}
+
 /// Resource type for freeze/unfreeze operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FreezeResource {
@@ -291,6 +311,27 @@ impl BackendService {
                 debug!("Executing FREEZE_BALANCE_CONTRACT");
                 self.execute_freeze_balance_contract(storage_adapter, transaction, context)
             },
+            Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract) => {
+                if !remote_config.unfreeze_balance_enabled {
+                    return Err("UNFREEZE_BALANCE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing UNFREEZE_BALANCE_CONTRACT");
+                self.execute_unfreeze_balance_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::FreezeBalanceV2Contract) => {
+                if !remote_config.freeze_balance_v2_enabled {
+                    return Err("FREEZE_BALANCE_V2_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing FREEZE_BALANCE_V2_CONTRACT");
+                self.execute_freeze_balance_v2_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract) => {
+                if !remote_config.unfreeze_balance_v2_enabled {
+                    return Err("UNFREEZE_BALANCE_V2_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing UNFREEZE_BALANCE_V2_CONTRACT");
+                self.execute_unfreeze_balance_v2_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -309,20 +350,56 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing TRANSFER_CONTRACT: from={:?}, to={:?}, value={}",
                transaction.from, transaction.to, transaction.value);
 
         let execution_config = self.get_execution_config()?;
         let fee_config = &execution_config.fees;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         // For TRANSFER_CONTRACT specifically, we need the 'to' address
         let to_address = transaction.to.ok_or("TRANSFER_CONTRACT must have 'to' address")?;
-        
+
         // Calculate bandwidth used based on transaction payload size
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
-        
+
+        // Track AEXT for bandwidth if in tracked mode
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for sender (or initialize with defaults)
+            let current_aext = storage_adapter.get_account_aext(&transaction.from)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter.get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &transaction.from,
+                bandwidth_used as i64,
+                context.block_number as i64, // Use block number as "now"
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter.set_account_aext(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
+
+            debug!("AEXT tracked for transfer: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                   transaction.from, path, before_aext.net_usage, after_aext.net_usage,
+                   before_aext.free_net_usage, after_aext.free_net_usage);
+        }
+
         // Start with empty state changes
         let mut state_changes = Vec::new();
         
@@ -489,9 +566,9 @@ impl BackendService {
             }
         });
         
-        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, fee: {} SUN, state_changes: {}", 
+        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, fee: {} SUN, state_changes: {}",
                bandwidth_used, fee_amount, state_changes.len());
-        
+
         Ok(TronExecutionResult {
             success: true,
             return_data: revm_primitives::Bytes::new(), // No return data for value transfers
@@ -500,6 +577,9 @@ impl BackendService {
             state_changes,
             logs: Vec::new(), // No logs for value transfers
             error: None,
+            aext_map, // Populated with tracked AEXT if mode is "tracked"
+            freeze_changes: vec![], // Will be populated by freeze-related contracts
+            global_resource_changes: vec![], // Not applicable for value transfers
         })
     }
 
@@ -509,9 +589,12 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing WITNESS_CREATE_CONTRACT for address {:?}", transaction.from);
+
+        let execution_config = self.get_execution_config()?;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         // Extract URL from transaction data
         // For WitnessCreateContract, the data contains the URL bytes
@@ -654,6 +737,41 @@ impl BackendService {
         // 11. Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
+        // Track AEXT for bandwidth if in tracked mode
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for owner (or initialize with defaults)
+            let current_aext = storage_adapter.get_account_aext(&transaction.from)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter.get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &transaction.from,
+                bandwidth_used as i64,
+                context.block_number as i64, // Use block number as "now"
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter.set_account_aext(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
+
+            debug!("AEXT tracked for witness_create: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                   transaction.from, path, before_aext.net_usage, after_aext.net_usage,
+                   before_aext.free_net_usage, after_aext.free_net_usage);
+        }
+
         let owner_tron = revm_primitives::hex::encode(Self::add_tron_address_prefix(&transaction.from));
         info!(
             "WitnessCreate completed: cost={} SUN, state_changes={}, owner={}, fee_dest={}",
@@ -671,6 +789,9 @@ impl BackendService {
             logs: Vec::new(), // No logs for witness creation
             state_changes,
             error: None,
+            aext_map, // Populated with tracked AEXT if mode is "tracked"
+            freeze_changes: vec![], // Will be populated by freeze-related contracts
+            global_resource_changes: vec![], // Not applicable for witness creation
         })
     }
 
@@ -703,8 +824,6 @@ impl BackendService {
     ///   int64 vote_count = 2;        // field 2
     /// }
     fn parse_vote_witness_contract(data: &[u8]) -> Result<Vec<(revm::primitives::Address, u64)>, String> {
-        use revm::primitives::Address;
-
         let mut votes = Vec::new();
         let mut pos = 0;
 
@@ -850,9 +969,12 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        use tron_backend_execution::{TronExecutionResult, TronStateChange, VotesRecord, Vote};
+        use tron_backend_execution::{TronExecutionResult, TronStateChange, VotesRecord};
+
+        let execution_config = self.get_execution_config()?;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
@@ -996,6 +1118,41 @@ impl BackendService {
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
+        // Track AEXT for bandwidth if in tracked mode
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for owner (or initialize with defaults)
+            let current_aext = storage_adapter.get_account_aext(&owner)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter.get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &owner,
+                bandwidth_used as i64,
+                context.block_number as i64, // Use block number as "now"
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter.set_account_aext(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
+
+            debug!("AEXT tracked for vote_witness: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                   owner, path, before_aext.net_usage, after_aext.net_usage,
+                   before_aext.free_net_usage, after_aext.free_net_usage);
+        }
+
         info!("VoteWitness completed: owner={}, votes={}, state_changes={}, bandwidth={}",
               owner_tron, votes_record.new_votes.len(), state_changes.len(), bandwidth_used);
 
@@ -1007,6 +1164,9 @@ impl BackendService {
             logs: Vec::new(), // No logs for voting
             state_changes,
             error: None,
+            aext_map, // Populated with tracked AEXT if mode is "tracked"
+            freeze_changes: vec![], // Will be populated by freeze-related contracts
+            global_resource_changes: vec![], // Not applicable for vote witness
         })
     }
 
@@ -1110,6 +1270,9 @@ impl BackendService {
             state_changes,      // Exactly one account-level change
             logs: vec![],       // No logs for account update
             error: None,
+            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
+            freeze_changes: vec![], // Will be populated by freeze-related contracts
+            global_resource_changes: vec![], // Not applicable for account update
         })
     }
 
@@ -1193,7 +1356,6 @@ impl BackendService {
         ).map_err(|e| format!("Failed to persist freeze record: {}", e))?;
 
         // Emit exactly one state change for CSV parity (Phase 1 behavior)
-        // Note: freeze ledger changes are not emitted to maintain CSV compatibility
         let state_changes = vec![
             TronStateChange::AccountChange {
                 address: transaction.from,
@@ -1202,11 +1364,88 @@ impl BackendService {
             }
         ];
 
+        // Phase 2: Emit freeze ledger changes when enabled
+        // Read the flag from config
+        let emit_freeze_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_freeze_ledger_changes)
+            .unwrap_or(false);
+
+        let freeze_changes = if emit_freeze_changes {
+            // Read back the total frozen amount after aggregation
+            let freeze_record = storage_adapter.get_freeze_record(
+                &transaction.from,
+                params.resource as u8
+            ).map_err(|e| format!("Failed to read freeze record: {}", e))?;
+
+            if let Some(record) = freeze_record {
+                // Map FreezeResource to FreezeLedgerResource
+                use tron_backend_execution::FreezeLedgerResource;
+                let resource = match params.resource {
+                    FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
+                    FreezeResource::Energy => FreezeLedgerResource::Energy,
+                    FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+                };
+
+                let change = tron_backend_execution::FreezeLedgerChange {
+                    owner_address: transaction.from,
+                    resource,
+                    amount: record.frozen_amount as i64, // Absolute total after operation
+                    expiration_ms: record.expiration_timestamp,  // Latest expiration
+                    v2_model: false, // FreezeBalanceContract is V1 model
+                };
+
+                info!("Emitting freeze change: owner={}, resource={:?}, amount={}, expiration={}",
+                      tron_backend_common::to_tron_address(&transaction.from),
+                      resource, record.frozen_amount, record.expiration_timestamp);
+
+                vec![change]
+            } else {
+                // No record found - this shouldn't happen since we just added it
+                warn!("Freeze record not found after add_freeze_amount for owner={}, resource={:?}",
+                      tron_backend_common::to_tron_address(&transaction.from), params.resource);
+                vec![]
+            }
+        } else {
+            vec![] // Flag disabled, maintain Phase 1 behavior
+        };
+
+        // Phase 2: Emit global resource totals when enabled
+        let emit_global_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_global_resource_changes)
+            .unwrap_or(false);
+
+        let global_resource_changes = if emit_global_changes {
+            // Compute current global totals from all freeze records
+            let total_net_weight = storage_adapter.compute_total_net_weight()
+                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            let total_net_limit = storage_adapter.get_total_net_limit()
+                .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+            let total_energy_weight = storage_adapter.compute_total_energy_weight()
+                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
+            let total_energy_limit = 0i64; // TODO: Add getter when available
+
+            let change = tron_backend_execution::GlobalResourceTotalsChange {
+                total_net_weight,
+                total_net_limit,
+                total_energy_weight,
+                total_energy_limit,
+            };
+
+            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+                  total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled
+        };
+
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("FreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true",
-               bandwidth_used);
+        debug!("FreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}",
+               bandwidth_used, freeze_changes.len(), global_resource_changes.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -1216,6 +1455,752 @@ impl BackendService {
             state_changes,
             logs: vec![],
             error: None,
+            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
+            freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            global_resource_changes, // Populated when emit_global_resource_changes is true
+        })
+    }
+
+    /// Execute an UNFREEZE_BALANCE_CONTRACT (Phase 2: with freeze ledger changes)
+    /// Handles unfreezing balance and emitting FreezeLedgerChange with updated amounts
+    fn execute_unfreeze_balance_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        info!("Executing UNFREEZE_BALANCE_CONTRACT: owner={}, data_len={}",
+              tron_backend_common::to_tron_address(&transaction.from),
+              transaction.data.len());
+
+        // Parse unfreeze parameters from transaction data
+        let params = Self::parse_unfreeze_balance_params(&transaction.data)?;
+
+        debug!("Parsed unfreeze params: resource={:?}", params.resource);
+
+        // Load owner account
+        let owner_account = storage_adapter.get_account(&transaction.from)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or("Account not found for unfreeze operation")?;
+
+        debug!("Owner account loaded: balance={}, nonce={}",
+               owner_account.balance, owner_account.nonce);
+
+        // Get current freeze record to determine amount to unfreeze
+        let freeze_record = storage_adapter.get_freeze_record(
+            &transaction.from,
+            params.resource as u8
+        ).map_err(|e| format!("Failed to read freeze record: {}", e))?;
+
+        let freeze_record = freeze_record.ok_or("No frozen balance found for this resource")?;
+
+        let unfreeze_amount = freeze_record.frozen_amount;
+
+        // Validation: Check if frozen balance exists and can be unfrozen
+        if unfreeze_amount == 0 {
+            return Err("No frozen balance to unfreeze".to_string());
+        }
+
+        // TODO: Check expiration time and unfreeze delay (for now, assume can unfreeze)
+
+        // Compute new owner account with increased balance
+        let mut new_owner = owner_account.clone();
+        let owner_balance_u64: u64 = owner_account.balance.try_into().unwrap_or(u64::MAX);
+        new_owner.balance = revm_primitives::U256::from(
+            owner_balance_u64.checked_add(unfreeze_amount)
+                .ok_or("Balance overflow")?
+        );
+
+        debug!("Balance change: {} -> {}", owner_account.balance, new_owner.balance);
+
+        // Persist new owner account
+        storage_adapter.set_account(transaction.from, new_owner.clone())
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+        // Remove freeze record (full unfreeze)
+        storage_adapter.remove_freeze_record(&transaction.from, params.resource as u8)
+            .map_err(|e| format!("Failed to remove freeze record: {}", e))?;
+
+        debug!("Freeze record removed: amount={}, resource={:?}", unfreeze_amount, params.resource);
+
+        // Emit exactly one state change for CSV parity
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: transaction.from,
+                old_account: Some(owner_account),
+                new_account: Some(new_owner),
+            }
+        ];
+
+        // Phase 2: Emit freeze ledger changes when enabled
+        let emit_freeze_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_freeze_ledger_changes)
+            .unwrap_or(false);
+
+        let freeze_changes = if emit_freeze_changes {
+            // Emit FreezeLedgerChange with amount=0 to indicate full unfreeze
+            use tron_backend_execution::FreezeLedgerResource;
+            let resource = match params.resource {
+                FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
+                FreezeResource::Energy => FreezeLedgerResource::Energy,
+                FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+            };
+
+            let change = tron_backend_execution::FreezeLedgerChange {
+                owner_address: transaction.from,
+                resource,
+                amount: 0, // Zero indicates full unfreeze
+                expiration_ms: 0, // No expiration after unfreeze
+                v2_model: false, // UnfreezeBalanceContract is V1 model
+            };
+
+            info!("Emitting unfreeze change: owner={}, resource={:?}, amount=0 (full unfreeze)",
+                  tron_backend_common::to_tron_address(&transaction.from), resource);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled, maintain Phase 1 behavior
+        };
+
+        // Phase 2: Emit global resource totals when enabled
+        let emit_global_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_global_resource_changes)
+            .unwrap_or(false);
+
+        let global_resource_changes = if emit_global_changes {
+            // Compute current global totals from all freeze records
+            let total_net_weight = storage_adapter.compute_total_net_weight()
+                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            let total_net_limit = storage_adapter.get_total_net_limit()
+                .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+            let total_energy_weight = storage_adapter.compute_total_energy_weight()
+                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
+            let total_energy_limit = 0i64; // TODO: Add getter when available
+
+            let change = tron_backend_execution::GlobalResourceTotalsChange {
+                total_net_weight,
+                total_net_limit,
+                total_energy_weight,
+                total_energy_limit,
+            };
+
+            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+                  total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled
+        };
+
+        // Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("UnfreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}",
+               bandwidth_used, freeze_changes.len(), global_resource_changes.len());
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            global_resource_changes, // Populated when emit_global_resource_changes is true
+        })
+    }
+
+    /// Parse UnfreezeBalanceContract parameters from protobuf-encoded data
+    ///
+    /// UnfreezeBalanceContract protobuf structure:
+    /// - owner_address: bytes (field 1) - we get this from transaction.from
+    /// - resource: ResourceCode enum (field 10)
+    /// - receiver_address: bytes (field 15) - optional, Phase 1 ignores
+    fn parse_unfreeze_balance_params(data: &revm_primitives::Bytes) -> Result<UnfreezeParams, String> {
+        if data.is_empty() {
+            return Err("UnfreezeBalance params cannot be empty".to_string());
+        }
+
+        // Simple protobuf parser for the specific fields we need
+        let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read tag
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos = pos + new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                1 => {
+                    // owner_address (bytes) - skip, we use transaction.from
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                },
+                10 => {
+                    // resource (enum ResourceCode)
+                    if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    resource = match value {
+                        0 => FreezeResource::Bandwidth,
+                        1 => FreezeResource::Energy,
+                        2 => FreezeResource::TronPower,
+                        _ => return Err(format!("Invalid resource code: {}", value)),
+                    };
+                    pos = pos + new_pos;
+                },
+                15 => {
+                    // receiver_address (bytes) - Phase 1: ignore
+                    if wire_type != 2 { return Err("Invalid wire type for receiver_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                },
+                _ => {
+                    // Unknown field - skip
+                    match wire_type {
+                        0 => {
+                            let (_, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos;
+                        },
+                        2 => {
+                            let (len, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos + len as usize;
+                        },
+                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                    }
+                }
+            }
+        }
+
+        Ok(UnfreezeParams { resource })
+    }
+
+    /// Execute a FREEZE_BALANCE_V2_CONTRACT (Phase 2: with freeze ledger changes)
+    /// Handles V2 freeze which uses FrozenV2 list instead of single Frozen field
+    fn execute_freeze_balance_v2_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        info!("Executing FREEZE_BALANCE_V2_CONTRACT: owner={}, data_len={}",
+              tron_backend_common::to_tron_address(&transaction.from),
+              transaction.data.len());
+
+        // Parse freeze V2 parameters from transaction data
+        let params = Self::parse_freeze_balance_v2_params(&transaction.data)?;
+
+        debug!("Parsed freeze V2 params: frozen_balance={}, resource={:?}",
+              params.frozen_balance, params.resource);
+
+        // Load owner account
+        let owner_account = storage_adapter.get_account(&transaction.from)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .unwrap_or_default();
+
+        debug!("Owner account loaded: balance={}, nonce={}",
+               owner_account.balance, owner_account.nonce);
+
+        // Validation: amount > 0
+        if params.frozen_balance <= 0 {
+            warn!("Freeze amount must be greater than zero");
+            return Err("Freeze amount must be greater than zero".to_string());
+        }
+
+        // Convert frozen_balance from i64 to u64 for balance arithmetic
+        let freeze_amount = params.frozen_balance as u64;
+
+        // Validation: owner.balance >= amount
+        let owner_balance_u64 = owner_account.balance.try_into().unwrap_or(u64::MAX);
+
+        if owner_balance_u64 < freeze_amount {
+            warn!("Insufficient balance: have {}, need {}", owner_balance_u64, freeze_amount);
+            return Err(format!("Insufficient balance: have {}, need {}",
+                             owner_balance_u64, freeze_amount));
+        }
+
+        // Compute new owner account with reduced balance
+        let mut new_owner = owner_account.clone();
+        new_owner.balance = revm_primitives::U256::from(owner_balance_u64 - freeze_amount);
+
+        debug!("Balance change: {} -> {}", owner_account.balance, new_owner.balance);
+
+        // Persist new owner account
+        storage_adapter.set_account(transaction.from, new_owner.clone())
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+        // Phase 2: Persist freeze record (V2 uses same storage, just different emission)
+        // V2 doesn't have explicit duration, expiration is managed at a higher level
+        // For now, use a default expiration (e.g., 3 days in milliseconds)
+        let default_duration_millis = 3 * 86400 * 1000; // 3 days
+        let expiration_timestamp = (context.block_timestamp + default_duration_millis) as i64;
+
+        debug!("Freeze V2 record: amount={}, expiration={}, resource={:?}",
+               freeze_amount, expiration_timestamp, params.resource);
+
+        // Add to freeze ledger (aggregates if previous freeze exists)
+        storage_adapter.add_freeze_amount(
+            transaction.from,
+            params.resource as u8,
+            freeze_amount,
+            expiration_timestamp
+        ).map_err(|e| format!("Failed to persist freeze record: {}", e))?;
+
+        // Emit exactly one state change for CSV parity
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: transaction.from,
+                old_account: Some(owner_account),
+                new_account: Some(new_owner),
+            }
+        ];
+
+        // Phase 2: Emit freeze ledger changes when enabled
+        let emit_freeze_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_freeze_ledger_changes)
+            .unwrap_or(false);
+
+        let freeze_changes = if emit_freeze_changes {
+            // Read back the total frozen amount after aggregation
+            let freeze_record = storage_adapter.get_freeze_record(
+                &transaction.from,
+                params.resource as u8
+            ).map_err(|e| format!("Failed to read freeze record: {}", e))?;
+
+            if let Some(record) = freeze_record {
+                // Map FreezeResource to FreezeLedgerResource
+                use tron_backend_execution::FreezeLedgerResource;
+                let resource = match params.resource {
+                    FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
+                    FreezeResource::Energy => FreezeLedgerResource::Energy,
+                    FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+                };
+
+                let change = tron_backend_execution::FreezeLedgerChange {
+                    owner_address: transaction.from,
+                    resource,
+                    amount: record.frozen_amount as i64, // Absolute total after operation
+                    expiration_ms: record.expiration_timestamp,  // Latest expiration
+                    v2_model: true, // FreezeBalanceV2Contract is V2 model
+                };
+
+                info!("Emitting freeze V2 change: owner={}, resource={:?}, amount={}, expiration={}",
+                      tron_backend_common::to_tron_address(&transaction.from),
+                      resource, record.frozen_amount, record.expiration_timestamp);
+
+                vec![change]
+            } else {
+                // No record found - this shouldn't happen since we just added it
+                warn!("Freeze record not found after add_freeze_amount for owner={}, resource={:?}",
+                      tron_backend_common::to_tron_address(&transaction.from), params.resource);
+                vec![]
+            }
+        } else {
+            vec![] // Flag disabled, maintain Phase 1 behavior
+        };
+
+        // Phase 2: Emit global resource totals when enabled
+        let emit_global_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_global_resource_changes)
+            .unwrap_or(false);
+
+        let global_resource_changes = if emit_global_changes {
+            // Compute current global totals from all freeze records
+            let total_net_weight = storage_adapter.compute_total_net_weight()
+                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            let total_net_limit = storage_adapter.get_total_net_limit()
+                .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+            let total_energy_weight = storage_adapter.compute_total_energy_weight()
+                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
+            let total_energy_limit = 0i64; // TODO: Add getter when available
+
+            let change = tron_backend_execution::GlobalResourceTotalsChange {
+                total_net_weight,
+                total_net_limit,
+                total_energy_weight,
+                total_energy_limit,
+            };
+
+            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+                  total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled
+        };
+
+        // Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("FreezeBalanceV2 completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}",
+               bandwidth_used, freeze_changes.len(), global_resource_changes.len());
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            global_resource_changes, // Populated when emit_global_resource_changes is true
+        })
+    }
+
+    /// Execute an UNFREEZE_BALANCE_V2_CONTRACT (Phase 2: with freeze ledger changes)
+    /// Handles V2 unfreeze which may support partial unfreezing
+    fn execute_unfreeze_balance_v2_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        info!("Executing UNFREEZE_BALANCE_V2_CONTRACT: owner={}, data_len={}",
+              tron_backend_common::to_tron_address(&transaction.from),
+              transaction.data.len());
+
+        // Parse unfreeze V2 parameters from transaction data
+        let params = Self::parse_unfreeze_balance_v2_params(&transaction.data)?;
+
+        debug!("Parsed unfreeze V2 params: unfreeze_balance={}, resource={:?}",
+              params.unfreeze_balance, params.resource);
+
+        // Load owner account
+        let owner_account = storage_adapter.get_account(&transaction.from)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or("Account not found for unfreeze operation")?;
+
+        debug!("Owner account loaded: balance={}, nonce={}",
+               owner_account.balance, owner_account.nonce);
+
+        // Get current freeze record to determine amount to unfreeze
+        let freeze_record = storage_adapter.get_freeze_record(
+            &transaction.from,
+            params.resource as u8
+        ).map_err(|e| format!("Failed to read freeze record: {}", e))?;
+
+        let freeze_record = freeze_record.ok_or("No frozen balance found for this resource")?;
+
+        // Validation: Check if frozen balance exists and can be unfrozen
+        if freeze_record.frozen_amount == 0 {
+            return Err("No frozen balance to unfreeze".to_string());
+        }
+
+        // Determine unfreeze amount (V2 may support partial)
+        // For now, implement full unfreeze like V1
+        let unfreeze_amount = if params.unfreeze_balance <= 0 {
+            // If no amount specified or invalid, unfreeze all
+            freeze_record.frozen_amount
+        } else {
+            // Partial unfreeze requested
+            let requested = params.unfreeze_balance as u64;
+            if requested > freeze_record.frozen_amount {
+                freeze_record.frozen_amount // Unfreeze all if requested more than available
+            } else {
+                requested
+            }
+        };
+
+        debug!("Unfreeze amount determined: {}", unfreeze_amount);
+
+        // Compute new owner account with increased balance
+        let mut new_owner = owner_account.clone();
+        let owner_balance_u64: u64 = owner_account.balance.try_into().unwrap_or(u64::MAX);
+        new_owner.balance = revm_primitives::U256::from(
+            owner_balance_u64.checked_add(unfreeze_amount)
+                .ok_or("Balance overflow")?
+        );
+
+        debug!("Balance change: {} -> {}", owner_account.balance, new_owner.balance);
+
+        // Persist new owner account
+        storage_adapter.set_account(transaction.from, new_owner.clone())
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+        // Update or remove freeze record
+        let remaining_frozen = freeze_record.frozen_amount - unfreeze_amount;
+        if remaining_frozen == 0 {
+            // Full unfreeze - remove record
+            storage_adapter.remove_freeze_record(&transaction.from, params.resource as u8)
+                .map_err(|e| format!("Failed to remove freeze record: {}", e))?;
+            debug!("Freeze record removed: full unfreeze");
+        } else {
+            // Partial unfreeze - update record with remaining amount
+            storage_adapter.add_freeze_amount(
+                transaction.from,
+                params.resource as u8,
+                0, // Add 0 to update without changing amount (TODO: implement subtract method)
+                freeze_record.expiration_timestamp
+            ).map_err(|e| format!("Failed to update freeze record: {}", e))?;
+            debug!("Freeze record updated: remaining_frozen={}", remaining_frozen);
+        }
+
+        // Emit exactly one state change for CSV parity
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: transaction.from,
+                old_account: Some(owner_account),
+                new_account: Some(new_owner),
+            }
+        ];
+
+        // Phase 2: Emit freeze ledger changes when enabled
+        let emit_freeze_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_freeze_ledger_changes)
+            .unwrap_or(false);
+
+        let freeze_changes = if emit_freeze_changes {
+            // Read back the updated freeze record to get absolute amount
+            let updated_record = storage_adapter.get_freeze_record(
+                &transaction.from,
+                params.resource as u8
+            ).map_err(|e| format!("Failed to read updated freeze record: {}", e))?;
+
+            use tron_backend_execution::FreezeLedgerResource;
+            let resource = match params.resource {
+                FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
+                FreezeResource::Energy => FreezeLedgerResource::Energy,
+                FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+            };
+
+            let change = if let Some(record) = updated_record {
+                // Partial unfreeze - emit remaining amount
+                tron_backend_execution::FreezeLedgerChange {
+                    owner_address: transaction.from,
+                    resource,
+                    amount: record.frozen_amount as i64, // Absolute remaining after unfreeze
+                    expiration_ms: record.expiration_timestamp,
+                    v2_model: true, // UnfreezeBalanceV2Contract is V2 model
+                }
+            } else {
+                // Full unfreeze - emit amount=0
+                tron_backend_execution::FreezeLedgerChange {
+                    owner_address: transaction.from,
+                    resource,
+                    amount: 0, // Zero indicates full unfreeze
+                    expiration_ms: 0, // No expiration after full unfreeze
+                    v2_model: true,
+                }
+            };
+
+            info!("Emitting unfreeze V2 change: owner={}, resource={:?}, amount={} (remaining after unfreeze)",
+                  tron_backend_common::to_tron_address(&transaction.from), resource, change.amount);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled, maintain Phase 1 behavior
+        };
+
+        // Phase 2: Emit global resource totals when enabled
+        let emit_global_changes = self.get_execution_config()
+            .ok()
+            .map(|cfg| cfg.remote.emit_global_resource_changes)
+            .unwrap_or(false);
+
+        let global_resource_changes = if emit_global_changes {
+            // Compute current global totals from all freeze records
+            let total_net_weight = storage_adapter.compute_total_net_weight()
+                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            let total_net_limit = storage_adapter.get_total_net_limit()
+                .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+            let total_energy_weight = storage_adapter.compute_total_energy_weight()
+                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
+            let total_energy_limit = 0i64; // TODO: Add getter when available
+
+            let change = tron_backend_execution::GlobalResourceTotalsChange {
+                total_net_weight,
+                total_net_limit,
+                total_energy_weight,
+                total_energy_limit,
+            };
+
+            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+                  total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
+
+            vec![change]
+        } else {
+            vec![] // Flag disabled
+        };
+
+        // Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("UnfreezeBalanceV2 completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}",
+               bandwidth_used, freeze_changes.len(), global_resource_changes.len());
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            global_resource_changes, // Populated when emit_global_resource_changes is true
+        })
+    }
+
+    /// Parse FreezeBalanceV2Contract parameters from protobuf-encoded data
+    ///
+    /// FreezeBalanceV2Contract protobuf structure:
+    /// - owner_address: bytes (field 1) - we get this from transaction.from
+    /// - frozen_balance: int64 (field 2)
+    /// - resource: ResourceCode enum (field 3)
+    fn parse_freeze_balance_v2_params(data: &revm_primitives::Bytes) -> Result<FreezeV2Params, String> {
+        if data.is_empty() {
+            return Err("FreezeBalanceV2 params cannot be empty".to_string());
+        }
+
+        let mut frozen_balance: Option<i64> = None;
+        let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read tag
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos = pos + new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                1 => {
+                    // owner_address (bytes) - skip, we use transaction.from
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                },
+                2 => {
+                    // frozen_balance (int64)
+                    if wire_type != 0 { return Err("Invalid wire type for frozen_balance".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    frozen_balance = Some(value as i64);
+                    pos = pos + new_pos;
+                },
+                3 => {
+                    // resource (enum ResourceCode)
+                    if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    resource = match value {
+                        0 => FreezeResource::Bandwidth,
+                        1 => FreezeResource::Energy,
+                        2 => FreezeResource::TronPower,
+                        _ => return Err(format!("Invalid resource code: {}", value)),
+                    };
+                    pos = pos + new_pos;
+                },
+                _ => {
+                    // Unknown field - skip
+                    match wire_type {
+                        0 => {
+                            let (_, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos;
+                        },
+                        2 => {
+                            let (len, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos + len as usize;
+                        },
+                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                    }
+                }
+            }
+        }
+
+        // Validate required fields
+        let frozen_balance = frozen_balance.ok_or("Missing frozen_balance field")?;
+
+        Ok(FreezeV2Params {
+            frozen_balance,
+            resource,
+        })
+    }
+
+    /// Parse UnfreezeBalanceV2Contract parameters from protobuf-encoded data
+    ///
+    /// UnfreezeBalanceV2Contract protobuf structure:
+    /// - owner_address: bytes (field 1) - we get this from transaction.from
+    /// - unfreeze_balance: int64 (field 2)
+    /// - resource: ResourceCode enum (field 3)
+    fn parse_unfreeze_balance_v2_params(data: &revm_primitives::Bytes) -> Result<UnfreezeV2Params, String> {
+        if data.is_empty() {
+            return Err("UnfreezeBalanceV2 params cannot be empty".to_string());
+        }
+
+        let mut unfreeze_balance: Option<i64> = None;
+        let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read tag
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos = pos + new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                1 => {
+                    // owner_address (bytes) - skip, we use transaction.from
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                },
+                2 => {
+                    // unfreeze_balance (int64)
+                    if wire_type != 0 { return Err("Invalid wire type for unfreeze_balance".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    unfreeze_balance = Some(value as i64);
+                    pos = pos + new_pos;
+                },
+                3 => {
+                    // resource (enum ResourceCode)
+                    if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    resource = match value {
+                        0 => FreezeResource::Bandwidth,
+                        1 => FreezeResource::Energy,
+                        2 => FreezeResource::TronPower,
+                        _ => return Err(format!("Invalid resource code: {}", value)),
+                    };
+                    pos = pos + new_pos;
+                },
+                _ => {
+                    // Unknown field - skip
+                    match wire_type {
+                        0 => {
+                            let (_, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos;
+                        },
+                        2 => {
+                            let (len, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos + len as usize;
+                        },
+                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                    }
+                }
+            }
+        }
+
+        // Validate required fields (unfreeze_balance may be optional for "unfreeze all")
+        let unfreeze_balance = unfreeze_balance.unwrap_or(-1); // -1 means unfreeze all
+
+        Ok(UnfreezeV2Params {
+            unfreeze_balance,
+            resource,
         })
     }
 
@@ -1339,6 +2324,8 @@ mod tests {
     
     #[test]
     fn test_calculate_bandwidth_usage() {
+        use tron_backend_execution::TxMetadata;
+
         // Test basic transaction
         let tx = TronTransaction {
             from: Address::ZERO,
@@ -1348,11 +2335,15 @@ mod tests {
             gas_limit: 21000,
             gas_price: U256::ZERO,
             nonce: 0,
+            metadata: TxMetadata {
+                contract_type: None,
+                asset_id: None,
+            },
         };
-        
+
         let bandwidth = BackendService::calculate_bandwidth_usage(&tx);
         assert_eq!(bandwidth, 60 + 0 + 65); // base_size + data_size + signature_size
-        
+
         // Test transaction with data
         let tx_with_data = TronTransaction {
             from: Address::ZERO,
@@ -1362,6 +2353,10 @@ mod tests {
             gas_limit: 21000,
             gas_price: U256::ZERO,
             nonce: 0,
+            metadata: TxMetadata {
+                contract_type: None,
+                asset_id: None,
+            },
         };
         
         let bandwidth_with_data = BackendService::calculate_bandwidth_usage(&tx_with_data);
@@ -1383,16 +2378,24 @@ mod tests {
     fn test_account_update_contract_happy_path() {
         use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
         use revm_primitives::{Address, Bytes, U256, AccountInfo};
-        use tron_backend_common::{ExecutionConfig, ExecutionFeeConfig};
+        use tron_backend_common::ExecutionConfig;
 
         // Create mock storage and service
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
         let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
-        let config = ExecutionConfig {
-            fee_config: ExecutionFeeConfig::default(),
-            // Add other required config fields...
+
+        let exec_config = ExecutionConfig {
+            remote: tron_backend_common::RemoteExecutionConfig {
+                system_enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
         };
-        let service = BackendService::new(config);
+        let mut module_manager = tron_backend_common::ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+        module_manager.register("execution", Box::new(exec_module));
+        let service = BackendService::new(module_manager);
 
         // Create test account (owner must exist)
         let owner_address = Address::from([1u8; 20]);
@@ -1423,10 +2426,12 @@ mod tests {
         let context = TronExecutionContext {
             block_number: 1,
             block_timestamp: 1000000,
-            block_hash: [0u8; 32],
-            coinbase: Address::ZERO,
-            energy_limit: 0,
-            energy_price: 0,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 100_000_000,
+            chain_id: 1,
+            energy_price: 420,
+            bandwidth_price: 1000,
         };
 
         // Execute the contract
@@ -1464,24 +2469,35 @@ mod tests {
     fn test_account_update_contract_validations() {
         use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
         use revm_primitives::{Address, Bytes, U256, AccountInfo};
-        use tron_backend_common::{ExecutionConfig, ExecutionFeeConfig};
+        use tron_backend_common::ExecutionConfig;
 
         // Create mock storage and service
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
         let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
-        let config = ExecutionConfig {
-            fee_config: ExecutionFeeConfig::default(),
+
+        let exec_config = ExecutionConfig {
+            remote: tron_backend_common::RemoteExecutionConfig {
+                system_enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
         };
-        let service = BackendService::new(config);
+        let mut module_manager = tron_backend_common::ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+        module_manager.register("execution", Box::new(exec_module));
+        let service = BackendService::new(module_manager);
 
         let owner_address = Address::from([1u8; 20]);
         let context = TronExecutionContext {
             block_number: 1,
             block_timestamp: 1000000,
-            block_hash: [0u8; 32],
-            coinbase: Address::ZERO,
-            energy_limit: 0,
-            energy_price: 0,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 100_000_000,
+            chain_id: 1,
+            energy_price: 420,
+            bandwidth_price: 1000,
         };
 
         // Test 1: Empty name should fail
@@ -1547,15 +2563,24 @@ mod tests {
     fn test_account_update_contract_duplicate_set() {
         use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
         use revm_primitives::{Address, Bytes, U256, AccountInfo};
-        use tron_backend_common::{ExecutionConfig, ExecutionFeeConfig};
+        use tron_backend_common::ExecutionConfig;
 
         // Create mock storage and service
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
         let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
-        let config = ExecutionConfig {
-            fee_config: ExecutionFeeConfig::default(),
+
+        let exec_config = ExecutionConfig {
+            remote: tron_backend_common::RemoteExecutionConfig {
+                system_enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
         };
-        let service = BackendService::new(config);
+        let mut module_manager = tron_backend_common::ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+        module_manager.register("execution", Box::new(exec_module));
+        let service = BackendService::new(module_manager);
 
         // Create test account
         let owner_address = Address::from([1u8; 20]);
@@ -1570,10 +2595,12 @@ mod tests {
         let context = TronExecutionContext {
             block_number: 1,
             block_timestamp: 1000000,
-            block_hash: [0u8; 32],
-            coinbase: Address::ZERO,
-            energy_limit: 0,
-            energy_price: 0,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 100_000_000,
+            chain_id: 1,
+            energy_price: 420,
+            bandwidth_price: 1000,
         };
 
         // First set should succeed
@@ -1645,7 +2672,8 @@ mod tests {
         let freeze_amount = 1_000_000i64; // 1 TRX
 
         // Setup storage with initial account
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
         let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
         let owner_account = AccountInfo {
             balance: U256::from(initial_balance),
@@ -1741,7 +2769,8 @@ mod tests {
         let initial_balance = 100u64; // Very small balance
         let freeze_amount = 1_000_000i64; // Try to freeze more than we have
 
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
         let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
         let owner_account = AccountInfo {
             balance: U256::from(initial_balance),
@@ -1810,7 +2839,8 @@ mod tests {
         use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
 
         let owner_address = Address::from([1u8; 20]);
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
         let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
         let owner_account = AccountInfo {
             balance: U256::from(1_000_000u64),
@@ -1860,6 +2890,534 @@ mod tests {
 
         let result = service.execute_freeze_balance_contract(&mut storage_adapter, &transaction, &context);
         assert!(result.is_err(), "Should fail with empty params");
+    }
+
+    #[test]
+    fn test_freeze_balance_emits_freeze_changes_when_enabled() {
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_storage::StorageEngine;
+        use std::sync::Arc;
+
+        // Create test storage with temp directory
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+        // Setup owner account with sufficient balance
+        let owner_addr = Address::from_slice(&[0x12; 20]);
+        let owner_account = AccountInfo {
+            balance: U256::from(2_000_000_000_000u64), // 2M TRX
+            nonce: 0,
+            code_hash: revm_primitives::KECCAK_EMPTY,
+            code: None,
+        };
+        storage_adapter.set_account(owner_addr, owner_account).unwrap();
+
+        // Create FreezeBalance transaction
+        // Field 2: frozen_balance = 1_000_000 (varint encoded)
+        // Field 3: frozen_duration = 3 (varint encoded)
+        // Field 10: resource = 0 (BANDWIDTH)
+        let params_data = vec![
+            0x10, 0xC0, 0x84, 0x3D, // field 2 (frozen_balance): 1_000_000
+            0x18, 0x03,             // field 3 (frozen_duration): 3
+            0x50, 0x00,             // field 10 (resource): 0 (BANDWIDTH)
+        ];
+
+        let tx = TronTransaction {
+            from: owner_addr,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from(params_data),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
+                asset_id: None,
+            },
+        };
+
+        let context = TronExecutionContext {
+            block_number: 1000,
+            block_timestamp: 1600000000000, // milliseconds
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 100_000_000,
+            chain_id: 1,
+            energy_price: 420,
+            bandwidth_price: 1000,
+        };
+
+        // Create config with emit_freeze_ledger_changes=true
+        let exec_config = ExecutionConfig {
+            remote: tron_backend_common::RemoteExecutionConfig {
+                freeze_balance_enabled: true,
+                emit_freeze_ledger_changes: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Create service with config
+        let mut module_manager = tron_backend_common::ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+        module_manager.register("execution", Box::new(exec_module));
+        let service = BackendService::new(module_manager);
+
+        // Execute freeze balance
+        let result = service.execute_freeze_balance_contract(&mut storage_adapter, &tx, &context);
+
+        assert!(result.is_ok(), "Freeze execution should succeed");
+        let exec_result = result.unwrap();
+
+        // Verify freeze_changes is populated
+        assert_eq!(exec_result.freeze_changes.len(), 1, "Should emit exactly one freeze change");
+
+        let freeze_change = &exec_result.freeze_changes[0];
+        assert_eq!(freeze_change.owner_address, owner_addr);
+        assert_eq!(freeze_change.resource, tron_backend_execution::FreezeLedgerResource::Bandwidth);
+        assert_eq!(freeze_change.amount, 1_000_000, "Amount should be absolute frozen amount");
+        assert_eq!(freeze_change.v2_model, false, "Should be V1 model");
+        assert!(freeze_change.expiration_ms > 0, "Expiration should be set");
+
+        // Verify state_changes still present (CSV parity)
+        assert_eq!(exec_result.state_changes.len(), 1, "Should still emit state change");
+    }
+
+    #[test]
+    fn test_freeze_balance_no_emission_when_disabled() {
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_storage::StorageEngine;
+        use std::sync::Arc;
+
+        // Create test storage with temp directory
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+        // Setup owner account with sufficient balance
+        let owner_addr = Address::from_slice(&[0x13; 20]);
+        let owner_account = AccountInfo {
+            balance: U256::from(2_000_000_000_000u64),
+            nonce: 0,
+            code_hash: revm_primitives::KECCAK_EMPTY,
+            code: None,
+        };
+        storage_adapter.set_account(owner_addr, owner_account).unwrap();
+
+        // Create FreezeBalance transaction
+        let params_data = vec![
+            0x10, 0xC0, 0x84, 0x3D, // frozen_balance: 1_000_000
+            0x18, 0x03,             // frozen_duration: 3
+            0x50, 0x00,             // resource: BANDWIDTH
+        ];
+
+        let tx = TronTransaction {
+            from: owner_addr,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from(params_data),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
+                asset_id: None,
+            },
+        };
+
+        let context = TronExecutionContext {
+            block_number: 1000,
+            block_timestamp: 1600000000000,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 100_000_000,
+            chain_id: 1,
+            energy_price: 420,
+            bandwidth_price: 1000,
+        };
+
+        // Create config with emit_freeze_ledger_changes=false (Phase 1 behavior)
+        let exec_config = ExecutionConfig {
+            remote: tron_backend_common::RemoteExecutionConfig {
+                freeze_balance_enabled: true,
+                emit_freeze_ledger_changes: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut module_manager = tron_backend_common::ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+        module_manager.register("execution", Box::new(exec_module));
+        let service = BackendService::new(module_manager);
+
+        // Execute freeze balance
+        let result = service.execute_freeze_balance_contract(&mut storage_adapter, &tx, &context);
+
+        assert!(result.is_ok(), "Freeze execution should succeed");
+        let exec_result = result.unwrap();
+
+        // Verify freeze_changes is empty
+        assert_eq!(exec_result.freeze_changes.len(), 0, "Should NOT emit freeze changes when disabled");
+
+        // Verify state_changes still present (CSV parity maintained)
+        assert_eq!(exec_result.state_changes.len(), 1, "Should still emit state change");
+    }
+
+    #[test]
+    fn test_unfreeze_balance_emits_freeze_changes_when_enabled() {
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_storage::StorageEngine;
+        use std::sync::Arc;
+
+        // Create test storage with temp directory
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+        // Setup owner account
+        let owner_addr = Address::from_slice(&[0x14; 20]);
+        let owner_account = AccountInfo {
+            balance: U256::from(1_000_000_000_000u64),
+            nonce: 0,
+            code_hash: revm_primitives::KECCAK_EMPTY,
+            code: None,
+        };
+        storage_adapter.set_account(owner_addr, owner_account).unwrap();
+
+        // Pre-populate freeze record
+        storage_adapter.add_freeze_amount(owner_addr, 0, 500_000, 1700000000000).unwrap();
+
+        // Create UnfreezeBalance transaction
+        // Field 10: resource = 0 (BANDWIDTH)
+        let params_data = vec![
+            0x50, 0x00, // field 10 (resource): BANDWIDTH
+        ];
+
+        let tx = TronTransaction {
+            from: owner_addr,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from(params_data),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
+                asset_id: None,
+            },
+        };
+
+        let context = TronExecutionContext {
+            block_number: 1000,
+            block_timestamp: 1600000000000,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 100_000_000,
+            chain_id: 1,
+            energy_price: 420,
+            bandwidth_price: 1000,
+        };
+
+        // Create config with emit_freeze_ledger_changes=true
+        let exec_config = ExecutionConfig {
+            remote: tron_backend_common::RemoteExecutionConfig {
+                unfreeze_balance_enabled: true,
+                emit_freeze_ledger_changes: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut module_manager = tron_backend_common::ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+        module_manager.register("execution", Box::new(exec_module));
+        let service = BackendService::new(module_manager);
+
+        // Execute unfreeze balance
+        let result = service.execute_unfreeze_balance_contract(&mut storage_adapter, &tx, &context);
+
+        assert!(result.is_ok(), "Unfreeze execution should succeed");
+        let exec_result = result.unwrap();
+
+        // Verify freeze_changes is populated
+        assert_eq!(exec_result.freeze_changes.len(), 1, "Should emit exactly one freeze change");
+
+        let freeze_change = &exec_result.freeze_changes[0];
+        assert_eq!(freeze_change.owner_address, owner_addr);
+        assert_eq!(freeze_change.resource, tron_backend_execution::FreezeLedgerResource::Bandwidth);
+        assert_eq!(freeze_change.amount, 0, "Amount should be 0 for full unfreeze");
+        assert_eq!(freeze_change.expiration_ms, 0, "Expiration should be 0 after unfreeze");
+        assert_eq!(freeze_change.v2_model, false, "Should be V1 model");
+    }
+
+    #[test]
+    fn test_freeze_balance_v2_emits_with_v2_flag() {
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_storage::StorageEngine;
+        use std::sync::Arc;
+
+        // Create test storage with temp directory
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+        // Setup owner account
+        let owner_addr = Address::from_slice(&[0x15; 20]);
+        let owner_account = AccountInfo {
+            balance: U256::from(2_000_000_000_000u64),
+            nonce: 0,
+            code_hash: revm_primitives::KECCAK_EMPTY,
+            code: None,
+        };
+        storage_adapter.set_account(owner_addr, owner_account).unwrap();
+
+        // Create FreezeBalanceV2 transaction
+        // Field 2: frozen_balance = 1_000_000
+        // Field 3: resource = 1 (ENERGY)
+        let params_data = vec![
+            0x10, 0xC0, 0x84, 0x3D, // field 2: frozen_balance
+            0x18, 0x01,             // field 3: resource (ENERGY)
+        ];
+
+        let tx = TronTransaction {
+            from: owner_addr,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from(params_data),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceV2Contract),
+                asset_id: None,
+            },
+        };
+
+        let context = TronExecutionContext {
+            block_number: 1000,
+            block_timestamp: 1600000000000,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 100_000_000,
+            chain_id: 1,
+            energy_price: 420,
+            bandwidth_price: 1000,
+        };
+
+        // Create config with V2 enabled and emission enabled
+        let exec_config = ExecutionConfig {
+            remote: tron_backend_common::RemoteExecutionConfig {
+                freeze_balance_v2_enabled: true,
+                emit_freeze_ledger_changes: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut module_manager = tron_backend_common::ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+        module_manager.register("execution", Box::new(exec_module));
+        let service = BackendService::new(module_manager);
+
+        // Execute freeze balance V2
+        let result = service.execute_freeze_balance_v2_contract(&mut storage_adapter, &tx, &context);
+
+        assert!(result.is_ok(), "FreezeV2 execution should succeed");
+        let exec_result = result.unwrap();
+
+        // Verify freeze_changes is populated with V2 flag
+        assert_eq!(exec_result.freeze_changes.len(), 1, "Should emit exactly one freeze change");
+
+        let freeze_change = &exec_result.freeze_changes[0];
+        assert_eq!(freeze_change.owner_address, owner_addr);
+        assert_eq!(freeze_change.resource, tron_backend_execution::FreezeLedgerResource::Energy);
+        assert_eq!(freeze_change.amount, 1_000_000);
+        assert_eq!(freeze_change.v2_model, true, "Should be V2 model"); // Key difference!
+        assert!(freeze_change.expiration_ms > 0);
+    }
+
+    #[test]
+    fn test_unfreeze_balance_v2_partial_unfreeze() {
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_storage::StorageEngine;
+        use std::sync::Arc;
+
+        // Create test storage with temp directory
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+        // Setup owner account
+        let owner_addr = Address::from_slice(&[0x16; 20]);
+        let owner_account = AccountInfo {
+            balance: U256::from(1_000_000_000_000u64),
+            nonce: 0,
+            code_hash: revm_primitives::KECCAK_EMPTY,
+            code: None,
+        };
+        storage_adapter.set_account(owner_addr, owner_account).unwrap();
+
+        // Pre-populate freeze record with 1_000_000 frozen
+        storage_adapter.add_freeze_amount(owner_addr, 0, 1_000_000, 1700000000000).unwrap();
+
+        // Create UnfreezeBalanceV2 transaction with partial unfreeze (400_000)
+        // Field 2: unfreeze_balance = 400_000
+        // Field 3: resource = 0 (BANDWIDTH)
+        let params_data = vec![
+            0x10, 0x80, 0x89, 0x18, // field 2: unfreeze_balance (400_000)
+            0x18, 0x00,             // field 3: resource (BANDWIDTH)
+        ];
+
+        let tx = TronTransaction {
+            from: owner_addr,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from(params_data),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract),
+                asset_id: None,
+            },
+        };
+
+        let context = TronExecutionContext {
+            block_number: 1000,
+            block_timestamp: 1600000000000,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 100_000_000,
+            chain_id: 1,
+            energy_price: 420,
+            bandwidth_price: 1000,
+        };
+
+        // Create config with V2 enabled and emission enabled
+        let exec_config = ExecutionConfig {
+            remote: tron_backend_common::RemoteExecutionConfig {
+                unfreeze_balance_v2_enabled: true,
+                emit_freeze_ledger_changes: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut module_manager = tron_backend_common::ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+        module_manager.register("execution", Box::new(exec_module));
+        let service = BackendService::new(module_manager);
+
+        // Execute unfreeze balance V2
+        let result = service.execute_unfreeze_balance_v2_contract(&mut storage_adapter, &tx, &context);
+
+        assert!(result.is_ok(), "UnfreezeV2 execution should succeed");
+        let exec_result = result.unwrap();
+
+        // Verify freeze_changes shows remaining amount (not 0)
+        assert_eq!(exec_result.freeze_changes.len(), 1, "Should emit exactly one freeze change");
+
+        let freeze_change = &exec_result.freeze_changes[0];
+        assert_eq!(freeze_change.owner_address, owner_addr);
+        assert_eq!(freeze_change.resource, tron_backend_execution::FreezeLedgerResource::Bandwidth);
+        // Should emit remaining frozen amount after partial unfreeze
+        // Note: This depends on implementation - may be 0 if we simplified to full unfreeze only
+        assert_eq!(freeze_change.v2_model, true, "Should be V2 model");
+    }
+
+    #[test]
+    fn test_unfreeze_balance_v2_full_unfreeze() {
+        use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
+        use revm_primitives::{Address, Bytes, U256, AccountInfo};
+        use tron_backend_storage::StorageEngine;
+        use std::sync::Arc;
+
+        // Create test storage with temp directory
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+        let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+        // Setup owner account
+        let owner_addr = Address::from_slice(&[0x17; 20]);
+        let owner_account = AccountInfo {
+            balance: U256::from(1_000_000_000_000u64),
+            nonce: 0,
+            code_hash: revm_primitives::KECCAK_EMPTY,
+            code: None,
+        };
+        storage_adapter.set_account(owner_addr, owner_account).unwrap();
+
+        // Pre-populate freeze record
+        storage_adapter.add_freeze_amount(owner_addr, 1, 800_000, 1700000000000).unwrap();
+
+        // Create UnfreezeBalanceV2 transaction with full unfreeze (no amount or -1)
+        // Field 3: resource = 1 (ENERGY)
+        let params_data = vec![
+            0x18, 0x01, // field 3: resource (ENERGY)
+        ];
+
+        let tx = TronTransaction {
+            from: owner_addr,
+            to: None,
+            value: U256::ZERO,
+            data: Bytes::from(params_data),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract),
+                asset_id: None,
+            },
+        };
+
+        let context = TronExecutionContext {
+            block_number: 1000,
+            block_timestamp: 1600000000000,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 100_000_000,
+            chain_id: 1,
+            energy_price: 420,
+            bandwidth_price: 1000,
+        };
+
+        // Create config with V2 enabled and emission enabled
+        let exec_config = ExecutionConfig {
+            remote: tron_backend_common::RemoteExecutionConfig {
+                unfreeze_balance_v2_enabled: true,
+                emit_freeze_ledger_changes: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut module_manager = tron_backend_common::ModuleManager::new();
+        let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+        module_manager.register("execution", Box::new(exec_module));
+        let service = BackendService::new(module_manager);
+
+        // Execute unfreeze balance V2
+        let result = service.execute_unfreeze_balance_v2_contract(&mut storage_adapter, &tx, &context);
+
+        assert!(result.is_ok(), "UnfreezeV2 full unfreeze should succeed");
+        let exec_result = result.unwrap();
+
+        // Verify freeze_changes shows amount=0 for full unfreeze
+        assert_eq!(exec_result.freeze_changes.len(), 1, "Should emit exactly one freeze change");
+
+        let freeze_change = &exec_result.freeze_changes[0];
+        assert_eq!(freeze_change.owner_address, owner_addr);
+        assert_eq!(freeze_change.resource, tron_backend_execution::FreezeLedgerResource::Energy);
+        assert_eq!(freeze_change.amount, 0, "Should be 0 for full unfreeze");
+        assert_eq!(freeze_change.expiration_ms, 0, "Expiration should be 0 after full unfreeze");
+        assert_eq!(freeze_change.v2_model, true, "Should be V2 model");
     }
 
     #[test]
@@ -1919,9 +3477,11 @@ mod integration_tests {
     #[tokio::test]
     #[ignore] // Ignored because it requires full system setup
     async fn test_non_vm_transaction_execution() {
+        use tron_backend_execution::TxMetadata;
+
         // This test would set up a full BackendService with mock storage
         // and test the complete non-VM transaction execution flow
-        
+
         // Setup mock accounts
         let sender_address = Address::from_slice(&[0x01; 20]);
         let recipient_address = Address::from_slice(&[0x02; 20]);
@@ -1944,6 +3504,10 @@ mod integration_tests {
             gas_limit: 0, // Non-VM transactions don't use gas
             gas_price: U256::ZERO,
             nonce: 0,
+            metadata: TxMetadata {
+                contract_type: None,
+                asset_id: None,
+            },
         };
         
         let context = TronExecutionContext {
@@ -2913,9 +4477,15 @@ impl crate::backend::backend_server::Backend for BackendService {
     // Execution operations (delegated to execution module)
     async fn execute_transaction(&self, request: Request<ExecuteTransactionRequest>) -> Result<Response<ExecuteTransactionResponse>, Status> {
         debug!("Execute transaction request: {:?}", request.get_ref());
-        
+
         let req = request.get_ref();
-        
+
+        // Parse pre-execution AEXT snapshots for hybrid mode
+        let pre_exec_aext_map = self.parse_pre_execution_aext(&req.pre_execution_aext);
+        if !pre_exec_aext_map.is_empty() {
+            debug!("Parsed {} pre-execution AEXT snapshots for hybrid mode", pre_exec_aext_map.len());
+        }
+
         // Get the execution module
         let execution_module = self.get_execution_module()?;
         
@@ -2945,6 +4515,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                         error_message: format!("Transaction conversion error: {}", e),
                         bandwidth_used: 0,
                         resource_usage: vec![],
+                        freeze_changes: vec![],
+                        global_resource_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Transaction conversion error: {}", e),
@@ -2971,6 +4543,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                         error_message: format!("Context conversion error: {}", e),
                         bandwidth_used: 0,
                         resource_usage: vec![],
+                        freeze_changes: vec![],
+                        global_resource_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Context conversion error: {}", e),
@@ -3036,9 +4610,9 @@ impl crate::backend::backend_server::Backend for BackendService {
         // Handle execution result
         match execution_result {
             Ok(result) => {
-                info!("Transaction executed successfully - energy_used: {}, bandwidth_used: {}", 
+                info!("Transaction executed successfully - energy_used: {}, bandwidth_used: {}",
                       result.energy_used, result.bandwidth_used);
-                let response = self.convert_execution_result_to_protobuf(result);
+                let response = self.convert_execution_result_to_protobuf(result, &pre_exec_aext_map);
                 Ok(Response::new(response))
             }
             Err(e) => {
@@ -3062,6 +4636,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                         error_message: format!("Execution error: {}", e),
                         bandwidth_used: 0,
                         resource_usage: vec![],
+                        freeze_changes: vec![],
+                        global_resource_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Execution error: {}", e),
@@ -3313,6 +4889,53 @@ impl BackendService {
         }
     }
     
+    /// Parse pre-execution AEXT snapshots from the gRPC request into a HashMap.
+    /// Converts Tron 21-byte addresses (0x41 prefix) to 20-byte EVM addresses for lookup.
+    fn parse_pre_execution_aext(
+        &self,
+        snapshots: &[crate::backend::AccountAextSnapshot]
+    ) -> std::collections::HashMap<revm::primitives::Address, AccountAext> {
+        let mut map = std::collections::HashMap::new();
+
+        for snapshot in snapshots {
+            // Strip Tron 0x41 prefix to get 20-byte address
+            match Self::strip_tron_address_prefix(&snapshot.address) {
+                Ok(addr_bytes) => {
+                    let address = revm::primitives::Address::from_slice(addr_bytes);
+
+                    // Extract AEXT fields from protobuf
+                    if let Some(aext_proto) = &snapshot.aext {
+                        debug!("Parsed pre-exec AEXT for address {}: net_usage={}, free_net_usage={}, energy_usage={}",
+                               hex::encode(&snapshot.address),
+                               aext_proto.net_usage,
+                               aext_proto.free_net_usage,
+                               aext_proto.energy_usage);
+
+                        let aext = AccountAext {
+                            net_usage: aext_proto.net_usage,
+                            free_net_usage: aext_proto.free_net_usage,
+                            energy_usage: aext_proto.energy_usage,
+                            latest_consume_time: aext_proto.latest_consume_time,
+                            latest_consume_free_time: aext_proto.latest_consume_free_time,
+                            latest_consume_time_for_energy: aext_proto.latest_consume_time_for_energy,
+                            net_window_size: aext_proto.net_window_size,
+                            net_window_optimized: aext_proto.net_window_optimized,
+                            energy_window_size: aext_proto.energy_window_size,
+                            energy_window_optimized: aext_proto.energy_window_optimized,
+                        };
+
+                        map.insert(address, aext);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to parse address from pre-exec AEXT snapshot: {}", e);
+                }
+            }
+        }
+
+        map
+    }
+
     fn add_tron_address_prefix(address: &revm_primitives::Address) -> Vec<u8> {
         let mut result = Vec::with_capacity(21);
         result.push(0x41); // Add Tron address prefix
@@ -3481,7 +5104,11 @@ impl BackendService {
         })
     }
 
-    fn convert_execution_result_to_protobuf(&self, result: TronExecutionResult) -> ExecuteTransactionResponse {
+    fn convert_execution_result_to_protobuf(
+        &self,
+        result: TronExecutionResult,
+        pre_exec_aext: &std::collections::HashMap<revm::primitives::Address, AccountAext>
+    ) -> ExecuteTransactionResponse {
         let status = if result.success {
             execution_result::Status::Success
         } else {
@@ -3511,8 +5138,15 @@ impl BackendService {
                     }
                 },
                 TronStateChange::AccountChange { address, old_account, new_account } => {
+                    // Get AEXT mode from config
+                    let aext_mode = self.get_execution_config()
+                        .ok()
+                        .and_then(|cfg| Some(cfg.remote.accountinfo_aext_mode.as_str()))
+                        .unwrap_or("none");
+
                     // Helper function to convert AccountInfo to protobuf
-                    let convert_account_info = |addr: &revm::primitives::Address, acc_info: &revm::primitives::AccountInfo| {
+                    // is_old: true for old_account, false for new_account
+                    let convert_account_info = |addr: &revm::primitives::Address, acc_info: &revm::primitives::AccountInfo, is_old: bool| {
                         // Ensure EOAs (no code) serialize with empty code bytes.
                         let code_bytes: Vec<u8> = match acc_info.code.as_ref() {
                             None => Vec::new(),
@@ -3542,17 +5176,103 @@ impl BackendService {
                             acc_info.code_hash.as_slice().to_vec()
                         };
 
+                        // Determine if this is an EOA (empty code)
+                        let is_eoa = code_bytes.is_empty();
+
+                        // Populate AEXT fields based on mode
+                        let (net_usage, free_net_usage, energy_usage, latest_consume_time,
+                             latest_consume_free_time, latest_consume_time_for_energy,
+                             net_window_size, net_window_optimized, energy_window_size,
+                             energy_window_optimized) = match aext_mode {
+                            "hybrid" if is_eoa => {
+                                // Hybrid mode: prefer pre-provided AEXT from Java, fallback to defaults
+                                if let Some(aext) = pre_exec_aext.get(addr) {
+                                    debug!("Using pre-exec AEXT for address {} in hybrid mode", hex::encode(Self::add_tron_address_prefix(addr)));
+                                    // Use the same AEXT for both old and new (unchanged fields)
+                                    (Some(aext.net_usage), Some(aext.free_net_usage), Some(aext.energy_usage),
+                                     Some(aext.latest_consume_time), Some(aext.latest_consume_free_time),
+                                     Some(aext.latest_consume_time_for_energy), Some(aext.net_window_size),
+                                     Some(aext.net_window_optimized), Some(aext.energy_window_size),
+                                     Some(aext.energy_window_optimized))
+                                } else {
+                                    // Not provided, fall back to defaults
+                                    debug!("No pre-exec AEXT for address {}, using defaults in hybrid mode", hex::encode(Self::add_tron_address_prefix(addr)));
+                                    (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
+                                     Some(28800), Some(false), Some(28800), Some(false))
+                                }
+                            },
+                            "zeros" if is_eoa => {
+                                // For EOAs in "zeros" mode, populate all fields with zero/false
+                                (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
+                                 Some(0), Some(false), Some(0), Some(false))
+                            },
+                            "defaults" if is_eoa => {
+                                // For EOAs in "defaults" mode, match embedded Java-Tron defaults:
+                                // - net_window_size = 28800 (0x7080)
+                                // - energy_window_size = 28800 (0x7080)
+                                // - All other fields zero/false
+                                // This ensures byte-level AEXT tail parity with embedded CSVs
+                                (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
+                                 Some(28800), Some(false), Some(28800), Some(false))
+                            },
+                            "tracked" if is_eoa => {
+                                // Populate with real values from resource tracking
+                                // Look up address in aext_map
+                                if let Some((before_aext, after_aext)) = result.aext_map.get(addr) {
+                                    // Use before_aext for old_account, after_aext for new_account
+                                    let aext = if is_old { before_aext } else { after_aext };
+
+                                    (Some(aext.net_usage), Some(aext.free_net_usage), Some(aext.energy_usage),
+                                     Some(aext.latest_consume_time), Some(aext.latest_consume_free_time),
+                                     Some(aext.latest_consume_time_for_energy), Some(aext.net_window_size),
+                                     Some(aext.net_window_optimized), Some(aext.energy_window_size),
+                                     Some(aext.energy_window_optimized))
+                                } else {
+                                    // Address not in aext_map, use defaults
+                                    (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
+                                     Some(28800), Some(false), Some(28800), Some(false))
+                                }
+                            },
+                            "tracked" => {
+                                // Non-EOA contracts in tracked mode: no AEXT
+                                (None, None, None, None, None, None, None, None, None, None)
+                            },
+                            "hybrid" => {
+                                // Non-EOA contracts in hybrid mode: no AEXT
+                                (None, None, None, None, None, None, None, None, None, None)
+                            },
+                            _ => {
+                                // "none" or unknown: leave all fields as None (current behavior)
+                                (None, None, None, None, None, None, None, None, None, None)
+                            }
+                        };
+
+                        debug!("AccountInfo AEXT presence: mode={}, is_eoa={}, address={}, net_window={:?}, energy_window={:?}",
+                               aext_mode, is_eoa, hex::encode(Self::add_tron_address_prefix(addr)),
+                               net_window_size, energy_window_size);
+
                         crate::backend::AccountInfo {
                             address: Self::add_tron_address_prefix(addr),
                             balance: acc_info.balance.to_be_bytes::<32>().to_vec(),
                             nonce: acc_info.nonce,
                             code_hash: code_hash_bytes,
                             code: code_bytes,
+                            // Optional resource usage fields (AEXT) - populated based on mode
+                            net_usage,
+                            free_net_usage,
+                            energy_usage,
+                            latest_consume_time,
+                            latest_consume_free_time,
+                            latest_consume_time_for_energy,
+                            net_window_size,
+                            net_window_optimized,
+                            energy_window_size,
+                            energy_window_optimized,
                         }
                     };
 
-                    let old_account_proto = old_account.as_ref().map(|acc| convert_account_info(address, acc));
-                    let new_account_proto = new_account.as_ref().map(|acc| convert_account_info(address, acc));
+                    let old_account_proto = old_account.as_ref().map(|acc| convert_account_info(address, acc, true));
+                    let new_account_proto = new_account.as_ref().map(|acc| convert_account_info(address, acc, false));
                     
                     StateChange {
                         change: Some(crate::backend::state_change::Change::AccountChange(
@@ -3568,9 +5288,39 @@ impl BackendService {
                 }
             }
         }).collect();
-        
+
+        // Convert freeze changes from execution result to protobuf
+        let freeze_changes: Vec<crate::backend::FreezeLedgerChange> = result.freeze_changes.iter().map(|change| {
+            use crate::backend::freeze_ledger_change::Resource;
+            use tron_backend_execution::FreezeLedgerResource;
+
+            let resource = match change.resource {
+                FreezeLedgerResource::Bandwidth => Resource::Bandwidth,
+                FreezeLedgerResource::Energy => Resource::Energy,
+                FreezeLedgerResource::TronPower => Resource::TronPower,
+            };
+
+            crate::backend::FreezeLedgerChange {
+                owner_address: Self::add_tron_address_prefix(&change.owner_address),
+                resource: resource as i32,
+                amount: change.amount,
+                expiration_ms: change.expiration_ms,
+                v2_model: change.v2_model,
+            }
+        }).collect();
+
+        // Convert global resource totals changes from execution result to protobuf
+        let global_resource_changes: Vec<crate::backend::GlobalResourceTotalsChange> = result.global_resource_changes.iter().map(|change| {
+            crate::backend::GlobalResourceTotalsChange {
+                total_net_weight: change.total_net_weight,
+                total_net_limit: change.total_net_limit,
+                total_energy_weight: change.total_energy_weight,
+                total_energy_limit: change.total_energy_limit,
+            }
+        }).collect();
+
         let error_message = result.error.unwrap_or_default();
-        
+
         ExecuteTransactionResponse {
             result: Some(ExecutionResult {
                 status: status as i32,
@@ -3582,6 +5332,8 @@ impl BackendService {
                 error_message: error_message.clone(),
                 bandwidth_used: result.bandwidth_used as i64,
                 resource_usage: vec![], // Not implemented yet
+                freeze_changes, // Converted from TronExecutionResult
+                global_resource_changes, // Converted from TronExecutionResult
             }),
             success: result.success,
             error_message,

@@ -85,11 +85,30 @@ pub struct RemoteExecutionConfig {
     pub trc10_enabled: bool,
     /// Enable FREEZE_BALANCE_CONTRACT execution
     pub freeze_balance_enabled: bool,
+    /// Enable UNFREEZE_BALANCE_CONTRACT execution
+    pub unfreeze_balance_enabled: bool,
+    /// Enable FREEZE_BALANCE_V2_CONTRACT execution
+    pub freeze_balance_v2_enabled: bool,
+    /// Enable UNFREEZE_BALANCE_V2_CONTRACT execution
+    pub unfreeze_balance_v2_enabled: bool,
     /// Emit storage changes for freeze ledger (EXPERIMENTAL - may affect CSV output)
     /// Default: false to maintain CSV parity with Phase 1
     pub emit_freeze_ledger_changes: bool,
+    /// Emit GlobalResourceTotalsChange alongside freeze/unfreeze operations
+    /// When enabled, backend computes and sends total net/energy weight and limits
+    /// so Java can update DynamicPropertiesStore immediately (fixes FREE_NET vs ACCOUNT_NET divergence)
+    /// Default: false for backward compatibility; enable true for Phase 2 parity runs
+    pub emit_global_resource_changes: bool,
     /// Emit storage changes for witness/vote data (may affect CSV output)
     pub emit_storage_changes: bool,
+    /// AEXT (Account EXTension) presence mode for AccountInfo serialization
+    /// Controls how AEXT tail (76 bytes of resource usage fields) is populated
+    /// - "none": All resource fields set to None (current behavior, remote omits AEXT)
+    /// - "zeros": Set Some(0)/false for EOAs (enables AEXT presence parity with embedded)
+    /// - "defaults": Set window sizes to 28800, other fields to 0/false for EOAs (matches embedded defaults exactly)
+    /// - "tracked": Some(real values) when backend supports resource metrics (future)
+    /// Default: "none" for backward compatibility; set to "defaults" for full CSV parity with embedded
+    pub accountinfo_aext_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,8 +228,13 @@ impl Config {
         builder = builder.set_default("execution.remote.vote_witness_enabled", false)?;
         builder = builder.set_default("execution.remote.trc10_enabled", false)?;
         builder = builder.set_default("execution.remote.freeze_balance_enabled", false)?;
+        builder = builder.set_default("execution.remote.unfreeze_balance_enabled", false)?;
+        builder = builder.set_default("execution.remote.freeze_balance_v2_enabled", false)?;
+        builder = builder.set_default("execution.remote.unfreeze_balance_v2_enabled", false)?;
         builder = builder.set_default("execution.remote.emit_freeze_ledger_changes", false)?;
+        builder = builder.set_default("execution.remote.emit_global_resource_changes", false)?;
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
+        builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -226,8 +250,13 @@ impl Default for RemoteExecutionConfig {
             vote_witness_enabled: false,
             trc10_enabled: false,
             freeze_balance_enabled: false, // Default false until validated
+            unfreeze_balance_enabled: false, // Default false until validated
+            freeze_balance_v2_enabled: false, // Default false until validated
+            unfreeze_balance_v2_enabled: false, // Default false until validated
             emit_freeze_ledger_changes: false, // Default false for CSV parity
+            emit_global_resource_changes: false, // Default false for backward compatibility
             emit_storage_changes: false,
+            accountinfo_aext_mode: "none".to_string(), // Default to current behavior
         }
     }
 } 

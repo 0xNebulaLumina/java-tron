@@ -167,6 +167,35 @@ pub enum TronStateChange {
     },
 }
 
+/// Freeze/resource ledger change for Phase 2 emission
+/// Describes a single freeze or unfreeze operation affecting an owner's resource balance
+#[derive(Debug, Clone)]
+pub struct FreezeLedgerChange {
+    pub owner_address: revm::primitives::Address,
+    pub resource: FreezeLedgerResource,
+    pub amount: i64,          // Absolute value after operation (for idempotency)
+    pub expiration_ms: i64,   // Expiration timestamp in milliseconds since epoch
+    pub v2_model: bool,       // true for V2 model, false for legacy V1
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreezeLedgerResource {
+    Bandwidth = 0,
+    Energy = 1,
+    TronPower = 2,
+}
+
+/// Global resource totals snapshot for Phase 2 emission
+/// Sent to Java to update DynamicPropertiesStore TOTAL_NET_WEIGHT/TOTAL_NET_LIMIT/etc
+/// immediately after freeze/unfreeze operations, fixing FREE_NET vs ACCOUNT_NET divergence
+#[derive(Debug, Clone)]
+pub struct GlobalResourceTotalsChange {
+    pub total_net_weight: i64,      // Sum of all BANDWIDTH freezes / TRX_PRECISION
+    pub total_net_limit: i64,       // Current network bandwidth limit (from dynamic props)
+    pub total_energy_weight: i64,   // Sum of all ENERGY freezes / TRX_PRECISION
+    pub total_energy_limit: i64,    // Current energy limit (from dynamic props, or 0 if N/A)
+}
+
 #[derive(Debug, Clone)]
 pub struct TronExecutionResult {
     pub success: bool,
@@ -176,6 +205,17 @@ pub struct TronExecutionResult {
     pub logs: Vec<revm::primitives::Log>,
     pub state_changes: Vec<TronStateChange>,
     pub error: Option<String>,
+    /// AEXT sidecar: per-address resource tracking (before, after) for tracked mode
+    /// Key: address, Value: (AextBefore, AextAfter)
+    pub aext_map: std::collections::HashMap<revm::primitives::Address, (crate::storage_adapter::AccountAext, crate::storage_adapter::AccountAext)>,
+    /// Freeze/resource ledger changes (Phase 2: emit_freeze_ledger_changes)
+    /// Emitted when config flag is enabled, for Java-side application
+    pub freeze_changes: Vec<FreezeLedgerChange>,
+    /// Global resource totals changes (Phase 2: emit_global_resource_changes)
+    /// Emitted when flag is enabled, for Java to update DynamicPropertiesStore totals
+    /// Fixes FREE_NET vs ACCOUNT_NET divergence by ensuring totalNetWeight/totalNetLimit
+    /// are current before next tx in same block
+    pub global_resource_changes: Vec<GlobalResourceTotalsChange>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -300,6 +340,9 @@ where
                     logs,
                     state_changes: vec![], // Will be populated by caller
                     error: None,
+                    aext_map: std::collections::HashMap::new(), // Will be populated by caller for tracked mode
+                    freeze_changes: vec![], // Will be populated by contract handlers
+                    global_resource_changes: vec![], // Will be populated by contract handlers
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -311,6 +354,9 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some("Transaction reverted".to_string()),
+                    aext_map: std::collections::HashMap::new(),
+                    freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -322,6 +368,9 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some(format!("Transaction halted: {:?}", reason)),
+                    aext_map: std::collections::HashMap::new(),
+                    freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
         }
@@ -347,6 +396,9 @@ where
                     logs,
                     state_changes: vec![], // Calls don't modify state
                     error: None,
+                    aext_map: std::collections::HashMap::new(),
+                    freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -358,6 +410,9 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some("Call reverted".to_string()),
+                    aext_map: std::collections::HashMap::new(),
+                    freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -369,6 +424,9 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some(format!("Call halted: {:?}", reason)),
+                    aext_map: std::collections::HashMap::new(),
+                    freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
         }

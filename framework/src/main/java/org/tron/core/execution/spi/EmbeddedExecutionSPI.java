@@ -251,7 +251,9 @@ public class EmbeddedExecutionSPI implements ExecutionSPI {
           new ArrayList<>(), // stateChanges
           new ArrayList<>(), // logs
           runtimeError != null ? runtimeError : "Unknown error", // errorMessage
-          0 // bandwidthUsed
+          0, // bandwidthUsed
+          new ArrayList<>(), // freezeChanges (Phase 2 - not used in embedded mode)
+          new ArrayList<>() // globalResourceChanges (Phase 2 - not used in embedded mode)
           );
     }
 
@@ -290,7 +292,9 @@ public class EmbeddedExecutionSPI implements ExecutionSPI {
         stateChanges,
         logs,
         errorMessage,
-        0 // TODO: Calculate bandwidth usage
+        0, // TODO: Calculate bandwidth usage
+        new ArrayList<>(), // freezeChanges (Phase 2 - not used in embedded mode)
+        new ArrayList<>() // globalResourceChanges (Phase 2 - not used in embedded mode)
         );
   }
 }

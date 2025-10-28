@@ -34,5 +34,8 @@ uuid = { version = "1.0", features = ["v4"] }
 revm = { version = "14.0", features = ["std"] }
 revm-primitives = "10.0"
 
+[dev-dependencies]
+tempfile = "3.8"
+
 [build-dependencies]
 tonic-build = "0.10" 

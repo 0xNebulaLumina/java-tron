@@ -9,8 +9,8 @@
 //! - State change generation
 //! - Feature flag integration
 
-use tron_backend_common::{ExecutionConfig, RemoteExecutionConfig, ExecutionFeeConfig};
-use tron_backend_execution::{TronContractType, TxMetadata, TronTransaction, TronExecutionContext, TronStateChange, ExecutionModule, InMemoryStorageAdapter};
+use tron_backend_common::ExecutionConfig;
+use tron_backend_execution::{TronContractType, TxMetadata, TronTransaction, TronExecutionContext, TronStateChange, ExecutionModule, EvmStateStore};
 use revm_primitives::{Address, U256, Bytes};
 
 /// Create a test configuration for witness contract testing
@@ -96,8 +96,11 @@ fn test_witness_create_execution() {
         block_number: 1785,
         block_timestamp: 1000000000,
         block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
         block_gas_limit: 30000000,
         chain_id: 2494104990, // TRON mainnet chain ID
+        energy_price: 420,
+        bandwidth_price: 1000,
     };
 
     // Verify transaction structure before execution
@@ -106,7 +109,9 @@ fn test_witness_create_execution() {
     assert!(!transaction.data.is_empty(), "WitnessCreate should have URL data");
 
     // Execute the transaction using in-memory storage
-    let storage = InMemoryStorageAdapter::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+        let storage = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine);
     let result = execution_module.execute_transaction_with_storage(storage, &transaction, &context);
 
     match result {
@@ -182,7 +187,9 @@ fn test_witness_create_blackhole_mode() {
         bandwidth_price: 1000,
     };
 
-    let storage = InMemoryStorageAdapter::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+        let storage = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine);
     let result = execution_module.execute_transaction_with_storage(storage, &transaction, &context);
 
     match result {
@@ -238,7 +245,9 @@ fn test_witness_create_feature_disabled() {
         bandwidth_price: 1000,
     };
 
-    let storage = InMemoryStorageAdapter::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+        let storage = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine);
     let result = execution_module.execute_transaction_with_storage(storage, &transaction, &context);
 
     // Should get an error indicating the feature is disabled
@@ -292,7 +301,9 @@ fn test_account_serialization_format() {
         bandwidth_price: 1000,
     };
 
-    let storage = InMemoryStorageAdapter::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+        let storage = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine);
     let result = execution_module.execute_transaction_with_storage(storage, &transaction, &context);
 
     match result {
@@ -360,8 +371,13 @@ fn test_state_change_deterministic_ordering() {
     let execution_module1 = ExecutionModule::new(config.clone());
     let execution_module2 = ExecutionModule::new(config);
 
-    let storage1 = InMemoryStorageAdapter::new();
-    let storage2 = InMemoryStorageAdapter::new();
+    let temp_dir1 = tempfile::tempdir().unwrap();
+    let storage_engine1 = tron_backend_storage::StorageEngine::new(temp_dir1.path()).unwrap();
+    let storage1 = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine1);
+
+    let temp_dir2 = tempfile::tempdir().unwrap();
+    let storage_engine2 = tron_backend_storage::StorageEngine::new(temp_dir2.path()).unwrap();
+    let storage2 = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine2);
 
     let result1 = execution_module1.execute_transaction_with_storage(storage1, &transaction, &context);
     let result2 = execution_module2.execute_transaction_with_storage(storage2, &transaction, &context);
@@ -422,15 +438,27 @@ fn test_vote_witness_after_freeze_v1_succeeds() {
     };
 
     // Use in-memory storage
-    let mut storage = InMemoryStorageAdapter::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+        let mut storage = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine);
 
     // Set owner balance to 2_000_000 SUN (enough for freeze + fees)
-    storage.set_balance(&owner_address, U256::from(2_000_000));
+    let owner_account = revm_primitives::AccountInfo {
+        balance: U256::from(2_000_000),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    storage.set_account(owner_address, owner_account).unwrap();
 
     // Step 1: Execute FreezeBalance (v1) for 1_000_000 SUN on BANDWIDTH
     // In a real contract, data would contain serialized FreezeBalanceContract protobuf
     // For this test, we'll simulate the freeze by directly setting the freeze record
-    storage.set_freeze_record(&owner_address, 0, 1_000_000, 1000000000 + 3 * 86400 * 1000)
+    let freeze_record1 = tron_backend_execution::FreezeRecord {
+        frozen_amount: 1_000_000,
+        expiration_timestamp: 1000000000 + 3 * 86400 * 1000,
+    };
+    storage.set_freeze_record(owner_address, 0, &freeze_record1)
         .expect("Should set freeze record");
 
     // Verify freeze was set
@@ -525,15 +553,32 @@ fn test_vote_witness_multi_freeze_accumulates() {
         bandwidth_price: 1000,
     };
 
-    let mut storage = InMemoryStorageAdapter::new();
-    storage.set_balance(&owner_address, U256::from(5_000_000));
+    let temp_dir = tempfile::tempdir().unwrap();
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+        let mut storage = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine);
+
+    let owner_account = revm_primitives::AccountInfo {
+        balance: U256::from(5_000_000),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    storage.set_account(owner_address, owner_account).unwrap();
 
     // Freeze for BANDWIDTH (resource=0)
-    storage.set_freeze_record(&owner_address, 0, 1_000_000, 2000000000 + 3 * 86400 * 1000)
+    let freeze_record_bandwidth = tron_backend_execution::FreezeRecord {
+        frozen_amount: 1_000_000,
+        expiration_timestamp: 2000000000 + 3 * 86400 * 1000,
+    };
+    storage.set_freeze_record(owner_address, 0, &freeze_record_bandwidth)
         .expect("Should set bandwidth freeze");
 
     // Freeze for ENERGY (resource=1)
-    storage.set_freeze_record(&owner_address, 1, 2_000_000, 2000000000 + 3 * 86400 * 1000)
+    let freeze_record_energy = tron_backend_execution::FreezeRecord {
+        frozen_amount: 2_000_000,
+        expiration_timestamp: 2000000000 + 3 * 86400 * 1000,
+    };
+    storage.set_freeze_record(owner_address, 1, &freeze_record_energy)
         .expect("Should set energy freeze");
 
     // Verify total tron power is sum of both

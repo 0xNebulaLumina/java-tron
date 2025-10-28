@@ -145,6 +145,125 @@ impl FreezeRecord {
     }
 }
 
+/// TRON Account AEXT (Account EXTension) - resource tracking fields
+/// Mirrors Java's AccountInfo optional resource fields for bandwidth and energy tracking
+#[derive(Debug, Clone, Default)]
+pub struct AccountAext {
+    /// Net (bandwidth) usage with windowed decay
+    pub net_usage: i64,
+    /// Free net usage with windowed decay
+    pub free_net_usage: i64,
+    /// Energy usage with windowed decay (Phase 2)
+    pub energy_usage: i64,
+    /// Latest consume time for ACCOUNT_NET (slot/block number)
+    pub latest_consume_time: i64,
+    /// Latest consume time for FREE_NET (slot/block number)
+    pub latest_consume_free_time: i64,
+    /// Latest consume time for energy (Phase 2)
+    pub latest_consume_time_for_energy: i64,
+    /// Net window size (default 28800 for EOAs)
+    pub net_window_size: i64,
+    /// Net window optimized flag (default false)
+    pub net_window_optimized: bool,
+    /// Energy window size (default 28800 for EOAs)
+    pub energy_window_size: i64,
+    /// Energy window optimized flag (default false)
+    pub energy_window_optimized: bool,
+}
+
+impl AccountAext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create with default window sizes (28800 for both net and energy)
+    pub fn with_defaults() -> Self {
+        Self {
+            net_usage: 0,
+            free_net_usage: 0,
+            energy_usage: 0,
+            latest_consume_time: 0,
+            latest_consume_free_time: 0,
+            latest_consume_time_for_energy: 0,
+            net_window_size: 28800,
+            net_window_optimized: false,
+            energy_window_size: 28800,
+            energy_window_optimized: false,
+        }
+    }
+
+    /// Serialize AccountAext to bytes for storage
+    /// Format: 10 fields, each 8 bytes + 2 bool flags = 82 bytes total
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut result = Vec::with_capacity(82);
+
+        // Serialize all i64 fields (8 bytes each, big-endian)
+        result.extend_from_slice(&self.net_usage.to_be_bytes());
+        result.extend_from_slice(&self.free_net_usage.to_be_bytes());
+        result.extend_from_slice(&self.energy_usage.to_be_bytes());
+        result.extend_from_slice(&self.latest_consume_time.to_be_bytes());
+        result.extend_from_slice(&self.latest_consume_free_time.to_be_bytes());
+        result.extend_from_slice(&self.latest_consume_time_for_energy.to_be_bytes());
+        result.extend_from_slice(&self.net_window_size.to_be_bytes());
+        result.extend_from_slice(&self.energy_window_size.to_be_bytes());
+
+        // Serialize bool flags (1 byte each)
+        result.push(if self.net_window_optimized { 1 } else { 0 });
+        result.push(if self.energy_window_optimized { 1 } else { 0 });
+
+        result
+    }
+
+    /// Deserialize AccountAext from bytes
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        if data.len() < 82 {
+            return Err(anyhow::anyhow!(
+                "Insufficient data for AccountAext: expected 82 bytes, got {}",
+                data.len()
+            ));
+        }
+
+        let mut pos = 0;
+
+        // Helper to read i64
+        let read_i64 = |data: &[u8], pos: &mut usize| -> i64 {
+            let value = i64::from_be_bytes([
+                data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3],
+                data[*pos + 4], data[*pos + 5], data[*pos + 6], data[*pos + 7],
+            ]);
+            *pos += 8;
+            value
+        };
+
+        let net_usage = read_i64(data, &mut pos);
+        let free_net_usage = read_i64(data, &mut pos);
+        let energy_usage = read_i64(data, &mut pos);
+        let latest_consume_time = read_i64(data, &mut pos);
+        let latest_consume_free_time = read_i64(data, &mut pos);
+        let latest_consume_time_for_energy = read_i64(data, &mut pos);
+        let net_window_size = read_i64(data, &mut pos);
+        let energy_window_size = read_i64(data, &mut pos);
+
+        // Read bool flags
+        let net_window_optimized = data[pos] != 0;
+        pos += 1;
+        let energy_window_optimized = data[pos] != 0;
+
+        Ok(Self {
+            net_usage,
+            free_net_usage,
+            energy_usage,
+            latest_consume_time,
+            latest_consume_free_time,
+            latest_consume_time_for_energy,
+            net_window_size,
+            net_window_optimized,
+            energy_window_size,
+            energy_window_optimized,
+        })
+    }
+}
+
 /// TRON Vote - single vote entry (vote_address, vote_count)
 #[derive(Debug, Clone)]
 pub struct Vote {
@@ -519,6 +638,7 @@ pub struct InMemoryEvmStateStore {
     codes: HashMap<Address, Bytecode>,
     storage: HashMap<(Address, U256), U256>,
     freeze_records: std::sync::Arc<std::sync::RwLock<HashMap<(Address, u8), FreezeRecord>>>,
+    account_aext: std::sync::Arc<std::sync::RwLock<HashMap<Address, AccountAext>>>,
 }
 
 impl Clone for InMemoryEvmStateStore {
@@ -528,6 +648,7 @@ impl Clone for InMemoryEvmStateStore {
             codes: self.codes.clone(),
             storage: self.storage.clone(),
             freeze_records: self.freeze_records.clone(),
+            account_aext: self.account_aext.clone(),
         }
     }
 }
@@ -539,6 +660,7 @@ impl InMemoryEvmStateStore {
             codes: HashMap::new(),
             storage: HashMap::new(),
             freeze_records: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
+            account_aext: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
         }
     }
 
@@ -601,6 +723,28 @@ impl InMemoryEvmStateStore {
         );
 
         Ok(total)
+    }
+
+    /// Get account AEXT (resource tracking fields) for an address
+    pub fn get_account_aext(&self, address: &Address) -> Result<Option<AccountAext>> {
+        Ok(self.account_aext.read().unwrap().get(address).cloned())
+    }
+
+    /// Set account AEXT (resource tracking fields) for an address
+    pub fn set_account_aext(&self, address: &Address, aext: AccountAext) -> Result<()> {
+        self.account_aext.write().unwrap().insert(*address, aext);
+        Ok(())
+    }
+
+    /// Get or initialize account AEXT with defaults
+    pub fn get_or_init_account_aext(&self, address: &Address) -> Result<AccountAext> {
+        if let Some(aext) = self.get_account_aext(address)? {
+            Ok(aext)
+        } else {
+            let aext = AccountAext::with_defaults();
+            self.set_account_aext(address, aext.clone())?;
+            Ok(aext)
+        }
     }
 
     // Phase C: Method alias shims (preferred names going forward)
@@ -1085,6 +1229,198 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    // Bandwidth and Resource Dynamic Properties for AEXT tracking
+
+    /// Get FREE_NET_LIMIT dynamic property (free bandwidth limit per account)
+    /// Default: 5000 bytes per transaction
+    pub fn get_free_net_limit(&self) -> Result<i64> {
+        let key = b"FREE_NET_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(5000) // Default
+                }
+            },
+            None => Ok(5000) // Default
+        }
+    }
+
+    /// Get PUBLIC_NET_LIMIT dynamic property (total public bandwidth pool)
+    /// Default: 14_400_000_000 bytes
+    pub fn get_public_net_limit(&self) -> Result<i64> {
+        let key = b"PUBLIC_NET_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(14_400_000_000) // Default
+                }
+            },
+            None => Ok(14_400_000_000) // Default
+        }
+    }
+
+    /// Get PUBLIC_NET_USAGE dynamic property (current public bandwidth usage)
+    /// Default: 0
+    pub fn get_public_net_usage(&self) -> Result<i64> {
+        let key = b"PUBLIC_NET_USAGE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Set PUBLIC_NET_USAGE dynamic property
+    pub fn set_public_net_usage(&self, value: i64) -> Result<()> {
+        let key = b"PUBLIC_NET_USAGE";
+        let data = value.to_be_bytes();
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Get PUBLIC_NET_TIME dynamic property (last time public bandwidth was updated)
+    /// Default: 0
+    pub fn get_public_net_time(&self) -> Result<i64> {
+        let key = b"PUBLIC_NET_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Set PUBLIC_NET_TIME dynamic property
+    pub fn set_public_net_time(&self, value: i64) -> Result<()> {
+        let key = b"PUBLIC_NET_TIME";
+        let data = value.to_be_bytes();
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Get TOTAL_NET_WEIGHT dynamic property (total frozen for bandwidth)
+    /// Default: 0
+    pub fn get_total_net_weight(&self) -> Result<i64> {
+        let key = b"TOTAL_NET_WEIGHT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Get TOTAL_NET_LIMIT dynamic property (total bandwidth from frozen balance)
+    /// Default: 43_200_000_000 bytes
+    pub fn get_total_net_limit(&self) -> Result<i64> {
+        let key = b"TOTAL_NET_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(43_200_000_000) // Default
+                }
+            },
+            None => Ok(43_200_000_000) // Default
+        }
+    }
+
+    /// Compute total NET weight from all freeze records
+    /// Weight = sum(frozen_amount for resource=BANDWIDTH) / TRX_PRECISION
+    /// TRX_PRECISION = 1_000_000 (matches Java ChainConstant.TRX_PRECISION)
+    /// This scans all freeze records - O(n) operation, suitable for Phase 2 parity
+    pub fn compute_total_net_weight(&self) -> Result<i64> {
+        const TRX_PRECISION: u128 = 1_000_000;
+        const BANDWIDTH_RESOURCE: u8 = 0;
+
+        let mut total_sun: u128 = 0;
+
+        // Scan all freeze records in the database
+        let records = self.storage_engine.prefix_query(self.freeze_records_database(), &[])?;
+
+        for kv in records {
+            // Key format: 0x41 + 20-byte address + 1-byte resource = 22 bytes
+            if kv.key.len() == 22 && kv.key[21] == BANDWIDTH_RESOURCE {
+                // Deserialize freeze record
+                let record = FreezeRecord::deserialize(&kv.value)?;
+                total_sun = total_sun.checked_add(record.frozen_amount as u128)
+                    .ok_or_else(|| anyhow::anyhow!("Overflow computing total net weight"))?;
+            }
+        }
+
+        // Convert to weight: integer division by TRX_PRECISION
+        let weight = (total_sun / TRX_PRECISION) as i64;
+
+        tracing::debug!("Computed total net weight: {} (from {} SUN)", weight, total_sun);
+        Ok(weight)
+    }
+
+    /// Compute total ENERGY weight from all freeze records
+    /// Weight = sum(frozen_amount for resource=ENERGY) / TRX_PRECISION
+    /// TRX_PRECISION = 1_000_000 (matches Java ChainConstant.TRX_PRECISION)
+    /// This scans all freeze records - O(n) operation, suitable for Phase 2 parity
+    pub fn compute_total_energy_weight(&self) -> Result<i64> {
+        const TRX_PRECISION: u128 = 1_000_000;
+        const ENERGY_RESOURCE: u8 = 1;
+
+        let mut total_sun: u128 = 0;
+
+        // Scan all freeze records in the database
+        let records = self.storage_engine.prefix_query(self.freeze_records_database(), &[])?;
+
+        for kv in records {
+            // Key format: 0x41 + 20-byte address + 1-byte resource = 22 bytes
+            if kv.key.len() == 22 && kv.key[21] == ENERGY_RESOURCE {
+                // Deserialize freeze record
+                let record = FreezeRecord::deserialize(&kv.value)?;
+                total_sun = total_sun.checked_add(record.frozen_amount as u128)
+                    .ok_or_else(|| anyhow::anyhow!("Overflow computing total energy weight"))?;
+            }
+        }
+
+        // Convert to weight: integer division by TRX_PRECISION
+        let weight = (total_sun / TRX_PRECISION) as i64;
+
+        tracing::debug!("Computed total energy weight: {} (from {} SUN)", weight, total_sun);
+        Ok(weight)
+    }
+
     /// Get witness information by address
     /// Uses dual-decoder: tries protobuf first (Java format), falls back to legacy custom format
     pub fn get_witness(&self, address: &Address) -> Result<Option<WitnessInfo>> {
@@ -1344,6 +1680,69 @@ impl EngineBackedEvmStateStore {
 
         tracing::info!("Successfully stored account name for address {:?}, length: {}", address, name.len());
         Ok(())
+    }
+
+    /// Get database name for account resource tracking (AEXT)
+    fn account_aext_database(&self) -> &str {
+        "account-resource"
+    }
+
+    /// Build storage key for account AEXT: 20-byte address
+    fn account_aext_key(&self, address: &Address) -> Vec<u8> {
+        address.as_slice().to_vec()
+    }
+
+    /// Get account AEXT (resource tracking fields) for an address
+    pub fn get_account_aext(&self, address: &Address) -> Result<Option<AccountAext>> {
+        let key = self.account_aext_key(address);
+        tracing::debug!("Getting account AEXT for address {:?}, key: {}",
+                       address, hex::encode(&key));
+
+        match self.storage_engine.get(self.account_aext_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found account AEXT data, length: {}", data.len());
+                match AccountAext::deserialize(&data) {
+                    Ok(aext) => {
+                        tracing::debug!("Successfully deserialized account AEXT - net_usage: {}, free_net_usage: {}, net_window: {}",
+                                       aext.net_usage, aext.free_net_usage, aext.net_window_size);
+                        Ok(Some(aext))
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to deserialize account AEXT data: {}, returning None", e);
+                        Ok(None)
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("No account AEXT found for address {:?}", address);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Set account AEXT (resource tracking fields) for an address
+    pub fn set_account_aext(&self, address: &Address, aext: &AccountAext) -> Result<()> {
+        let key = self.account_aext_key(address);
+        let data = aext.serialize();
+
+        tracing::debug!("Setting account AEXT for address {:?}, net_usage: {}, free_net_usage: {}, net_window: {}",
+                       address, aext.net_usage, aext.free_net_usage, aext.net_window_size);
+
+        self.storage_engine.put(self.account_aext_database(), &key, &data)?;
+
+        tracing::debug!("Successfully stored account AEXT for address {:?}", address);
+        Ok(())
+    }
+
+    /// Get or initialize account AEXT with defaults
+    pub fn get_or_init_account_aext(&self, address: &Address) -> Result<AccountAext> {
+        if let Some(aext) = self.get_account_aext(address)? {
+            Ok(aext)
+        } else {
+            let aext = AccountAext::with_defaults();
+            self.set_account_aext(address, &aext)?;
+            Ok(aext)
+        }
     }
 
     // Phase C: Method alias shims (preferred names going forward)
@@ -1965,7 +2364,7 @@ mod tests {
     #[test]
     fn test_snapshot_hooks() {
         let storage = InMemoryEvmStateStore::new();
-        let mut db = StorageAdapterDatabase::new(storage);
+        let mut db = EvmStateDatabase::new(storage);
 
         // Track modified accounts via hook
         let modified_accounts = Arc::new(Mutex::new(Vec::new()));
@@ -2005,7 +2404,7 @@ mod tests {
     #[test]
     fn test_modified_accounts_tracking() {
         let storage = InMemoryEvmStateStore::new();
-        let mut db = StorageAdapterDatabase::new(storage);
+        let mut db = EvmStateDatabase::new(storage);
 
         let addr1 = Address::from([1u8; 20]);
         let addr2 = Address::from([2u8; 20]);
@@ -2030,7 +2429,7 @@ mod tests {
     #[test]
     fn test_snapshot_revert_clears_modified_accounts() {
         let storage = InMemoryEvmStateStore::new();
-        let mut db = StorageAdapterDatabase::new(storage);
+        let mut db = EvmStateDatabase::new(storage);
 
         let test_address = Address::from([1u8; 20]);
 
@@ -2096,9 +2495,10 @@ mod tests {
 
     #[test]
     fn test_account_name_storage() {
-        let storage = InMemoryEvmStateStore::new();
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut adapter = StorageModuleAdapter::new(storage_engine);
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
+            .expect("Failed to create storage engine");
+        let mut adapter = EngineBackedEvmStateStore::new(storage_engine);
 
         let test_address = Address::from([1u8; 20]);
         let test_name = b"TestAccount";
@@ -2117,8 +2517,10 @@ mod tests {
 
     #[test]
     fn test_account_name_validation() {
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut adapter = StorageModuleAdapter::new(storage_engine);
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
+            .expect("Failed to create storage engine");
+        let mut adapter = EngineBackedEvmStateStore::new(storage_engine);
 
         let test_address = Address::from([1u8; 20]);
 
@@ -2143,8 +2545,10 @@ mod tests {
 
     #[test]
     fn test_account_name_utf8_handling() {
-        let storage_engine = tron_backend_storage::StorageEngine::new_mock();
-        let mut adapter = StorageModuleAdapter::new(storage_engine);
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
+            .expect("Failed to create storage engine");
+        let mut adapter = EngineBackedEvmStateStore::new(storage_engine);
 
         let test_address = Address::from([1u8; 20]);
 
@@ -2458,5 +2862,365 @@ mod tests {
         let power = storage.get_tron_power_in_sun(&address, false)
             .expect("Should compute tron power");
         assert_eq!(power, 0, "Expected zero power when no freeze records");
+    }
+
+    // ResourceTracker Tests
+
+    #[test]
+    fn test_resource_tracker_increase_no_time_delta() {
+        // When now == lastTime, no recovery should occur
+        let new_usage = ResourceTracker::increase(100, 50, 1000, 1000, 28800);
+        assert_eq!(new_usage, 150, "No recovery when time delta is 0");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_partial_recovery() {
+        // lastUsage=1000, usage=200, lastTime=0, now=14400, windowSize=28800
+        // Time delta = 14400 (half the window)
+        // Recovery = 1000 * 14400 / 28800 = 500
+        // New usage = max(0, 1000 - 500) + 200 = 500 + 200 = 700
+        let new_usage = ResourceTracker::increase(1000, 200, 0, 14400, 28800);
+        assert_eq!(new_usage, 700, "Half window should recover half usage");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_full_recovery() {
+        // lastUsage=1000, usage=200, lastTime=0, now=28800, windowSize=28800
+        // Time delta = 28800 (full window)
+        // Recovery = 1000 (full recovery)
+        // New usage = max(0, 1000 - 1000) + 200 = 0 + 200 = 200
+        let new_usage = ResourceTracker::increase(1000, 200, 0, 28800, 28800);
+        assert_eq!(new_usage, 200, "Full window should fully recover");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_beyond_window() {
+        // Time delta exceeds window - should fully recover
+        let new_usage = ResourceTracker::increase(1000, 200, 0, 50000, 28800);
+        assert_eq!(new_usage, 200, "Beyond window should fully recover");
+    }
+
+    #[test]
+    fn test_resource_tracker_recovery_zero_usage() {
+        // Recovery with zero last usage
+        let new_usage = ResourceTracker::recovery(0, 0, 14400, 28800);
+        assert_eq!(new_usage, 0, "Recovery of zero usage should be zero");
+    }
+
+    #[test]
+    fn test_resource_tracker_recovery_half_window() {
+        // lastUsage=1000, lastTime=0, now=14400, windowSize=28800
+        // Should recover to 500
+        let recovered = ResourceTracker::recovery(1000, 0, 14400, 28800);
+        assert_eq!(recovered, 500, "Half window recovery");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_zero_window() {
+        // When windowSize is 0, should just return the usage
+        let new_usage = ResourceTracker::increase(1000, 200, 0, 14400, 0);
+        assert_eq!(new_usage, 200, "Zero window should return usage only");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_negative_time_delta() {
+        // When now < lastTime, should not recover
+        let new_usage = ResourceTracker::increase(1000, 200, 5000, 4000, 28800);
+        assert_eq!(new_usage, 1200, "Negative time delta should not recover");
+    }
+
+    #[test]
+    fn test_resource_tracker_increase_overflow_protection() {
+        // Test with very large values to ensure no overflow
+        let new_usage = ResourceTracker::increase(i64::MAX / 2, 100, 0, 100, 28800);
+        // Should not panic and should return a reasonable value
+        assert!(new_usage > 0, "Should handle large values without overflow");
+    }
+
+    #[test]
+    fn test_resource_tracker_track_bandwidth_free_net_path() {
+        use crate::storage_adapter::{ResourceTracker, AccountAext, BandwidthPath};
+
+        let owner = Address::from([0xab; 20]);
+        let current_aext = AccountAext::with_defaults();
+        let free_net_limit = 5000i64;
+        let bytes_used = 212i64;
+        let now = 1000i64;
+
+        let result = ResourceTracker::track_bandwidth(
+            &owner,
+            bytes_used,
+            now,
+            &current_aext,
+            free_net_limit,
+        );
+
+        assert!(result.is_ok(), "Track bandwidth should succeed");
+        let (path, before, after) = result.unwrap();
+
+        assert_eq!(path, BandwidthPath::FreeNet, "Should use FREE_NET path");
+        assert_eq!(before.free_net_usage, 0, "Before should have zero free_net_usage");
+        assert_eq!(after.free_net_usage, 212, "After should have 212 free_net_usage");
+        assert_eq!(after.latest_consume_free_time, 1000, "Should update consume time");
+    }
+
+    #[test]
+    fn test_resource_tracker_track_bandwidth_with_existing_usage() {
+        use crate::storage_adapter::{ResourceTracker, AccountAext, BandwidthPath};
+
+        let owner = Address::from([0xcd; 20]);
+        let mut current_aext = AccountAext::with_defaults();
+        current_aext.free_net_usage = 1000;
+        current_aext.latest_consume_free_time = 0;
+
+        let free_net_limit = 5000i64;
+        let bytes_used = 212i64;
+        let now = 14400i64; // Half window
+
+        let result = ResourceTracker::track_bandwidth(
+            &owner,
+            bytes_used,
+            now,
+            &current_aext,
+            free_net_limit,
+        );
+
+        assert!(result.is_ok(), "Track bandwidth should succeed");
+        let (path, before, after) = result.unwrap();
+
+        assert_eq!(path, BandwidthPath::FreeNet, "Should use FREE_NET path");
+        // Before: recovered from 1000 by half = 500
+        assert_eq!(before.free_net_usage, 500, "Before should have recovered to 500");
+        // After: 500 + 212 = 712
+        assert_eq!(after.free_net_usage, 712, "After should have 712 free_net_usage");
+    }
+
+    #[test]
+    fn test_resource_tracker_track_bandwidth_exceeds_limit() {
+        use crate::storage_adapter::{ResourceTracker, AccountAext, BandwidthPath};
+
+        let owner = Address::from([0xef; 20]);
+        let mut current_aext = AccountAext::with_defaults();
+        current_aext.free_net_usage = 4900; // Close to limit
+        current_aext.latest_consume_free_time = 0;
+
+        let free_net_limit = 5000i64;
+        let bytes_used = 500i64; // Would exceed limit
+        let now = 100i64; // Small time delta
+
+        let result = ResourceTracker::track_bandwidth(
+            &owner,
+            bytes_used,
+            now,
+            &current_aext,
+            free_net_limit,
+        );
+
+        assert!(result.is_ok(), "Track bandwidth should succeed");
+        let (path, _before, _after) = result.unwrap();
+
+        // Should fall back to FEE when FREE_NET is insufficient
+        assert_eq!(path, BandwidthPath::Fee, "Should use FEE path when limit exceeded");
+    }
+
+    #[test]
+    fn test_account_aext_serialization_roundtrip() {
+        let aext = AccountAext {
+            net_usage: 100,
+            free_net_usage: 200,
+            energy_usage: 0,
+            latest_consume_time: 1000,
+            latest_consume_free_time: 2000,
+            latest_consume_time_for_energy: 0,
+            net_window_size: 28800,
+            net_window_optimized: false,
+            energy_window_size: 28800,
+            energy_window_optimized: false,
+        };
+
+        let serialized = aext.serialize();
+        assert_eq!(serialized.len(), 82, "Serialized size should be 82 bytes");
+
+        let deserialized = AccountAext::deserialize(&serialized)
+            .expect("Should deserialize");
+
+        assert_eq!(deserialized.net_usage, 100);
+        assert_eq!(deserialized.free_net_usage, 200);
+        assert_eq!(deserialized.latest_consume_time, 1000);
+        assert_eq!(deserialized.latest_consume_free_time, 2000);
+        assert_eq!(deserialized.net_window_size, 28800);
+        assert_eq!(deserialized.net_window_optimized, false);
+    }
+
+    #[test]
+    fn test_account_aext_with_defaults() {
+        let aext = AccountAext::with_defaults();
+
+        assert_eq!(aext.net_usage, 0);
+        assert_eq!(aext.free_net_usage, 0);
+        assert_eq!(aext.net_window_size, 28800);
+        assert_eq!(aext.energy_window_size, 28800);
+        assert_eq!(aext.net_window_optimized, false);
+        assert_eq!(aext.energy_window_optimized, false);
+    }
+}
+
+/// Resource Tracker for bandwidth and energy accounting
+/// Mirrors Java's BandwidthProcessor and ResourceProcessor semantics
+pub struct ResourceTracker;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BandwidthPath {
+    AccountNet,  // Used account frozen bandwidth
+    FreeNet,     // Used free public bandwidth
+    Fee,         // Fall back to fee deduction
+}
+
+impl ResourceTracker {
+    /// Increase usage with windowed recovery (Java ResourceProcessor.increase parity)
+    /// Formula: newUsage = increase(lastUsage, usage, lastTime, now, windowSize)
+    ///        = max(0, lastUsage - (now - lastTime) / windowSize * lastUsage) + usage
+    /// Simplified: recovered = lastUsage * (now - lastTime) / windowSize
+    ///            newUsage = max(0, lastUsage - recovered) + usage
+    pub fn increase(
+        last_usage: i64,
+        usage: i64,
+        last_time: i64,
+        now: i64,
+        window_size: i64,
+    ) -> i64 {
+        if window_size == 0 {
+            return usage;
+        }
+
+        let time_delta = now.saturating_sub(last_time);
+        if time_delta <= 0 {
+            // No time passed, just add usage
+            return last_usage.saturating_add(usage);
+        }
+
+        // Calculate recovered amount: (last_usage * time_delta) / window_size
+        // Use saturating operations to avoid overflow
+        let recovered = if time_delta >= window_size {
+            // Fully recovered if time delta exceeds window
+            last_usage
+        } else {
+            // Partial recovery: last_usage * time_delta / window_size
+            let numerator = (last_usage as i128).saturating_mul(time_delta as i128);
+            let recovered_amt = numerator / (window_size as i128);
+            recovered_amt.min(last_usage as i128) as i64
+        };
+
+        // New usage = max(0, last_usage - recovered) + usage
+        let after_recovery = last_usage.saturating_sub(recovered).max(0);
+        after_recovery.saturating_add(usage)
+    }
+
+    /// Compute recovered usage (for debugging/logging)
+    pub fn recovery(last_usage: i64, last_time: i64, now: i64, window_size: i64) -> i64 {
+        Self::increase(last_usage, 0, last_time, now, window_size)
+    }
+
+    /// Track bandwidth usage and return (path, before_aext, after_aext)
+    /// Mirrors Java BandwidthProcessor.consume path selection:
+    /// 1. Try ACCOUNT_NET (if account has frozen bandwidth)
+    /// 2. Try FREE_NET (if public bandwidth available)
+    /// 3. Fall back to FEE (charge TRX)
+    pub fn track_bandwidth(
+        _owner: &Address,
+        bytes_used: i64,
+        now: i64,  // block number or slot
+        current_aext: &AccountAext,
+        free_net_limit: i64,
+    ) -> Result<(BandwidthPath, AccountAext, AccountAext)> {
+        // Compute before AEXT (with decay but no new usage)
+        let net_window_size = if current_aext.net_window_size > 0 {
+            current_aext.net_window_size
+        } else {
+            28800
+        };
+
+        let free_net_window_size = 28800i64; // Default window for free net
+
+        // Recover net_usage
+        let recovered_net_usage = Self::recovery(
+            current_aext.net_usage,
+            current_aext.latest_consume_time,
+            now,
+            net_window_size,
+        );
+
+        // Recover free_net_usage
+        let recovered_free_net_usage = Self::recovery(
+            current_aext.free_net_usage,
+            current_aext.latest_consume_free_time,
+            now,
+            free_net_window_size,
+        );
+
+        let before_aext = AccountAext {
+            net_usage: recovered_net_usage,
+            free_net_usage: recovered_free_net_usage,
+            energy_usage: current_aext.energy_usage,
+            latest_consume_time: current_aext.latest_consume_time,
+            latest_consume_free_time: current_aext.latest_consume_free_time,
+            latest_consume_time_for_energy: current_aext.latest_consume_time_for_energy,
+            net_window_size: current_aext.net_window_size,
+            net_window_optimized: current_aext.net_window_optimized,
+            energy_window_size: current_aext.energy_window_size,
+            energy_window_optimized: current_aext.energy_window_optimized,
+        };
+
+        // Path selection logic
+        // Phase 1: Simplified - assume no frozen bandwidth (ACCOUNT_NET always 0)
+        let account_net_limit = 0i64;  // Would calculate from freeze records in full implementation
+
+        let available_account_net = account_net_limit.saturating_sub(recovered_net_usage).max(0);
+
+        let (path, after_aext) = if bytes_used <= available_account_net {
+            // Path 1: ACCOUNT_NET
+            let new_net_usage = Self::increase(
+                current_aext.net_usage,
+                bytes_used,
+                current_aext.latest_consume_time,
+                now,
+                net_window_size,
+            );
+
+            let after = AccountAext {
+                net_usage: new_net_usage,
+                latest_consume_time: now,
+                ..before_aext.clone()
+            };
+
+            (BandwidthPath::AccountNet, after)
+        } else {
+            // Try FREE_NET
+            let available_free_net = free_net_limit.saturating_sub(recovered_free_net_usage).max(0);
+
+            if bytes_used <= available_free_net {
+                // Path 2: FREE_NET
+                let new_free_net_usage = Self::increase(
+                    current_aext.free_net_usage,
+                    bytes_used,
+                    current_aext.latest_consume_free_time,
+                    now,
+                    free_net_window_size,
+                );
+
+                let after = AccountAext {
+                    free_net_usage: new_free_net_usage,
+                    latest_consume_free_time: now,
+                    ..before_aext.clone()
+                };
+
+                (BandwidthPath::FreeNet, after)
+            } else {
+                // Path 3: FEE (no AEXT changes)
+                (BandwidthPath::Fee, before_aext.clone())
+            }
+        };
+
+        Ok((path, before_aext, after_aext))
     }
 }
