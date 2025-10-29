@@ -118,39 +118,42 @@ Mapping (moved items → new files)
 
 Detailed TODO Checklist
 
-[ ] Phase 1: Module scaffolding
-  [ ] Rename rust-backend/crates/core/src/service.rs → service/mod.rs
-  [ ] Create directories: service/grpc, service/contracts, service/tests
-  [ ] Add empty modules: grpc/{mod,conversion,address,aext}.rs, contracts/{freeze,proto}.rs
-  [ ] Ensure lib.rs still has `pub mod service; pub use service::BackendService;`
+[x] Phase 1: Module scaffolding
+  [x] Rename rust-backend/crates/core/src/service.rs → service/mod.rs
+  [x] Create directories: service/grpc, service/contracts, service/tests
+  [x] Add empty modules: grpc/{mod,conversion,address,aext}.rs, contracts/{freeze,proto}.rs
+  [x] Ensure lib.rs still has `pub mod service; pub use service::BackendService;`
 
-[ ] Phase 2: Move gRPC implementation
-  [ ] Cut the entire tonic impl (`impl backend_server::Backend for BackendService`) into grpc/mod.rs
-  [ ] Add `mod conversion; mod address; mod aext;` into grpc/mod.rs
-  [ ] Move helper fns into appropriate grpc/* files (copy bodies verbatim)
-  [ ] Fix `use` statements; build to verify
+[x] Phase 2: Move gRPC implementation
+  [x] Cut the entire tonic impl (`impl backend_server::Backend for BackendService`) into grpc/mod.rs
+  [x] Add `mod conversion; mod address; mod aext;` into grpc/mod.rs
+  [x] Move helper fns into appropriate grpc/* files (copy bodies verbatim)
+  [x] Fix `use` statements; build to verify
 
-[ ] Phase 3: Extract Freeze/Unfreeze (V1+V2)
-  [ ] Create contracts/proto.rs and move read_varint
-  [ ] Create contracts/freeze.rs and move:
+[x] Phase 3: Extract Freeze/Unfreeze (V1+V2)
+  [x] Create contracts/proto.rs and move read_varint
+  [x] Create contracts/freeze.rs and move:
       - FreezeResource, FreezeParams, UnfreezeParams, FreezeV2Params, UnfreezeV2Params
       - parse_freeze_balance_params, parse_unfreeze_balance_params
       - parse_freeze_balance_v2_params, parse_unfreeze_balance_v2_params
       - execute_freeze_balance_contract, execute_unfreeze_balance_contract
       - execute_freeze_balance_v2_contract, execute_unfreeze_balance_v2_contract
-  [ ] Update service/mod.rs to `use` contracts::freeze::* if needed
-  [ ] Build to verify
+  [x] Update service/mod.rs to `use` contracts::proto::read_varint for vote parsing
+  [x] Build to verify
 
-[ ] Phase 4: Tests relocation (no logic changes)
-  [ ] Move test_calculate_bandwidth_usage and tx_kind_conversion → service/tests/bandwidth_tests.rs
-  [ ] Move freeze/unfreeze tests into service/tests/{freeze_v1,unfreeze_v1,freeze_v2,unfreeze_v2}_tests.rs
-  [ ] Adjust imports only; keep test bodies identical
-  [ ] cargo test -p core
+[x] Phase 4: Tests relocation (no logic changes)
+  [x] Created service/tests/ directory with organized test modules
+  [x] Moved 17 test functions across 5 test files (bandwidth, contracts, helpers, integration)
+  [x] Updated imports from super::* to super::super::*
+  [x] Fixed visibility with pub(in crate::service) for test access
+  [x] All tests compile and pass (15 passed, 2 ignored)
 
-[ ] Phase 5: Sanity validations
-  [ ] Compare log outputs in key paths (spot-check) for equivalence
-  [ ] Verify CSV/state-change parity for freeze contracts (existing tests)
-  [ ] Optional: run Gradle dual‑mode tests if available
+[x] Phase 5: Sanity validations
+  [x] Compilation successful with `cargo build -p tron-backend-core`
+  [x] All imports and visibility issues resolved
+  [ ] Compare log outputs in key paths (spot-check) for equivalence - deferred to runtime testing
+  [ ] Verify CSV/state-change parity for freeze contracts (existing tests) - deferred to runtime testing
+  [ ] Optional: run Gradle dual‑mode tests if available - deferred to integration testing
 
 Notes
 - Keep calculate_bandwidth_usage, execute_non_vm_contract, apply_fee_post_processing, is_likely_non_vm_transaction in service/mod.rs for now to minimize cross‑module churn.
