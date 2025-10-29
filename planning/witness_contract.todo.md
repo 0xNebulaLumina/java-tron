@@ -1,0 +1,188 @@
+Title: Remote Non-VM System Contracts Parity Plan (Witness Contracts)
+
+Purpose
+- Achieve state-change/digest parity between embedded (Java) and remote (Rust) for system contracts, starting with WitnessCreateContract, and eliminate zero-address artifacts.
+
+Scope (Phase 1 → Phase n)
+- Phase 1: Contract-type plumbing, address handling fix, WitnessCreate parity, tests, and validation.
+- Phase 2: WitnessUpdate parity.
+- Phase 3: VoteWitness parity (subset → complete), storage deltas alignment.
+- Out of scope (for now): Full TRC-10 support; advanced governance contracts; archival migrations.
+
+Preconditions / Inputs
+- CSV mismatch identified at block 1785/tx 0 (WitnessCreateContract).
+- Java actuator source-of-truth: actuator/src/main/java/org/tron/core/actuator/WitnessCreateActuator.java:121–180.
+- Java RemoteExecutionSPI already sets contractType and txKind; ensure toAddress fix.
+
+Milestone Checklist
+- [ ] Phase 1 completed: Remote matches embedded for WitnessCreate; first mismatch resolved.
+- [ ] Phase 2 completed: Remote matches embedded for WitnessUpdate.
+- [ ] Phase 3 completed: Remote matches embedded for VoteWitness (core paths).
+- [ ] End-to-end CSV parity verified across targeted blocks.
+
+--------------------------------------------------------------------------------
+Phase 1 — WitnessCreate Parity (and zero-address fix)
+
+1) Contract Metadata Plumbing (Rust)
+- [x] Extend internal conversion to carry contract_type and asset_id
+  - [x] service.rs: convert_protobuf_transaction() — parse TronTransaction.contract_type, TronTransaction.asset_id
+  - [x] Define internal enum ContractType mirroring protobuf; add TryFrom/i32 mapping
+  - [x] Add TxMetadata { tx_kind, contract_type, asset_id: Option<Vec<u8>> }
+- [x] Thread metadata to Non-VM dispatcher
+  - [x] execute_transaction() — pass tx_kind + contract_type to Non-VM branch
+  - [x] Replace execute_non_vm_transaction(...) with execute_non_vm_dispatch(...)
+
+2) Address Handling Fix
+- [x] Java: Stop using to=0x00.. for system contracts
+  - [x] RemoteExecutionSPI: For WitnessCreate/Update/Vote set .setTo(ByteString.EMPTY)
+  - [x] Keep txKind=NON_VM, setContractType(...), setAssetId(...) only when applicable
+- [x] Rust: Allow transaction.to=None for system contracts
+  - [x] Non-VM dispatcher must not require `to` except for TRANSFER_CONTRACT/TRANSFER_ASSET_CONTRACT
+
+3) Dynamic Properties Access (Rust)
+- [x] Define property accessors in storage engine/adapter
+  - [x] get_account_upgrade_cost() (AccountUpgradeCost)
+  - [x] get_allow_multi_sign() (AllowMultiSign)
+  - [x] support_black_hole_optimization() (SupportBlackHoleOptimization)
+  - [x] get_blackhole_address() (when crediting)
+- [x] Ensure defaults match embedded at block heights under test
+  - [x] Document canonical keys and default values
+
+4) Witness Store Support (Rust Storage)
+- [x] Add CF/namespace for WitnessStore (by 21-byte Tron address key)
+- [x] Define serialization for WitnessCapsule-equivalent { address, url, voteCount }
+- [x] Implement get_witness(addr), put_witness(witness)
+- [x] Unit-test roundtrip (serialize/deserialize)
+
+5) Account Serialization Parity (Rust→Java Bridge)
+- [x] Ensure empty-code normalization to keccak("") (c5d246…a470) is preserved
+- [x] Keep account serialization format (balance[32] + nonce[8] + code_hash[32] + code_len[4] + code)
+- [x] Verify RemoteExecutionSPI.serializeAccountInfo() remains the consumer of AccountChange data
+
+6) Implement WitnessCreate Handler (Rust)
+- [x] Validate preconditions
+  - [x] Owner account exists
+  - [x] Owner not already a witness
+  - [x] URL validity check (match embedded or accept as-is initially; log deviations)
+  - [x] Balance >= AccountUpgradeCost
+- [x] Mutations
+  - [x] Insert witness entry: (owner, url, voteCount=0)
+  - [x] Update owner account flags: isWitness=true; default witness permission if allowMultiSign==1
+  - [x] Deduct AccountUpgradeCost from owner balance
+  - [x] Burn or credit cost:
+    - [x] If supportBlackHoleOptimization() -> burn (no account delta)
+    - [x] Else -> credit blackhole account +cost (AccountChange)
+  - [ ] Increment total create witness cost (DynamicProperties) [Note: deferred - not critical for CSV parity]
+- [x] Emitted state changes (for CSV parity)
+  - [x] Owner AccountChange: balance decreased (old/new)
+  - [x] Owner AccountChange: metadata/permission changed (ensure serialized blob reflects change)
+  - [x] Optional blackhole AccountChange only when not burning
+  - [x] No zero-address AccountChange
+- [x] Deterministic ordering: sort by address asc; account before storage for same address
+
+7) Logging and Metrics
+- [ ] Log chosen Non-VM branch: WitnessCreateContract
+- [ ] Log cost, burn vs blackhole credit, resulting owner balance
+- [ ] Avoid logging zero-address creation anywhere
+
+8) Feature Flags & Fallback
+- [ ] Introduce flags (readable by Java and/or Rust)
+  - [ ] remote.exec.system.enabled=true (globally enable system contracts)
+  - [ ] remote.exec.witness.create.enabled=true (default true)
+- [ ] Java: If disabled or error encountered, throw to fall back to Java actuator
+
+9) Tests (Rust Unit + Integration)
+- [x] Unit: convert_protobuf_transaction() parses contract_type and allows to=None
+- [x] Unit: Witness store read/write
+- [x] Unit: Dynamic properties defaulting
+- [x] Integration: Execute WitnessCreate with fixture context
+  - [x] Emitted changes count matches embedded (2 owner changes; +blackhole if mode == credit)
+  - [x] Account blobs lengths 76 and code hash equals keccak("")
+  - [x] Deterministic order; digest parity script passes for the tx
+
+10) End-to-End Validation
+- [ ] Re-run remote-remote on blocks up to and including 1785
+- [ ] Confirm first mismatch disappears
+- [ ] Capture CSV diff and update notes
+
+--------------------------------------------------------------------------------
+Phase 2 — WitnessUpdate Parity
+
+1) Semantics & Validation
+- [ ] Mirror WitnessUpdateActuator (owner must be witness; url validation)
+
+2) Mutations
+- [ ] Update WitnessStore URL (deterministic serialization)
+- [ ] No balance change; no zero-address changes
+
+3) Emitted Changes
+- [ ] If embedded surfaces only account-level change, follow suit (document)
+- [ ] If storage changes must be emitted: produce StorageChange with deterministic key format aligned to Java DB keys
+
+4) Tests & Validation
+- [ ] Unit: witness update write/read
+- [ ] Integration: target a block/tx with WitnessUpdate; parity on state_digest
+
+--------------------------------------------------------------------------------
+Phase 3 — VoteWitness Parity
+
+1) Scope & Rules
+- [ ] Mirror VoteWitnessActuator + VoteWitnessProcessor core behavior
+- [ ] Validate witness list, arrays lengths, vote caps, and constraints
+
+2) Mutations
+- [ ] Update voter’s vote mapping
+- [ ] Update witness vote tallies/vi and any aggregates (per-cycle where applicable)
+
+3) Emitted Changes
+- [ ] AccountChange for voter if metadata or balance affected
+- [ ] StorageChange(s) for tallies with deterministic keys
+- [ ] Preserve ordering rules
+
+4) Tests & Validation
+- [ ] Unit: tally math paths
+- [ ] Integration: known VoteWitness tx samples; digest parity
+
+--------------------------------------------------------------------------------
+Cross-Cutting Tasks
+
+Serialization & Keys
+- [ ] Document deterministic key formats for new storage entries (WitnessStore, vote tallies)
+- [ ] Ensure big-endian encoding matches Java conventions
+
+Error Handling & Fallback
+- [ ] On validation failure in Rust Non-VM handler, return explicit error; Java should fallback to actuator
+- [ ] Log structured errors with tx_id, block_num
+
+Configuration & Defaults
+- [ ] Review rust-backend/config.toml options for flags
+- [ ] Add env overrides for dynamic properties during tests
+
+Observability
+- [ ] Add tracing spans for Non-VM dispatcher and specific contract handlers
+- [ ] Summarize state change counts and addresses for audit
+
+Documentation
+- [ ] Update docs/ or planning/ notes with implemented parity coverage and known gaps
+
+--------------------------------------------------------------------------------
+Validation Playbook
+- [ ] Run block 1785 replay (remote-remote) and compare to embedded CSV
+- [ ] Verify state_changes_json matches structure and lengths (two 76-byte account blobs, no zero-address)
+- [ ] Verify state_digest_sha256 parity at row 7
+- [ ] Expand sample set to next N blocks with witness-related txs
+
+Exit Criteria
+- [ ] First mismatch removed; digest parity for targeted witness txs
+- [ ] No zero-address account creations in logs or CSV
+- [ ] Tests stable and deterministic
+
+Risks & Mitigations
+- [ ] Dynamic property drift — pin test values or snapshot from Java DB
+- [ ] Storage key mismatch — gate storage changes emission until verified
+- [ ] VoteWitness complexity — stage rollout; start with basic scenarios
+
+Rollout & Backout
+- [ ] Default enable WitnessCreate only; others behind flags
+- [ ] Backout path: disable flags; Java actuators take over
+

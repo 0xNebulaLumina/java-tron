@@ -33,14 +33,14 @@ evm_eth_coinbase_compat = false
 # - "burn": Fees are burned (no state delta, supply reduction handled elsewhere)
 # - "blackhole": Fees are credited to designated blackhole address
 # - "none": No fee handling (useful for testing)
-mode = "burn"
+mode = "blackhole"
 
 # Whether black hole optimization is supported (matches java-tron's supportBlackHoleOptimization)
-support_black_hole_optimization = true
+support_black_hole_optimization = false
 
 # Base58-encoded TRON address for blackhole (required if mode = "blackhole")
 # Example: "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"
-blackhole_address_base58 = ""
+blackhole_address_base58 = "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"
 
 # EXPERIMENTAL: Emit synthetic VM blackhole credits (default: false)
 # When enabled, VM transactions will emit estimated fee credits to blackhole
@@ -57,4 +57,62 @@ settings = {}
 
 [modules.execution]
 enabled = true
-settings = {} 
+settings = {}
+
+# Remote Execution Feature Flags
+[execution.remote]
+# Global enable/disable for remote system contract execution
+system_enabled = true
+
+# Specific contract type flags
+witness_create_enabled = true
+witness_update_enabled = false  # Disabled until implemented
+vote_witness_enabled = true
+
+# TRC-10 transfers (requires additional storage support)
+trc10_enabled = false
+
+# FreezeBalanceContract execution (Phase 2: balance delta + resource ledger)
+# Set to true to enable remote execution of FreezeBalanceContract
+# Default: false for safe rollout - falls back to Java embedded execution when disabled
+freeze_balance_enabled = true
+unfreeze_balance_enabled = true
+freeze_balance_v2_enabled = true
+unfreeze_balance_v2_enabled = true
+
+# Emit freeze/resource ledger changes in ExecutionResult (Phase 2)
+# When true, emits FreezeLedgerChange messages describing freeze/unfreeze operations
+# These changes are applied to Java's local stores (AccountStore, DynamicPropertiesStore)
+# so BandwidthProcessor sees updated netLimit for subsequent txs in the same block.
+# Default: false to maintain CSV parity with Phase 1 (only AccountChange)
+# When enabled, Java applies these changes via RuntimeSpiImpl.applyFreezeLedgerChanges()
+# Affects: FreezeBalance, UnfreezeBalance, FreezeBalanceV2, UnfreezeBalanceV2,
+#          DelegateResource, UnDelegateResource, WithdrawExpireUnfreeze, CancelAllUnfreezeV2
+emit_freeze_ledger_changes = true
+
+# Emit GlobalResourceTotalsChange alongside freeze/unfreeze operations (Phase 2)
+# When true, backend computes and sends total net/energy weight and limits after each freeze/unfreeze
+# so Java can update DynamicPropertiesStore.totalNetWeight/totalNetLimit immediately.
+# This fixes the FREE_NET vs ACCOUNT_NET divergence where Java's BandwidthProcessor computed netLimit=0
+# because totalNetWeight hadn't been updated yet for freeze operations in the same block.
+# Default: false for backward compatibility; set true for Phase 2 parity runs.
+# When enabled, Java applies these changes via RuntimeSpiImpl.applyGlobalResourceChange()
+# Affects: FreezeBalance, UnfreezeBalance, FreezeBalanceV2, UnfreezeBalanceV2
+emit_global_resource_changes = true
+
+# Emit storage changes for witness/vote data (may affect CSV output)
+emit_storage_changes = false
+
+# AEXT (Account EXTension) presence mode for AccountInfo serialization
+# Controls how the 76-byte AEXT tail (resource usage fields) is populated in proto AccountInfo
+# Modes:
+#   - "none": All resource fields set to None (current behavior, remote omits AEXT tail)
+#   - "zeros": Set Some(0)/false for EOAs (enables AEXT presence parity with embedded)
+#   - "defaults": Set window sizes to 28800, other fields to 0/false for EOAs (matches embedded defaults exactly)
+#   - "tracked": Some(real values) when backend supports resource metrics (future)
+#   - "hybrid": Prefer pre-execution AEXT values passed from Java, fall back to defaults (recommended for parity)
+# Default: "none" for backward compatibility
+# Recommendation: Set to "hybrid" for full CSV digest parity with embedded execution
+# In "hybrid" mode, Java passes its pre-execution resource usage values via gRPC, and the Rust backend
+# echoes these values in AccountInfo for both old and new accounts, ensuring byte-level parity for unchanged fields.
+accountinfo_aext_mode = "hybrid" 

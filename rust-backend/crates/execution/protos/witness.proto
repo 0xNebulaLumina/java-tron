@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package protocol;
+
+// Witness message - must exactly match field numbers/names from Tron.proto
+// to ensure wire compatibility with Java storage
+message Witness {
+  bytes address = 1;
+  int64 voteCount = 2;
+  bytes pubKey = 3;
+  string url = 4;
+  int64 totalProduced = 5;
+  int64 totalMissed = 6;
+  int64 latestBlockNum = 7;
+  int64 latestSlotNum = 8;
+  bool isJobs = 9;
+}
