@@ -43,6 +43,8 @@ pub struct ExecutionConfig {
     pub evm_eth_coinbase_compat: bool,
     /// TRON fee handling configuration
     pub fees: ExecutionFeeConfig,
+    /// Remote execution feature flags
+    pub remote: RemoteExecutionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +69,46 @@ pub struct ExecutionFeeConfig {
     /// Optional flat fee for non-VM transactions in SUN (when not reading from dynamic properties)
     /// If None, no fee deltas are emitted for non-VM transactions
     pub non_vm_blackhole_credit_flat: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteExecutionConfig {
+    /// Global enable/disable for remote system contract execution
+    pub system_enabled: bool,
+    /// Enable WITNESS_CREATE_CONTRACT execution
+    pub witness_create_enabled: bool,
+    /// Enable WITNESS_UPDATE_CONTRACT execution
+    pub witness_update_enabled: bool,
+    /// Enable VOTE_WITNESS_CONTRACT execution
+    pub vote_witness_enabled: bool,
+    /// Enable TRC-10 transfers (requires additional storage support)
+    pub trc10_enabled: bool,
+    /// Enable FREEZE_BALANCE_CONTRACT execution
+    pub freeze_balance_enabled: bool,
+    /// Enable UNFREEZE_BALANCE_CONTRACT execution
+    pub unfreeze_balance_enabled: bool,
+    /// Enable FREEZE_BALANCE_V2_CONTRACT execution
+    pub freeze_balance_v2_enabled: bool,
+    /// Enable UNFREEZE_BALANCE_V2_CONTRACT execution
+    pub unfreeze_balance_v2_enabled: bool,
+    /// Emit storage changes for freeze ledger (EXPERIMENTAL - may affect CSV output)
+    /// Default: false to maintain CSV parity with Phase 1
+    pub emit_freeze_ledger_changes: bool,
+    /// Emit GlobalResourceTotalsChange alongside freeze/unfreeze operations
+    /// When enabled, backend computes and sends total net/energy weight and limits
+    /// so Java can update DynamicPropertiesStore immediately (fixes FREE_NET vs ACCOUNT_NET divergence)
+    /// Default: false for backward compatibility; enable true for Phase 2 parity runs
+    pub emit_global_resource_changes: bool,
+    /// Emit storage changes for witness/vote data (may affect CSV output)
+    pub emit_storage_changes: bool,
+    /// AEXT (Account EXTension) presence mode for AccountInfo serialization
+    /// Controls how AEXT tail (76 bytes of resource usage fields) is populated
+    /// - "none": All resource fields set to None (current behavior, remote omits AEXT)
+    /// - "zeros": Set Some(0)/false for EOAs (enables AEXT presence parity with embedded)
+    /// - "defaults": Set window sizes to 28800, other fields to 0/false for EOAs (matches embedded defaults exactly)
+    /// - "tracked": Some(real values) when backend supports resource metrics (future)
+    /// Default: "none" for backward compatibility; set to "defaults" for full CSV parity with embedded
+    pub accountinfo_aext_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +167,7 @@ impl Default for ExecutionConfig {
             max_cpu_time_of_one_tx: 80,
             evm_eth_coinbase_compat: false, // Default off for TRON parity
             fees: ExecutionFeeConfig::default(),
+            remote: RemoteExecutionConfig::default(),
         }
     }
 }
@@ -178,7 +221,42 @@ impl Config {
         builder = builder.set_default("execution.fees.experimental_vm_blackhole_credit", false)?;
         // non_vm_blackhole_credit_flat is Option<u64>, leave unset for None default
 
+        // Remote execution configuration defaults
+        builder = builder.set_default("execution.remote.system_enabled", true)?;
+        builder = builder.set_default("execution.remote.witness_create_enabled", true)?;
+        builder = builder.set_default("execution.remote.witness_update_enabled", false)?;
+        builder = builder.set_default("execution.remote.vote_witness_enabled", false)?;
+        builder = builder.set_default("execution.remote.trc10_enabled", false)?;
+        builder = builder.set_default("execution.remote.freeze_balance_enabled", false)?;
+        builder = builder.set_default("execution.remote.unfreeze_balance_enabled", false)?;
+        builder = builder.set_default("execution.remote.freeze_balance_v2_enabled", false)?;
+        builder = builder.set_default("execution.remote.unfreeze_balance_v2_enabled", false)?;
+        builder = builder.set_default("execution.remote.emit_freeze_ledger_changes", false)?;
+        builder = builder.set_default("execution.remote.emit_global_resource_changes", false)?;
+        builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
+        builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
+
         let config = builder.build()?;
         config.try_deserialize()
+    }
+}
+
+impl Default for RemoteExecutionConfig {
+    fn default() -> Self {
+        Self {
+            system_enabled: true,
+            witness_create_enabled: true,
+            witness_update_enabled: false,
+            vote_witness_enabled: false,
+            trc10_enabled: false,
+            freeze_balance_enabled: false, // Default false until validated
+            unfreeze_balance_enabled: false, // Default false until validated
+            freeze_balance_v2_enabled: false, // Default false until validated
+            unfreeze_balance_v2_enabled: false, // Default false until validated
+            emit_freeze_ledger_changes: false, // Default false for CSV parity
+            emit_global_resource_changes: false, // Default false for backward compatibility
+            emit_storage_changes: false,
+            accountinfo_aext_mode: "none".to_string(), // Default to current behavior
+        }
     }
 } 

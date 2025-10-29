@@ -8,9 +8,124 @@ use revm::{
 
 use tron_backend_common::ExecutionConfig;
 use crate::precompiles::TronPrecompiles;
-use crate::storage_adapter::{StorageAdapterDatabase, StorageAdapter};
+use crate::storage_adapter::{EvmStateDatabase, EvmStateStore};
 
 // Tron-specific transaction and execution types
+
+/// TRON Contract Type enumeration - matches protobuf ContractType
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum TronContractType {
+    AccountCreateContract = 0,
+    TransferContract = 1,
+    TransferAssetContract = 2,
+    VoteAssetContract = 3,
+    VoteWitnessContract = 4,
+    WitnessCreateContract = 5,
+    AssetIssueContract = 6,
+    WitnessUpdateContract = 8,
+    ParticipateAssetIssueContract = 9,
+    AccountUpdateContract = 10,
+    FreezeBalanceContract = 11,
+    UnfreezeBalanceContract = 12,
+    WithdrawBalanceContract = 13,
+    UnfreezeAssetContract = 14,
+    UpdateAssetContract = 15,
+    ProposalCreateContract = 16,
+    ProposalApproveContract = 17,
+    ProposalDeleteContract = 18,
+    SetAccountIdContract = 19,
+    CustomContract = 20,
+    CreateSmartContract = 30,
+    TriggerSmartContract = 31,
+    GetContract = 32,
+    UpdateSettingContract = 33,
+    ExchangeCreateContract = 41,
+    ExchangeInjectContract = 42,
+    ExchangeWithdrawContract = 43,
+    ExchangeTransactionContract = 44,
+    UpdateEnergyLimitContract = 45,
+    AccountPermissionUpdateContract = 46,
+    ClearAbiContract = 48,
+    UpdateBrokerageContract = 49,
+    ShieldContract = 51,
+    MarketSellAssetContract = 52,
+    MarketCancelOrderContract = 53,
+    FreezeBalanceV2Contract = 54,
+    UnfreezeBalanceV2Contract = 55,
+    WithdrawExpireUnfreezeContract = 56,
+    DelegateResourceContract = 57,
+    UndelegateResourceContract = 58,
+    CancelAllUnfreezeV2Contract = 59,
+}
+
+impl TryFrom<i32> for TronContractType {
+    type Error = String;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(TronContractType::AccountCreateContract),
+            1 => Ok(TronContractType::TransferContract),
+            2 => Ok(TronContractType::TransferAssetContract),
+            3 => Ok(TronContractType::VoteAssetContract),
+            4 => Ok(TronContractType::VoteWitnessContract),
+            5 => Ok(TronContractType::WitnessCreateContract),
+            6 => Ok(TronContractType::AssetIssueContract),
+            8 => Ok(TronContractType::WitnessUpdateContract),
+            9 => Ok(TronContractType::ParticipateAssetIssueContract),
+            10 => Ok(TronContractType::AccountUpdateContract),
+            11 => Ok(TronContractType::FreezeBalanceContract),
+            12 => Ok(TronContractType::UnfreezeBalanceContract),
+            13 => Ok(TronContractType::WithdrawBalanceContract),
+            14 => Ok(TronContractType::UnfreezeAssetContract),
+            15 => Ok(TronContractType::UpdateAssetContract),
+            16 => Ok(TronContractType::ProposalCreateContract),
+            17 => Ok(TronContractType::ProposalApproveContract),
+            18 => Ok(TronContractType::ProposalDeleteContract),
+            19 => Ok(TronContractType::SetAccountIdContract),
+            20 => Ok(TronContractType::CustomContract),
+            30 => Ok(TronContractType::CreateSmartContract),
+            31 => Ok(TronContractType::TriggerSmartContract),
+            32 => Ok(TronContractType::GetContract),
+            33 => Ok(TronContractType::UpdateSettingContract),
+            41 => Ok(TronContractType::ExchangeCreateContract),
+            42 => Ok(TronContractType::ExchangeInjectContract),
+            43 => Ok(TronContractType::ExchangeWithdrawContract),
+            44 => Ok(TronContractType::ExchangeTransactionContract),
+            45 => Ok(TronContractType::UpdateEnergyLimitContract),
+            46 => Ok(TronContractType::AccountPermissionUpdateContract),
+            48 => Ok(TronContractType::ClearAbiContract),
+            49 => Ok(TronContractType::UpdateBrokerageContract),
+            51 => Ok(TronContractType::ShieldContract),
+            52 => Ok(TronContractType::MarketSellAssetContract),
+            53 => Ok(TronContractType::MarketCancelOrderContract),
+            54 => Ok(TronContractType::FreezeBalanceV2Contract),
+            55 => Ok(TronContractType::UnfreezeBalanceV2Contract),
+            56 => Ok(TronContractType::WithdrawExpireUnfreezeContract),
+            57 => Ok(TronContractType::DelegateResourceContract),
+            58 => Ok(TronContractType::UndelegateResourceContract),
+            59 => Ok(TronContractType::CancelAllUnfreezeV2Contract),
+            _ => Err(format!("Invalid contract type: {}", value)),
+        }
+    }
+}
+
+/// Transaction metadata for TRON system contracts
+#[derive(Debug, Clone)]
+pub struct TxMetadata {
+    pub contract_type: Option<TronContractType>,
+    pub asset_id: Option<Vec<u8>>,  // For TRC-10 transfers
+}
+
+impl Default for TxMetadata {
+    fn default() -> Self {
+        Self {
+            contract_type: None,
+            asset_id: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TronTransaction {
     pub from: revm::primitives::Address,
@@ -20,6 +135,7 @@ pub struct TronTransaction {
     pub gas_limit: u64,
     pub gas_price: revm::primitives::U256,
     pub nonce: u64,
+    pub metadata: TxMetadata,  // Added metadata for contract type and asset ID
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +167,35 @@ pub enum TronStateChange {
     },
 }
 
+/// Freeze/resource ledger change for Phase 2 emission
+/// Describes a single freeze or unfreeze operation affecting an owner's resource balance
+#[derive(Debug, Clone)]
+pub struct FreezeLedgerChange {
+    pub owner_address: revm::primitives::Address,
+    pub resource: FreezeLedgerResource,
+    pub amount: i64,          // Absolute value after operation (for idempotency)
+    pub expiration_ms: i64,   // Expiration timestamp in milliseconds since epoch
+    pub v2_model: bool,       // true for V2 model, false for legacy V1
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreezeLedgerResource {
+    Bandwidth = 0,
+    Energy = 1,
+    TronPower = 2,
+}
+
+/// Global resource totals snapshot for Phase 2 emission
+/// Sent to Java to update DynamicPropertiesStore TOTAL_NET_WEIGHT/TOTAL_NET_LIMIT/etc
+/// immediately after freeze/unfreeze operations, fixing FREE_NET vs ACCOUNT_NET divergence
+#[derive(Debug, Clone)]
+pub struct GlobalResourceTotalsChange {
+    pub total_net_weight: i64,      // Sum of all BANDWIDTH freezes / TRX_PRECISION
+    pub total_net_limit: i64,       // Current network bandwidth limit (from dynamic props)
+    pub total_energy_weight: i64,   // Sum of all ENERGY freezes / TRX_PRECISION
+    pub total_energy_limit: i64,    // Current energy limit (from dynamic props, or 0 if N/A)
+}
+
 #[derive(Debug, Clone)]
 pub struct TronExecutionResult {
     pub success: bool,
@@ -60,6 +205,17 @@ pub struct TronExecutionResult {
     pub logs: Vec<revm::primitives::Log>,
     pub state_changes: Vec<TronStateChange>,
     pub error: Option<String>,
+    /// AEXT sidecar: per-address resource tracking (before, after) for tracked mode
+    /// Key: address, Value: (AextBefore, AextAfter)
+    pub aext_map: std::collections::HashMap<revm::primitives::Address, (crate::storage_adapter::AccountAext, crate::storage_adapter::AccountAext)>,
+    /// Freeze/resource ledger changes (Phase 2: emit_freeze_ledger_changes)
+    /// Emitted when config flag is enabled, for Java-side application
+    pub freeze_changes: Vec<FreezeLedgerChange>,
+    /// Global resource totals changes (Phase 2: emit_global_resource_changes)
+    /// Emitted when flag is enabled, for Java to update DynamicPropertiesStore totals
+    /// Fixes FREE_NET vs ACCOUNT_NET divergence by ensuring totalNetWeight/totalNetLimit
+    /// are current before next tx in same block
+    pub global_resource_changes: Vec<GlobalResourceTotalsChange>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -184,6 +340,9 @@ where
                     logs,
                     state_changes: vec![], // Will be populated by caller
                     error: None,
+                    aext_map: std::collections::HashMap::new(), // Will be populated by caller for tracked mode
+                    freeze_changes: vec![], // Will be populated by contract handlers
+                    global_resource_changes: vec![], // Will be populated by contract handlers
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -195,6 +354,9 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some("Transaction reverted".to_string()),
+                    aext_map: std::collections::HashMap::new(),
+                    freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -206,6 +368,9 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some(format!("Transaction halted: {:?}", reason)),
+                    aext_map: std::collections::HashMap::new(),
+                    freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
         }
@@ -231,6 +396,9 @@ where
                     logs,
                     state_changes: vec![], // Calls don't modify state
                     error: None,
+                    aext_map: std::collections::HashMap::new(),
+                    freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -242,6 +410,9 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some("Call reverted".to_string()),
+                    aext_map: std::collections::HashMap::new(),
+                    freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -253,6 +424,9 @@ where
                     logs: vec![],
                     state_changes: vec![],
                     error: Some(format!("Call halted: {:?}", reason)),
+                    aext_map: std::collections::HashMap::new(),
+                    freeze_changes: vec![],
+                    global_resource_changes: vec![],
                 })
             }
         }
@@ -274,9 +448,9 @@ where
     }
 }
 
-// Specialized implementation for StorageAdapterDatabase
-impl<S: StorageAdapter + Send + Sync + 'static> TronEvm<StorageAdapterDatabase<S>> {
-    /// Extract state changes from StorageAdapterDatabase after execution
+// Specialized implementation for EvmStateDatabase
+impl<S: EvmStateStore + Send + Sync + 'static> TronEvm<EvmStateDatabase<S>> {
+    /// Extract state changes from EvmStateDatabase after execution
     pub fn extract_state_changes_from_db(&mut self) -> Vec<TronStateChange> {
         let db = &mut self.evm.context.evm.db;
         let state_records = db.get_state_change_records();

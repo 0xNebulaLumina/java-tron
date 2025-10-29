@@ -454,11 +454,35 @@ message RestoreDatabaseResponse {
   string error_message = 2;
 }
 
+// Account AEXT (resource usage extension) for pre-execution snapshot
+// Captures Java's view of account resource state before execution
+message AccountAext {
+  int64 net_usage = 1;
+  int64 free_net_usage = 2;
+  int64 energy_usage = 3;
+  int64 latest_consume_time = 4;
+  int64 latest_consume_free_time = 5;
+  int64 latest_consume_time_for_energy = 6;
+  int64 net_window_size = 7;
+  bool net_window_optimized = 8;
+  int64 energy_window_size = 9;
+  bool energy_window_optimized = 10;
+}
+
+// Snapshot of an account's AEXT state at a specific address
+message AccountAextSnapshot {
+  bytes address = 1;  // 21-byte Tron address (0x41 prefix + 20 bytes)
+  AccountAext aext = 2;
+}
+
 // Execution Messages (preserved from original backend.proto)
 message ExecuteTransactionRequest {
   // Note: database field removed - execution uses unified storage context
   TronTransaction transaction = 1;
   ExecutionContext context = 2;
+  // Pre-execution AEXT snapshots for hybrid mode
+  // Java provides these to ensure AccountInfo serialization matches embedded behavior
+  repeated AccountAextSnapshot pre_execution_aext = 3;
 }
 
 message ExecuteTransactionResponse {
@@ -584,6 +608,9 @@ message ExecutionResult {
   // Tron-specific fields
   int64 bandwidth_used = 8;
   repeated TronResourceUsage resource_usage = 9;
+  // Phase 2: Freeze/resource ledger changes
+  repeated FreezeLedgerChange freeze_changes = 10;
+  repeated GlobalResourceTotalsChange global_resource_changes = 11;
 }
 
 // Account information for account changes
@@ -593,6 +620,19 @@ message AccountInfo {
   uint64 nonce = 3;
   bytes code_hash = 4;      // 32-byte hash of the code
   bytes code = 5;           // Contract bytecode (empty for EOAs)
+
+  // Optional resource usage fields (AEXT extension)
+  // When present, these are serialized to AEXT tail format in Java
+  optional int64 net_usage = 6;
+  optional int64 free_net_usage = 7;
+  optional int64 energy_usage = 8;
+  optional int64 latest_consume_time = 9;
+  optional int64 latest_consume_free_time = 10;
+  optional int64 latest_consume_time_for_energy = 11;
+  optional int64 net_window_size = 12;
+  optional bool net_window_optimized = 13;
+  optional int64 energy_window_size = 14;
+  optional bool energy_window_optimized = 15;
 }
 
 // Storage slot change within a contract
@@ -631,6 +671,31 @@ message TronResourceUsage {
   int64 used = 2;
   int64 total = 3;
   bytes token_id = 4; // for TRC10/TRC20
+}
+
+// Freeze/resource ledger change emission (Phase 2: emit_freeze_ledger_changes)
+// Describes a single freeze or unfreeze operation affecting an owner's resource balance
+message FreezeLedgerChange {
+  enum Resource {
+    BANDWIDTH = 0;
+    ENERGY = 1;
+    TRON_POWER = 2;
+  }
+
+  bytes owner_address = 1;      // 21-byte Tron address (0x41 prefix + 20 bytes)
+  Resource resource = 2;         // Resource type being frozen/unfrozen
+  int64 amount = 3;              // Absolute value after operation (for idempotency)
+  int64 expiration_ms = 4;       // Expiration timestamp in milliseconds since epoch
+  bool v2_model = 5;             // true for V2 model, false for legacy V1
+}
+
+// Global resource totals change (optional, emitted alongside freeze changes)
+// Captures dynamic property updates for total weights and limits
+message GlobalResourceTotalsChange {
+  int64 total_net_weight = 1;    // Total network weight across all accounts
+  int64 total_net_limit = 2;     // Total network bandwidth limit
+  int64 total_energy_weight = 3; // Total energy weight across all accounts
+  int64 total_energy_limit = 4;  // Total energy limit
 }
 
 message CallContractRequest {

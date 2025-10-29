@@ -103,7 +103,7 @@ else
     RUST_LOG_PATH="rust.log (not found)"
 fi
 
-cp ../archive/5.embedded-java.log ./
+cp ../archive/3.embedded-java.log ./
 
 # Step 10: Find newest CSV file
 echo "Step 10: Finding newest CSV file..."
@@ -130,3 +130,23 @@ echo "10.3 Newest CSV file: $NEWEST_CSV"
 echo "============================================"
 echo ""
 echo "Script completed successfully!"
+echo ""
+echo ""
+echo ""
+echo "Generated prompt:"
+echo "’‘’"
+echo "Think harder."
+echo ""
+echo "I want to compare the (embedded execution + embedded storage) results vs the (remote execution + remote storage) results,"
+echo ""
+echo "The result csv are"
+echo "+ output-directory/execution-csv/20251028-095309-779948da-embedded-embedded.csv"
+echo "+ $NEWEST_CSV"
+echo "respectively."
+echo ""
+echo "you will help me debug and figure out why there are mismatches, starting from the first tx."
+echo ""
+echo "(embedded execution + embedded storage) java log: 3.embedded-java.log"
+echo "(remote execution + remote storage) java log: $JAVA_LOG_PATH"
+echo "(remote execution + remote storage) rust log: $RUST_LOG_PATH"
+echo "’‘’"

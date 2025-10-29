@@ -27,12 +27,17 @@ public class ExecutionProgramResult extends ProgramResult {
   // Additional ExecutionSPI-specific fields
   @Getter @Setter private List<StateChange> stateChanges;
   @Getter @Setter private long bandwidthUsed;
+  // Phase 2: Freeze/resource ledger changes for Java-side application
+  @Getter @Setter private List<ExecutionSPI.FreezeLedgerChange> freezeChanges;
+  @Getter @Setter private List<ExecutionSPI.GlobalResourceTotalsChange> globalResourceChanges;
 
   /** Default constructor creates an empty result. */
   public ExecutionProgramResult() {
     super();
     this.stateChanges = new ArrayList<>();
     this.bandwidthUsed = 0;
+    this.freezeChanges = new ArrayList<>();
+    this.globalResourceChanges = new ArrayList<>();
   }
 
   /**
@@ -119,10 +124,16 @@ public class ExecutionProgramResult extends ProgramResult {
     }
 
     // Set ExecutionSPI-specific fields
-    result.stateChanges = executionResult.getStateChanges() != null 
-        ? new ArrayList<>(executionResult.getStateChanges()) 
+    result.stateChanges = executionResult.getStateChanges() != null
+        ? new ArrayList<>(executionResult.getStateChanges())
         : new ArrayList<>();
     result.bandwidthUsed = executionResult.getBandwidthUsed();
+    result.freezeChanges = executionResult.getFreezeChanges() != null
+        ? new ArrayList<>(executionResult.getFreezeChanges())
+        : new ArrayList<>();
+    result.globalResourceChanges = executionResult.getGlobalResourceChanges() != null
+        ? new ArrayList<>(executionResult.getGlobalResourceChanges())
+        : new ArrayList<>();
 
     return result;
   }
@@ -160,7 +171,9 @@ public class ExecutionProgramResult extends ProgramResult {
         stateChanges != null ? new ArrayList<>(stateChanges) : new ArrayList<>(),
         logs,
         success ? null : (getRuntimeError() != null ? getRuntimeError() : "Execution failed"),
-        bandwidthUsed
+        bandwidthUsed,
+        freezeChanges != null ? new ArrayList<>(freezeChanges) : new ArrayList<>(),
+        globalResourceChanges != null ? new ArrayList<>(globalResourceChanges) : new ArrayList<>()
     );
   }
 
