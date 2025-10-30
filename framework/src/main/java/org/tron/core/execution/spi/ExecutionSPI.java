@@ -124,6 +124,7 @@ public interface ExecutionSPI {
     private final long bandwidthUsed;
     private final List<FreezeLedgerChange> freezeChanges;
     private final List<GlobalResourceTotalsChange> globalResourceChanges;
+    private final List<Trc10LedgerChange> trc10Changes;
 
     public ExecutionResult(
         boolean success,
@@ -135,7 +136,8 @@ public interface ExecutionSPI {
         String errorMessage,
         long bandwidthUsed,
         List<FreezeLedgerChange> freezeChanges,
-        List<GlobalResourceTotalsChange> globalResourceChanges) {
+        List<GlobalResourceTotalsChange> globalResourceChanges,
+        List<Trc10LedgerChange> trc10Changes) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -146,6 +148,7 @@ public interface ExecutionSPI {
       this.bandwidthUsed = bandwidthUsed;
       this.freezeChanges = freezeChanges;
       this.globalResourceChanges = globalResourceChanges;
+      this.trc10Changes = trc10Changes;
     }
 
     // Getters
@@ -187,6 +190,10 @@ public interface ExecutionSPI {
 
     public List<GlobalResourceTotalsChange> getGlobalResourceChanges() {
       return globalResourceChanges;
+    }
+
+    public List<Trc10LedgerChange> getTrc10Changes() {
+      return trc10Changes;
     }
   }
 
@@ -368,6 +375,185 @@ public interface ExecutionSPI {
 
     public long getTotalEnergyLimit() {
       return totalEnergyLimit;
+    }
+  }
+
+  /**
+   * TRC-10 operation type.
+   */
+  enum Trc10Op {
+    ISSUE(0),
+    PARTICIPATE(1),
+    TRANSFER(2);
+
+    private final int value;
+
+    Trc10Op(int value) {
+      this.value = value;
+    }
+
+    public int getValue() {
+      return value;
+    }
+
+    public static Trc10Op fromValue(int value) {
+      for (Trc10Op op : Trc10Op.values()) {
+        if (op.value == value) {
+          return op;
+        }
+      }
+      throw new IllegalArgumentException("Unknown TRC-10 op value: " + value);
+    }
+  }
+
+  /**
+   * Frozen supply entry for TRC-10 asset issuance.
+   */
+  class FrozenSupply {
+    private final long frozenAmount;
+    private final long frozenDays;
+
+    public FrozenSupply(long frozenAmount, long frozenDays) {
+      this.frozenAmount = frozenAmount;
+      this.frozenDays = frozenDays;
+    }
+
+    public long getFrozenAmount() {
+      return frozenAmount;
+    }
+
+    public long getFrozenDays() {
+      return frozenDays;
+    }
+  }
+
+  /**
+   * TRC-10 ledger change emitted by Rust backend for asset operations.
+   * Describes ISSUE, PARTICIPATE, or TRANSFER operations that need Java-side application.
+   */
+  class Trc10LedgerChange {
+    private final Trc10Op op;
+    private final byte[] ownerAddress;
+    private final byte[] toAddress;
+    private final String assetId;
+    private final long amount;
+    private final String name;
+    private final String abbr;
+    private final long totalSupply;
+    private final int precision;
+    private final List<FrozenSupply> frozenSupply;
+    private final long trxNum;
+    private final long num;
+    private final long startTime;
+    private final long endTime;
+    private final String description;
+    private final String url;
+    private final long freeAssetNetLimit;
+    private final long publicFreeAssetNetLimit;
+    private final Long feeSun;
+
+    public Trc10LedgerChange(Trc10Op op, byte[] ownerAddress, byte[] toAddress,
+                              String assetId, long amount, String name, String abbr,
+                              long totalSupply, int precision, List<FrozenSupply> frozenSupply,
+                              long trxNum, long num, long startTime, long endTime,
+                              String description, String url, long freeAssetNetLimit,
+                              long publicFreeAssetNetLimit, Long feeSun) {
+      this.op = op;
+      this.ownerAddress = ownerAddress;
+      this.toAddress = toAddress;
+      this.assetId = assetId;
+      this.amount = amount;
+      this.name = name;
+      this.abbr = abbr;
+      this.totalSupply = totalSupply;
+      this.precision = precision;
+      this.frozenSupply = frozenSupply;
+      this.trxNum = trxNum;
+      this.num = num;
+      this.startTime = startTime;
+      this.endTime = endTime;
+      this.description = description;
+      this.url = url;
+      this.freeAssetNetLimit = freeAssetNetLimit;
+      this.publicFreeAssetNetLimit = publicFreeAssetNetLimit;
+      this.feeSun = feeSun;
+    }
+
+    // Getters
+    public Trc10Op getOp() {
+      return op;
+    }
+
+    public byte[] getOwnerAddress() {
+      return ownerAddress;
+    }
+
+    public byte[] getToAddress() {
+      return toAddress;
+    }
+
+    public String getAssetId() {
+      return assetId;
+    }
+
+    public long getAmount() {
+      return amount;
+    }
+
+    public String getName() {
+      return name;
+    }
+
+    public String getAbbr() {
+      return abbr;
+    }
+
+    public long getTotalSupply() {
+      return totalSupply;
+    }
+
+    public int getPrecision() {
+      return precision;
+    }
+
+    public List<FrozenSupply> getFrozenSupply() {
+      return frozenSupply;
+    }
+
+    public long getTrxNum() {
+      return trxNum;
+    }
+
+    public long getNum() {
+      return num;
+    }
+
+    public long getStartTime() {
+      return startTime;
+    }
+
+    public long getEndTime() {
+      return endTime;
+    }
+
+    public String getDescription() {
+      return description;
+    }
+
+    public String getUrl() {
+      return url;
+    }
+
+    public long getFreeAssetNetLimit() {
+      return freeAssetNetLimit;
+    }
+
+    public long getPublicFreeAssetNetLimit() {
+      return publicFreeAssetNetLimit;
+    }
+
+    public Long getFeeSun() {
+      return feeSun;
     }
   }
 

@@ -25,65 +25,65 @@ Decision: Proceed with Phase 1 (emit in Rust, apply in Java) to completion. Trac
 
 ### P1.1 Java Result Plumbing (gRPC → SPI → ProgramResult)
 
-- [ ] Add TRC-10 DTOs to `ExecutionSPI` (or reuse protobuf types with conversion):
-  - [ ] `ExecutionSPI.Trc10Op { ISSUE, PARTICIPATE, TRANSFER }`
-  - [ ] `ExecutionSPI.FrozenSupply { long frozenAmount, long frozenDays }`
-  - [ ] `ExecutionSPI.Trc10LedgerChange` with fields: `op, ownerAddress, toAddress, assetId, amount, name, abbr, totalSupply, precision, frozenSupply[], trxNum, num, startTime, endTime, description, url, freeAssetNetLimit, publicFreeAssetNetLimit, feeSun(optional)`
-- [ ] Extend `ExecutionSPI.ExecutionResult` to include `List<Trc10LedgerChange> trc10Changes` with a getter.
-- [ ] Extend `ExecutionProgramResult`:
-  - [ ] Add `List<ExecutionSPI.Trc10LedgerChange> trc10Changes` with getter/setter.
-  - [ ] In `fromExecutionResult(...)`, copy `trc10Changes` from SPI result.
-  - [ ] In `toExecutionResult(...)`, copy `trc10Changes` back to SPI result.
-- [ ] Update `RemoteExecutionSPI.convertExecuteTransactionResponse(...)` to:
-  - [ ] Iterate `protoResult.getTrc10ChangesList()` and map to `ExecutionSPI.Trc10LedgerChange` (convert enum and nested `FrozenSupply`).
-  - [ ] Set `trc10Changes` on the constructed SPI `ExecutionResult` before wrapping into `ExecutionProgramResult`.
-- [ ] Sorting/parity:
-  - [ ] If multiple TRC‑10 changes can exist per tx in the future, define deterministic ordering (e.g., by `op` then `owner_address` then `asset_id` bytes) before setting on results to stabilize CSVs.
+- [x] Add TRC-10 DTOs to `ExecutionSPI` (or reuse protobuf types with conversion):
+  - [x] `ExecutionSPI.Trc10Op { ISSUE, PARTICIPATE, TRANSFER }`
+  - [x] `ExecutionSPI.FrozenSupply { long frozenAmount, long frozenDays }`
+  - [x] `ExecutionSPI.Trc10LedgerChange` with fields: `op, ownerAddress, toAddress, assetId, amount, name, abbr, totalSupply, precision, frozenSupply[], trxNum, num, startTime, endTime, description, url, freeAssetNetLimit, publicFreeAssetNetLimit, feeSun(optional)`
+- [x] Extend `ExecutionSPI.ExecutionResult` to include `List<Trc10LedgerChange> trc10Changes` with a getter.
+- [x] Extend `ExecutionProgramResult`:
+  - [x] Add `List<ExecutionSPI.Trc10LedgerChange> trc10Changes` with getter/setter.
+  - [x] In `fromExecutionResult(...)`, copy `trc10Changes` from SPI result.
+  - [x] In `toExecutionResult(...)`, copy `trc10Changes` back to SPI result.
+- [x] Update `RemoteExecutionSPI.convertExecuteTransactionResponse(...)` to:
+  - [x] Iterate `protoResult.getTrc10ChangesList()` and map to `ExecutionSPI.Trc10LedgerChange` (convert enum and nested `FrozenSupply`).
+  - [x] Set `trc10Changes` on the constructed SPI `ExecutionResult` before wrapping into `ExecutionProgramResult`.
+- [x] Sorting/parity:
+  - [x] If multiple TRC‑10 changes can exist per tx in the future, define deterministic ordering (e.g., by `op` then `owner_address` then `asset_id` bytes) before setting on results to stabilize CSVs.
 
 ### P1.2 Runtime Apply — Asset Issue Parity (Actuator-complete)
 
 File: `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java`
 
-- [ ] Compute `remainSupply = totalSupply - sum(frozenSupply.frozen_amount)` for crediting owner (not full totalSupply).
-- [ ] `ALLOW_SAME_TOKEN_NAME` handling:
-  - [ ] When `allowSameTokenName == 0` (legacy):
-    - [ ] Set `precision = 0` for V2 record.
-    - [ ] Persist to both `AssetIssueStore` (name‑keyed) and `AssetIssueV2Store` (id‑keyed).
-    - [ ] Add owner balance in both legacy (name‑keyed) and V2 maps as actuator does.
-  - [ ] When `allowSameTokenName != 0` (V2 only):
-    - [ ] Persist to `AssetIssueV2Store` only.
-- [ ] Token ID assignment:
-  - [ ] Increment `TOKEN_ID_NUM`, persist via `DynamicPropertiesStore.saveTokenIdNum()`, set `assetIssueCapsule.setId(String.valueOf(tokenIdNum))` for both stores.
-- [ ] Deduct issuance fee:
-  - [ ] Read `ASSET_ISSUE_FEE` from `DynamicPropertiesStore`.
-  - [ ] Deduct from owner balance.
-  - [ ] If `supportBlackHoleOptimization()` true → burn via `dynamicStore.burnTrx(fee)`; else credit blackhole account.
-- [ ] Account updates:
-  - [ ] `setAssetIssuedName` and `setAssetIssuedID` on owner.
-  - [ ] Set `frozen_supply` on account: convert contract’s frozen list to `Protocol.Account.Frozen` with expire time `start_time + frozen_days * FROZEN_PERIOD` and append to account.
-- [ ] Bandwidth/energy: no system energy change; bandwidth accounted by remote result; ensure no double-accounting.
-- [ ] Error handling/logging: mimic actuator messages when fail to apply, but do not throw (maintain tx flow), log clearly.
+- [x] Compute `remainSupply = totalSupply - sum(frozenSupply.frozen_amount)` for crediting owner (not full totalSupply).
+- [x] `ALLOW_SAME_TOKEN_NAME` handling:
+  - [x] When `allowSameTokenName == 0` (legacy):
+    - [x] Set `precision = 0` for V2 record.
+    - [x] Persist to both `AssetIssueStore` (name‑keyed) and `AssetIssueV2Store` (id‑keyed).
+    - [x] Add owner balance in both legacy (name‑keyed) and V2 maps as actuator does.
+  - [x] When `allowSameTokenName != 0` (V2 only):
+    - [x] Persist to `AssetIssueV2Store` only.
+- [x] Token ID assignment:
+  - [x] Increment `TOKEN_ID_NUM`, persist via `DynamicPropertiesStore.saveTokenIdNum()`, set `assetIssueCapsule.setId(String.valueOf(tokenIdNum))` for both stores.
+- [x] Deduct issuance fee:
+  - [x] Read `ASSET_ISSUE_FEE` from `DynamicPropertiesStore`.
+  - [x] Deduct from owner balance.
+  - [x] If `supportBlackHoleOptimization()` true → burn via `dynamicStore.burnTrx(fee)`; else credit blackhole account.
+- [x] Account updates:
+  - [x] `setAssetIssuedName` and `setAssetIssuedID` on owner.
+  - [x] Set `frozen_supply` on account: convert contract's frozen list to `Protocol.Account.Frozen` with expire time `start_time + frozen_days * FROZEN_PERIOD` and append to account.
+- [x] Bandwidth/energy: no system energy change; bandwidth accounted by remote result; ensure no double-accounting.
+- [x] Error handling/logging: mimic actuator messages when fail to apply, but do not throw (maintain tx flow), log clearly.
 
 ### P1.3 Runtime Apply — Participate Parity (Actuator-complete)
 
-- [ ] Resolve asset for exchange:
-  - [ ] If `allowSameTokenName == 0`: resolve via name‑keyed store first (`AssetIssueStore`), else via V2.
-  - [ ] If V2 only: resolve by ID in V2 store.
-- [ ] Validate basics (mirror actuator as much as feasible in apply step):
-  - [ ] `trxNum > 0`, `num > 0`, asset exists, issuer matches `to_address`, current block time within `[start_time, end_time)`, owner/issuer accounts exist.
-  - [ ] Owner TRX balance sufficient for `amount` (best effort parity; if not, log and skip apply to avoid divergence; actuator would have failed earlier in embedded path).
-- [ ] Compute token amount: `exchangeAmount = floor(amount * num / trx_num)`.
-- [ ] Ledger deltas:
-  - [ ] Debit owner TRX by `amount`; credit issuer TRX by `amount`.
-  - [ ] Debit issuer asset by `exchangeAmount`; credit owner asset by `exchangeAmount` (V1/V2 paths per `allowSameTokenName`).
-- [ ] Persist account updates and stores.
-- [ ] Logging with before/after balances for troubleshooting parity.
+- [x] Resolve asset for exchange:
+  - [x] If `allowSameTokenName == 0`: resolve via name‑keyed store first (`AssetIssueStore`), else via V2.
+  - [x] If V2 only: resolve by ID in V2 store.
+- [x] Validate basics (mirror actuator as much as feasible in apply step):
+  - [x] `trxNum > 0`, `num > 0`, asset exists, issuer matches `to_address`, current block time within `[start_time, end_time)`, owner/issuer accounts exist.
+  - [x] Owner TRX balance sufficient for `amount` (best effort parity; if not, log and skip apply to avoid divergence; actuator would have failed earlier in embedded path).
+- [x] Compute token amount: `exchangeAmount = floor(amount * num / trx_num)`.
+- [x] Ledger deltas:
+  - [x] Debit owner TRX by `amount`; credit issuer TRX by `amount`.
+  - [x] Debit issuer asset by `exchangeAmount`; credit owner asset by `exchangeAmount` (V1/V2 paths per `allowSameTokenName`).
+- [x] Persist account updates and stores.
+- [x] Logging with before/after balances for troubleshooting parity.
 
 ### P1.4 RemoteExecutionSPI Mapping/Toggles Hygiene
 
-- [ ] Keep TRC‑10 mapping gated behind `-Dremote.exec.trc10.enabled` (default false). Confirm consistent messages: “... disabled - falling back to Java”.
-- [ ] Ensure pre‑exec AEXT snapshots include Participate recipient (present) and consider TransferAssetContract parity when that’s implemented.
-- [ ] Ensure `TxKind=NON_VM` is set for TRC‑10 contracts.
+- [x] Keep TRC‑10 mapping gated behind `-Dremote.exec.trc10.enabled` (default false). Confirm consistent messages: "... disabled - falling back to Java".
+- [x] Ensure pre‑exec AEXT snapshots include Participate recipient (present) and consider TransferAssetContract parity when that's implemented.
+- [x] Ensure `TxKind=NON_VM` is set for TRC‑10 contracts.
 
 ### P1.5 Rust Backend Hygiene (Phase 1)
 

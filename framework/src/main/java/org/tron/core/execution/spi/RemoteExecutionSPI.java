@@ -725,7 +725,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           response.getErrorMessage(), // errorMessage
           0, // bandwidthUsed
           new ArrayList<>(), // freezeChanges
-          new ArrayList<>() // globalResourceChanges
+          new ArrayList<>(), // globalResourceChanges
+          new ArrayList<>() // trc10Changes
           );
     }
 
@@ -884,6 +885,107 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       });
     }
 
+    // Convert protobuf TRC-10 changes to ExecutionSPI TRC-10 changes (Phase 1)
+    List<ExecutionSPI.Trc10LedgerChange> trc10Changes = new ArrayList<>();
+    for (tron.backend.BackendOuterClass.Trc10LedgerChange protoTrc10 : protoResult.getTrc10ChangesList()) {
+      // Convert proto Trc10Op enum to ExecutionSPI Trc10Op enum
+      ExecutionSPI.Trc10Op op;
+      switch (protoTrc10.getOp()) {
+        case ISSUE:
+          op = ExecutionSPI.Trc10Op.ISSUE;
+          break;
+        case PARTICIPATE:
+          op = ExecutionSPI.Trc10Op.PARTICIPATE;
+          break;
+        case TRANSFER:
+          op = ExecutionSPI.Trc10Op.TRANSFER;
+          break;
+        default:
+          logger.warn("Unknown TRC-10 op type: {}, skipping entry", protoTrc10.getOp());
+          continue;
+      }
+
+      // Convert frozen supply list
+      List<ExecutionSPI.FrozenSupply> frozenSupplyList = new ArrayList<>();
+      for (tron.backend.BackendOuterClass.FrozenSupply protoFrozen : protoTrc10.getFrozenSupplyList()) {
+        frozenSupplyList.add(new ExecutionSPI.FrozenSupply(
+            protoFrozen.getFrozenAmount(),
+            protoFrozen.getFrozenDays()));
+      }
+
+      // Convert bytes to String for text fields
+      String name = protoTrc10.getName().toStringUtf8();
+      String abbr = protoTrc10.getAbbr().toStringUtf8();
+      String description = protoTrc10.getDescription().toStringUtf8();
+      String url = protoTrc10.getUrl().toStringUtf8();
+      String assetId = protoTrc10.getAssetId().toStringUtf8();
+
+      // Handle optional fee_sun field
+      Long feeSun = protoTrc10.hasFeeSun() ? protoTrc10.getFeeSun() : null;
+
+      ExecutionSPI.Trc10LedgerChange trc10Change = new ExecutionSPI.Trc10LedgerChange(
+          op,
+          protoTrc10.getOwnerAddress().toByteArray(),
+          protoTrc10.getToAddress().toByteArray(),
+          assetId,
+          protoTrc10.getAmount(),
+          name,
+          abbr,
+          protoTrc10.getTotalSupply(),
+          protoTrc10.getPrecision(),
+          frozenSupplyList,
+          protoTrc10.getTrxNum(),
+          protoTrc10.getNum(),
+          protoTrc10.getStartTime(),
+          protoTrc10.getEndTime(),
+          description,
+          url,
+          protoTrc10.getFreeAssetNetLimit(),
+          protoTrc10.getPublicFreeAssetNetLimit(),
+          feeSun);
+      trc10Changes.add(trc10Change);
+
+      logger.debug("Parsed TRC-10 change: op={}, owner={}, name={}, totalSupply={}, precision={}",
+          op,
+          org.tron.common.utils.ByteArray.toHexString(protoTrc10.getOwnerAddress().toByteArray()),
+          name,
+          protoTrc10.getTotalSupply(),
+          protoTrc10.getPrecision());
+    }
+
+    // Deterministically order TRC-10 changes: by op, then by owner address, then by asset_id bytes
+    if (trc10Changes.size() > 1) {
+      trc10Changes.sort(new Comparator<ExecutionSPI.Trc10LedgerChange>() {
+        @Override
+        public int compare(ExecutionSPI.Trc10LedgerChange a, ExecutionSPI.Trc10LedgerChange b) {
+          // First compare by op
+          int cmp = Integer.compare(a.getOp().getValue(), b.getOp().getValue());
+          if (cmp != 0) {
+            return cmp;
+          }
+          // Then by owner address bytes
+          byte[] aa = a.getOwnerAddress();
+          byte[] bb = b.getOwnerAddress();
+          int min = Math.min(aa != null ? aa.length : 0, bb != null ? bb.length : 0);
+          for (int i = 0; i < min; i++) {
+            int da = aa[i] & 0xFF;
+            int db = bb[i] & 0xFF;
+            if (da != db) {
+              return Integer.compare(da, db);
+            }
+          }
+          cmp = Integer.compare(aa != null ? aa.length : 0, bb != null ? bb.length : 0);
+          if (cmp != 0) {
+            return cmp;
+          }
+          // Finally by asset_id string
+          String assetA = a.getAssetId() != null ? a.getAssetId() : "";
+          String assetB = b.getAssetId() != null ? b.getAssetId() : "";
+          return assetA.compareTo(assetB);
+        }
+      });
+    }
+
     // Report metrics if callback is registered
     if (metricsCallback != null) {
       metricsCallback.onMetric("remote.energy_used", protoResult.getEnergyUsed());
@@ -893,6 +995,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               ? 1.0
               : 0.0);
       metricsCallback.onMetric("remote.freeze_changes_count", freezeChanges.size());
+      metricsCallback.onMetric("remote.trc10_changes_count", trc10Changes.size());
     }
 
     return new ExecutionResult(
@@ -905,7 +1008,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         protoResult.getErrorMessage(),
         protoResult.getBandwidthUsed(),
         freezeChanges,
-        globalResourceChanges);
+        globalResourceChanges,
+        trc10Changes);
   }
 
   /**

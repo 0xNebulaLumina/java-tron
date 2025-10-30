@@ -30,6 +30,8 @@ public class ExecutionProgramResult extends ProgramResult {
   // Phase 2: Freeze/resource ledger changes for Java-side application
   @Getter @Setter private List<ExecutionSPI.FreezeLedgerChange> freezeChanges;
   @Getter @Setter private List<ExecutionSPI.GlobalResourceTotalsChange> globalResourceChanges;
+  // Phase 1: TRC-10 ledger changes for Java-side application
+  @Getter @Setter private List<ExecutionSPI.Trc10LedgerChange> trc10Changes;
 
   /** Default constructor creates an empty result. */
   public ExecutionProgramResult() {
@@ -38,6 +40,7 @@ public class ExecutionProgramResult extends ProgramResult {
     this.bandwidthUsed = 0;
     this.freezeChanges = new ArrayList<>();
     this.globalResourceChanges = new ArrayList<>();
+    this.trc10Changes = new ArrayList<>();
   }
 
   /**
@@ -134,6 +137,9 @@ public class ExecutionProgramResult extends ProgramResult {
     result.globalResourceChanges = executionResult.getGlobalResourceChanges() != null
         ? new ArrayList<>(executionResult.getGlobalResourceChanges())
         : new ArrayList<>();
+    result.trc10Changes = executionResult.getTrc10Changes() != null
+        ? new ArrayList<>(executionResult.getTrc10Changes())
+        : new ArrayList<>();
 
     return result;
   }
@@ -173,7 +179,8 @@ public class ExecutionProgramResult extends ProgramResult {
         success ? null : (getRuntimeError() != null ? getRuntimeError() : "Execution failed"),
         bandwidthUsed,
         freezeChanges != null ? new ArrayList<>(freezeChanges) : new ArrayList<>(),
-        globalResourceChanges != null ? new ArrayList<>(globalResourceChanges) : new ArrayList<>()
+        globalResourceChanges != null ? new ArrayList<>(globalResourceChanges) : new ArrayList<>(),
+        trc10Changes != null ? new ArrayList<>(trc10Changes) : new ArrayList<>()
     );
   }
 
