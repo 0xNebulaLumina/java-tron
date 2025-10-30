@@ -56,6 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("  UnfreezeBalance V1 enabled: {}", config.execution.remote.unfreeze_balance_enabled);
     info!("  FreezeBalanceV2 enabled: {}", config.execution.remote.freeze_balance_v2_enabled);
     info!("  UnfreezeBalanceV2 enabled: {}", config.execution.remote.unfreeze_balance_v2_enabled);
+    info!("  TRC-10 enabled: {}", config.execution.remote.trc10_enabled);
     info!("======================================");
 
     // Create the backend service

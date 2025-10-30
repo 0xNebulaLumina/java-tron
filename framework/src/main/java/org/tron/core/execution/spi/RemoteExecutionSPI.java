@@ -20,6 +20,8 @@ import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
+import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
+import org.tron.protos.contract.AssetIssueContractOuterClass.ParticipateAssetIssueContract;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
 import org.tron.protos.contract.BalanceContract.FreezeBalanceContract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
@@ -406,6 +408,49 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           contractType = tron.backend.BackendOuterClass.ContractType.ACCOUNT_UPDATE_CONTRACT;
           logger.debug("Mapped AccountUpdateContract to remote request; owner={}, data_len={}",
               org.tron.common.utils.ByteArray.toHexString(accountUpdateContract.getOwnerAddress().toByteArray()), data.length);
+          break;
+
+        case AssetIssueContract:
+          // Gate with system property (default false)
+          boolean trc10AssetIssueEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!trc10AssetIssueEnabled) {
+            logger.debug("TRC-10 AssetIssue remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("TRC-10 AssetIssue execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+
+          AssetIssueContract assetIssueContract = contractParameter.unpack(AssetIssueContract.class);
+          fromAddress = assetIssueContract.getOwnerAddress().toByteArray();
+          toAddress = new byte[0]; // Empty for asset issuance
+          value = 0;
+          data = assetIssueContract.toByteArray(); // Full contract data for Rust processing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.ASSET_ISSUE_CONTRACT;
+          assetId = new byte[0]; // Asset ID not yet assigned
+          logger.debug("Mapped AssetIssueContract to remote request; owner={}, name={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              assetIssueContract.getName().toStringUtf8());
+          break;
+
+        case ParticipateAssetIssueContract:
+          // Gate with same property as AssetIssue
+          boolean trc10ParticipateEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!trc10ParticipateEnabled) {
+            logger.debug("TRC-10 Participate remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("TRC-10 Participate execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+
+          ParticipateAssetIssueContract participateContract = contractParameter.unpack(ParticipateAssetIssueContract.class);
+          fromAddress = participateContract.getOwnerAddress().toByteArray();
+          toAddress = participateContract.getToAddress().toByteArray();
+          value = 0;
+          data = participateContract.toByteArray(); // Full contract data for Rust processing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.PARTICIPATE_ASSET_ISSUE_CONTRACT;
+          assetId = participateContract.getAssetName().toByteArray(); // Asset name/ID for participation
+          logger.debug("Mapped ParticipateAssetIssueContract to remote request; owner={}, to={}, asset_name={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(toAddress),
+              participateContract.getAssetName().toStringUtf8());
           break;
 
         default:
@@ -900,6 +945,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       switch (contractType) {
         case TransferContract:
         case TransferAssetContract:
+        case ParticipateAssetIssueContract:
+          // For Participate, toAddress is the asset issuer - include for resource tracking
           addressesToSnapshot.add(toAddress);
           break;
         default:

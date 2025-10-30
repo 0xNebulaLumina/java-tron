@@ -401,6 +401,7 @@ impl BackendService {
                 resource_usage: vec![], // Not implemented yet
                 freeze_changes, // Converted from TronExecutionResult
                 global_resource_changes, // Converted from TronExecutionResult
+                trc10_changes: vec![], // TRC-10 changes (to be populated by handlers)
             }),
             success: result.success,
             error_message,

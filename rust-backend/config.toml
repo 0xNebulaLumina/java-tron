@@ -69,8 +69,12 @@ witness_create_enabled = true
 witness_update_enabled = false  # Disabled until implemented
 vote_witness_enabled = true
 
-# TRC-10 transfers (requires additional storage support)
-trc10_enabled = false
+# TRC-10 transfers, asset issuance, and participation (Phase 1: emit changes, apply in Java)
+# When enabled, AssetIssueContract and ParticipateAssetIssueContract are processed in Rust
+# Validation and change emission happens in Rust; Java applies via applyTrc10LedgerChanges()
+# TransferAssetContract remains stubbed (not yet implemented)
+# Default: true for Phase 1 development and testing
+trc10_enabled = true
 
 # FreezeBalanceContract execution (Phase 2: balance delta + resource ledger)
 # Set to true to enable remote execution of FreezeBalanceContract

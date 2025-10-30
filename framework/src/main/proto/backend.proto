@@ -611,6 +611,8 @@ message ExecutionResult {
   // Phase 2: Freeze/resource ledger changes
   repeated FreezeLedgerChange freeze_changes = 10;
   repeated GlobalResourceTotalsChange global_resource_changes = 11;
+  // TRC-10 ledger changes (Phase 1: emitted from Rust, applied in Java)
+  repeated Trc10LedgerChange trc10_changes = 12;
 }
 
 // Account information for account changes
@@ -696,6 +698,45 @@ message GlobalResourceTotalsChange {
   int64 total_net_limit = 2;     // Total network bandwidth limit
   int64 total_energy_weight = 3; // Total energy weight across all accounts
   int64 total_energy_limit = 4;  // Total energy limit
+}
+
+// TRC-10 operation types
+enum Trc10Op {
+  ISSUE = 0;       // Asset issuance
+  PARTICIPATE = 1; // Participate in asset issuance
+  TRANSFER = 2;    // TRC-10 asset transfer (future)
+}
+
+// Frozen supply for asset issuance
+message FrozenSupply {
+  int64 frozen_amount = 1;
+  int64 frozen_days = 2;
+}
+
+// TRC-10 ledger change (emitted from Rust, applied in Java Phase 1)
+message Trc10LedgerChange {
+  Trc10Op op = 1;
+  bytes owner_address = 2;   // 21-byte Tron address
+  bytes to_address = 3;      // optional for ISSUE; required for PARTICIPATE/TRANSFER
+  bytes asset_id = 4;        // V2 id if known (for ISSUE Java assigns); otherwise asset_name per contract input
+  int64 amount = 5;          // for PARTICIPATE (TRX) or TRANSFER; ISSUE sets 0
+
+  // ISSUE-only fields below (copied from AssetIssueContract for Java side application)
+  bytes name = 10;
+  bytes abbr = 11;
+  int64 total_supply = 12;
+  int32 precision = 13;
+  repeated FrozenSupply frozen_supply = 14;
+  int32 trx_num = 15;
+  int32 num = 16;
+  int64 start_time = 17;
+  int64 end_time = 18;
+  bytes description = 19;
+  bytes url = 20;
+  int64 free_asset_net_limit = 21;
+  int64 public_free_asset_net_limit = 22;
+  // Fee hint: asset_issue_fee in SUN (Rust fills; Java computes preferred source from properties if absent)
+  optional int64 fee_sun = 30;
 }
 
 message CallContractRequest {
