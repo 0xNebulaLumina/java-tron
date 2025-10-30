@@ -7,3 +7,5 @@ mod contracts;
 mod helpers;
 #[cfg(test)]
 mod integration;
+#[cfg(test)]
+mod trc10;

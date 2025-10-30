@@ -39,17 +39,17 @@ async fn test_non_vm_transaction_execution() {
     let sender_address = Address::from_slice(&[0x01; 20]);
     let recipient_address = Address::from_slice(&[0x02; 20]);
 
-    let sender_account = revm_primitives::AccountInfo {
+    let _sender_account = revm_primitives::AccountInfo {
         balance: U256::from(1000000u64), // 1M SUN
         nonce: 0,
         code_hash: revm_primitives::B256::ZERO,
         code: None,
     };
 
-    let recipient_account = revm_primitives::AccountInfo::default();
+    let _recipient_account = revm_primitives::AccountInfo::default();
 
     // Create transaction
-    let transaction = TronTransaction {
+    let _transaction = TronTransaction {
         from: sender_address,
         to: Some(recipient_address),
         value: U256::from(100000u64), // 100K SUN transfer
@@ -63,7 +63,7 @@ async fn test_non_vm_transaction_execution() {
         },
     };
 
-    let context = TronExecutionContext {
+    let _context = TronExecutionContext {
         block_number: 1000,
         block_timestamp: 1640000000,
         block_coinbase: Address::ZERO,

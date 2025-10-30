@@ -280,7 +280,8 @@ public class ShadowExecutionSPITest {
         null, // errorMessage
         50L, // bandwidthUsed
         new ArrayList<>(), // freezeChanges
-        new ArrayList<>() // globalResourceChanges
+        new ArrayList<>(), // globalResourceChanges
+        new ArrayList<>() // trc10Changes
         );
   }
 
@@ -295,7 +296,8 @@ public class ShadowExecutionSPITest {
         "Execution failed", // errorMessage
         25L, // bandwidthUsed
         new ArrayList<>(), // freezeChanges
-        new ArrayList<>() // globalResourceChanges
+        new ArrayList<>(), // globalResourceChanges
+        new ArrayList<>() // trc10Changes
         );
   }
 }

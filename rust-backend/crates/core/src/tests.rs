@@ -423,10 +423,10 @@ fn test_vote_witness_after_freeze_v1_succeeds() {
     let owner_address = create_tron_address(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
 
     // Create witness address to vote for
-    let witness_address = create_tron_address(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+    let _witness_address = create_tron_address(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
 
     // Create execution context for block 2142
-    let context = TronExecutionContext {
+    let _context = TronExecutionContext {
         block_number: 2142,
         block_timestamp: 1000000000,
         block_coinbase: Address::ZERO,

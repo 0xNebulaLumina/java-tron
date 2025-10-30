@@ -606,11 +606,10 @@ public class RuntimeSpiImpl implements Runtime {
         dynamicStore.burnTrx(fee);
         logger.debug("Burned asset issue fee: {}", fee);
       } else {
-        byte[] blackholeAddress = accountStore.getBlackhole();
-        org.tron.core.capsule.AccountCapsule blackholeAccount = accountStore.get(blackholeAddress);
+        org.tron.core.capsule.AccountCapsule blackholeAccount = accountStore.getBlackhole();
         if (blackholeAccount != null) {
           blackholeAccount.setBalance(blackholeAccount.getBalance() + fee);
-          accountStore.put(blackholeAddress, blackholeAccount);
+          accountStore.put(blackholeAccount.getAddress().toByteArray(), blackholeAccount);
         }
         logger.debug("Sent asset issue fee to blackhole: {}", fee);
       }
@@ -777,7 +776,7 @@ public class RuntimeSpiImpl implements Runtime {
 
       // Add tokens to owner using addAssetAmountV2 (handles V1/V2)
       ownerAccount.addAssetAmountV2(
-          com.google.protobuf.ByteString.copyFrom(assetNameBytes),
+          assetNameBytes,
           exchangeAmount,
           dynamicStore,
           assetIssueStore);
