@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use tracing::{debug, warn};
 use revm_primitives::hex;
-use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, AccountAext};
+use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, AccountAext, Trc10LedgerChange, Trc10Op, FrozenSupply};
 use crate::backend::*;
 use super::super::BackendService;
 use super::address::{strip_tron_address_prefix, add_tron_address_prefix};
@@ -386,6 +386,49 @@ impl BackendService {
             }
         }).collect();
 
+        // Convert TRC-10 ledger changes from execution result to protobuf
+        let trc10_changes: Vec<crate::backend::Trc10LedgerChange> = result.trc10_changes.iter().map(|change| {
+            use crate::backend::Trc10Op as ProtoTrc10Op;
+            use tron_backend_execution::Trc10Op as RustTrc10Op;
+
+            // Convert Rust Trc10Op enum to protobuf enum
+            let op = match change.op {
+                RustTrc10Op::Issue => ProtoTrc10Op::Issue,
+                RustTrc10Op::Participate => ProtoTrc10Op::Participate,
+                RustTrc10Op::Transfer => ProtoTrc10Op::Transfer,
+            };
+
+            // Convert frozen_supply vec
+            let frozen_supply: Vec<crate::backend::FrozenSupply> = change.frozen_supply.iter().map(|fs| {
+                crate::backend::FrozenSupply {
+                    frozen_amount: fs.frozen_amount,
+                    frozen_days: fs.frozen_days,
+                }
+            }).collect();
+
+            crate::backend::Trc10LedgerChange {
+                op: op as i32,
+                owner_address: change.owner_address.clone(),
+                to_address: change.to_address.clone(),
+                asset_id: change.asset_id.clone(),
+                amount: change.amount,
+                name: change.name.clone(),
+                abbr: change.abbr.clone(),
+                total_supply: change.total_supply,
+                precision: change.precision,
+                frozen_supply,
+                trx_num: change.trx_num,
+                num: change.num,
+                start_time: change.start_time,
+                end_time: change.end_time,
+                description: change.description.clone(),
+                url: change.url.clone(),
+                free_asset_net_limit: change.free_asset_net_limit,
+                public_free_asset_net_limit: change.public_free_asset_net_limit,
+                fee_sun: change.fee_sun,
+            }
+        }).collect();
+
         let error_message = result.error.unwrap_or_default();
 
         ExecuteTransactionResponse {
@@ -401,7 +444,7 @@ impl BackendService {
                 resource_usage: vec![], // Not implemented yet
                 freeze_changes, // Converted from TronExecutionResult
                 global_resource_changes, // Converted from TronExecutionResult
-                trc10_changes: vec![], // TRC-10 changes (to be populated by handlers)
+                trc10_changes, // Converted from TronExecutionResult
             }),
             success: result.success,
             error_message,

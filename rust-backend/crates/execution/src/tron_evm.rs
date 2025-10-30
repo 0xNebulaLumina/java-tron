@@ -196,6 +196,48 @@ pub struct GlobalResourceTotalsChange {
     pub total_energy_limit: i64,    // Current energy limit (from dynamic props, or 0 if N/A)
 }
 
+/// TRC-10 operation type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trc10Op {
+    Issue = 0,
+    Participate = 1,
+    Transfer = 2,
+}
+
+/// Frozen supply entry for asset issuance
+#[derive(Debug, Clone)]
+pub struct FrozenSupply {
+    pub frozen_amount: i64,
+    pub frozen_days: i64,
+}
+
+/// TRC-10 ledger change (Phase 1: emitted from Rust, applied in Java)
+/// Describes asset issuance or participation operations for Java-side application
+#[derive(Debug, Clone)]
+pub struct Trc10LedgerChange {
+    pub op: Trc10Op,
+    pub owner_address: Vec<u8>,     // 21-byte Tron address
+    pub to_address: Vec<u8>,        // Empty for ISSUE; issuer address for PARTICIPATE
+    pub asset_id: Vec<u8>,          // Asset name for lookup; Java assigns V2 id for ISSUE
+    pub amount: i64,                // TRX amount for PARTICIPATE; 0 for ISSUE
+
+    // ISSUE-only fields (empty for PARTICIPATE)
+    pub name: Vec<u8>,
+    pub abbr: Vec<u8>,
+    pub total_supply: i64,
+    pub precision: i32,
+    pub frozen_supply: Vec<FrozenSupply>,
+    pub trx_num: i32,
+    pub num: i32,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub description: Vec<u8>,
+    pub url: Vec<u8>,
+    pub free_asset_net_limit: i64,
+    pub public_free_asset_net_limit: i64,
+    pub fee_sun: Option<i64>,       // Asset issue fee hint for Java
+}
+
 #[derive(Debug, Clone)]
 pub struct TronExecutionResult {
     pub success: bool,
@@ -216,6 +258,9 @@ pub struct TronExecutionResult {
     /// Fixes FREE_NET vs ACCOUNT_NET divergence by ensuring totalNetWeight/totalNetLimit
     /// are current before next tx in same block
     pub global_resource_changes: Vec<GlobalResourceTotalsChange>,
+    /// TRC-10 ledger changes (Phase 1: emitted from Rust, applied in Java)
+    /// Contains asset issuance and participation operations for Java to apply to stores
+    pub trc10_changes: Vec<Trc10LedgerChange>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -343,6 +388,7 @@ where
                     aext_map: std::collections::HashMap::new(), // Will be populated by caller for tracked mode
                     freeze_changes: vec![], // Will be populated by contract handlers
                     global_resource_changes: vec![], // Will be populated by contract handlers
+                    trc10_changes: vec![], // Will be populated by TRC-10 contracts
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -357,6 +403,7 @@ where
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
+                    trc10_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -371,6 +418,7 @@ where
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
+                    trc10_changes: vec![],
                 })
             }
         }
@@ -399,6 +447,7 @@ where
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
+                    trc10_changes: vec![],
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -413,6 +462,7 @@ where
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
+                    trc10_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -427,6 +477,7 @@ where
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
+                    trc10_changes: vec![],
                 })
             }
         }

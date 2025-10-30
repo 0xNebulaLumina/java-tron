@@ -78,6 +78,9 @@ public class RuntimeSpiImpl implements Runtime {
       // Apply freeze ledger changes to local database (Phase 2)
       applyFreezeLedgerChanges(executionResult, context);
 
+      // Apply TRC-10 ledger changes to local database (Phase 1)
+      applyTrc10LedgerChanges(executionResult, context);
+
       // Since ExecutionProgramResult extends ProgramResult, we can use it directly
       context.setProgramResult(executionResult);
 
@@ -425,12 +428,288 @@ public class RuntimeSpiImpl implements Runtime {
   }
 
   /**
+   * Apply TRC-10 ledger changes from remote execution to the local Java-Tron database (Phase 1).
+   * This processes asset issuance and participation operations emitted from Rust backend.
+   * Can be disabled via JVM property: -Dremote.exec.apply.trc10=false for rapid rollback.
+   */
+  private void applyTrc10LedgerChanges(ExecutionProgramResult result, TransactionContext context) {
+    // Check JVM toggle for rapid rollback
+    // Default is true (apply enabled), can be disabled with -Dremote.exec.apply.trc10=false
+    boolean applyEnabled = Boolean.parseBoolean(
+        System.getProperty("remote.exec.apply.trc10", "true"));
+
+    if (!applyEnabled) {
+      logger.debug("TRC-10 ledger changes application disabled by JVM property " +
+          "(-Dremote.exec.apply.trc10=false) for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    // Check for TRC-10 changes
+    boolean hasTrc10Changes = result.getTrc10Changes() != null && !result.getTrc10Changes().isEmpty();
+
+    if (!hasTrc10Changes) {
+      logger.debug("No TRC-10 ledger changes to apply for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    logger.info("Applying TRC-10 ledger changes to local database for transaction: {} (count={})",
+        context.getTrxCap().getTransactionId(), result.getTrc10Changes().size());
+
+    try {
+      ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
+
+      // Apply each TRC-10 change
+      for (ExecutionSPI.Trc10LedgerChange trc10Change : result.getTrc10Changes()) {
+        applyTrc10LedgerChange(trc10Change, chainBaseManager, context);
+      }
+
+      logger.info("Successfully applied TRC-10 ledger changes for transaction: {}",
+          context.getTrxCap().getTransactionId());
+
+    } catch (Exception e) {
+      logger.error("Failed to apply TRC-10 ledger changes for transaction: {}, error: {}",
+          context.getTrxCap().getTransactionId(), e.getMessage(), e);
+      // Don't throw exception - maintain transaction flow
+      // Failures here indicate store inconsistency that should be investigated
+    }
+  }
+
+  /**
+   * Apply a single TRC-10 ledger change based on operation type.
+   */
+  private void applyTrc10LedgerChange(ExecutionSPI.Trc10LedgerChange trc10Change,
+                                     ChainBaseManager chainBaseManager,
+                                     TransactionContext context) {
+    try {
+      switch (trc10Change.getOp()) {
+        case ISSUE:
+          applyTrc10AssetIssue(trc10Change, chainBaseManager, context);
+          break;
+
+        case PARTICIPATE:
+          applyTrc10AssetParticipate(trc10Change, chainBaseManager, context);
+          break;
+
+        case TRANSFER:
+          logger.warn("TRC-10 TRANSFER operation not yet implemented in Phase 1");
+          break;
+
+        default:
+          logger.warn("Unknown TRC-10 operation type: {}", trc10Change.getOp());
+      }
+
+    } catch (Exception e) {
+      logger.error("Failed to apply TRC-10 ledger change for op={}, error: {}",
+          trc10Change.getOp(), e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Apply TRC-10 asset issuance to AssetIssueStore.
+   * Creates a new AssetIssueCapsule with the asset details and stores it.
+   */
+  private void applyTrc10AssetIssue(ExecutionSPI.Trc10LedgerChange trc10Change,
+                                   ChainBaseManager chainBaseManager,
+                                   TransactionContext context) {
+    try {
+      byte[] ownerAddress = trc10Change.getOwnerAddress();
+      String addressStr = org.tron.common.utils.StringUtil.encode58Check(ownerAddress);
+
+      logger.info("Applying TRC-10 asset issuance for owner: {}, name: {}",
+          addressStr, new String(trc10Change.getName()));
+
+      // Create AssetIssueCapsule from the TRC-10 change data
+      org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.Builder builder =
+          org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.newBuilder();
+
+      builder.setOwnerAddress(com.google.protobuf.ByteString.copyFrom(ownerAddress));
+      builder.setName(com.google.protobuf.ByteString.copyFrom(trc10Change.getName()));
+      builder.setAbbr(com.google.protobuf.ByteString.copyFrom(trc10Change.getAbbr()));
+      builder.setTotalSupply(trc10Change.getTotalSupply());
+      builder.setPrecision(trc10Change.getPrecision());
+      builder.setTrxNum(trc10Change.getTrxNum());
+      builder.setNum(trc10Change.getNum());
+      builder.setStartTime(trc10Change.getStartTime());
+      builder.setEndTime(trc10Change.getEndTime());
+      builder.setDescription(com.google.protobuf.ByteString.copyFrom(trc10Change.getDescription()));
+      builder.setUrl(com.google.protobuf.ByteString.copyFrom(trc10Change.getUrl()));
+      builder.setFreeAssetNetLimit(trc10Change.getFreeAssetNetLimit());
+      builder.setPublicFreeAssetNetLimit(trc10Change.getPublicFreeAssetNetLimit());
+
+      // Add frozen supply if present
+      for (ExecutionSPI.FrozenSupply frozenSupply : trc10Change.getFrozenSupply()) {
+        builder.addFrozenSupply(
+            org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.FrozenSupply.newBuilder()
+                .setFrozenAmount(frozenSupply.getFrozenAmount())
+                .setFrozenDays(frozenSupply.getFrozenDays())
+                .build()
+        );
+      }
+
+      org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract assetIssueContract = builder.build();
+
+      // Create AssetIssueCapsule
+      org.tron.core.capsule.AssetIssueCapsule assetIssueCapsule =
+          new org.tron.core.capsule.AssetIssueCapsule(assetIssueContract);
+
+      // Assign token ID (V2) using the dynamic properties store
+      long tokenIdNum = chainBaseManager.getDynamicPropertiesStore().getTokenIdNum() + 1;
+      chainBaseManager.getDynamicPropertiesStore().saveTokenIdNum(tokenIdNum);
+      assetIssueCapsule.setId(String.valueOf(tokenIdNum));
+
+      // Store in AssetIssueStore (by name for V1 compatibility)
+      byte[] nameBytes = trc10Change.getName();
+      chainBaseManager.getAssetIssueStore().put(nameBytes, assetIssueCapsule);
+
+      // Also store in AssetIssueV2Store (by ID)
+      chainBaseManager.getAssetIssueV2Store().put(
+          com.google.protobuf.ByteString.copyFrom(String.valueOf(tokenIdNum).getBytes()).toByteArray(),
+          assetIssueCapsule
+      );
+
+      // Credit the total supply to the owner's account
+      byte[] ownerAddrBytes = ownerAddress;
+      org.tron.core.capsule.AccountCapsule ownerAccount = chainBaseManager.getAccountStore().get(ownerAddrBytes);
+      if (ownerAccount == null) {
+        logger.warn("Owner account not found for asset issue, creating: {}", addressStr);
+        org.tron.protos.Protocol.Account.Builder accountBuilder = org.tron.protos.Protocol.Account.newBuilder()
+            .setAddress(com.google.protobuf.ByteString.copyFrom(ownerAddrBytes))
+            .setBalance(0)
+            .setCreateTime(System.currentTimeMillis())
+            .setType(org.tron.protos.Protocol.AccountType.Normal);
+        ownerAccount = new org.tron.core.capsule.AccountCapsule(accountBuilder.build());
+      }
+
+      // Add asset to owner's asset map
+      ownerAccount.addAssetAmountV2(
+          com.google.protobuf.ByteString.copyFrom(String.valueOf(tokenIdNum).getBytes()),
+          trc10Change.getTotalSupply(),
+          chainBaseManager.getDynamicPropertiesStore(),
+          chainBaseManager.getAssetIssueStore()
+      );
+
+      // Save owner account
+      chainBaseManager.getAccountStore().put(ownerAddrBytes, ownerAccount);
+
+      logger.info("Successfully applied TRC-10 asset issuance: owner={}, name={}, tokenId={}, totalSupply={}",
+          addressStr, new String(trc10Change.getName()), tokenIdNum, trc10Change.getTotalSupply());
+
+    } catch (Exception e) {
+      logger.error("Failed to apply TRC-10 asset issuance, error: {}", e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Apply TRC-10 asset participation (exchange TRX for tokens).
+   * Updates both owner and issuer account asset balances.
+   */
+  private void applyTrc10AssetParticipate(ExecutionSPI.Trc10LedgerChange trc10Change,
+                                         ChainBaseManager chainBaseManager,
+                                         TransactionContext context) {
+    try {
+      byte[] ownerAddress = trc10Change.getOwnerAddress();
+      byte[] issuerAddress = trc10Change.getToAddress();
+      byte[] assetIdBytes = trc10Change.getAssetId();
+      long trxAmount = trc10Change.getAmount();
+
+      String ownerStr = org.tron.common.utils.StringUtil.encode58Check(ownerAddress);
+      String issuerStr = org.tron.common.utils.StringUtil.encode58Check(issuerAddress);
+
+      logger.info("Applying TRC-10 asset participation: owner={}, issuer={}, asset={}, trxAmount={}",
+          ownerStr, issuerStr, new String(assetIdBytes), trxAmount);
+
+      // Look up the asset to get exchange rate
+      org.tron.core.capsule.AssetIssueCapsule assetIssueCapsule =
+          chainBaseManager.getAssetIssueStore().get(assetIdBytes);
+
+      if (assetIssueCapsule == null) {
+        // Try V2 store
+        assetIssueCapsule = chainBaseManager.getAssetIssueV2Store().get(assetIdBytes);
+      }
+
+      if (assetIssueCapsule == null) {
+        logger.error("Asset not found for participation: {}", new String(assetIdBytes));
+        return;
+      }
+
+      // Calculate token amount: token_amount = (trx_amount * num) / trx_num
+      int trxNum = assetIssueCapsule.getTrxNum();
+      int num = assetIssueCapsule.getNum();
+      if (trxNum <= 0 || num <= 0) {
+        logger.error("Invalid exchange rate for asset: trxNum={}, num={}", trxNum, num);
+        return;
+      }
+
+      long tokenAmount = (trxAmount * num) / trxNum;
+
+      logger.debug("Exchange calculation: trxAmount={} * num={} / trxNum={} = tokenAmount={}",
+          trxAmount, num, trxNum, tokenAmount);
+
+      // Get token ID (V2 style)
+      String tokenId = assetIssueCapsule.getId();
+      byte[] tokenIdBytes = com.google.protobuf.ByteString.copyFrom(tokenId.getBytes()).toByteArray();
+
+      // Update owner account: add tokens, deduct TRX
+      org.tron.core.capsule.AccountCapsule ownerAccount = chainBaseManager.getAccountStore().get(ownerAddress);
+      if (ownerAccount == null) {
+        logger.error("Owner account not found: {}", ownerStr);
+        return;
+      }
+
+      // Add tokens to owner
+      ownerAccount.addAssetAmountV2(
+          com.google.protobuf.ByteString.copyFrom(tokenIdBytes),
+          tokenAmount,
+          chainBaseManager.getDynamicPropertiesStore(),
+          chainBaseManager.getAssetIssueStore()
+      );
+
+      // Deduct TRX from owner
+      ownerAccount.setBalance(ownerAccount.getBalance() - trxAmount);
+
+      // Save owner account
+      chainBaseManager.getAccountStore().put(ownerAddress, ownerAccount);
+
+      // Update issuer account: deduct tokens, add TRX
+      org.tron.core.capsule.AccountCapsule issuerAccount = chainBaseManager.getAccountStore().get(issuerAddress);
+      if (issuerAccount == null) {
+        logger.error("Issuer account not found: {}", issuerStr);
+        return;
+      }
+
+      // Deduct tokens from issuer
+      long issuerBalance = issuerAccount.getAssetMapV2()
+          .getOrDefault(com.google.protobuf.ByteString.copyFrom(tokenIdBytes), 0L);
+      issuerAccount.addAssetAmountV2(
+          com.google.protobuf.ByteString.copyFrom(tokenIdBytes),
+          issuerBalance - tokenAmount,
+          chainBaseManager.getDynamicPropertiesStore(),
+          chainBaseManager.getAssetIssueStore()
+      );
+
+      // Add TRX to issuer
+      issuerAccount.setBalance(issuerAccount.getBalance() + trxAmount);
+
+      // Save issuer account
+      chainBaseManager.getAccountStore().put(issuerAddress, issuerAccount);
+
+      logger.info("Successfully applied TRC-10 asset participation: owner={}, issuer={}, tokenAmount={}, trxAmount={}",
+          ownerStr, issuerStr, tokenAmount, trxAmount);
+
+    } catch (Exception e) {
+      logger.error("Failed to apply TRC-10 asset participation, error: {}", e.getMessage(), e);
+    }
+  }
+
+  /**
    * Apply a single state change to the local database.
    */
   private void applyStateChange(ExecutionSPI.StateChange stateChange,
                                ChainBaseManager chainBaseManager,
                                TransactionContext context) {
-    try {
+    try{
       byte[] address = stateChange.getAddress();
       byte[] key = stateChange.getKey();
       byte[] oldValue = stateChange.getOldValue();

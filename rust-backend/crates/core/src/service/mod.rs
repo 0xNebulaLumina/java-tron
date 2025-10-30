@@ -244,6 +244,20 @@ impl BackendService {
                 // TODO: Implement TRC-10 transfer handler
                 Err("TRC-10 transfers not yet implemented in Rust backend".to_string())
             },
+            Some(tron_backend_execution::TronContractType::AssetIssueContract) => {
+                if !remote_config.trc10_enabled {
+                    return Err("ASSET_ISSUE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing ASSET_ISSUE_CONTRACT (TRC-10 Phase 1)");
+                self.execute_asset_issue_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract) => {
+                if !remote_config.trc10_enabled {
+                    return Err("PARTICIPATE_ASSET_ISSUE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing PARTICIPATE_ASSET_ISSUE_CONTRACT (TRC-10 Phase 1)");
+                self.execute_participate_asset_issue_contract(storage_adapter, transaction, context)
+            },
             Some(tron_backend_execution::TronContractType::AccountUpdateContract) => {
                 debug!("Executing ACCOUNT_UPDATE_CONTRACT");
                 self.execute_account_update_contract(storage_adapter, transaction, context)
@@ -524,6 +538,7 @@ impl BackendService {
             aext_map, // Populated with tracked AEXT if mode is "tracked"
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for value transfers
+            trc10_changes: vec![], // Will be populated by TRC-10 contracts
         })
     }
 
@@ -736,6 +751,7 @@ impl BackendService {
             aext_map, // Populated with tracked AEXT if mode is "tracked"
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for witness creation
+            trc10_changes: vec![], // Will be populated by TRC-10 contracts
         })
     }
 
@@ -1111,6 +1127,592 @@ impl BackendService {
             aext_map, // Populated with tracked AEXT if mode is "tracked"
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for vote witness
+            trc10_changes: vec![], // Will be populated by TRC-10 contracts
+        })
+    }
+
+    /// Execute an ASSET_ISSUE_CONTRACT (TRC-10 Phase 1)
+    /// Validates asset issuance and emits Trc10LedgerChange for Java-side application
+    fn execute_asset_issue_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::{TronExecutionResult, TronStateChange, Trc10LedgerChange, Trc10Op, FrozenSupply};
+
+        info!("AssetIssue owner={} data_len={}",
+              tron_backend_common::to_tron_address(&transaction.from),
+              transaction.data.len());
+
+        // Parse AssetIssueContract from transaction.data
+        let data = transaction.data.as_ref();
+        let mut name: Vec<u8> = vec![];
+        let mut abbr: Vec<u8> = vec![];
+        let mut total_supply: Option<i64> = None;
+        let mut frozen_supply: Vec<FrozenSupply> = vec![];
+        let mut trx_num: Option<i32> = None;
+        let mut precision: i32 = 0; // Default precision is 0
+        let mut num: Option<i32> = None;
+        let mut start_time: Option<i64> = None;
+        let mut end_time: Option<i64> = None;
+        let mut description: Vec<u8> = vec![];
+        let mut url: Vec<u8> = vec![];
+        let mut free_asset_net_limit: i64 = 0;
+        let mut public_free_asset_net_limit: i64 = 0;
+
+        let mut pos = 0;
+        while pos < data.len() {
+            // Read tag
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos = pos + new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                1 => {
+                    // owner_address (bytes) - skip, we use transaction.from
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                },
+                2 => {
+                    // name (bytes)
+                    if wire_type != 2 { return Err("Invalid wire type for name".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Invalid name length".to_string());
+                    }
+                    name = data[pos..pos + len as usize].to_vec();
+                    pos = pos + len as usize;
+                },
+                3 => {
+                    // abbr (bytes)
+                    if wire_type != 2 { return Err("Invalid wire type for abbr".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Invalid abbr length".to_string());
+                    }
+                    abbr = data[pos..pos + len as usize].to_vec();
+                    pos = pos + len as usize;
+                },
+                4 => {
+                    // total_supply (int64)
+                    if wire_type != 0 { return Err("Invalid wire type for total_supply".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    total_supply = Some(value as i64);
+                    pos = pos + new_pos;
+                },
+                5 => {
+                    // frozen_supply (repeated FrozenSupply)
+                    if wire_type != 2 { return Err("Invalid wire type for frozen_supply".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Invalid frozen_supply length".to_string());
+                    }
+                    let frozen_data = &data[pos..pos + len as usize];
+
+                    // Parse FrozenSupply message
+                    let mut frozen_amount: Option<i64> = None;
+                    let mut frozen_days: Option<i64> = None;
+                    let mut fpos = 0;
+                    while fpos < frozen_data.len() {
+                        let (ftag, fnew_pos) = read_varint(&frozen_data[fpos..])?;
+                        fpos = fpos + fnew_pos;
+                        let ffield_number = ftag >> 3;
+                        let fwire_type = ftag & 0x7;
+
+                        match ffield_number {
+                            1 => {
+                                // frozen_amount
+                                if fwire_type != 0 { return Err("Invalid wire type for frozen_amount".to_string()); }
+                                let (value, new_fpos) = read_varint(&frozen_data[fpos..])?;
+                                frozen_amount = Some(value as i64);
+                                fpos = fpos + new_fpos;
+                            },
+                            2 => {
+                                // frozen_days
+                                if fwire_type != 0 { return Err("Invalid wire type for frozen_days".to_string()); }
+                                let (value, new_fpos) = read_varint(&frozen_data[fpos..])?;
+                                frozen_days = Some(value as i64);
+                                fpos = fpos + new_fpos;
+                            },
+                            _ => {
+                                // Unknown field - skip
+                                if fwire_type == 0 {
+                                    let (_, new_fpos) = read_varint(&frozen_data[fpos..])?;
+                                    fpos = fpos + new_fpos;
+                                } else {
+                                    return Err(format!("Unsupported wire type {} in FrozenSupply", fwire_type));
+                                }
+                            }
+                        }
+                    }
+
+                    if let (Some(amt), Some(days)) = (frozen_amount, frozen_days) {
+                        frozen_supply.push(FrozenSupply {
+                            frozen_amount: amt,
+                            frozen_days: days,
+                        });
+                    }
+
+                    pos = pos + len as usize;
+                },
+                6 => {
+                    // trx_num (int32)
+                    if wire_type != 0 { return Err("Invalid wire type for trx_num".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    trx_num = Some(value as i32);
+                    pos = pos + new_pos;
+                },
+                7 => {
+                    // precision (int32)
+                    if wire_type != 0 { return Err("Invalid wire type for precision".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    precision = value as i32;
+                    pos = pos + new_pos;
+                },
+                8 => {
+                    // num (int32)
+                    if wire_type != 0 { return Err("Invalid wire type for num".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    num = Some(value as i32);
+                    pos = pos + new_pos;
+                },
+                9 => {
+                    // start_time (int64)
+                    if wire_type != 0 { return Err("Invalid wire type for start_time".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    start_time = Some(value as i64);
+                    pos = pos + new_pos;
+                },
+                10 => {
+                    // end_time (int64)
+                    if wire_type != 0 { return Err("Invalid wire type for end_time".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    end_time = Some(value as i64);
+                    pos = pos + new_pos;
+                },
+                20 => {
+                    // description (bytes)
+                    if wire_type != 2 { return Err("Invalid wire type for description".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Invalid description length".to_string());
+                    }
+                    description = data[pos..pos + len as usize].to_vec();
+                    pos = pos + len as usize;
+                },
+                21 => {
+                    // url (bytes)
+                    if wire_type != 2 { return Err("Invalid wire type for url".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Invalid url length".to_string());
+                    }
+                    url = data[pos..pos + len as usize].to_vec();
+                    pos = pos + len as usize;
+                },
+                22 => {
+                    // free_asset_net_limit (int64)
+                    if wire_type != 0 { return Err("Invalid wire type for free_asset_net_limit".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    free_asset_net_limit = value as i64;
+                    pos = pos + new_pos;
+                },
+                23 => {
+                    // public_free_asset_net_limit (int64)
+                    if wire_type != 0 { return Err("Invalid wire type for public_free_asset_net_limit".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    public_free_asset_net_limit = value as i64;
+                    pos = pos + new_pos;
+                },
+                _ => {
+                    // Unknown field - skip
+                    match wire_type {
+                        0 => {
+                            let (_, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos;
+                        },
+                        2 => {
+                            let (len, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos + len as usize;
+                        },
+                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                    }
+                }
+            }
+        }
+
+        // Validate required fields
+        let total_supply = total_supply.ok_or("Missing total_supply field")?;
+        let trx_num = trx_num.ok_or("Missing trx_num field")?;
+        let num = num.ok_or("Missing num field")?;
+        let start_time = start_time.ok_or("Missing start_time field")?;
+        let end_time = end_time.ok_or("Missing end_time field")?;
+
+        // Validation: name (1-32 bytes)
+        if name.is_empty() || name.len() > 32 {
+            warn!("Invalid asset name length: {}", name.len());
+            return Err(format!("Asset name must be 1-32 bytes, got {}", name.len()));
+        }
+
+        // Validation: abbr (1-32 bytes if present)
+        if !abbr.is_empty() && abbr.len() > 32 {
+            warn!("Invalid asset abbr length: {}", abbr.len());
+            return Err(format!("Asset abbr cannot exceed 32 bytes, got {}", abbr.len()));
+        }
+
+        // Validation: total_supply > 0
+        if total_supply <= 0 {
+            warn!("Invalid total_supply: {}", total_supply);
+            return Err(format!("total_supply must be positive, got {}", total_supply));
+        }
+
+        // Validation: trx_num > 0
+        if trx_num <= 0 {
+            warn!("Invalid trx_num: {}", trx_num);
+            return Err(format!("trx_num must be positive, got {}", trx_num));
+        }
+
+        // Validation: num > 0
+        if num <= 0 {
+            warn!("Invalid num: {}", num);
+            return Err(format!("num must be positive, got {}", num));
+        }
+
+        // Validation: precision (0-6 for TRC-10)
+        if precision < 0 || precision > 6 {
+            warn!("Invalid precision: {}", precision);
+            return Err(format!("precision must be 0-6, got {}", precision));
+        }
+
+        // Validation: time window (start_time < end_time)
+        if start_time >= end_time {
+            warn!("Invalid time window: start={} end={}", start_time, end_time);
+            return Err(format!("start_time must be < end_time"));
+        }
+
+        // Validation: start_time > block timestamp
+        if start_time <= context.block_timestamp as i64 {
+            warn!("start_time {} <= block_timestamp {}", start_time, context.block_timestamp);
+            return Err(format!("start_time must be > block_timestamp"));
+        }
+
+        // Validation: frozen_supply sum <= total_supply
+        let frozen_total: i64 = frozen_supply.iter().map(|f| f.frozen_amount).sum();
+        if frozen_total > total_supply {
+            warn!("Frozen supply total {} exceeds total_supply {}", frozen_total, total_supply);
+            return Err(format!("frozen_supply total exceeds total_supply"));
+        }
+
+        // Validation: frozen days (1-3650)
+        for f in &frozen_supply {
+            if f.frozen_days < 1 || f.frozen_days > 3650 {
+                warn!("Invalid frozen_days: {}", f.frozen_days);
+                return Err(format!("frozen_days must be 1-3650, got {}", f.frozen_days));
+            }
+        }
+
+        // Validation: description length (<= 200 bytes)
+        if description.len() > 200 {
+            warn!("Description too long: {}", description.len());
+            return Err(format!("description cannot exceed 200 bytes, got {}", description.len()));
+        }
+
+        // Validation: url length (<= 256 bytes)
+        if url.len() > 256 {
+            warn!("URL too long: {}", url.len());
+            return Err(format!("url cannot exceed 256 bytes, got {}", url.len()));
+        }
+
+        // Validation: owner account must exist
+        let owner_account = match storage_adapter.get_account(&transaction.from) {
+            Ok(Some(account)) => account,
+            Ok(None) => {
+                warn!("Owner account does not exist");
+                return Err("Owner account does not exist".to_string());
+            },
+            Err(e) => {
+                error!("Failed to get owner account: {}", e);
+                return Err(format!("Failed to get owner account: {}", e));
+            }
+        };
+
+        info!("AssetIssue validated: name={:?} total_supply={} trx_num={} num={} precision={}",
+              String::from_utf8_lossy(&name), total_supply, trx_num, num, precision);
+
+        // Build Trc10LedgerChange with op=ISSUE
+        let owner_tron_address = {
+            let mut addr = vec![0x41];
+            addr.extend_from_slice(transaction.from.as_slice());
+            addr
+        };
+
+        let trc10_change = Trc10LedgerChange {
+            op: Trc10Op::Issue,
+            owner_address: owner_tron_address.clone(),
+            to_address: vec![],
+            asset_id: vec![], // Will be assigned by Java
+            amount: 0, // Not used for ISSUE
+            name: name.clone(),
+            abbr: abbr.clone(),
+            total_supply,
+            precision,
+            frozen_supply: frozen_supply.clone(),
+            trx_num,
+            num,
+            start_time,
+            end_time,
+            description: description.clone(),
+            url: url.clone(),
+            free_asset_net_limit,
+            public_free_asset_net_limit,
+            fee_sun: None, // Will be set by Java (dynamic fee calculation)
+        };
+
+        // Calculate bandwidth usage (approximate)
+        let tx_size = 200 + data.len(); // Transaction overhead + contract data
+
+        // Build state changes with AccountChange variant
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: transaction.from, // revm::primitives::Address (20 bytes)
+                old_account: Some(owner_account.clone().into()),
+                new_account: Some(owner_account.into()), // No immediate account changes in Phase 1
+            }
+        ];
+
+        // Return success with TRC-10 ledger change
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: tx_size as u64,
+            logs: vec![],
+            state_changes,
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![trc10_change],
+        })
+    }
+
+    /// Execute a PARTICIPATE_ASSET_ISSUE_CONTRACT (TRC-10 Phase 1)
+    /// Validates participation and emits Trc10LedgerChange for Java-side application
+    fn execute_participate_asset_issue_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::{TronExecutionResult, TronStateChange, Trc10LedgerChange, Trc10Op};
+        use revm_primitives::Address;
+
+        info!("ParticipateAssetIssue owner={} data_len={}",
+              tron_backend_common::to_tron_address(&transaction.from),
+              transaction.data.len());
+
+        // Parse ParticipateAssetIssueContract from transaction.data
+        let data = transaction.data.as_ref();
+        let mut to_address: Vec<u8> = vec![];
+        let mut asset_name: Vec<u8> = vec![];
+        let mut amount: Option<i64> = None;
+
+        let mut pos = 0;
+        while pos < data.len() {
+            // Read tag
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos = pos + new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                1 => {
+                    // owner_address (bytes) - skip, we use transaction.from
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                },
+                2 => {
+                    // to_address (bytes)
+                    if wire_type != 2 { return Err("Invalid wire type for to_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Invalid to_address length".to_string());
+                    }
+                    to_address = data[pos..pos + len as usize].to_vec();
+                    pos = pos + len as usize;
+                },
+                3 => {
+                    // asset_name (bytes)
+                    if wire_type != 2 { return Err("Invalid wire type for asset_name".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Invalid asset_name length".to_string());
+                    }
+                    asset_name = data[pos..pos + len as usize].to_vec();
+                    pos = pos + len as usize;
+                },
+                4 => {
+                    // amount (int64) - TRX amount to exchange
+                    if wire_type != 0 { return Err("Invalid wire type for amount".to_string()); }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    amount = Some(value as i64);
+                    pos = pos + new_pos;
+                },
+                _ => {
+                    // Unknown field - skip
+                    match wire_type {
+                        0 => {
+                            let (_, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos;
+                        },
+                        2 => {
+                            let (len, new_pos) = read_varint(&data[pos..])?;
+                            pos = pos + new_pos + len as usize;
+                        },
+                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                    }
+                }
+            }
+        }
+
+        // Validate required fields
+        let amount = amount.ok_or("Missing amount field")?;
+
+        // Validation: to_address must be present (21 bytes with 0x41 prefix)
+        if to_address.is_empty() {
+            warn!("Missing to_address");
+            return Err("to_address is required".to_string());
+        }
+        if to_address.len() != 21 {
+            warn!("Invalid to_address length: {}", to_address.len());
+            return Err(format!("to_address must be 21 bytes, got {}", to_address.len()));
+        }
+
+        // Validation: asset_name must be present
+        if asset_name.is_empty() {
+            warn!("Missing asset_name");
+            return Err("asset_name is required".to_string());
+        }
+
+        // Validation: amount must be positive
+        if amount <= 0 {
+            warn!("Invalid amount: {}", amount);
+            return Err(format!("amount must be positive, got {}", amount));
+        }
+
+        // Convert to_address from 21-byte Tron format to 20-byte EVM format for storage lookup
+        if to_address[0] != 0x41 {
+            warn!("Invalid to_address prefix: 0x{:02x}", to_address[0]);
+            return Err(format!("to_address must start with 0x41, got 0x{:02x}", to_address[0]));
+        }
+        let to_evm_address: Address = Address::from_slice(&to_address[1..21]);
+
+        // Validation: owner account must exist
+        let owner_account = match storage_adapter.get_account(&transaction.from) {
+            Ok(Some(account)) => account,
+            Ok(None) => {
+                warn!("Owner account does not exist");
+                return Err("Owner account does not exist".to_string());
+            },
+            Err(e) => {
+                error!("Failed to get owner account: {}", e);
+                return Err(format!("Failed to get owner account: {}", e));
+            }
+        };
+
+        // Validation: to_address account must exist
+        let to_account = match storage_adapter.get_account(&to_evm_address) {
+            Ok(Some(account)) => account,
+            Ok(None) => {
+                warn!("To address account does not exist");
+                return Err("To address account does not exist".to_string());
+            },
+            Err(e) => {
+                error!("Failed to get to account: {}", e);
+                return Err(format!("Failed to get to account: {}", e));
+            }
+        };
+
+        // Note: In Phase 1, we skip asset existence/time window validation
+        // Java will handle these checks when applying the change
+        // This allows us to focus on contract parsing and basic validation
+
+        info!("ParticipateAssetIssue validated: asset_name={:?} amount={} TRX",
+              String::from_utf8_lossy(&asset_name), amount);
+
+        // Build Trc10LedgerChange with op=PARTICIPATE
+        let owner_tron_address = {
+            let mut addr = vec![0x41];
+            addr.extend_from_slice(transaction.from.as_slice());
+            addr
+        };
+
+        let trc10_change = Trc10LedgerChange {
+            op: Trc10Op::Participate,
+            owner_address: owner_tron_address.clone(),
+            to_address: to_address.clone(), // Asset issuer address
+            asset_id: asset_name.clone(), // In Phase 1, asset_name is used (ID or name depending on proposal)
+            amount, // TRX amount to exchange
+            // ISSUE-only fields (empty for PARTICIPATE)
+            name: vec![],
+            abbr: vec![],
+            total_supply: 0,
+            precision: 0,
+            frozen_supply: vec![],
+            trx_num: 0,
+            num: 0,
+            start_time: 0,
+            end_time: 0,
+            description: vec![],
+            url: vec![],
+            free_asset_net_limit: 0,
+            public_free_asset_net_limit: 0,
+            fee_sun: None,
+        };
+
+        // Calculate bandwidth usage (approximate)
+        let tx_size = 200 + data.len(); // Transaction overhead + contract data
+
+        // Build state changes with AccountChange variants for both owner and to_address
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: transaction.from, // revm::primitives::Address (20 bytes)
+                old_account: Some(owner_account.clone().into()),
+                new_account: Some(owner_account.into()), // No immediate account changes in Phase 1
+            },
+            TronStateChange::AccountChange {
+                address: to_evm_address, // revm::primitives::Address (20 bytes)
+                old_account: Some(to_account.clone().into()),
+                new_account: Some(to_account.into()), // No immediate account changes in Phase 1
+            }
+        ];
+
+        // Return success with TRC-10 ledger change
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: tx_size as u64,
+            logs: vec![],
+            state_changes,
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![trc10_change],
         })
     }
 
@@ -1217,6 +1819,7 @@ impl BackendService {
             aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for account update
+            trc10_changes: vec![], // Will be populated by TRC-10 contracts
         })
     }
 }

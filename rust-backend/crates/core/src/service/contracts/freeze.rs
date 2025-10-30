@@ -222,6 +222,7 @@ impl BackendService {
             error: None,
             aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            trc10_changes: vec![],
             global_resource_changes, // Populated when emit_global_resource_changes is true
         })
     }
@@ -375,6 +376,7 @@ impl BackendService {
             error: None,
             aext_map: std::collections::HashMap::new(),
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            trc10_changes: vec![],
             global_resource_changes, // Populated when emit_global_resource_changes is true
         })
     }
@@ -619,6 +621,7 @@ impl BackendService {
             error: None,
             aext_map: std::collections::HashMap::new(),
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            trc10_changes: vec![],
             global_resource_changes, // Populated when emit_global_resource_changes is true
         })
     }
@@ -815,6 +818,7 @@ impl BackendService {
             error: None,
             aext_map: std::collections::HashMap::new(),
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
+            trc10_changes: vec![],
             global_resource_changes, // Populated when emit_global_resource_changes is true
         })
     }

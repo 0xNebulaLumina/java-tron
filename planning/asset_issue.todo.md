@@ -1,6 +1,6 @@
 # TRC-10 Remote Execution: Asset Issue + Participate — Detailed Plan
 
-Status: proposed
+Status: Phase 1 Complete (Emit-and-Apply Implementation)
 
 Goal: Add Java→Rust mapping for TRC‑10 contracts and implement remote handlers in Rust for AssetIssueContract and ParticipateAssetIssueContract. Keep TransferAssetContract stubbed for now. Deliver safe parity under feature flags with a clear upgrade path.
 
@@ -35,7 +35,7 @@ Plan: Implement (1) now, then (2) as an optional follow‑up behind flags.
 
 ## Java Tasks
 
-- [ ] J1: Map TRC‑10 contracts in RemoteExecutionSPI
+- [x] J1: Map TRC‑10 contracts in RemoteExecutionSPI
   - File: `framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java`
   - Imports:
     - `org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract`
@@ -51,10 +51,10 @@ Plan: Implement (1) now, then (2) as an optional follow‑up behind flags.
       - `txKind = NON_VM`, `contractType = PARTICIPATE_ASSET_ISSUE_CONTRACT`.
   - Keep existing TRC‑10 transfer case gated as it is (remains stubbed in Rust); fallback if disabled.
 
-- [ ] J2: Pre‑exec AEXT snapshot coverage (optional parity aid)
+- [x] J2: Pre‑exec AEXT snapshot coverage (optional parity aid)
   - Extend `collectPreExecutionAext(...)` to include `toAddress` for `ParticipateAssetIssueContract` (like TransferAssetContract) to improve resource usage parity in CSV/logs.
 
-- [ ] J3: Apply TRC‑10 ledger changes in Java runtime (Phase 1 approach)
+- [x] J3: Apply TRC‑10 ledger changes in Java runtime (Phase 1 approach)
   - File: `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java`
   - Add method `applyTrc10LedgerChanges(ExecutionProgramResult result, TransactionContext context)`
     - Iterate `result.getTrc10Changes()` (new field) and apply per change (details in Proto Tasks):
@@ -76,7 +76,7 @@ Plan: Implement (1) now, then (2) as an optional follow‑up behind flags.
 
 ## Proto Tasks (backend.proto)
 
-- [ ] P1: Add TRC‑10 ledger change messages
+- [x] P1: Add TRC‑10 ledger change messages
   - File: `framework/src/main/proto/backend.proto`
   - New message and enum:
     - `enum Trc10Op { ISSUE = 0; PARTICIPATE = 1; TRANSFER = 2; }`
@@ -105,11 +105,11 @@ Plan: Implement (1) now, then (2) as an optional follow‑up behind flags.
          optional int64 fee_sun = 30;
        }`
 
-- [ ] P2: Extend `ExecutionResult` with TRC‑10 changes
+- [x] P2: Extend `ExecutionResult` with TRC‑10 changes
   - Add: `repeated Trc10LedgerChange trc10_changes = <next_free_tag>;`
-  - Ensure tag numbers don’t collide (after 11 currently used; pick 12+ as available; adjust accordingly).
+  - Ensure tag numbers don't collide (after 11 currently used; pick 12+ as available; adjust accordingly).
 
-- [ ] P3: Regenerate code
+- [x] P3: Regenerate code
   - Rust: `crates/core/build.rs` already compiles `framework/src/main/proto/backend.proto`; no path change needed. Rebuild to generate new gRPC artifacts.
   - Java: Gradle build generates `tron.backend.BackendOuterClass.Trc10LedgerChange` types.
 
@@ -117,26 +117,25 @@ Plan: Implement (1) now, then (2) as an optional follow‑up behind flags.
 
 ## Rust Tasks
 
-- [ ] R1: Enable and log TRC‑10 feature
+- [x] R1: Enable and log TRC‑10 feature
   - File: `rust-backend/config.toml`
     - Set `[execution.remote] trc10_enabled = true` (for dev/test profile).
   - File: `rust-backend/src/main.rs`
     - Log flag on startup: `info!("  TRC-10 enabled: {}", config.execution.remote.trc10_enabled);`
 
-- [ ] R2: Dispatch TRC‑10 contract types in core service
+- [x] R2: Dispatch TRC‑10 contract types in core service
   - File: `rust-backend/crates/core/src/service/mod.rs`
   - In non‑VM branch, add:
     - `Some(TronContractType::AssetIssueContract)` → require `remote.trc10_enabled`, call `execute_asset_issue_contract(...)`.
     - `Some(TronContractType::ParticipateAssetIssueContract)` → require flag, call `execute_participate_asset_issue_contract(...)`.
     - Leave `TransferAssetContract` returning `Err("TRC‑10 transfers not yet implemented in Rust backend")`.
 
-- [ ] R3: Decode TRC‑10 contract payloads (prost)
-  - Use existing prost in `crates/execution` to compile TRON core contract protos as a module if not already:
-    - Source: `protocol/src/main/protos/core/contract/asset_issue_contract.proto`
-    - Generate and expose `protocol::AssetIssueContract` and `protocol::ParticipateAssetIssueContract`.
-  - Convert `tx.data` into the respective messages in handlers.
+- [x] R3: Decode TRC‑10 contract payloads (manual protobuf parsing)
+  - Note: Instead of prost, used manual wire-format protobuf parsing following the established pattern from freeze contracts.
+  - Leveraged `read_varint()` helper from `service/contracts/proto.rs` for field-by-field parsing.
+  - This approach avoids additional dependencies while maintaining compatibility with TRON protobuf format.
 
-- [ ] R4: Implement `execute_asset_issue_contract`
+- [x] R4: Implement `execute_asset_issue_contract`
   - Input: `EngineBackedEvmStateStore`, `TronTransaction`, `TronExecutionContext`.
   - Steps:
     1) Parse `AssetIssueContract` from `transaction.data`.
@@ -153,19 +152,19 @@ Plan: Implement (1) now, then (2) as an optional follow‑up behind flags.
     4) Energy/bandwidth: set bandwidth via existing calculator; energy_used=0.
     5) Return success with 1 AccountChange (owner old==new acceptable) and `trc10_changes` containing the ISSUE entry.
 
-- [ ] R5: Implement `execute_participate_asset_issue_contract`
+- [x] R5: Implement `execute_participate_asset_issue_contract`
   - Steps:
     1) Parse `ParticipateAssetIssueContract` from `transaction.data`.
     2) Validate:
        - Owner and `to_address` exist and are different; amount > 0.
-       - Asset exists (lookup by `asset_name` or V2 id depending on `ALLOW_SAME_TOKEN_NAME`).
-       - `to_address` matches asset issuer; `ctx.block_timestamp` within [start, end).
-       - Compute `exchangeAmount = floor(amount * num / trx_num)`; ensure > 0.
-       - Check balances: owner TRX >= amount; issuer asset >= exchangeAmount.
+       - Asset exists (lookup by `asset_name` or V2 id depending on `ALLOW_SAME_TOKEN_NAME`) - Phase 1: deferred to Java.
+       - `to_address` matches asset issuer; `ctx.block_timestamp` within [start, end) - Phase 1: deferred to Java.
+       - Compute `exchangeAmount = floor(amount * num / trx_num)`; ensure > 0 - Phase 1: computed in Java during apply.
+       - Check balances: owner TRX >= amount; issuer asset >= exchangeAmount - Phase 1: deferred to Java.
     3) Build `Trc10LedgerChange` with `op=PARTICIPATE`, include `owner_address`, `to_address`, `asset_id` (asset name or id), `amount` (TRX paid).
     4) Emit 2 AccountChanges (owner, issuer; old==new acceptable), set bandwidth, energy_used=0.
 
-- [ ] R6: Attach TRC‑10 changes to protobuf result
+- [x] R6: Attach TRC‑10 changes to protobuf result
   - File: `rust-backend/crates/core/src/service/grpc/conversion.rs`
   - Extend `convert_execution_result_to_protobuf` to map internal `trc10_changes` to `repeated Trc10LedgerChange` in the response.
 
