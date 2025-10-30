@@ -526,24 +526,24 @@ public class RuntimeSpiImpl implements Runtime {
       org.tron.core.store.AssetIssueV2Store assetIssueV2Store = chainBaseManager.getAssetIssueV2Store();
       org.tron.core.store.AccountStore accountStore = chainBaseManager.getAccountStore();
 
-      logger.info("Applying TRC-10 asset issuance for owner: {}, name: {}",
-          addressStr, trc10Change.getName());
+      logger.info("Applying TRC-10 asset issuance for owner: {}, name_hex: {}",
+          addressStr, org.tron.common.utils.ByteArray.toHexString(trc10Change.getName()));
 
       // Create AssetIssueCapsule from the TRC-10 change data
       org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.Builder builder =
           org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.newBuilder();
 
       builder.setOwnerAddress(com.google.protobuf.ByteString.copyFrom(ownerAddress));
-      builder.setName(com.google.protobuf.ByteString.copyFrom(trc10Change.getName().getBytes()));
-      builder.setAbbr(com.google.protobuf.ByteString.copyFrom(trc10Change.getAbbr().getBytes()));
+      builder.setName(com.google.protobuf.ByteString.copyFrom(trc10Change.getName()));
+      builder.setAbbr(com.google.protobuf.ByteString.copyFrom(trc10Change.getAbbr()));
       builder.setTotalSupply(trc10Change.getTotalSupply());
       builder.setPrecision(trc10Change.getPrecision());
       builder.setTrxNum((int) trc10Change.getTrxNum());
       builder.setNum((int) trc10Change.getNum());
       builder.setStartTime(trc10Change.getStartTime());
       builder.setEndTime(trc10Change.getEndTime());
-      builder.setDescription(com.google.protobuf.ByteString.copyFrom(trc10Change.getDescription().getBytes()));
-      builder.setUrl(com.google.protobuf.ByteString.copyFrom(trc10Change.getUrl().getBytes()));
+      builder.setDescription(com.google.protobuf.ByteString.copyFrom(trc10Change.getDescription()));
+      builder.setUrl(com.google.protobuf.ByteString.copyFrom(trc10Change.getUrl()));
       builder.setFreeAssetNetLimit(trc10Change.getFreeAssetNetLimit());
       builder.setPublicFreeAssetNetLimit(trc10Change.getPublicFreeAssetNetLimit());
 
@@ -655,8 +655,8 @@ public class RuntimeSpiImpl implements Runtime {
       // Save owner account
       accountStore.put(ownerAddress, ownerAccount);
 
-      logger.info("Successfully applied TRC-10 asset issuance: owner={}, name={}, tokenId={}, totalSupply={}, remainSupply={}, fee={}",
-          addressStr, trc10Change.getName(), tokenIdNum, trc10Change.getTotalSupply(), remainSupply, fee);
+      logger.info("Successfully applied TRC-10 asset issuance: owner={}, name_hex={}, tokenId={}, totalSupply={}, remainSupply={}, fee={}",
+          addressStr, org.tron.common.utils.ByteArray.toHexString(trc10Change.getName()), tokenIdNum, trc10Change.getTotalSupply(), remainSupply, fee);
 
     } catch (Exception e) {
       logger.error("Failed to apply TRC-10 asset issuance, error: {}", e.getMessage(), e);
@@ -678,7 +678,7 @@ public class RuntimeSpiImpl implements Runtime {
     try {
       byte[] ownerAddress = trc10Change.getOwnerAddress();
       byte[] issuerAddress = trc10Change.getToAddress();
-      byte[] assetNameBytes = trc10Change.getAssetId().getBytes(); // asset_name from contract
+      byte[] assetNameBytes = trc10Change.getAssetId(); // asset_name from contract
       long trxAmount = trc10Change.getAmount();
 
       org.tron.core.store.DynamicPropertiesStore dynamicStore = chainBaseManager.getDynamicPropertiesStore();
@@ -689,8 +689,8 @@ public class RuntimeSpiImpl implements Runtime {
       String ownerStr = org.tron.common.utils.StringUtil.encode58Check(ownerAddress);
       String issuerStr = org.tron.common.utils.StringUtil.encode58Check(issuerAddress);
 
-      logger.info("Applying TRC-10 asset participation: owner={}, issuer={}, assetName={}, trxAmount={}",
-          ownerStr, issuerStr, trc10Change.getAssetId(), trxAmount);
+      logger.info("Applying TRC-10 asset participation: owner={}, issuer={}, assetName_hex={}, trxAmount={}",
+          ownerStr, issuerStr, org.tron.common.utils.ByteArray.toHexString(assetNameBytes), trxAmount);
 
       // Look up asset using getAssetIssueStoreFinal (handles V1/V2 based on ALLOW_SAME_TOKEN_NAME)
       org.tron.core.capsule.AssetIssueCapsule assetIssueCapsule =
@@ -698,7 +698,7 @@ public class RuntimeSpiImpl implements Runtime {
               dynamicStore, assetIssueStore, assetIssueV2Store).get(assetNameBytes);
 
       if (assetIssueCapsule == null) {
-        logger.error("Asset not found for participation: {}", trc10Change.getAssetId());
+        logger.error("Asset not found for participation: {}", org.tron.common.utils.ByteArray.toHexString(assetNameBytes));
         return;
       }
 
@@ -801,8 +801,8 @@ public class RuntimeSpiImpl implements Runtime {
           assetIssueStore);
 
       if (!reduceSuccess) {
-        logger.error("Failed to reduce asset amount from issuer: issuer={}, asset={}, amount={}",
-            issuerStr, trc10Change.getAssetId(), exchangeAmount);
+        logger.error("Failed to reduce asset amount from issuer: issuer={}, asset_hex={}, amount={}",
+            issuerStr, org.tron.common.utils.ByteArray.toHexString(assetNameBytes), exchangeAmount);
         // Rollback owner account changes by reloading from store
         accountStore.put(ownerAddress, accountStore.get(ownerAddress));
         accountStore.put(issuerAddress, accountStore.get(issuerAddress));

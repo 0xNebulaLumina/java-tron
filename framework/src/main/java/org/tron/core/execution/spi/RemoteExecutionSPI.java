@@ -426,9 +426,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           txKind = TxKind.NON_VM;
           contractType = tron.backend.BackendOuterClass.ContractType.ASSET_ISSUE_CONTRACT;
           assetId = new byte[0]; // Asset ID not yet assigned
-          logger.debug("Mapped AssetIssueContract to remote request; owner={}, name={}",
+          logger.debug("Mapped AssetIssueContract to remote request; owner={}, name_hex={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
-              assetIssueContract.getName().toStringUtf8());
+              org.tron.common.utils.ByteArray.toHexString(assetIssueContract.getName().toByteArray()));
           break;
 
         case ParticipateAssetIssueContract:
@@ -447,10 +447,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           txKind = TxKind.NON_VM;
           contractType = tron.backend.BackendOuterClass.ContractType.PARTICIPATE_ASSET_ISSUE_CONTRACT;
           assetId = participateContract.getAssetName().toByteArray(); // Asset name/ID for participation
-          logger.debug("Mapped ParticipateAssetIssueContract to remote request; owner={}, to={}, asset_name={}",
+          logger.debug("Mapped ParticipateAssetIssueContract to remote request; owner={}, to={}, asset_name_hex={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(toAddress),
-              participateContract.getAssetName().toStringUtf8());
+              org.tron.common.utils.ByteArray.toHexString(participateContract.getAssetName().toByteArray()));
           break;
 
         default:
@@ -913,13 +913,6 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             protoFrozen.getFrozenDays()));
       }
 
-      // Convert bytes to String for text fields
-      String name = protoTrc10.getName().toStringUtf8();
-      String abbr = protoTrc10.getAbbr().toStringUtf8();
-      String description = protoTrc10.getDescription().toStringUtf8();
-      String url = protoTrc10.getUrl().toStringUtf8();
-      String assetId = protoTrc10.getAssetId().toStringUtf8();
-
       // Handle optional fee_sun field
       Long feeSun = protoTrc10.hasFeeSun() ? protoTrc10.getFeeSun() : null;
 
@@ -927,10 +920,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           op,
           protoTrc10.getOwnerAddress().toByteArray(),
           protoTrc10.getToAddress().toByteArray(),
-          assetId,
+          protoTrc10.getAssetId().toByteArray(),
           protoTrc10.getAmount(),
-          name,
-          abbr,
+          protoTrc10.getName().toByteArray(),
+          protoTrc10.getAbbr().toByteArray(),
           protoTrc10.getTotalSupply(),
           protoTrc10.getPrecision(),
           frozenSupplyList,
@@ -938,17 +931,17 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           protoTrc10.getNum(),
           protoTrc10.getStartTime(),
           protoTrc10.getEndTime(),
-          description,
-          url,
+          protoTrc10.getDescription().toByteArray(),
+          protoTrc10.getUrl().toByteArray(),
           protoTrc10.getFreeAssetNetLimit(),
           protoTrc10.getPublicFreeAssetNetLimit(),
           feeSun);
       trc10Changes.add(trc10Change);
 
-      logger.debug("Parsed TRC-10 change: op={}, owner={}, name={}, totalSupply={}, precision={}",
+      logger.debug("Parsed TRC-10 change: op={}, owner={}, name_hex={}, totalSupply={}, precision={}",
           op,
           org.tron.common.utils.ByteArray.toHexString(protoTrc10.getOwnerAddress().toByteArray()),
-          name,
+          org.tron.common.utils.ByteArray.toHexString(protoTrc10.getName().toByteArray()),
           protoTrc10.getTotalSupply(),
           protoTrc10.getPrecision());
     }
@@ -978,10 +971,18 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           if (cmp != 0) {
             return cmp;
           }
-          // Finally by asset_id string
-          String assetA = a.getAssetId() != null ? a.getAssetId() : "";
-          String assetB = b.getAssetId() != null ? b.getAssetId() : "";
-          return assetA.compareTo(assetB);
+          // Finally by asset_id bytes
+          byte[] aAsset = a.getAssetId();
+          byte[] bAsset = b.getAssetId();
+          int min2 = Math.min(aAsset != null ? aAsset.length : 0, bAsset != null ? bAsset.length : 0);
+          for (int i = 0; i < min2; i++) {
+            int da = aAsset[i] & 0xFF;
+            int db = bAsset[i] & 0xFF;
+            if (da != db) {
+              return Integer.compare(da, db);
+            }
+          }
+          return Integer.compare(aAsset != null ? aAsset.length : 0, bAsset != null ? bAsset.length : 0);
         }
       });
     }

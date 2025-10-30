@@ -435,10 +435,10 @@ public interface ExecutionSPI {
     private final Trc10Op op;
     private final byte[] ownerAddress;
     private final byte[] toAddress;
-    private final String assetId;
+    private final byte[] assetId;
     private final long amount;
-    private final String name;
-    private final String abbr;
+    private final byte[] name;
+    private final byte[] abbr;
     private final long totalSupply;
     private final int precision;
     private final List<FrozenSupply> frozenSupply;
@@ -446,17 +446,17 @@ public interface ExecutionSPI {
     private final long num;
     private final long startTime;
     private final long endTime;
-    private final String description;
-    private final String url;
+    private final byte[] description;
+    private final byte[] url;
     private final long freeAssetNetLimit;
     private final long publicFreeAssetNetLimit;
     private final Long feeSun;
 
     public Trc10LedgerChange(Trc10Op op, byte[] ownerAddress, byte[] toAddress,
-                              String assetId, long amount, String name, String abbr,
+                              byte[] assetId, long amount, byte[] name, byte[] abbr,
                               long totalSupply, int precision, List<FrozenSupply> frozenSupply,
                               long trxNum, long num, long startTime, long endTime,
-                              String description, String url, long freeAssetNetLimit,
+                              byte[] description, byte[] url, long freeAssetNetLimit,
                               long publicFreeAssetNetLimit, Long feeSun) {
       this.op = op;
       this.ownerAddress = ownerAddress;
@@ -492,7 +492,7 @@ public interface ExecutionSPI {
       return toAddress;
     }
 
-    public String getAssetId() {
+    public byte[] getAssetId() {
       return assetId;
     }
 
@@ -500,11 +500,11 @@ public interface ExecutionSPI {
       return amount;
     }
 
-    public String getName() {
+    public byte[] getName() {
       return name;
     }
 
-    public String getAbbr() {
+    public byte[] getAbbr() {
       return abbr;
     }
 
@@ -536,11 +536,11 @@ public interface ExecutionSPI {
       return endTime;
     }
 
-    public String getDescription() {
+    public byte[] getDescription() {
       return description;
     }
 
-    public String getUrl() {
+    public byte[] getUrl() {
       return url;
     }
 

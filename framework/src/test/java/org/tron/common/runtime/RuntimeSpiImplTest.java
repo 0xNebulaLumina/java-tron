@@ -139,10 +139,10 @@ public class RuntimeSpiImplTest {
             org.tron.core.execution.spi.ExecutionSPI.Trc10Op.ISSUE,
             ownerAddr,
             toAddr,
-            "1000001", // assetId
+            "1000001".getBytes(), // assetId bytes
             0L, // amount
-            "TestToken", // name
-            "TT", // abbr
+            "TestToken".getBytes(), // name bytes
+            "TT".getBytes(), // abbr bytes
             10000000L, // totalSupply
             6, // precision
             frozenList,
@@ -150,8 +150,8 @@ public class RuntimeSpiImplTest {
             1, // num
             System.currentTimeMillis(), // startTime
             System.currentTimeMillis() + 86400000L, // endTime
-            "Test token description", // description
-            "https://test.com", // url
+            "Test token description".getBytes(), // description bytes
+            "https://test.com".getBytes(), // url bytes
             0L, // freeAssetNetLimit
             0L, // publicFreeAssetNetLimit
             1024000000L // feeSun
@@ -160,7 +160,8 @@ public class RuntimeSpiImplTest {
     assertNotNull("Trc10LedgerChange should be created", change);
     assertEquals("Op should be ISSUE",
         org.tron.core.execution.spi.ExecutionSPI.Trc10Op.ISSUE, change.getOp());
-    assertEquals("Name should be TestToken", "TestToken", change.getName());
+    assertTrue("Name should equal TestToken bytes",
+        java.util.Arrays.equals("TestToken".getBytes(), change.getName()));
     assertEquals("Total supply should be 10000000", 10000000L, change.getTotalSupply());
     assertEquals("Precision should be 6", 6, change.getPrecision());
     assertEquals("Frozen supply list should have 1 entry", 1, change.getFrozenSupply().size());
