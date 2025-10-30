@@ -7,6 +7,7 @@ import org.tron.common.runtime.ProgramResult;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.db.TransactionContext;
+import org.tron.core.execution.spi.ExecutionMode;
 import org.tron.core.execution.spi.ExecutionProgramResult;
 import org.tron.core.execution.spi.ExecutionSPI.StateChange;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
@@ -115,12 +116,30 @@ public class ExecutionCsvRecordBuilder {
     // State changes (if available from ExecutionProgramResult)
     if (programResult instanceof ExecutionProgramResult) {
       ExecutionProgramResult execResult = (ExecutionProgramResult) programResult;
-      List<StateChange> stateChanges = execResult.getStateChanges();
-      
-      if (stateChanges != null && !stateChanges.isEmpty()) {
-        builder.stateChangeCount(stateChanges.size())
-               .stateChanges(stateChanges)
-               .stateDigestSha256(StateChangeCanonicalizer.computeStateDigest(stateChanges));
+      List<StateChange> baseStateChanges = execResult.getStateChanges();
+
+      // Start with base state changes from execution
+      List<StateChange> mergedStateChanges = new ArrayList<>();
+      if (baseStateChanges != null) {
+        mergedStateChanges.addAll(baseStateChanges);
+      }
+
+      // Synthesize TRC-10 ledger changes if applicable
+      if (isRemoteMode() && execResult.isSuccess()
+          && LedgerCsvSynthesizer.isEnabled()
+          && execResult.getTrc10Changes() != null
+          && !execResult.getTrc10Changes().isEmpty()) {
+
+        List<StateChange> ledgerChanges = LedgerCsvSynthesizer.synthesize(execResult, trace);
+
+        // Merge and replace placeholders
+        mergedStateChanges = mergeReplacePlaceholders(mergedStateChanges, ledgerChanges);
+      }
+
+      if (mergedStateChanges != null && !mergedStateChanges.isEmpty()) {
+        builder.stateChangeCount(mergedStateChanges.size())
+               .stateChanges(mergedStateChanges)
+               .stateDigestSha256(StateChangeCanonicalizer.computeStateDigest(mergedStateChanges));
       } else {
         builder.stateChangeCount(0)
                .stateChanges(new ArrayList<>())
@@ -224,7 +243,7 @@ public class ExecutionCsvRecordBuilder {
       return "UNKNOWN";
     }
   }
-  
+
   /**
    * Get current storage mode.
    */
@@ -234,5 +253,97 @@ public class ExecutionCsvRecordBuilder {
     } catch (Exception e) {
       return "UNKNOWN";
     }
+  }
+
+  /**
+   * Check if execution is in remote mode.
+   */
+  private static boolean isRemoteMode() {
+    try {
+      return ExecutionSpiFactory.determineExecutionMode() == ExecutionMode.REMOTE;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
+  /**
+   * Merge base state changes with synthesized ledger changes, replacing placeholders.
+   *
+   * <p>Strategy:
+   * - Index base changes by (address + keyHex)
+   * - For each synthesized change:
+   *   - If a placeholder exists for same address with empty key and old==new, replace it
+   *   - Otherwise, add the synthesized change if not already present
+   *
+   * @param base Base state changes from execution
+   * @param ledger Synthesized ledger changes
+   * @return Merged list with placeholders replaced
+   */
+  private static List<StateChange> mergeReplacePlaceholders(
+      List<StateChange> base,
+      List<StateChange> ledger) {
+
+    if (ledger == null || ledger.isEmpty()) {
+      return base;
+    }
+
+    if (base == null || base.isEmpty()) {
+      return ledger;
+    }
+
+    // Build result list
+    List<StateChange> result = new ArrayList<>();
+    java.util.Set<String> processedAddresses = new java.util.HashSet<>();
+
+    // First, identify and replace placeholders with synthesized entries
+    for (StateChange baseChange : base) {
+      String addressHex = org.tron.common.utils.ByteArray.toHexString(baseChange.getAddress()).toLowerCase();
+      String keyHex = org.tron.common.utils.ByteArray.toHexString(baseChange.getKey()).toLowerCase();
+      String compositeKey = addressHex + ":" + keyHex;
+
+      // Check if this is a placeholder (empty key, old==new)
+      boolean isPlaceholder = keyHex.isEmpty()
+          && java.util.Arrays.equals(baseChange.getOldValue(), baseChange.getNewValue());
+
+      if (isPlaceholder) {
+        // Try to find synthesized replacement
+        StateChange replacement = findSynthesizedForAddress(ledger, baseChange.getAddress());
+        if (replacement != null) {
+          result.add(replacement);
+          processedAddresses.add(addressHex);
+        } else {
+          // No replacement found, keep placeholder
+          result.add(baseChange);
+        }
+      } else {
+        // Not a placeholder, keep as-is
+        result.add(baseChange);
+      }
+    }
+
+    // Add any synthesized changes that weren't used as replacements
+    for (StateChange ledgerChange : ledger) {
+      String addressHex = org.tron.common.utils.ByteArray.toHexString(ledgerChange.getAddress()).toLowerCase();
+      if (!processedAddresses.contains(addressHex)) {
+        result.add(ledgerChange);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Find a synthesized change for the given address (account-level change with empty key).
+   */
+  private static StateChange findSynthesizedForAddress(List<StateChange> ledger, byte[] address) {
+    String targetHex = org.tron.common.utils.ByteArray.toHexString(address).toLowerCase();
+    for (StateChange change : ledger) {
+      String addressHex = org.tron.common.utils.ByteArray.toHexString(change.getAddress()).toLowerCase();
+      String keyHex = org.tron.common.utils.ByteArray.toHexString(change.getKey()).toLowerCase();
+      if (addressHex.equals(targetHex) && keyHex.isEmpty()) {
+        return change;
+      }
+    }
+    return null;
   }
 }
