@@ -134,43 +134,85 @@ impl BackendService {
                     vec![]
                 };
 
-                // Create new overlay (replaces any previous overlay)
+                // Snapshot previous overlay for seeding (before replacing it)
+                // CRITICAL: We must seed from the previous overlay first, not from storage,
+                // because storage may not have the Java-applied TRC-10 changes yet
+                let prev_overlay_snapshot = overlay_guard.as_ref().cloned();
+
+                // Create new overlay (will replace any previous overlay)
                 let mut new_overlay = BlockExecutionOverlay::new(block_key.clone());
 
                 // Seed the new overlay with accounts from previous block's TRC-10 operations
-                // This ensures correct old_account reads even if Java's post-exec flush hasn't propagated
+                // Strategy: Try previous overlay first, then fallback to storage
                 if !seed_addresses.is_empty() {
-                    info!("Seeding overlay with {} addresses from previous block's TRC-10 operations",
+                    info!("Seeding new overlay with {} addresses from previous block's TRC-10 operations",
                           seed_addresses.len());
 
-                    // Get storage engine for reading accounts
-                    if let Ok(storage_module) = self.get_storage_module() {
-                        if let Some(storage_module_any) = storage_module.as_any().downcast_ref::<tron_backend_storage::StorageModule>() {
-                            let storage_engine = storage_module_any.get_engine();
+                    let mut seeded_from_overlay = 0;
+                    let mut seeded_from_storage = 0;
+                    let mut not_found = 0;
 
-                            for addr in &seed_addresses {
-                                // Try to read account from storage
-                                match self.read_account_from_storage(&storage_engine, addr) {
-                                    Ok(Some(account_info)) => {
-                                        new_overlay.put_account(*addr, account_info.clone());
-                                        debug!("Seeded overlay with account {:?}, balance={}",
-                                               addr, account_info.balance);
+                    for addr in &seed_addresses {
+                        // Try to get account from previous overlay first
+                        let account_opt = if let Some(ref prev_overlay) = prev_overlay_snapshot {
+                            prev_overlay.get_account(addr)
+                        } else {
+                            None
+                        };
+
+                        match account_opt {
+                            Some(account_info) => {
+                                // Found in previous overlay - this is the preferred path
+                                new_overlay.put_account(*addr, account_info.clone());
+                                debug!("Seeded from OVERLAY: address={:?}, balance={}",
+                                       addr, account_info.balance);
+                                seeded_from_overlay += 1;
+                            }
+                            None => {
+                                // Not in previous overlay, try storage fallback
+                                debug!("Address {:?} not in previous overlay, trying storage fallback", addr);
+
+                                // Get storage engine for reading accounts
+                                if let Ok(storage_module) = self.get_storage_module() {
+                                    if let Some(storage_module_any) = storage_module.as_any().downcast_ref::<tron_backend_storage::StorageModule>() {
+                                        match storage_module_any.engine() {
+                                            Ok(storage_engine) => {
+                                                match self.read_account_from_storage(storage_engine, addr) {
+                                                    Ok(Some(account_info)) => {
+                                                        new_overlay.put_account(*addr, account_info.clone());
+                                                        debug!("Seeded from STORAGE: address={:?}, balance={}",
+                                                               addr, account_info.balance);
+                                                        seeded_from_storage += 1;
+                                                    }
+                                                    Ok(None) => {
+                                                        debug!("Account {:?} not found in storage (may have been deleted)", addr);
+                                                        not_found += 1;
+                                                    }
+                                                    Err(e) => {
+                                                        warn!("Failed to read account {:?} from storage: {}, skipping", addr, e);
+                                                        not_found += 1;
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to get storage engine: {}", e);
+                                                not_found += 1;
+                                            }
+                                        }
+                                    } else {
+                                        warn!("Failed to downcast storage module for overlay seeding");
+                                        not_found += 1;
                                     }
-                                    Ok(None) => {
-                                        debug!("Account {:?} not found in storage (may have been deleted)", addr);
-                                    }
-                                    Err(e) => {
-                                        warn!("Failed to read account {:?} for seeding: {}, skipping", addr, e);
-                                    }
+                                } else {
+                                    warn!("Storage module not available for overlay seeding");
+                                    not_found += 1;
                                 }
                             }
-                            info!("Overlay seeding complete: {} accounts seeded", seed_addresses.len());
-                        } else {
-                            warn!("Failed to downcast storage module for overlay seeding");
                         }
-                    } else {
-                        warn!("Storage module not available for overlay seeding");
                     }
+
+                    info!("Overlay seeding complete: {} total addresses, {} from OVERLAY, {} from STORAGE, {} not found",
+                          seed_addresses.len(), seeded_from_overlay, seeded_from_storage, not_found);
                 }
 
                 *overlay_guard = Some(new_overlay);
@@ -260,7 +302,7 @@ impl BackendService {
     /// Returns None if account doesn't exist, Some(AccountInfo) if found
     fn read_account_from_storage(
         &self,
-        storage_engine: &Arc<tron_backend_storage::StorageEngine>,
+        storage_engine: &tron_backend_storage::StorageEngine,
         address: &Address,
     ) -> Result<Option<revm_primitives::AccountInfo>, String> {
         use revm_primitives::{AccountInfo, U256, B256};

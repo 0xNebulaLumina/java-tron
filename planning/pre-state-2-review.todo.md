@@ -114,19 +114,19 @@ Acceptance Criteria
 Detailed TODOs
 
 Java (framework)
-- [ ] Add INFO log in `applyTrc10LedgerChanges(...)` summarizing dirty counts and whether post‑exec flush is enabled and will run.
-- [ ] Double‑check dirty‑marking coverage for: owner, blackhole, issuer, TOKEN_ID_NUM, BURN_TRX_AMOUNT, asset V1/V2 keys.
-- [ ] Confirm post‑exec flush is no‑op in EMBEDDED mode and when `remote.resource.sync.postexec=false`.
+- [x] Add INFO log in `applyTrc10LedgerChanges(...)` summarizing dirty counts and whether post‑exec flush is enabled and will run.
+- [x] Double‑check dirty‑marking coverage for: owner, blackhole, issuer, TOKEN_ID_NUM, BURN_TRX_AMOUNT, asset V1/V2 keys.
+- [x] Confirm post‑exec flush is no‑op in EMBEDDED mode and when `remote.resource.sync.postexec=false`.
 - [ ] Document JVM flags in README/config notes.
 
 Rust (core service + common config)
-- [ ] Change overlay seeding to use previous overlay values first, with storage fallback.
-- [ ] Snapshot previous overlay under read lock before creating new one; do not mutate previous overlay during seeding.
-- [ ] Fix storage engine accessor usage (`engine()`), or use `EngineBackedEvmStateStore` for reads.
-- [ ] Update `read_account_from_storage` to accept `&StorageEngine` or remove if using adapter.
-- [ ] Add DEBUG per‑address seeding logs and INFO summary.
-- [ ] Keep `overlay_seed_shadow_trc10` default false; document flag semantics.
-- [ ] Ensure `last_block_trc10_touched` lifecycle: insert on AssetIssue/Participate, clear on new overlay creation; log sizes.
+- [x] Change overlay seeding to use previous overlay values first, with storage fallback.
+- [x] Snapshot previous overlay under read lock before creating new one; do not mutate previous overlay during seeding.
+- [x] Fix storage engine accessor usage (`engine()`), or use `EngineBackedEvmStateStore` for reads.
+- [x] Update `read_account_from_storage` to accept `&StorageEngine` or remove if using adapter.
+- [x] Add DEBUG per‑address seeding logs and INFO summary.
+- [x] Keep `overlay_seed_shadow_trc10` default false; document flag semantics.
+- [x] Ensure `last_block_trc10_touched` lifecycle: insert on AssetIssue/Participate, clear on new overlay creation; log sizes.
 
 Rust (optional barrier)
 - [ ] Define a storage refresh/snapshot API (no‑op by default) in storage engine.

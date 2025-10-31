@@ -516,6 +516,22 @@ public class RuntimeSpiImpl implements Runtime {
         applyTrc10LedgerChange(trc10Change, chainBaseManager, context);
       }
 
+      // Log dirty resource counts and flush decision
+      boolean postexecEnabled = Boolean.parseBoolean(
+          System.getProperty("remote.resource.sync.postexec", "true"));
+      org.tron.core.storage.spi.StorageMode mode = org.tron.core.storage.spi.StorageSpiFactory.determineStorageMode();
+      boolean willPostexecFlush = postexecEnabled && (mode == org.tron.core.storage.spi.StorageMode.REMOTE);
+
+      logger.info("TRC-10 ledger changes applied for transaction: {}, " +
+              "dirty_accounts={}, dirty_dynamic_keys={}, dirty_asset_v1={}, dirty_asset_v2={}, " +
+              "will_postexec_flush={}",
+          context.getTrxCap().getTransactionId(),
+          org.tron.core.storage.sync.ResourceSyncContext.getDirtyAccountCount(),
+          org.tron.core.storage.sync.ResourceSyncContext.getDirtyDynamicKeyCount(),
+          org.tron.core.storage.sync.ResourceSyncContext.getDirtyAssetV1Count(),
+          org.tron.core.storage.sync.ResourceSyncContext.getDirtyAssetV2Count(),
+          willPostexecFlush);
+
       logger.info("Successfully applied TRC-10 ledger changes for transaction: {}",
           context.getTrxCap().getTransactionId());
 

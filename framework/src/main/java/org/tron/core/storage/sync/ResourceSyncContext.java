@@ -263,6 +263,38 @@ public class ResourceSyncContext {
                          syncData.dirtyAssetIssueV2Keys.size(),
                          syncData.flushed);
   }
+
+  /**
+   * Get count of dirty accounts in current context.
+   */
+  public static int getDirtyAccountCount() {
+    ResourceSyncData syncData = contextThreadLocal.get();
+    return syncData != null ? syncData.dirtyAccounts.size() : 0;
+  }
+
+  /**
+   * Get count of dirty dynamic keys in current context.
+   */
+  public static int getDirtyDynamicKeyCount() {
+    ResourceSyncData syncData = contextThreadLocal.get();
+    return syncData != null ? syncData.dirtyDynamicKeys.size() : 0;
+  }
+
+  /**
+   * Get count of dirty asset V1 keys in current context.
+   */
+  public static int getDirtyAssetV1Count() {
+    ResourceSyncData syncData = contextThreadLocal.get();
+    return syncData != null ? syncData.dirtyAssetIssueV1Keys.size() : 0;
+  }
+
+  /**
+   * Get count of dirty asset V2 keys in current context.
+   */
+  public static int getDirtyAssetV2Count() {
+    ResourceSyncData syncData = contextThreadLocal.get();
+    return syncData != null ? syncData.dirtyAssetIssueV2Keys.size() : 0;
+  }
   
   /**
    * Check if a resource sync context is active for the current thread.
