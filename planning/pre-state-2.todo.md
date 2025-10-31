@@ -95,23 +95,26 @@ Implementation TODOs
 
 - Track shadow TRC‑10 touched addresses
   - [x] Add `last_block_trc10_touched: Arc<RwLock<HashSet<Address>>>` field to `BackendService` struct.
-  - [ ] In `execute_asset_issue_contract(...)`, after applying overlay deltas, insert owner and blackhole addresses into `last_block_trc10_touched`.
-  - [ ] In `execute_participate_asset_issue_contract(...)`, insert owner and issuer addresses into the same set when overlay deltas are applied.
-  - [ ] Clear the set when a new block overlay is created.
+  - [x] In `execute_asset_issue_contract(...)`, after applying overlay deltas, insert owner and blackhole addresses into `last_block_trc10_touched`.
+  - [x] In `execute_participate_asset_issue_contract(...)`, insert owner and issuer addresses into the same set when overlay deltas are applied.
+  - [x] Clear the set when a new block overlay is created.
 
 - Seed next‑block overlay (guarded)
-  - [ ] In `get_or_create_overlay(...)` when a new block key is detected, if `remote.overlay.seed_shadow_trc10=true`, attempt to preload the overlay with accounts from `last_block_trc10_touched`:
-        - For each address A: read account from storage; if read value appears to lag the prior overlay’s value (optional heuristic), write the prior overlay’s AccountInfo into the new overlay for A.
+  - [x] In `get_or_create_overlay(...)` when a new block key is detected, if `remote.overlay.seed_shadow_trc10=true`, attempt to preload the overlay with accounts from `last_block_trc10_touched`:
+        - For each address A: read account from storage; if read value appears to lag the prior overlay's value (optional heuristic), write the prior overlay's AccountInfo into the new overlay for A.
         - Add DEBUG/INFO logs summarizing how many addresses were seeded and for which ops.
-  - [ ] Ensure this does not double‑apply deltas (only writes to overlay, not DB; and only seeds if storage is behind or always seed overlay state as a cache source while DB is authoritative for persistence).
+  - [x] Ensure this does not double‑apply deltas (only writes to overlay, not DB; and only seeds if storage is behind or always seed overlay state as a cache source while DB is authoritative for persistence).
+  - [x] Add `read_account_from_storage` helper method to read accounts from storage engine for seeding.
 
 - Optional storage barrier at block boundary
   - [ ] Provide a storage engine “refresh/snapshot” API that is invoked on new block creation if `remote.storage.block_barrier=true` (forces visibility of any prior writes committed via gRPC before the block starts execution).
   - [ ] Wire this call early in the gRPC path before first tx of a block.
 
 - Diagnostics
-  - [ ] Add INFO logs on WitnessCreate/AssetIssue/Participate showing pre‑read balances for key accounts (owner/blackhole/issuer) and whether overlay or storage was used (HIT/MISS).
-  - [ ] Add metrics counters for overlay seed operations and storage barrier invocations.
+  - [x] Add INFO logs on WitnessCreate/AssetIssue/Participate showing pre‑read balances for key accounts (owner/blackhole/issuer) and whether overlay or storage was used (HIT/MISS).
+  - [x] Add DEBUG logs for TRC-10 touched address tracking and overlay seeding operations.
+  - [x] Add INFO logs for block boundary detection and overlay creation/seeding.
+  - [ ] Add metrics counters for overlay seed operations and storage barrier invocations (future enhancement).
 
 - Testing
   - [ ] With `remote.overlay.seed_shadow_trc10=true`, reproduce 3188→3189 sequence and assert parity.

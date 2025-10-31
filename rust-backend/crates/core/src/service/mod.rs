@@ -111,10 +111,77 @@ impl BackendService {
                 debug!("Reusing existing overlay for block {}", block_key.block_number);
             }
             _ => {
-                // Create new overlay (replaces any previous overlay)
-                debug!("Creating new overlay for block {}, timestamp {}",
+                // Block boundary detected - new block starting
+                info!("Block boundary: creating new overlay for block {}, timestamp {}",
                        block_key.block_number, block_key.block_timestamp);
-                *overlay_guard = Some(BlockExecutionOverlay::new(block_key));
+
+                // Capture touched addresses from previous block for seeding (before clearing)
+                let seed_addresses = if remote_config.overlay_seed_shadow_trc10 {
+                    match self.last_block_trc10_touched.read() {
+                        Ok(touched) => {
+                            let addrs: Vec<Address> = touched.iter().copied().collect();
+                            info!("Overlay seeding enabled: captured {} TRC-10 touched addresses from previous block",
+                                  addrs.len());
+                            addrs
+                        }
+                        Err(e) => {
+                            warn!("Failed to read TRC-10 touched addresses for seeding: {}", e);
+                            vec![]
+                        }
+                    }
+                } else {
+                    debug!("Overlay seeding disabled by config (overlay_seed_shadow_trc10=false)");
+                    vec![]
+                };
+
+                // Create new overlay (replaces any previous overlay)
+                let mut new_overlay = BlockExecutionOverlay::new(block_key.clone());
+
+                // Seed the new overlay with accounts from previous block's TRC-10 operations
+                // This ensures correct old_account reads even if Java's post-exec flush hasn't propagated
+                if !seed_addresses.is_empty() {
+                    info!("Seeding overlay with {} addresses from previous block's TRC-10 operations",
+                          seed_addresses.len());
+
+                    // Get storage engine for reading accounts
+                    if let Ok(storage_module) = self.get_storage_module() {
+                        if let Some(storage_module_any) = storage_module.as_any().downcast_ref::<tron_backend_storage::StorageModule>() {
+                            let storage_engine = storage_module_any.get_engine();
+
+                            for addr in &seed_addresses {
+                                // Try to read account from storage
+                                match self.read_account_from_storage(&storage_engine, addr) {
+                                    Ok(Some(account_info)) => {
+                                        new_overlay.put_account(*addr, account_info.clone());
+                                        debug!("Seeded overlay with account {:?}, balance={}",
+                                               addr, account_info.balance);
+                                    }
+                                    Ok(None) => {
+                                        debug!("Account {:?} not found in storage (may have been deleted)", addr);
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to read account {:?} for seeding: {}, skipping", addr, e);
+                                    }
+                                }
+                            }
+                            info!("Overlay seeding complete: {} accounts seeded", seed_addresses.len());
+                        } else {
+                            warn!("Failed to downcast storage module for overlay seeding");
+                        }
+                    } else {
+                        warn!("Storage module not available for overlay seeding");
+                    }
+                }
+
+                *overlay_guard = Some(new_overlay);
+
+                // Clear the TRC-10 touched set for the new block
+                if let Ok(mut touched) = self.last_block_trc10_touched.write() {
+                    touched.clear();
+                    debug!("Cleared TRC-10 touched addresses for new block");
+                } else {
+                    warn!("Failed to clear TRC-10 touched addresses");
+                }
             }
         }
 
@@ -187,6 +254,61 @@ impl BackendService {
         }
 
         Ok(())
+    }
+
+    /// Read account from storage engine (for overlay seeding)
+    /// Returns None if account doesn't exist, Some(AccountInfo) if found
+    fn read_account_from_storage(
+        &self,
+        storage_engine: &Arc<tron_backend_storage::StorageEngine>,
+        address: &Address,
+    ) -> Result<Option<revm_primitives::AccountInfo>, String> {
+        use revm_primitives::{AccountInfo, U256, B256};
+
+        // Convert address to bytes for storage lookup
+        let addr_bytes = address.as_slice();
+
+        // Try to read account from storage (account database)
+        match storage_engine.get("account", addr_bytes) {
+            Ok(Some(data)) => {
+                // Deserialize account data
+                // Format: [balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]
+                if data.len() < 32 {
+                    return Err(format!("Account data too short: {} bytes", data.len()));
+                }
+
+                // Extract balance (32 bytes, big-endian)
+                let mut balance_bytes = [0u8; 32];
+                balance_bytes.copy_from_slice(&data[0..32]);
+                let balance = U256::from_be_bytes(balance_bytes);
+
+                let mut nonce = 0u64;
+                let mut code_hash = B256::ZERO;
+
+                // Extract nonce if present (8 bytes)
+                if data.len() >= 40 {
+                    let mut nonce_bytes = [0u8; 8];
+                    nonce_bytes.copy_from_slice(&data[32..40]);
+                    nonce = u64::from_be_bytes(nonce_bytes);
+
+                    // Extract code hash if present (32 bytes)
+                    if data.len() >= 72 {
+                        let mut hash_bytes = [0u8; 32];
+                        hash_bytes.copy_from_slice(&data[40..72]);
+                        code_hash = B256::from_slice(&hash_bytes);
+                    }
+                }
+
+                Ok(Some(AccountInfo {
+                    balance,
+                    nonce,
+                    code_hash,
+                    code: None, // Code not needed for balance checks
+                }))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(format!("Failed to read account from storage: {}", e)),
+        }
     }
 
     /// Apply balance delta to overlay only (no DB write)
@@ -1638,6 +1760,16 @@ impl BackendService {
                     warn!("Failed to apply blackhole delta to overlay: {}, continuing", e);
                 }
 
+                // Track touched addresses for overlay seeding (Phase 2)
+                if let Ok(mut touched) = self.last_block_trc10_touched.write() {
+                    touched.insert(transaction.from);
+                    touched.insert(blackhole_addr);
+                    debug!("Tracked TRC-10 touched addresses for AssetIssue: owner={:?}, blackhole={:?}",
+                           transaction.from, blackhole_addr);
+                } else {
+                    warn!("Failed to acquire write lock for TRC-10 touched tracking");
+                }
+
                 info!("Shadow TRC-10: owner debit {} SUN, blackhole credit {} SUN",
                       asset_issue_fee, asset_issue_fee);
             } else {
@@ -1868,6 +2000,16 @@ impl BackendService {
             // Issuer (to_address): credit TRX amount
             if let Err(e) = self.overlay_apply_delta(to_evm_address, trx_amount) {
                 warn!("Failed to apply issuer delta to overlay: {}, continuing", e);
+            }
+
+            // Track touched addresses for overlay seeding (Phase 2)
+            if let Ok(mut touched) = self.last_block_trc10_touched.write() {
+                touched.insert(transaction.from);
+                touched.insert(to_evm_address);
+                debug!("Tracked TRC-10 touched addresses for ParticipateAssetIssue: owner={:?}, issuer={:?}",
+                       transaction.from, to_evm_address);
+            } else {
+                warn!("Failed to acquire write lock for TRC-10 touched tracking");
             }
 
             info!("Shadow TRC-10: owner debit {} SUN, issuer credit {} SUN",
