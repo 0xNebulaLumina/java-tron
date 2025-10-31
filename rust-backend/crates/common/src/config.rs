@@ -109,6 +109,25 @@ pub struct RemoteExecutionConfig {
     /// - "tracked": Some(real values) when backend supports resource metrics (future)
     /// Default: "none" for backward compatibility; set to "defaults" for full CSV parity with embedded
     pub accountinfo_aext_mode: String,
+
+    // Block Execution Overlay Configuration
+    /// Enable per-block state overlay for correct old_account reads
+    /// When enabled, overlay caches account state across transactions within the same block
+    /// and shadows TRC-10 ledger effects, ensuring AccountChange.old_account reflects true pre-state
+    /// Default: true (required for state digest parity)
+    pub overlay_enabled: bool,
+
+    /// Enable shadow TRC-10 ledger effects in overlay
+    /// When enabled, AssetIssue/ParticipateAssetIssue TRX deltas are applied to overlay only,
+    /// allowing subsequent transactions to see correct old_account without double-applying to DB
+    /// Requires overlay_enabled = true
+    /// Default: true (required for TRC-10 digest parity)
+    pub overlay_shadow_trc10: bool,
+
+    /// Default asset issue fee in SUN (fallback if dynamic property not available)
+    /// Java default: 1024 TRX = 1,024,000,000 SUN
+    /// Default: 1_024_000_000
+    pub asset_issue_fee_default: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -236,6 +255,11 @@ impl Config {
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
         builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
 
+        // Block execution overlay configuration defaults
+        builder = builder.set_default("execution.remote.overlay_enabled", true)?;
+        builder = builder.set_default("execution.remote.overlay_shadow_trc10", true)?;
+        builder = builder.set_default("execution.remote.asset_issue_fee_default", 1_024_000_000u64)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -257,6 +281,9 @@ impl Default for RemoteExecutionConfig {
             emit_global_resource_changes: false, // Default false for backward compatibility
             emit_storage_changes: false,
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
+            overlay_enabled: true, // Default true for state digest parity
+            overlay_shadow_trc10: true, // Default true for TRC-10 digest parity
+            asset_issue_fee_default: 1_024_000_000, // 1024 TRX in SUN
         }
     }
 } 

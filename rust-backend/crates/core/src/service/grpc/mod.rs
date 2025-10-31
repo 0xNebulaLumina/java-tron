@@ -1004,7 +1004,7 @@ impl crate::backend::backend_server::Backend for BackendService {
         
         let context = match self.convert_protobuf_context(req.context.as_ref()) {
             Ok(ctx) => {
-                debug!("Converted context - block_gas_limit: {}, energy_price: {}", 
+                debug!("Converted context - block_gas_limit: {}, energy_price: {}",
                        ctx.block_gas_limit, ctx.energy_price);
                 ctx
             },
@@ -1030,7 +1030,12 @@ impl crate::backend::backend_server::Backend for BackendService {
                 }));
             }
         };
-        
+
+        // Initialize overlay for this block (creates new overlay if block changed)
+        if let Err(e) = self.get_or_create_overlay(&context) {
+            warn!("Failed to initialize overlay: {}, continuing without overlay", e);
+        }
+
         // Get the storage engine and create a unified storage adapter
         let storage_engine = self.get_storage_engine()?;
         let mut storage_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(

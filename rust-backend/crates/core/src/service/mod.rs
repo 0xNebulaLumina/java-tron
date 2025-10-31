@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::time::SystemTime;
+use std::sync::{Arc, RwLock};
 
 use tonic::{Request, Response, Status};
 use tracing::{info, error, debug, warn};
@@ -14,10 +15,12 @@ use crate::backend::*;
 // Module declarations
 pub mod grpc;
 pub mod contracts;
+pub mod overlay;
 
 // Import utilities from submodules
 use contracts::proto::read_varint;
 use grpc::address::add_tron_address_prefix;
+use overlay::{BlockExecutionOverlay, BlockKey};
 
 /// Vote witness contract constants
 const MAX_VOTE_NUMBER: usize = 30;
@@ -26,6 +29,9 @@ const TRX_PRECISION: u64 = 1_000_000; // 1 TRX = 1,000,000 SUN
 pub struct BackendService {
     module_manager: ModuleManager,
     start_time: SystemTime,
+    /// Per-block execution overlay (keyed by BlockKey)
+    /// Only keeps one active overlay at a time to avoid unbounded memory growth
+    overlay: Arc<RwLock<Option<BlockExecutionOverlay>>>,
 }
 
 impl BackendService {
@@ -33,6 +39,7 @@ impl BackendService {
         Self {
             module_manager,
             start_time: SystemTime::now(),
+            overlay: Arc::new(RwLock::new(None)),
         }
     }
     
@@ -62,17 +69,146 @@ impl BackendService {
     fn get_execution_config(&self) -> Result<&tron_backend_common::ExecutionConfig, String> {
         let execution_module = self.get_execution_module()
             .map_err(|e| format!("Failed to get execution module: {}", e))?;
-        
+
         // Downcast to the concrete execution module type
         let execution_module = execution_module
             .as_any()
             .downcast_ref::<ExecutionModule>()
             .ok_or_else(|| "Failed to downcast execution module".to_string())?;
-        
+
         // Access the config field (we need to add a getter method)
         execution_module.get_config()
     }
-    
+
+    /// Get or create the overlay for the given block context
+    /// Resets overlay if block key changes
+    fn get_or_create_overlay(&self, context: &TronExecutionContext) -> Result<(), String> {
+        let execution_config = self.get_execution_config()?;
+        let remote_config = &execution_config.remote;
+
+        // Check if overlay is enabled
+        if !remote_config.overlay_enabled {
+            debug!("Overlay disabled by config, skipping");
+            return Ok(());
+        }
+
+        let block_key = BlockKey::new(
+            context.block_number,
+            context.block_timestamp,
+            Some(context.block_coinbase),
+        );
+
+        let mut overlay_guard = self.overlay.write()
+            .map_err(|e| format!("Failed to acquire overlay write lock: {}", e))?;
+
+        match overlay_guard.as_ref() {
+            Some(existing) if existing.block_key() == &block_key => {
+                // Overlay already exists for this block, reuse it
+                debug!("Reusing existing overlay for block {}", block_key.block_number);
+            }
+            _ => {
+                // Create new overlay (replaces any previous overlay)
+                debug!("Creating new overlay for block {}, timestamp {}",
+                       block_key.block_number, block_key.block_timestamp);
+                *overlay_guard = Some(BlockExecutionOverlay::new(block_key));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get account from overlay first, then fall back to storage adapter
+    fn overlay_get_account(
+        &self,
+        storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore,
+        address: &revm_primitives::Address,
+    ) -> Result<revm_primitives::AccountInfo, String> {
+        let execution_config = self.get_execution_config()?;
+        if !execution_config.remote.overlay_enabled {
+            // Overlay disabled, go straight to DB
+            return storage_adapter.get_account(address)
+                .map_err(|e| format!("Failed to get account from storage: {}", e))
+                .map(|opt| opt.unwrap_or_else(|| revm_primitives::AccountInfo::default()));
+        }
+
+        // Try overlay first
+        let overlay_guard = self.overlay.read()
+            .map_err(|e| format!("Failed to acquire overlay read lock: {}", e))?;
+
+        if let Some(overlay) = overlay_guard.as_ref() {
+            if let Some(account) = overlay.get_account(address) {
+                return Ok(account);
+            }
+        }
+        drop(overlay_guard);
+
+        // Not in overlay, read from DB
+        let account = storage_adapter.get_account(address)
+            .map_err(|e| format!("Failed to get account from storage: {}", e))?
+            .unwrap_or_else(|| revm_primitives::AccountInfo::default());
+
+        // Cache in overlay for future reads within this block
+        let mut overlay_guard = self.overlay.write()
+            .map_err(|e| format!("Failed to acquire overlay write lock: {}", e))?;
+        if let Some(overlay) = overlay_guard.as_mut() {
+            overlay.put_account(*address, account.clone());
+        }
+
+        Ok(account)
+    }
+
+    /// Put account into overlay and optionally persist to DB
+    fn overlay_put_account(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        address: revm_primitives::Address,
+        account: revm_primitives::AccountInfo,
+        persist_db: bool,
+    ) -> Result<(), String> {
+        let execution_config = self.get_execution_config()?;
+
+        // Always update overlay if enabled
+        if execution_config.remote.overlay_enabled {
+            let mut overlay_guard = self.overlay.write()
+                .map_err(|e| format!("Failed to acquire overlay write lock: {}", e))?;
+            if let Some(overlay) = overlay_guard.as_mut() {
+                overlay.put_account(address, account.clone());
+            }
+        }
+
+        // Persist to DB if requested
+        if persist_db {
+            storage_adapter.set_account(address, account)
+                .map_err(|e| format!("Failed to set account in storage: {}", e))?;
+        }
+
+        Ok(())
+    }
+
+    /// Apply balance delta to overlay only (no DB write)
+    fn overlay_apply_delta(
+        &self,
+        address: revm_primitives::Address,
+        delta_sun: i128,
+    ) -> Result<(), String> {
+        let execution_config = self.get_execution_config()?;
+        if !execution_config.remote.overlay_enabled {
+            debug!("Overlay disabled, skipping delta application");
+            return Ok(());
+        }
+
+        let mut overlay_guard = self.overlay.write()
+            .map_err(|e| format!("Failed to acquire overlay write lock: {}", e))?;
+
+        if let Some(overlay) = overlay_guard.as_mut() {
+            overlay.apply_delta(address, delta_sun)?;
+        } else {
+            warn!("Overlay not initialized, cannot apply delta");
+        }
+
+        Ok(())
+    }
+
     /// Detect if a transaction is likely a non-VM transaction based on heuristics
     fn is_likely_non_vm_transaction(&self, tx: &TronTransaction, storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore) -> bool {
         // Non-VM heuristic: empty data AND to address has no code
@@ -569,10 +705,11 @@ impl BackendService {
             return Err("Invalid witness URL: too long".to_string());
         }
 
-        // 2. Load owner account
-        let owner_account = storage_adapter.get_account(&transaction.from)
-            .map_err(|e| format!("Failed to load owner account: {}", e))?
-            .ok_or("Owner account does not exist".to_string())?;
+        // 2. Load owner account (from overlay or DB)
+        let owner_account = self.overlay_get_account(storage_adapter, &transaction.from)?;
+        if owner_account.balance.is_zero() && owner_account.nonce == 0 {
+            return Err("Owner account does not exist".to_string());
+        }
 
         // 3. Check if owner is already a witness
         if storage_adapter.is_witness(&transaction.from)
@@ -630,10 +767,8 @@ impl BackendService {
             old_account: Some(owner_account),
             new_account: Some(new_owner_account.clone()),
         });
-        // Persist owner account update
-        storage_adapter
-            .set_account(transaction.from, new_owner_account.clone())
-            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+        // Persist owner account update (overlay + DB)
+        self.overlay_put_account(storage_adapter, transaction.from, new_owner_account.clone(), true)?;
 
         // 9. Handle fee burning/crediting
         let fee_destination: String;
@@ -646,9 +781,8 @@ impl BackendService {
             if let Some(blackhole_addr) = storage_adapter.get_blackhole_address()
                 .map_err(|e| format!("Failed to get blackhole address: {}", e))? {
 
-                let blackhole_account = storage_adapter.get_account(&blackhole_addr)
-                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
-                    .unwrap_or_default();
+                // Load blackhole account from overlay or DB
+                let blackhole_account = self.overlay_get_account(storage_adapter, &blackhole_addr)?;
 
                 let new_blackhole_account = revm_primitives::AccountInfo {
                     balance: blackhole_account.balance + revm_primitives::U256::from(account_upgrade_cost),
@@ -664,10 +798,8 @@ impl BackendService {
                     new_account: Some(new_blackhole_account.clone()),
                 });
 
-                // Persist blackhole account update
-                storage_adapter
-                    .set_account(blackhole_addr, new_blackhole_account.clone())
-                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
+                // Persist blackhole account update (overlay + DB)
+                self.overlay_put_account(storage_adapter, blackhole_addr, new_blackhole_account.clone(), true)?;
 
                 let bh_tron = revm_primitives::hex::encode(add_tron_address_prefix(&blackhole_addr));
                 info!(
@@ -1480,6 +1612,35 @@ impl BackendService {
         // Calculate bandwidth usage (approximate)
         let tx_size = 200 + data.len(); // Transaction overhead + contract data
 
+        // Shadow TRC-10 ledger effects into overlay (no DB write)
+        // This ensures subsequent transactions see the correct old_account balance
+        let execution_config = self.get_execution_config()?;
+        if execution_config.remote.overlay_enabled && execution_config.remote.overlay_shadow_trc10 {
+            // Get asset issue fee (use config default)
+            let asset_issue_fee = execution_config.remote.asset_issue_fee_default as i128;
+
+            // Get blackhole address
+            if let Ok(Some(blackhole_addr)) = storage_adapter.get_blackhole_address() {
+                debug!("Applying shadow TRC-10 deltas for AssetIssue: owner={:?} fee={} SUN",
+                       transaction.from, asset_issue_fee);
+
+                // Owner: debit fee
+                if let Err(e) = self.overlay_apply_delta(transaction.from, -asset_issue_fee) {
+                    warn!("Failed to apply owner delta to overlay: {}, continuing", e);
+                }
+
+                // Blackhole: credit fee
+                if let Err(e) = self.overlay_apply_delta(blackhole_addr, asset_issue_fee) {
+                    warn!("Failed to apply blackhole delta to overlay: {}, continuing", e);
+                }
+
+                info!("Shadow TRC-10: owner debit {} SUN, blackhole credit {} SUN",
+                      asset_issue_fee, asset_issue_fee);
+            } else {
+                debug!("No blackhole address, skipping shadow TRC-10 deltas");
+            }
+        }
+
         // Build state changes with AccountChange variant
         let state_changes = vec![
             TronStateChange::AccountChange {
@@ -1685,6 +1846,29 @@ impl BackendService {
 
         // Calculate bandwidth usage (approximate)
         let tx_size = 200 + data.len(); // Transaction overhead + contract data
+
+        // Shadow TRC-10 ledger effects into overlay (no DB write)
+        // For ParticipateAssetIssue: owner pays TRX, issuer receives TRX
+        let execution_config = self.get_execution_config()?;
+        if execution_config.remote.overlay_enabled && execution_config.remote.overlay_shadow_trc10 {
+            let trx_amount = amount as i128; // Amount is already in SUN
+
+            debug!("Applying shadow TRC-10 deltas for ParticipateAssetIssue: owner={:?} issuer={:?} amount={} SUN",
+                   transaction.from, to_evm_address, trx_amount);
+
+            // Owner: debit TRX amount
+            if let Err(e) = self.overlay_apply_delta(transaction.from, -trx_amount) {
+                warn!("Failed to apply owner delta to overlay: {}, continuing", e);
+            }
+
+            // Issuer (to_address): credit TRX amount
+            if let Err(e) = self.overlay_apply_delta(to_evm_address, trx_amount) {
+                warn!("Failed to apply issuer delta to overlay: {}, continuing", e);
+            }
+
+            info!("Shadow TRC-10: owner debit {} SUN, issuer credit {} SUN",
+                  trx_amount, trx_amount);
+        }
 
         // Build state changes with AccountChange variants for both owner and to_address
         let state_changes = vec![

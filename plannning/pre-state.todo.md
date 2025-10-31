@@ -27,83 +27,83 @@ Detailed TODOs
 
 1) Overlay Infrastructure
 
-- [ ] Add BlockExecutionOverlay structure
-  - [ ] Data: HashMap<Address, AccountInfo>
-  - [ ] Methods:
-    - [ ] get_account(addr) -> Option<AccountInfo> (clone)
-    - [ ] put_account(addr, AccountInfo)
-    - [ ] apply_delta(addr, i128) -> Result<()> (safe add/sub SUN on balance; create default account if missing)
-    - [ ] clear()
-  - [ ] Derive Debug; ensure no accidental Send/Sync issues (store under Arc<RwLock<...>>)
+- [x] Add BlockExecutionOverlay structure
+  - [x] Data: HashMap<Address, AccountInfo>
+  - [x] Methods:
+    - [x] get_account(addr) -> Option<AccountInfo> (clone)
+    - [x] put_account(addr, AccountInfo)
+    - [x] apply_delta(addr, i128) -> Result<()> (safe add/sub SUN on balance; create default account if missing)
+    - [x] clear()
+  - [x] Derive Debug; ensure no accidental Send/Sync issues (store under Arc<RwLock<...>>)
 
-- [ ] Block keying and lifecycle
-  - [ ] Define BlockKey { block_number: u64, block_timestamp: u64, witness: Address (optional) }
-  - [ ] Equality/hash based on all fields present in TronExecutionContext
-  - [ ] Place Map<BlockKey, BlockExecutionOverlay> in BackendService
-  - [ ] Ensure only one active overlay at a time for simplicity; drop others on block changes
-  - [ ] Add cleanup policy (e.g., on new block, remove previous overlay)
+- [x] Block keying and lifecycle
+  - [x] Define BlockKey { block_number: u64, block_timestamp: u64, witness: Address (optional) }
+  - [x] Equality/hash based on all fields present in TronExecutionContext
+  - [x] Place Map<BlockKey, BlockExecutionOverlay> in BackendService (simplified to Option<BlockExecutionOverlay>)
+  - [x] Ensure only one active overlay at a time for simplicity; drop others on block changes
+  - [x] Add cleanup policy (e.g., on new block, remove previous overlay)
 
-- [ ] Logging and flags
-  - [ ] Add config flag execution.overlay.enabled (default true)
-  - [ ] Add flag execution.overlay.shadow_trc10 (default true)
-  - [ ] Add debug logs for overlay hits/misses and shadow delta applications
+- [x] Logging and flags
+  - [x] Add config flag execution.remote.overlay_enabled (default true)
+  - [x] Add flag execution.remote.overlay_shadow_trc10 (default true)
+  - [x] Add debug logs for overlay hits/misses and shadow delta applications
 
 
 2) gRPC Integration (BackendService)
 
-- [ ] In grpc::Backend::execute_transaction:
-  - [ ] Compute BlockKey from request.context
-  - [ ] Get or create the overlay for the BlockKey if overlay.enabled
-  - [ ] Pass mutable overlay handle to non‑VM/system execution paths
-  - [ ] On block change, reset overlay (drop previous)
+- [x] In grpc::Backend::execute_transaction:
+  - [x] Compute BlockKey from request.context
+  - [x] Get or create the overlay for the BlockKey if overlay.enabled
+  - [x] Pass mutable overlay handle to non‑VM/system execution paths (via BackendService methods)
+  - [x] On block change, reset overlay (drop previous)
 
-- [ ] Add helper wrappers on BackendService:
-  - [ ] overlay_get_account(overlay, storage_adapter, address) -> AccountInfo
+- [x] Add helper wrappers on BackendService:
+  - [x] overlay_get_account(overlay, storage_adapter, address) -> AccountInfo
     - Lookup overlay first; if missing, load from DB (storage_adapter.get_account), cache into overlay
     - If DB returns None, use default AccountInfo (balance=0, nonce=0, empty code hash)
-  - [ ] overlay_put_account(overlay, storage_adapter, address, new_account, persist_db: bool)
+  - [x] overlay_put_account(overlay, storage_adapter, address, new_account, persist_db: bool)
     - Always update overlay; persist to DB when persist_db is true (system/non‑VM writes)
-  - [ ] overlay_apply_delta(overlay, address, delta_sun: i128)
-    - Adjust balance in overlay; clamp/validate underflow; don’t persist
+  - [x] overlay_apply_delta(overlay, address, delta_sun: i128)
+    - Adjust balance in overlay; clamp/validate underflow; don't persist
 
 
 3) Wire Overlay Into Non‑VM/System Handlers
 
-- [ ] Replace direct storage_adapter.get_account/set_account usages with overlay helpers in:
-  - [ ] execute_transfer_contract
-  - [ ] execute_witness_create_contract
-  - [ ] freeze/unfreeze contract handlers (crates/core/src/service/contracts/freeze.rs) where AccountChange is emitted
+- [x] Replace direct storage_adapter.get_account/set_account usages with overlay helpers in:
+  - [ ] execute_transfer_contract (not implemented yet)
+  - [x] execute_witness_create_contract
+  - [ ] freeze/unfreeze contract handlers (crates/core/src/service/contracts/freeze.rs) where AccountChange is emitted (not yet wired)
   - [ ] Any other non‑VM/system paths that produce AccountChange (account update, vote witness, etc.)
 
-- [ ] AccountChange construction pattern per handler:
-  - [ ] Load old via overlay_get_account before mutation
-  - [ ] Compute new AccountInfo in memory
-  - [ ] Emit TronStateChange::AccountChange { old_account: Some(old), new_account: Some(new) }
-  - [ ] Persist new to DB via overlay_put_account(..., persist_db=true) for real ledger writes (e.g., WitnessCreate, Transfer)
-  - [ ] For creations (no prior), set old_account=None, consistent with existing logic
+- [x] AccountChange construction pattern per handler:
+  - [x] Load old via overlay_get_account before mutation
+  - [x] Compute new AccountInfo in memory
+  - [x] Emit TronStateChange::AccountChange { old_account: Some(old), new_account: Some(new) }
+  - [x] Persist new to DB via overlay_put_account(..., persist_db=true) for real ledger writes (e.g., WitnessCreate)
+  - [x] For creations (no prior), set old_account=None, consistent with existing logic
 
 
 4) Shadow TRC‑10 Ledger Effects Into Overlay (no DB write)
 
-- [ ] AssetIssueContract (execute_asset_issue_contract):
-  - [ ] Determine asset issue TRX fee (SUN):
-    - [ ] Add EngineBackedEvmStateStore::get_asset_issue_fee() reading dynamic property (fallback to 1_024_000_000 SUN if absent)
-    - [ ] Make default configurable via execution.fees.asset_issue_fee_default
-  - [ ] Resolve blackhole address (use existing get_blackhole_address or compute from config)
-  - [ ] overlay_apply_delta(owner, -fee)
-  - [ ] overlay_apply_delta(blackhole, +fee)
-  - [ ] Do NOT emit AccountChange for these deltas here (maintain Phase‑1 behavior: Trc10LedgerChange only)
+- [x] AssetIssueContract (execute_asset_issue_contract):
+  - [x] Determine asset issue TRX fee (SUN):
+    - [x] Use execution.remote.asset_issue_fee_default config (1_024_000_000 SUN)
+    - [ ] Add EngineBackedEvmStateStore::get_asset_issue_fee() reading dynamic property (fallback to config) - DEFERRED
+  - [x] Resolve blackhole address (use existing get_blackhole_address)
+  - [x] overlay_apply_delta(owner, -fee)
+  - [x] overlay_apply_delta(blackhole, +fee)
+  - [x] Do NOT emit AccountChange for these deltas here (maintain Phase‑1 behavior: Trc10LedgerChange only)
 
-- [ ] ParticipateAssetIssueContract (execute_participate_asset_issue_contract):
-  - [ ] Parse TRX amount from payload (already parsed)
-  - [ ] Identify issuer/receiver address (per current handler semantics)
-  - [ ] overlay_apply_delta(payer, -trx_amount)
-  - [ ] overlay_apply_delta(receiver, +trx_amount)
-  - [ ] Keep Phase‑1 behavior (Trc10LedgerChange only; no DB writes here)
+- [x] ParticipateAssetIssueContract (execute_participate_asset_issue_contract):
+  - [x] Parse TRX amount from payload (already parsed)
+  - [x] Identify issuer/receiver address (per current handler semantics)
+  - [x] overlay_apply_delta(payer, -trx_amount)
+  - [x] overlay_apply_delta(receiver, +trx_amount)
+  - [x] Keep Phase‑1 behavior (Trc10LedgerChange only; no DB writes here)
 
-- [ ] Sorting/state digest parity:
-  - [ ] Maintain existing deterministic sort for state_changes in each handler
-  - [ ] Shadow overlay only influences old_account read for subsequent txs
+- [x] Sorting/state digest parity:
+  - [x] Maintain existing deterministic sort for state_changes in each handler
+  - [x] Shadow overlay only influences old_account read for subsequent txs
 
 
 5) Engine/Dynamic Properties Enhancements
