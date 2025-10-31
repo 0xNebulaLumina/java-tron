@@ -128,6 +128,21 @@ pub struct RemoteExecutionConfig {
     /// Java default: 1024 TRX = 1,024,000,000 SUN
     /// Default: 1_024_000_000
     pub asset_issue_fee_default: u64,
+
+    /// Enable overlay seeding for next-block reads (Phase 2 cross-block parity)
+    /// When enabled, on block boundary the overlay for the new block is seeded with
+    /// shadow TRC-10 touched addresses from the prior block, ensuring correct old_account
+    /// even when Java's post-exec flush has not yet propagated to storage
+    /// Requires overlay_shadow_trc10 = true
+    /// Default: false (can be enabled once Java post-exec flush is deployed)
+    pub overlay_seed_shadow_trc10: bool,
+
+    /// Enable storage snapshot/barrier at block boundary (EXPERIMENTAL)
+    /// When enabled, forces a storage engine refresh before the first transaction of a new block
+    /// to guarantee visibility of any prior writes committed via gRPC
+    /// Provides stricter read-your-writes semantics but may have performance impact
+    /// Default: false (prefer overlay seeding for production)
+    pub storage_block_barrier: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +274,8 @@ impl Config {
         builder = builder.set_default("execution.remote.overlay_enabled", true)?;
         builder = builder.set_default("execution.remote.overlay_shadow_trc10", true)?;
         builder = builder.set_default("execution.remote.asset_issue_fee_default", 1_024_000_000u64)?;
+        builder = builder.set_default("execution.remote.overlay_seed_shadow_trc10", false)?;
+        builder = builder.set_default("execution.remote.storage_block_barrier", false)?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -284,6 +301,8 @@ impl Default for RemoteExecutionConfig {
             overlay_enabled: true, // Default true for state digest parity
             overlay_shadow_trc10: true, // Default true for TRC-10 digest parity
             asset_issue_fee_default: 1_024_000_000, // 1024 TRX in SUN
+            overlay_seed_shadow_trc10: false, // Default false until Java post-exec flush deployed
+            storage_block_barrier: false, // Default false (prefer overlay seeding)
         }
     }
 } 

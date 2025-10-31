@@ -42,31 +42,31 @@ Design Notes
 
 Implementation TODOs
 - Toggle and config
-  - [ ] Introduce JVM property `remote.resource.sync.postexec` (default true in REMOTE mode) to enable post‑exec flushing after TRC‑10 application.
-  - [ ] Document existing toggles used by the path:
+  - [x] Introduce JVM property `remote.resource.sync.postexec` (default true in REMOTE mode) to enable post‑exec flushing after TRC‑10 application.
+  - [x] Document existing toggles used by the path:
         - `remote.resource.sync.enabled` (default true in REMOTE)
         - `remote.resource.sync.debug` (default false)
         - `remote.resource.sync.confirm` (optional read‑after‑write verification)
 
 - RuntimeSpiImpl post‑exec flush
-  - [ ] In `RuntimeSpiImpl.execute(...)`, immediately after successful `applyTrc10LedgerChanges(...)` logging (`Successfully applied TRC-10 ledger changes`), call a guarded post‑exec flush:
+  - [x] In `RuntimeSpiImpl.execute(...)`, immediately after successful `applyTrc10LedgerChanges(...)` logging (`Successfully applied TRC-10 ledger changes`), call a guarded post‑exec flush:
         - If `StorageSpiFactory.determineStorageMode() == REMOTE` and `remote.resource.sync.postexec=true`, call `ResourceSyncContext.flushPreExec()` to flush dirty sets that were recorded during TRC‑10 apply.
         - Ensure `ResourceSyncContext.finish()` still runs at the end to clear the context.
-  - [ ] Log an INFO line with txId and flushed counts on post‑exec flush (reuse `ResourceSyncService` debug where possible).
+  - [x] Log an INFO line with txId and flushed counts on post‑exec flush (reuse `ResourceSyncService` debug where possible).
 
 - Mark TRC‑10 mutations as dirty during apply
-  - [ ] In `applyTrc10AssetIssue(...)`:
+  - [x] In `applyTrc10AssetIssue(...)`:
         - After debiting owner and crediting blackhole (or burn), record dirty keys:
           - `ResourceSyncContext.recordAccountDirty(ownerAddress)`
           - If blackhole credit (not burn), `recordAccountDirty(blackholeAddress)`
           - If burn, `recordDynamicKeyDirty("BURN_TRX_AMOUNT".getBytes())` (or whatever dynamic key is actually updated during burn)
-  - [ ] In `applyTrc10AssetParticipate(...)`:
+  - [x] In `applyTrc10AssetParticipate(...)`:
         - After paying owner and crediting issuer TRX balances, mark both addresses dirty via `recordAccountDirty(...)`.
-  - [ ] Maintain current actuator parity logic for remainSupply and V1/V2 stores; only add dirty‑marking and rely on post‑exec flush to persist.
+  - [x] Maintain current actuator parity logic for remainSupply and V1/V2 stores; only add dirty‑marking and rely on post‑exec flush to persist.
 
 - Observability
-  - [ ] Add INFO in `applyTrc10LedgerChanges(...)` summarizing number of dirty accounts/dynamic keys and whether a post‑exec flush will occur.
-  - [ ] Optionally enable `remote.resource.sync.confirm=true` to perform read‑back confirmation for just‑flushed keys (omit on hot paths in prod if too costly).
+  - [x] Add INFO in `applyTrc10LedgerChanges(...)` summarizing number of dirty accounts/dynamic keys and whether a post‑exec flush will occur.
+  - [x] Optionally enable `remote.resource.sync.confirm=true` to perform read‑back confirmation for just‑flushed keys (omit on hot paths in prod if too costly).
 
 - Testing
   - Unit
@@ -90,11 +90,12 @@ Objectives
 
 Implementation TODOs
 - Config toggles
-  - [ ] Add `remote.overlay.seed_shadow_trc10` (default false) to enable overlay seeding on block boundary.
-  - [ ] Add `remote.storage.block_barrier` (default false) to optionally force a storage engine snapshot/barrier at block boundary (see below).
+  - [x] Add `remote.overlay.seed_shadow_trc10` (default false) to enable overlay seeding on block boundary.
+  - [x] Add `remote.storage.block_barrier` (default false) to optionally force a storage engine snapshot/barrier at block boundary (see below).
 
 - Track shadow TRC‑10 touched addresses
-  - [ ] In `execute_asset_issue_contract(...)`, after applying overlay deltas, insert owner and blackhole addresses into a `HashSet<Address>` maintained on the service (e.g., `last_block_trc10_touched`).
+  - [x] Add `last_block_trc10_touched: Arc<RwLock<HashSet<Address>>>` field to `BackendService` struct.
+  - [ ] In `execute_asset_issue_contract(...)`, after applying overlay deltas, insert owner and blackhole addresses into `last_block_trc10_touched`.
   - [ ] In `execute_participate_asset_issue_contract(...)`, insert owner and issuer addresses into the same set when overlay deltas are applied.
   - [ ] Clear the set when a new block overlay is created.
 

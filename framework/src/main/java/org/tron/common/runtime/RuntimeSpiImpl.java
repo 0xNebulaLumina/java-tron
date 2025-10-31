@@ -81,6 +81,9 @@ public class RuntimeSpiImpl implements Runtime {
       // Apply TRC-10 ledger changes to local database (Phase 1)
       applyTrc10LedgerChanges(executionResult, context);
 
+      // Post-exec flush to sync TRC-10 mutations to remote storage (Phase 2)
+      flushPostExecTrc10Mutations(executionResult, context);
+
       // Since ExecutionProgramResult extends ProgramResult, we can use it directly
       context.setProgramResult(executionResult);
 
@@ -428,6 +431,54 @@ public class RuntimeSpiImpl implements Runtime {
   }
 
   /**
+   * Flush TRC-10 mutations to remote storage after local application (Phase 2).
+   * This ensures subsequent transactions in the next block see the TRC-10 state changes.
+   * Can be disabled via JVM property: -Dremote.resource.sync.postexec=false for rapid rollback.
+   */
+  private void flushPostExecTrc10Mutations(ExecutionProgramResult result, TransactionContext context) {
+    // Check if post-exec flush is enabled (default true in REMOTE mode)
+    boolean postexecEnabled = Boolean.parseBoolean(
+        System.getProperty("remote.resource.sync.postexec", "true"));
+
+    if (!postexecEnabled) {
+      logger.debug("TRC-10 post-exec flush disabled by JVM property " +
+          "(-Dremote.resource.sync.postexec=false) for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    // Check if we're in REMOTE mode
+    org.tron.core.storage.spi.StorageMode mode = org.tron.core.storage.spi.StorageSpiFactory.determineStorageMode();
+    if (mode != org.tron.core.storage.spi.StorageMode.REMOTE) {
+      logger.trace("Not in REMOTE mode, skipping post-exec flush");
+      return;
+    }
+
+    // Check for TRC-10 changes
+    boolean hasTrc10Changes = result.getTrc10Changes() != null && !result.getTrc10Changes().isEmpty();
+    if (!hasTrc10Changes) {
+      return; // Nothing to flush
+    }
+
+    try {
+      logger.info("Flushing TRC-10 post-exec mutations for transaction: {} (count={})",
+          context.getTrxCap().getTransactionId(), result.getTrc10Changes().size());
+
+      // Trigger flush via ResourceSyncContext
+      // The dirty keys were already recorded during applyTrc10LedgerChanges
+      org.tron.core.storage.sync.ResourceSyncContext.flushPreExec();
+
+      logger.info("Successfully flushed TRC-10 post-exec mutations for transaction: {}",
+          context.getTrxCap().getTransactionId());
+
+    } catch (Exception e) {
+      logger.error("Failed to flush TRC-10 post-exec mutations for transaction: {}, error: {}",
+          context.getTrxCap().getTransactionId(), e.getMessage(), e);
+      // Don't throw exception - maintain transaction flow
+    }
+  }
+
+  /**
    * Apply TRC-10 ledger changes from remote execution to the local Java-Tron database (Phase 1).
    * This processes asset issuance and participation operations emitted from Rust backend.
    * Can be disabled via JVM property: -Dremote.exec.apply.trc10=false for rapid rollback.
@@ -577,10 +628,15 @@ public class RuntimeSpiImpl implements Runtime {
         assetIssueCapsuleV2.setPrecision(0);
         assetIssueStore.put(assetIssueCapsule.createDbKey(), assetIssueCapsule);
         assetIssueV2Store.put(assetIssueCapsuleV2.createDbV2Key(), assetIssueCapsuleV2);
+        // Mark asset stores as dirty for resource sync
+        org.tron.core.storage.sync.ResourceSyncContext.recordAssetIssueDirtyV1(assetIssueCapsule.createDbKey());
+        org.tron.core.storage.sync.ResourceSyncContext.recordAssetIssueDirtyV2(assetIssueCapsuleV2.createDbV2Key());
         logger.debug("Stored asset in both V1 and V2 stores (ALLOW_SAME_TOKEN_NAME=0), V2 precision forced to 0");
       } else {
         // V2 only mode
         assetIssueV2Store.put(assetIssueCapsuleV2.createDbV2Key(), assetIssueCapsuleV2);
+        // Mark V2 asset store as dirty for resource sync
+        org.tron.core.storage.sync.ResourceSyncContext.recordAssetIssueDirtyV2(assetIssueCapsuleV2.createDbV2Key());
         logger.debug("Stored asset in V2 store only (ALLOW_SAME_TOKEN_NAME=1)");
       }
 
@@ -601,15 +657,22 @@ public class RuntimeSpiImpl implements Runtime {
       }
       ownerAccount.setBalance(ownerBalance - fee);
 
+      // Mark owner account as dirty for resource sync
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(ownerAddress);
+
       // Burn or send to blackhole
       if (dynamicStore.supportBlackHoleOptimization()) {
         dynamicStore.burnTrx(fee);
         logger.debug("Burned asset issue fee: {}", fee);
+        // Mark BURN_TRX_AMOUNT dynamic key as dirty
+        org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("BURN_TRX_AMOUNT".getBytes());
       } else {
         org.tron.core.capsule.AccountCapsule blackholeAccount = accountStore.getBlackhole();
         if (blackholeAccount != null) {
           blackholeAccount.setBalance(blackholeAccount.getBalance() + fee);
           accountStore.put(blackholeAccount.getAddress().toByteArray(), blackholeAccount);
+          // Mark blackhole account as dirty for resource sync
+          org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(blackholeAccount.getAddress().toByteArray());
         }
         logger.debug("Sent asset issue fee to blackhole: {}", fee);
       }
@@ -654,6 +717,12 @@ public class RuntimeSpiImpl implements Runtime {
 
       // Save owner account
       accountStore.put(ownerAddress, ownerAccount);
+
+      // Mark owner account as dirty again after all mutations (in case not marked before)
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(ownerAddress);
+
+      // Mark TOKEN_ID_NUM dynamic key as dirty
+      org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("TOKEN_ID_NUM".getBytes());
 
       logger.info("Successfully applied TRC-10 asset issuance: owner={}, name_hex={}, tokenId={}, totalSupply={}, remainSupply={}, fee={}",
           addressStr, org.tron.common.utils.ByteArray.toHexString(trc10Change.getName()), tokenIdNum, trc10Change.getTotalSupply(), remainSupply, fee);
@@ -784,6 +853,9 @@ public class RuntimeSpiImpl implements Runtime {
       // Save owner account
       accountStore.put(ownerAddress, ownerAccount);
 
+      // Mark owner account as dirty for resource sync
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(ownerAddress);
+
       // Add TRX to issuer
       try {
         long newIssuerBalance = Math.addExact(issuerAccount.getBalance(), trxAmount);
@@ -811,6 +883,9 @@ public class RuntimeSpiImpl implements Runtime {
 
       // Save issuer account
       accountStore.put(issuerAddress, issuerAccount);
+
+      // Mark issuer account as dirty for resource sync
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(issuerAddress);
 
       logger.info("Successfully applied TRC-10 asset participation: owner={}, issuer={}, tokenAmount={}, trxAmount={}",
           ownerStr, issuerStr, exchangeAmount, trxAmount);

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 use std::sync::{Arc, RwLock};
 
@@ -8,7 +8,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
 
 use tron_backend_common::{ModuleManager, HealthStatus, from_tron_address};
-use revm_primitives::hex;
+use revm_primitives::{hex, Address};
 use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, EvmStateStore};
 use crate::backend::*;
 
@@ -32,6 +32,9 @@ pub struct BackendService {
     /// Per-block execution overlay (keyed by BlockKey)
     /// Only keeps one active overlay at a time to avoid unbounded memory growth
     overlay: Arc<RwLock<Option<BlockExecutionOverlay>>>,
+    /// Tracks addresses touched by shadow TRC-10 operations in the current block
+    /// Used for overlay seeding on block boundary (Phase 2 cross-block parity)
+    last_block_trc10_touched: Arc<RwLock<HashSet<Address>>>,
 }
 
 impl BackendService {
@@ -40,6 +43,7 @@ impl BackendService {
             module_manager,
             start_time: SystemTime::now(),
             overlay: Arc::new(RwLock::new(None)),
+            last_block_trc10_touched: Arc::new(RwLock::new(HashSet::new())),
         }
     }
     
