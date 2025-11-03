@@ -49,18 +49,18 @@ public class ResourceSyncContext {
     private final Set<ByteArrayWrapper> dirtyDynamicKeys = new HashSet<>();
     private final Set<ByteArrayWrapper> dirtyAssetIssueV1Keys = new HashSet<>();
     private final Set<ByteArrayWrapper> dirtyAssetIssueV2Keys = new HashSet<>();
-    private boolean flushed = false;
-    
+    private boolean dirtySinceFlush = false;
+
     ResourceSyncData(TransactionContext ctx) {
       this.transactionContext = ctx;
     }
-    
+
     void clear() {
       dirtyAccounts.clear();
       dirtyDynamicKeys.clear();
       dirtyAssetIssueV1Keys.clear();
       dirtyAssetIssueV2Keys.clear();
-      flushed = false;
+      dirtySinceFlush = false;
     }
   }
   
@@ -80,8 +80,12 @@ public class ResourceSyncContext {
     
     @Override
     public boolean equals(Object obj) {
-      if (this == obj) return true;
-      if (!(obj instanceof ByteArrayWrapper)) return false;
+      if (this == obj) {
+        return true;
+      }
+      if (!(obj instanceof ByteArrayWrapper)) {
+        return false;
+      }
       return java.util.Arrays.equals(data, ((ByteArrayWrapper) obj).data);
     }
     
@@ -105,7 +109,8 @@ public class ResourceSyncContext {
     
     ResourceSyncData existing = contextThreadLocal.get();
     if (existing != null) {
-      logger.warn("ResourceSyncContext already exists for current thread, clearing previous context");
+      logger.warn("ResourceSyncContext already exists for current thread, "
+          + "clearing previous context");
       existing.clear();
     }
     
@@ -113,25 +118,28 @@ public class ResourceSyncContext {
     contextThreadLocal.set(syncData);
     
     if (logger.isDebugEnabled()) {
+      String txId = ctx != null && ctx.getTrxCap() != null
+          ? org.tron.common.utils.ByteArray.toHexString(
+              ctx.getTrxCap().getTransactionId().getBytes())
+          : "null";
       logger.debug("Initialized ResourceSyncContext for transaction thread {} tx={}",
-                   Thread.currentThread().getId(),
-                   ctx != null && ctx.getTrxCap() != null ? 
-                   org.tron.common.utils.ByteArray.toHexString(ctx.getTrxCap().getTransactionId().getBytes()) : "null");
+                   Thread.currentThread().getId(), txId);
     }
   }
   
   /**
    * Record that an account has been modified and needs to be synced.
-   * 
+   *
    * @param address the account address
    */
   public static void recordAccountDirty(byte[] address) {
     ResourceSyncData syncData = contextThreadLocal.get();
     if (syncData != null && address != null) {
       syncData.dirtyAccounts.add(new ByteArrayWrapper(address));
-      
+      syncData.dirtySinceFlush = true;
+
       if (logger.isTraceEnabled()) {
-        logger.trace("Recorded dirty account: {}", 
+        logger.trace("Recorded dirty account: {}",
                      org.tron.common.utils.ByteArray.toHexString(address));
       }
     }
@@ -139,14 +147,15 @@ public class ResourceSyncContext {
   
   /**
    * Record that a dynamic property has been modified and needs to be synced.
-   * 
+   *
    * @param key the dynamic property key
    */
   public static void recordDynamicKeyDirty(byte[] key) {
     ResourceSyncData syncData = contextThreadLocal.get();
     if (syncData != null && key != null) {
       syncData.dirtyDynamicKeys.add(new ByteArrayWrapper(key));
-      
+      syncData.dirtySinceFlush = true;
+
       if (logger.isTraceEnabled()) {
         logger.trace("Recorded dirty dynamic key: {}",
                      org.tron.common.utils.ByteArray.toHexString(key));
@@ -156,14 +165,15 @@ public class ResourceSyncContext {
   
   /**
    * Record that an asset issue (V1) has been modified and needs to be synced.
-   * 
+   *
    * @param assetName the asset name
    */
   public static void recordAssetIssueDirtyV1(byte[] assetName) {
     ResourceSyncData syncData = contextThreadLocal.get();
     if (syncData != null && assetName != null) {
       syncData.dirtyAssetIssueV1Keys.add(new ByteArrayWrapper(assetName));
-      
+      syncData.dirtySinceFlush = true;
+
       if (logger.isTraceEnabled()) {
         logger.trace("Recorded dirty asset issue V1: {}",
                      org.tron.common.utils.ByteArray.toHexString(assetName));
@@ -173,14 +183,15 @@ public class ResourceSyncContext {
   
   /**
    * Record that an asset issue (V2) has been modified and needs to be synced.
-   * 
+   *
    * @param assetId the asset ID
    */
   public static void recordAssetIssueDirtyV2(byte[] assetId) {
     ResourceSyncData syncData = contextThreadLocal.get();
     if (syncData != null && assetId != null) {
       syncData.dirtyAssetIssueV2Keys.add(new ByteArrayWrapper(assetId));
-      
+      syncData.dirtySinceFlush = true;
+
       if (logger.isTraceEnabled()) {
         logger.trace("Recorded dirty asset issue V2: {}",
                      org.tron.common.utils.ByteArray.toHexString(assetId));
@@ -189,24 +200,64 @@ public class ResourceSyncContext {
   }
   
   /**
-   * Flush all recorded resource mutations to remote storage.
+   * Flush all recorded resource mutations to remote storage (pre-execution phase).
    * This should be called after all pre-execution resource consumption
    * and before any remote execution operations.
-   * 
-   * @throws RuntimeException if flush fails
+   *
+   * @return true if flush was performed, false if skipped (nothing dirty)
    */
-  public static void flushPreExec() {
+  public static boolean flushPreExec() {
+    return flushInternal("pre-exec");
+  }
+
+  /**
+   * Flush all recorded resource mutations to remote storage (post-execution phase).
+   * This should be called after remote execution has applied TRC-10 mutations
+   * to ensure they are visible to the next transaction.
+   *
+   * @return true if flush was performed, false if skipped (nothing dirty)
+   */
+  public static boolean flushPostExec() {
+    return flushInternal("post-exec");
+  }
+
+  /**
+   * Internal flush implementation supporting multi-phase flushing.
+   * This method flushes mutations to remote storage only if there are dirty keys
+   * that have been recorded since the last flush.
+   *
+   * @param stage the flush stage name (for logging)
+   * @return true if flush was performed, false if skipped
+   */
+  private static boolean flushInternal(String stage) {
     ResourceSyncData syncData = contextThreadLocal.get();
     if (syncData == null) {
-      return; // No context, nothing to flush
+      if (logger.isDebugEnabled()) {
+        logger.debug("No ResourceSyncContext active, skipping {} flush", stage);
+      }
+      return false; // No context, nothing to flush
     }
-    
-    if (syncData.flushed) {
-      logger.debug("ResourceSyncContext already flushed for this transaction");
-      return;
+
+    // Check if there are any dirty keys AND if anything changed since last flush
+    boolean hasDirtyKeys = !syncData.dirtyAccounts.isEmpty()
+        || !syncData.dirtyDynamicKeys.isEmpty()
+        || !syncData.dirtyAssetIssueV1Keys.isEmpty()
+        || !syncData.dirtyAssetIssueV2Keys.isEmpty();
+
+    if (!hasDirtyKeys || !syncData.dirtySinceFlush) {
+      if (logger.isDebugEnabled()) {
+        logger.debug("Skipping {} flush: hasDirtyKeys={}, dirtySinceFlush={}",
+                     stage, hasDirtyKeys, syncData.dirtySinceFlush);
+      }
+      return false;
     }
-    
+
     try {
+      int accountCount = syncData.dirtyAccounts.size();
+      int dynamicCount = syncData.dirtyDynamicKeys.size();
+      int assetV1Count = syncData.dirtyAssetIssueV1Keys.size();
+      int assetV2Count = syncData.dirtyAssetIssueV2Keys.size();
+
       ResourceSyncService.getInstance().flushResourceDeltas(
           syncData.transactionContext,
           extractByteArrays(syncData.dirtyAccounts),
@@ -214,20 +265,26 @@ public class ResourceSyncContext {
           extractByteArrays(syncData.dirtyAssetIssueV1Keys),
           extractByteArrays(syncData.dirtyAssetIssueV2Keys)
       );
-      
-      syncData.flushed = true;
-      
+
+      // Clear dirty sets and reset flag after successful flush
+      syncData.dirtyAccounts.clear();
+      syncData.dirtyDynamicKeys.clear();
+      syncData.dirtyAssetIssueV1Keys.clear();
+      syncData.dirtyAssetIssueV2Keys.clear();
+      syncData.dirtySinceFlush = false;
+
       if (logger.isDebugEnabled()) {
-        logger.debug("Flushed ResourceSyncContext: {} accounts, {} dynamic keys, {} asset V1, {} asset V2",
-                     syncData.dirtyAccounts.size(),
-                     syncData.dirtyDynamicKeys.size(),
-                     syncData.dirtyAssetIssueV1Keys.size(),
-                     syncData.dirtyAssetIssueV2Keys.size());
+        logger.debug("Successfully flushed {} mutations: {} accounts, {} dynamic keys, "
+            + "{} asset V1, {} asset V2",
+            stage, accountCount, dynamicCount, assetV1Count, assetV2Count);
       }
-      
+
+      return true;
+
     } catch (Exception e) {
-      logger.error("Failed to flush ResourceSyncContext", e);
+      logger.error("Failed to flush {} mutations", stage, e);
       // Don't throw - this shouldn't abort transaction execution
+      return false;
     }
   }
   
@@ -256,12 +313,13 @@ public class ResourceSyncContext {
     if (syncData == null) {
       return "No resource sync context active";
     }
-    return String.format("ResourceSync: %d accounts, %d dynamic keys, %d asset V1, %d asset V2, flushed=%s",
-                         syncData.dirtyAccounts.size(),
-                         syncData.dirtyDynamicKeys.size(),
-                         syncData.dirtyAssetIssueV1Keys.size(),
-                         syncData.dirtyAssetIssueV2Keys.size(),
-                         syncData.flushed);
+    return String.format("ResourceSync: %d accounts, %d dynamic keys, %d asset V1, "
+        + "%d asset V2, dirtySinceFlush=%s",
+        syncData.dirtyAccounts.size(),
+        syncData.dirtyDynamicKeys.size(),
+        syncData.dirtyAssetIssueV1Keys.size(),
+        syncData.dirtyAssetIssueV2Keys.size(),
+        syncData.dirtySinceFlush);
   }
 
   /**

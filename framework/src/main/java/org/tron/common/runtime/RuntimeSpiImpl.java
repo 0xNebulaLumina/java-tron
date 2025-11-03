@@ -457,19 +457,33 @@ public class RuntimeSpiImpl implements Runtime {
     // Check for TRC-10 changes
     boolean hasTrc10Changes = result.getTrc10Changes() != null && !result.getTrc10Changes().isEmpty();
     if (!hasTrc10Changes) {
+      logger.trace("No TRC-10 changes to flush for transaction: {}",
+          context.getTrxCap().getTransactionId());
       return; // Nothing to flush
     }
 
     try {
-      logger.info("Flushing TRC-10 post-exec mutations for transaction: {} (count={})",
-          context.getTrxCap().getTransactionId(), result.getTrc10Changes().size());
+      // Get metrics before flush for accurate logging
+      String metricsBeforeFlush = org.tron.core.storage.sync.ResourceSyncContext.getCurrentMetrics();
 
-      // Trigger flush via ResourceSyncContext
+      logger.debug("Attempting TRC-10 post-exec flush for transaction: {} (TRC-10 changes count: {}, metrics: {})",
+          context.getTrxCap().getTransactionId(), result.getTrc10Changes().size(), metricsBeforeFlush);
+
+      // Trigger flush via ResourceSyncContext post-exec API
       // The dirty keys were already recorded during applyTrc10LedgerChanges
-      org.tron.core.storage.sync.ResourceSyncContext.flushPreExec();
+      boolean flushed = org.tron.core.storage.sync.ResourceSyncContext.flushPostExec();
 
-      logger.info("Successfully flushed TRC-10 post-exec mutations for transaction: {}",
-          context.getTrxCap().getTransactionId());
+      if (flushed) {
+        logger.info("Successfully flushed TRC-10 post-exec mutations for transaction: {} (accounts: {}, dynamic: {}, assetV1: {}, assetV2: {})",
+            context.getTrxCap().getTransactionId(),
+            org.tron.core.storage.sync.ResourceSyncContext.getDirtyAccountCount(),
+            org.tron.core.storage.sync.ResourceSyncContext.getDirtyDynamicKeyCount(),
+            org.tron.core.storage.sync.ResourceSyncContext.getDirtyAssetV1Count(),
+            org.tron.core.storage.sync.ResourceSyncContext.getDirtyAssetV2Count());
+      } else {
+        logger.debug("No post-exec resource mutations to flush for transaction: {} (already flushed or no dirty keys)",
+            context.getTrxCap().getTransactionId());
+      }
 
     } catch (Exception e) {
       logger.error("Failed to flush TRC-10 post-exec mutations for transaction: {}, error: {}",
@@ -657,7 +671,10 @@ public class RuntimeSpiImpl implements Runtime {
       }
 
       // Deduct asset issue fee
-      long fee = dynamicStore.getAssetIssueFee();
+      // Prefer feeSun from remote if provided to avoid dynamic store drift on historical blocks
+      long fee = trc10Change.getFeeSun() != null
+          ? trc10Change.getFeeSun()
+          : dynamicStore.getAssetIssueFee();
       org.tron.core.capsule.AccountCapsule ownerAccount = accountStore.get(ownerAddress);
       if (ownerAccount == null) {
         logger.error("Owner account not found for asset issue: {}", addressStr);
@@ -740,8 +757,10 @@ public class RuntimeSpiImpl implements Runtime {
       // Mark TOKEN_ID_NUM dynamic key as dirty
       org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("TOKEN_ID_NUM".getBytes());
 
-      logger.info("Successfully applied TRC-10 asset issuance: owner={}, name_hex={}, tokenId={}, totalSupply={}, remainSupply={}, fee={}",
-          addressStr, org.tron.common.utils.ByteArray.toHexString(trc10Change.getName()), tokenIdNum, trc10Change.getTotalSupply(), remainSupply, fee);
+      logger.info("Successfully applied TRC-10 asset issuance: owner={}, name_hex={}, tokenId={}, totalSupply={}, remainSupply={}, fee={}, feeSun={}, useBlackhole={}",
+          addressStr, org.tron.common.utils.ByteArray.toHexString(trc10Change.getName()), tokenIdNum, trc10Change.getTotalSupply(), remainSupply, fee,
+          trc10Change.getFeeSun() != null ? "provided(" + trc10Change.getFeeSun() + ")" : "dynamic",
+          dynamicStore.supportBlackHoleOptimization());
 
     } catch (Exception e) {
       logger.error("Failed to apply TRC-10 asset issuance, error: {}", e.getMessage(), e);
