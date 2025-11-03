@@ -55,68 +55,68 @@ Out of scope: Changing protobufs, altering Rust execution semantics, adding TRC�
 
 ### A. Verify and tighten SPI result plumbing
 
-- [ ] Ensure `RemoteExecutionSPI.convertExecuteTransactionResponse(...)` maps `protoResult.getTrc10ChangesList()` to `ExecutionSPI.Trc10LedgerChange` including:
-  - [ ] `op` (ISSUE/PARTICIPATE)
-  - [ ] `ownerAddress`, `toAddress`
-  - [ ] `totalSupply`, `precision`, `trxNum`, `num`, `startTime`, `endTime`, `frozenSupply[]`
-  - [ ] Optional `feeSun`
-  - [ ] Deterministic ordering (op → owner bytes → asset_id bytes) before attaching to result
-- [ ] Confirm `ExecutionProgramResult` carries `trc10Changes` end‑to‑end (getter/setter), and `RuntimeSpiImpl.execute(...)` receives them.
+- [x] Ensure `RemoteExecutionSPI.convertExecuteTransactionResponse(...)` maps `protoResult.getTrc10ChangesList()` to `ExecutionSPI.Trc10LedgerChange` including:
+  - [x] `op` (ISSUE/PARTICIPATE)
+  - [x] `ownerAddress`, `toAddress`
+  - [x] `totalSupply`, `precision`, `trxNum`, `num`, `startTime`, `endTime`, `frozenSupply[]`
+  - [x] Optional `feeSun`
+  - [x] Deterministic ordering (op → owner bytes → asset_id bytes) before attaching to result
+- [x] Confirm `ExecutionProgramResult` carries `trc10Changes` end‑to‑end (getter/setter), and `RuntimeSpiImpl.execute(...)` receives them.
 
 ### B. Apply TRC‑10 ISSUE in Java (parity with actuator)
 
 File: `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java`
 
-- [ ] In `applyTrc10AssetIssue(...)`:
-  - [ ] Determine fee: use `trc10Change.feeSun` when non‑null; fallback to `DynamicPropertiesStore.getAssetIssueFee()`.
-  - [ ] Apply owner TRX debit:
-    - [ ] Load owner `AccountCapsule`; check sufficient balance; subtract fee; mark dirty.
-  - [ ] Apply blackhole vs burn:
-    - [ ] If `DynamicPropertiesStore.supportBlackHoleOptimization()` is true: call `dynamicStore.burnTrx(fee)` and mark `BURN_TRX_AMOUNT` dirty.
-    - [ ] Else: load blackhole account, credit fee, persist, mark dirty.
-  - [ ] Asset metadata and remain supply:
-    - [ ] Build V1/V2 `AssetIssueCapsule` from change; assign token id (increment TOKEN_ID_NUM).
-    - [ ] Respect `ALLOW_SAME_TOKEN_NAME`: V1+V2 (precision forced to 0 for V2) vs V2‑only.
-    - [ ] `remainSupply = totalSupply − sum(frozenSupply)`, credit to owner’s asset maps (V1/V2 as appropriate).
-    - [ ] Append frozen supply list to owner account with proper expire times.
-  - [ ] Persist owner account and asset stores; mark all mutated keys dirty in `ResourceSyncContext`.
-  - [ ] INFO/DEBUG logs with amounts, blackhole/burn decision, token id, remainSupply.
+- [x] In `applyTrc10AssetIssue(...)`:
+  - [x] Determine fee: use `trc10Change.feeSun` when non‑null; fallback to `DynamicPropertiesStore.getAssetIssueFee()`.
+  - [x] Apply owner TRX debit:
+    - [x] Load owner `AccountCapsule`; check sufficient balance; subtract fee; mark dirty.
+  - [x] Apply blackhole vs burn:
+    - [x] If `DynamicPropertiesStore.supportBlackHoleOptimization()` is true: call `dynamicStore.burnTrx(fee)` and mark `BURN_TRX_AMOUNT` dirty.
+    - [x] Else: load blackhole account, credit fee, persist, mark dirty.
+  - [x] Asset metadata and remain supply:
+    - [x] Build V1/V2 `AssetIssueCapsule` from change; assign token id (increment TOKEN_ID_NUM).
+    - [x] Respect `ALLOW_SAME_TOKEN_NAME`: V1+V2 (precision forced to 0 for V2) vs V2‑only.
+    - [x] `remainSupply = totalSupply − sum(frozenSupply)`, credit to owner's asset maps (V1/V2 as appropriate).
+    - [x] Append frozen supply list to owner account with proper expire times.
+  - [x] Persist owner account and asset stores; mark all mutated keys dirty in `ResourceSyncContext`.
+  - [x] INFO/DEBUG logs with amounts, blackhole/burn decision, token id, remainSupply.
 
 ### C. Apply TRC‑10 PARTICIPATE in Java (parity with actuator)
 
-- [ ] In `applyTrc10AssetParticipate(...)`:
-  - [ ] Resolve asset via V1+V2 or V2 rules (ALLOW_SAME_TOKEN_NAME).
-  - [ ] Calculate `exchangeAmount = (amount * num) / trxNum` (floor division). Validate amounts > 0.
-  - [ ] TRX movement: owner −= trxAmount; issuer += trxAmount (overflow safe via Math.addExact checks; log on failure).
-  - [ ] Token movement: owner token map += exchangeAmount; issuer token map −= exchangeAmount (handle V1/V2 helpers).
-  - [ ] Persist owner/issuer accounts; mark both dirty; INFO log summary.
+- [x] In `applyTrc10AssetParticipate(...)`:
+  - [x] Resolve asset via V1+V2 or V2 rules (ALLOW_SAME_TOKEN_NAME).
+  - [x] Calculate `exchangeAmount = (amount * num) / trxNum` (floor division). Validate amounts > 0.
+  - [x] TRX movement: owner −= trxAmount; issuer += trxAmount (overflow safe via Math.addExact checks; log on failure).
+  - [x] Token movement: owner token map += exchangeAmount; issuer token map −= exchangeAmount (handle V1/V2 helpers).
+  - [x] Persist owner/issuer accounts; mark both dirty; INFO log summary.
 
 ### D. Post‑execution flush ordering and semantics
 
-- [ ] Keep apply order in `RuntimeSpiImpl.execute(...)`: base state changes → freeze → TRC‑10 → post‑exec flush.
-- [ ] Ensure post‑exec flush waits for remote write completion:
-  - [ ] `ResourceSyncService.flushResourceDeltas(...)` composes futures and `.get()`; confirm this path is invoked with `-Dremote.resource.sync.postexec=true` (default).
+- [x] Keep apply order in `RuntimeSpiImpl.execute(...)`: base state changes → freeze → TRC‑10 → post‑exec flush.
+- [x] Ensure post‑exec flush waits for remote write completion:
+  - [x] `ResourceSyncService.flushResourceDeltas(...)` composes futures and `.get()`; confirm this path is invoked with `-Dremote.resource.sync.postexec=true` (default).
 - [ ] Optional: add a light confirmation (guarded by `-Dremote.resource.sync.confirm=true`) for 1–3 mutated accounts (blackhole, owner) post‑flush.
 
 ### E. CSV parity remains intact
 
-- [ ] Keep `ExecutionCsvRecordBuilder` synthesis (`LedgerCsvSynthesizer.synthesize(...)`) active. With store mutations flushed, subsequent tx’s “oldValue” will match across modes.
-- [ ] Ensure `LedgerCsvSynthesizer` continues to prefer `feeSun` if present when constructing synthetic owner/blackhole changes; no change needed, but verify.
+- [x] Keep `ExecutionCsvRecordBuilder` synthesis (`LedgerCsvSynthesizer.synthesize(...)`) active. With store mutations flushed, subsequent tx's "oldValue" will match across modes.
+- [x] Ensure `LedgerCsvSynthesizer` continues to prefer `feeSun` if present when constructing synthetic owner/blackhole changes; no change needed, but verify.
 
 ### F. Flags and defaults
 
-- [ ] `-Dremote.exec.apply.trc10=true` (default): controls Java apply path.
-- [ ] `-Dremote.resource.sync.postexec=true` (default): enables synchronous flush after apply.
-- [ ] `-Dremote.resource.sync.enabled=true` in REMOTE mode (service auto‑enables); verify defaults.
-- [ ] Leave `-Dremote.exec.trc10.enabled=false` by default unless we actively route TRC‑10 execution to Rust (separate concern).
+- [x] `-Dremote.exec.apply.trc10=true` (default): controls Java apply path.
+- [x] `-Dremote.resource.sync.postexec=true` (default): enables synchronous flush after apply.
+- [x] `-Dremote.resource.sync.enabled=true` in REMOTE mode (service auto‑enables); verify defaults.
+- [x] Leave `-Dremote.exec.trc10.enabled=false` by default unless we actively route TRC‑10 execution to Rust (separate concern).
 
 ### G. Observability
 
-- [ ] Add INFO logs summarizing ISSUE/PARTICIPATE apply:
-  - [ ] Owner and blackhole addresses, fee, remainSupply, token id, exchange amounts
-- [ ] Add metrics via `MetricsCallback` or simple counters:
-  - [ ] `remote.trc10.issue.apply_count`, `remote.trc10.participate.apply_count`
-- [ ] Resource sync: one‑line summary already exists; extend to print whether blackhole/owner addresses were included in the account batch when debug enabled.
+- [x] Add INFO logs summarizing ISSUE/PARTICIPATE apply:
+  - [x] Owner and blackhole addresses, fee, remainSupply, token id, exchange amounts
+- [x] Add metrics via `MetricsCallback` or simple counters:
+  - [x] `remote.trc10.issue.apply_count`, `remote.trc10.participate.apply_count`
+- [x] Resource sync: one‑line summary already exists; extend to print whether blackhole/owner addresses were included in the account batch when debug enabled.
 
 ### H. Tests (deterministic)
 

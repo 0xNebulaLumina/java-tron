@@ -657,7 +657,10 @@ public class RuntimeSpiImpl implements Runtime {
       }
 
       // Deduct asset issue fee
-      long fee = dynamicStore.getAssetIssueFee();
+      // Prefer feeSun from remote if provided to avoid dynamic store drift on historical blocks
+      long fee = trc10Change.getFeeSun() != null
+          ? trc10Change.getFeeSun()
+          : dynamicStore.getAssetIssueFee();
       org.tron.core.capsule.AccountCapsule ownerAccount = accountStore.get(ownerAddress);
       if (ownerAccount == null) {
         logger.error("Owner account not found for asset issue: {}", addressStr);
@@ -740,8 +743,10 @@ public class RuntimeSpiImpl implements Runtime {
       // Mark TOKEN_ID_NUM dynamic key as dirty
       org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("TOKEN_ID_NUM".getBytes());
 
-      logger.info("Successfully applied TRC-10 asset issuance: owner={}, name_hex={}, tokenId={}, totalSupply={}, remainSupply={}, fee={}",
-          addressStr, org.tron.common.utils.ByteArray.toHexString(trc10Change.getName()), tokenIdNum, trc10Change.getTotalSupply(), remainSupply, fee);
+      logger.info("Successfully applied TRC-10 asset issuance: owner={}, name_hex={}, tokenId={}, totalSupply={}, remainSupply={}, fee={}, feeSun={}, useBlackhole={}",
+          addressStr, org.tron.common.utils.ByteArray.toHexString(trc10Change.getName()), tokenIdNum, trc10Change.getTotalSupply(), remainSupply, fee,
+          trc10Change.getFeeSun() != null ? "provided(" + trc10Change.getFeeSun() + ")" : "dynamic",
+          dynamicStore.supportBlackHoleOptimization());
 
     } catch (Exception e) {
       logger.error("Failed to apply TRC-10 asset issuance, error: {}", e.getMessage(), e);
