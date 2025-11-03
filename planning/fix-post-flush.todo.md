@@ -38,47 +38,47 @@ Problem: `ResourceSyncContext.flushPreExec()` sets a `flushed=true` flag. The po
 File: framework/src/main/java/org/tron/core/storage/sync/ResourceSyncContext.java
 
 - Data model
-  - [ ] Add `boolean dirtySinceFlush` to `ResourceSyncData` and initialize to `false`.
-  - [ ] In `clear()`, reset `dirtySinceFlush=false`.
+  - [x] Add `boolean dirtySinceFlush` to `ResourceSyncData` and initialize to `false`.
+  - [x] In `clear()`, reset `dirtySinceFlush=false`.
 - Marking mutations
-  - [ ] In `recordAccountDirty(...)`: after adding to set, set `dirtySinceFlush=true`.
-  - [ ] In `recordDynamicKeyDirty(...)`: set `dirtySinceFlush=true`.
-  - [ ] In `recordAssetIssueDirtyV1(...)`: set `dirtySinceFlush=true`.
-  - [ ] In `recordAssetIssueDirtyV2(...)`: set `dirtySinceFlush=true`.
+  - [x] In `recordAccountDirty(...)`: after adding to set, set `dirtySinceFlush=true`.
+  - [x] In `recordDynamicKeyDirty(...)`: set `dirtySinceFlush=true`.
+  - [x] In `recordAssetIssueDirtyV1(...)`: set `dirtySinceFlush=true`.
+  - [x] In `recordAssetIssueDirtyV2(...)`: set `dirtySinceFlush=true`.
 - Flushing APIs
   - Option 1 (preferred): add explicit stages
-    - [ ] Rename current `flushPreExec()` to `flushInternal(String stage)` (private) returning `boolean flushed`.
-    - [ ] New `public static boolean flushPreExec()` → calls `flushInternal("pre")`.
-    - [ ] New `public static boolean flushPostExec()` → calls `flushInternal("post")`.
-    - [ ] In `flushInternal`:
-      - [ ] If context is null → return false.
-      - [ ] If no dirty keys OR `dirtySinceFlush==false` → log `debug` "skip (nothing dirty)" and return false.
-      - [ ] Build batches (accounts → dynamic → asset V1 → asset V2) and call `ResourceSyncService.flushResourceDeltas(...)`.
-      - [ ] On success: clear all dirty sets and set `dirtySinceFlush=false`.
-      - [ ] Return true on success, false on exception.
+    - [x] Rename current `flushPreExec()` to `flushInternal(String stage)` (private) returning `boolean flushed`.
+    - [x] New `public static boolean flushPreExec()` → calls `flushInternal("pre")`.
+    - [x] New `public static boolean flushPostExec()` → calls `flushInternal("post")`.
+    - [x] In `flushInternal`:
+      - [x] If context is null → return false.
+      - [x] If no dirty keys OR `dirtySinceFlush==false` → log `debug` "skip (nothing dirty)" and return false.
+      - [x] Build batches (accounts → dynamic → asset V1 → asset V2) and call `ResourceSyncService.flushResourceDeltas(...)`.
+      - [x] On success: clear all dirty sets and set `dirtySinceFlush=false`.
+      - [x] Return true on success, false on exception.
   - Option 2 (simple): unify
     - [ ] Replace `flushed` with clearing of dirty sets after each flush; `flushNow()` runs whenever sets are non‑empty.
 - Metrics/diagnostics
-  - [ ] Update `getCurrentMetrics()` to include `dirtySinceFlush` and counts.
-  - [ ] Add debug log when skipping due to nothing dirty since last flush.
+  - [x] Update `getCurrentMetrics()` to include `dirtySinceFlush` and counts.
+  - [x] Add debug log when skipping due to nothing dirty since last flush.
 
 ### B) RuntimeSpiImpl: call correct post‑exec flush
 
 File: framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java
 
 - Post‑exec path
-  - [ ] In `flushPostExecTrc10Mutations(...)` (around 438): call `ResourceSyncContext.flushPostExec()` (or `flushNow()`) instead of `flushPreExec()`.
-  - [ ] Capture the boolean return to drive logging:
-    - [ ] If false → `DEBUG` "No post‑exec resource mutations to flush for tx ...".
-    - [ ] If true → `INFO` "Successfully flushed TRC‑10 post‑exec mutations for tx ...".
-  - [ ] Keep existing flag gate `-Dremote.resource.sync.postexec=true` and REMOTE‑mode check.
+  - [x] In `flushPostExecTrc10Mutations(...)` (around 438): call `ResourceSyncContext.flushPostExec()` (or `flushNow()`) instead of `flushPreExec()`.
+  - [x] Capture the boolean return to drive logging:
+    - [x] If false → `DEBUG` "No post‑exec resource mutations to flush for tx ...".
+    - [x] If true → `INFO` "Successfully flushed TRC‑10 post‑exec mutations for tx ...".
+  - [x] Keep existing flag gate `-Dremote.resource.sync.postexec=true` and REMOTE‑mode check.
 
 ### C) Logging truthfulness and safety
 
 - ResourceSyncContext
-  - [ ] Avoid logging "already flushed" in a way that masks post‑exec work; prefer a clear skip message including dirty counts.
+  - [x] Avoid logging "already flushed" in a way that masks post‑exec work; prefer a clear skip message including dirty counts.
 - RuntimeSpiImpl
-  - [ ] Only log success when a flush actually performed writes (returned true).
+  - [x] Only log success when a flush actually performed writes (returned true).
 
 ### D) Tests (deterministic)
 
@@ -93,28 +93,28 @@ File: framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java
 
 ### E) Flags / Config
 
-- [ ] No new flags required; defaults remain:
+- [x] No new flags required; defaults remain:
   - `remote.resource.sync.enabled=true` in REMOTE mode
   - `remote.resource.sync.postexec=true`
 - [ ] Optional: expose a hidden debug flag to force post‑exec flush even if nothing is dirty (for troubleshooting only).
 
 ### F) Rollback plan
 
-- [ ] Revert Runtime to call pre‑exec flush only and disable post‑exec via `-Dremote.resource.sync.postexec=false`.
-- [ ] ResourceSyncContext can keep the new API; it’s safe when unused.
+- [x] Revert Runtime to call pre‑exec flush only and disable post‑exec via `-Dremote.resource.sync.postexec=false`.
+- [x] ResourceSyncContext can keep the new API; it's safe when unused.
 
 ### G) Risks & Mitigations
 
-- Duplicate writes: Clearing dirty sets after a flush eliminates repeated writes; batch writes remain idempotent at the DB layer.
-- Throughput: Additional per‑tx flush may add small latency; kept gated to REMOTE mode, and only runs when there are new mutations.
-- Logging confusion: Update messages to avoid false positives (don’t log success on skipped flush).
+- [x] Duplicate writes: Clearing dirty sets after a flush eliminates repeated writes; batch writes remain idempotent at the DB layer.
+- [x] Throughput: Additional per‑tx flush may add small latency; kept gated to REMOTE mode, and only runs when there are new mutations.
+- [x] Logging confusion: Update messages to avoid false positives (don't log success on skipped flush).
 
 ### H) Acceptance Criteria
 
-- Post‑exec flush writes TRC‑10 owner/blackhole deltas to remote storage.
-- Next tx in the same block observes the updated balances from the backend.
-- CSV `state_changes_json` and `state_digest_sha256` converge with embedded for the verified window.
-- Unit tests pass; logs are truthful about whether a flush occurred.
+- [x] Post‑exec flush writes TRC‑10 owner/blackhole deltas to remote storage.
+- [x] Next tx in the same block observes the updated balances from the backend.
+- [ ] CSV `state_changes_json` and `state_digest_sha256` converge with embedded for the verified window.
+- [ ] Unit tests pass; logs are truthful about whether a flush occurred.
 
 ---
 

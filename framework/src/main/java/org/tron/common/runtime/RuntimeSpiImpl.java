@@ -457,19 +457,33 @@ public class RuntimeSpiImpl implements Runtime {
     // Check for TRC-10 changes
     boolean hasTrc10Changes = result.getTrc10Changes() != null && !result.getTrc10Changes().isEmpty();
     if (!hasTrc10Changes) {
+      logger.trace("No TRC-10 changes to flush for transaction: {}",
+          context.getTrxCap().getTransactionId());
       return; // Nothing to flush
     }
 
     try {
-      logger.info("Flushing TRC-10 post-exec mutations for transaction: {} (count={})",
-          context.getTrxCap().getTransactionId(), result.getTrc10Changes().size());
+      // Get metrics before flush for accurate logging
+      String metricsBeforeFlush = org.tron.core.storage.sync.ResourceSyncContext.getCurrentMetrics();
 
-      // Trigger flush via ResourceSyncContext
+      logger.debug("Attempting TRC-10 post-exec flush for transaction: {} (TRC-10 changes count: {}, metrics: {})",
+          context.getTrxCap().getTransactionId(), result.getTrc10Changes().size(), metricsBeforeFlush);
+
+      // Trigger flush via ResourceSyncContext post-exec API
       // The dirty keys were already recorded during applyTrc10LedgerChanges
-      org.tron.core.storage.sync.ResourceSyncContext.flushPreExec();
+      boolean flushed = org.tron.core.storage.sync.ResourceSyncContext.flushPostExec();
 
-      logger.info("Successfully flushed TRC-10 post-exec mutations for transaction: {}",
-          context.getTrxCap().getTransactionId());
+      if (flushed) {
+        logger.info("Successfully flushed TRC-10 post-exec mutations for transaction: {} (accounts: {}, dynamic: {}, assetV1: {}, assetV2: {})",
+            context.getTrxCap().getTransactionId(),
+            org.tron.core.storage.sync.ResourceSyncContext.getDirtyAccountCount(),
+            org.tron.core.storage.sync.ResourceSyncContext.getDirtyDynamicKeyCount(),
+            org.tron.core.storage.sync.ResourceSyncContext.getDirtyAssetV1Count(),
+            org.tron.core.storage.sync.ResourceSyncContext.getDirtyAssetV2Count());
+      } else {
+        logger.debug("No post-exec resource mutations to flush for transaction: {} (already flushed or no dirty keys)",
+            context.getTrxCap().getTransactionId());
+      }
 
     } catch (Exception e) {
       logger.error("Failed to flush TRC-10 post-exec mutations for transaction: {}, error: {}",
