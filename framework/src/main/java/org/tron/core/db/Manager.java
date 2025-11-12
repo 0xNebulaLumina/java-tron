@@ -1555,6 +1555,14 @@ public class Manager {
     // Flush resource mutations to remote storage before execution
     ResourceSyncContext.flushPreExec();
 
+    // Read blackhole balance before execution
+    AccountCapsule blackholeBefore = getAccountStore().getBlackhole();
+    if (blackholeBefore == null) {
+      logger.warn("Blackhole account not found before transaction execution. TxId: {}, BlockNum: {}",
+          txId, Objects.nonNull(blockCap) ? blockCap.getNum() : null);
+    }
+    long blackholeBalanceBefore = blackholeBefore != null ? blackholeBefore.getBalance() : 0L;
+
     trace.init(blockCap, eventPluginLoaded);
     StateChangeJournalRegistry.initializeForCurrentTransaction();
     StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
@@ -1585,6 +1593,19 @@ public class Manager {
     }
 
     trace.finalization();
+
+    // Read blackhole balance after execution and log the change
+    AccountCapsule blackholeAfter = getAccountStore().getBlackhole();
+    if (blackholeAfter == null) {
+      logger.warn("Blackhole account not found after transaction execution. TxId: {}, BlockNum: {}, ContractType: {}",
+          txId, Objects.nonNull(blockCap) ? blockCap.getNum() : null, contract.getType().name());
+    }
+    long blackholeBalanceAfter = blackholeAfter != null ? blackholeAfter.getBalance() : 0L;
+    long blackholeDiff = blackholeBalanceAfter - blackholeBalanceBefore;
+    String contractType = contract.getType().name();
+    Long blockNum = Objects.nonNull(blockCap) ? blockCap.getNum() : null;
+    logger.info("TxId: {}, BlockNum: {}, ContractType: {}, Blackhole balance: before={} SUN, after={} SUN, diff={} SUN",
+        txId, blockNum, contractType, blackholeBalanceBefore, blackholeBalanceAfter, blackholeDiff);
     if (getDynamicPropertiesStore().supportVM()) {
       trxCap.setResult(trace.getTransactionContext());
     }
