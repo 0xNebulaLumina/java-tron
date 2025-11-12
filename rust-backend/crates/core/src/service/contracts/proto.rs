@@ -28,3 +28,20 @@ pub(crate) fn read_varint(data: &[u8]) -> Result<(u64, usize), String> {
         }
     }
 }
+
+/// Write a protobuf varint to a byte vector
+/// Used for test utilities to construct protobuf messages
+#[cfg(test)]
+pub(crate) fn write_varint(buf: &mut Vec<u8>, mut value: u64) {
+    loop {
+        let mut byte = (value & 0x7F) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80; // Set continuation bit
+        }
+        buf.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
