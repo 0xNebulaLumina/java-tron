@@ -173,7 +173,8 @@ public class ExecutionProgramResult extends ProgramResult {
         success ? null : (getRuntimeError() != null ? getRuntimeError() : "Execution failed"),
         bandwidthUsed,
         freezeChanges != null ? new ArrayList<>(freezeChanges) : new ArrayList<>(),
-        globalResourceChanges != null ? new ArrayList<>(globalResourceChanges) : new ArrayList<>()
+        globalResourceChanges != null ? new ArrayList<>(globalResourceChanges) : new ArrayList<>(),
+        new ArrayList<>() // trc10Changes - not applicable for VM execution
     );
   }
 

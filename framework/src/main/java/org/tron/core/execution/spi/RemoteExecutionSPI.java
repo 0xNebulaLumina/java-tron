@@ -702,7 +702,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           response.getErrorMessage(), // errorMessage
           0, // bandwidthUsed
           new ArrayList<>(), // freezeChanges
-          new ArrayList<>() // globalResourceChanges
+          new ArrayList<>(), // globalResourceChanges
+          new ArrayList<>() // trc10Changes
           );
     }
 
@@ -861,6 +862,42 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       });
     }
 
+    // Convert protobuf TRC-10 changes (Phase 2: full TRC-10 ledger semantics)
+    List<Trc10Change> trc10Changes = new ArrayList<>();
+    for (tron.backend.BackendOuterClass.Trc10Change protoTrc10 : protoResult.getTrc10ChangesList()) {
+      // Handle the oneof union type
+      if (protoTrc10.hasAssetIssued()) {
+        tron.backend.BackendOuterClass.Trc10AssetIssued protoAssetIssued = protoTrc10.getAssetIssued();
+
+        Trc10AssetIssued assetIssued = new Trc10AssetIssued(
+            protoAssetIssued.getOwnerAddress().toByteArray(),
+            protoAssetIssued.getName().toByteArray(),
+            protoAssetIssued.getAbbr().toByteArray(),
+            protoAssetIssued.getTotalSupply(),
+            protoAssetIssued.getTrxNum(),
+            protoAssetIssued.getPrecision(),
+            protoAssetIssued.getNum(),
+            protoAssetIssued.getStartTime(),
+            protoAssetIssued.getEndTime(),
+            protoAssetIssued.getDescription().toByteArray(),
+            protoAssetIssued.getUrl().toByteArray(),
+            protoAssetIssued.getFreeAssetNetLimit(),
+            protoAssetIssued.getPublicFreeAssetNetLimit(),
+            protoAssetIssued.getPublicFreeAssetNetUsage(),
+            protoAssetIssued.getPublicLatestFreeNetTime(),
+            protoAssetIssued.getTokenId());
+
+        trc10Changes.add(new Trc10Change(assetIssued));
+
+        logger.debug("Parsed TRC-10 asset issued: owner={}, name={}, totalSupply={}, precision={}, tokenId={}",
+            org.tron.common.utils.ByteArray.toHexString(protoAssetIssued.getOwnerAddress().toByteArray()),
+            new String(protoAssetIssued.getName().toByteArray(), java.nio.charset.StandardCharsets.UTF_8),
+            protoAssetIssued.getTotalSupply(),
+            protoAssetIssued.getPrecision(),
+            protoAssetIssued.getTokenId());
+      }
+    }
+
     // Report metrics if callback is registered
     if (metricsCallback != null) {
       metricsCallback.onMetric("remote.energy_used", protoResult.getEnergyUsed());
@@ -882,7 +919,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         protoResult.getErrorMessage(),
         protoResult.getBandwidthUsed(),
         freezeChanges,
-        globalResourceChanges);
+        globalResourceChanges,
+        trc10Changes);
   }
 
   /**
