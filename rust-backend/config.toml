@@ -70,7 +70,7 @@ witness_update_enabled = false  # Disabled until implemented
 vote_witness_enabled = true
 
 # TRC-10 transfers (requires additional storage support)
-trc10_enabled = false
+trc10_enabled = true
 
 # FreezeBalanceContract execution (Phase 2: balance delta + resource ledger)
 # Set to true to enable remote execution of FreezeBalanceContract
