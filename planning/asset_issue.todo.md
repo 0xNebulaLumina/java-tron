@@ -154,7 +154,7 @@ Todo items (Rust)
 
 ---
 
-## Phase 2: Full TRC‑10 Ledger Semantics (Option A - Proto Extension) [IN PROGRESS]
+## Phase 2: Full TRC‑10 Ledger Semantics (Option A - Proto Extension) [COMPLETED]
 
 We will proceed with Option A. Rust emits high‑level TRC‑10 semantic diffs; Java applies them to existing stores.
 
@@ -168,6 +168,7 @@ We will proceed with Option A. Rust emits high‑level TRC‑10 semantic diffs; 
 5. Updated execute_asset_issue_contract to emit Trc10Change with all parsed fields
 6. Added protobuf conversion logic in conversion.rs
 7. All Rust code compiles successfully
+8. Added comprehensive Rust tests for Trc10Change emission
 
 **✅ Completed - Java Side (Parsing):**
 1. Added Trc10AssetIssued and Trc10Change classes to ExecutionSPI.java
@@ -176,11 +177,20 @@ We will proceed with Option A. Rust emits high‑level TRC‑10 semantic diffs; 
 4. Updated all ExecutionResult constructor calls across the codebase
 5. All Java code compiles successfully
 
-**⏳ Remaining - Java Side (Application):**
-- Create AssetIssueCapsule V1/V2 entries in stores
-- Manage TOKEN_ID_NUM (read, increment, save)
-- Update issuer account asset maps (assetV1/assetV2)
-- Add comprehensive tests
+**✅ Completed - Java Side (Application):**
+1. Implemented applyTrc10Changes() in RuntimeSpiImpl.java
+2. Implemented applyAssetIssuedChange() with full store application logic:
+   - Create AssetIssueCapsule V1/V2 entries in stores
+   - Manage TOKEN_ID_NUM (read, increment, save)
+   - Update issuer account asset maps (assetV1/assetV2)
+   - Handle ALLOW_SAME_TOKEN_NAME toggle (V1 vs V2 behavior)
+3. Added comprehensive Java tests for TRC-10 changes:
+   - testTrc10AssetIssuedChangeParsing: Verify parsing from ExecutionProgramResult
+   - testTrc10AssetIssuedApplicationWithV1: Test V1+V2 store creation (ALLOW_SAME_TOKEN_NAME=0)
+   - testTrc10AssetIssuedApplicationWithoutV1: Test V2-only store creation (ALLOW_SAME_TOKEN_NAME=1)
+   - testTokenIdNumManagement: Verify TOKEN_ID_NUM read/increment/save
+4. All tests compile successfully (require Spring context to run)
+5. Java implementation feature-gated with `-Dremote.exec.apply.trc10=true` (default true)
 
 Proto changes (backend.proto):
 
