@@ -531,6 +531,7 @@ impl BackendService {
             aext_map, // Populated with tracked AEXT if mode is "tracked"
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for value transfers
+            trc10_changes: vec![], // Not applicable for value transfers
         })
     }
 
@@ -743,6 +744,7 @@ impl BackendService {
             aext_map, // Populated with tracked AEXT if mode is "tracked"
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for witness creation
+            trc10_changes: vec![], // Not applicable for witness creation
         })
     }
 
@@ -1118,6 +1120,7 @@ impl BackendService {
             aext_map, // Populated with tracked AEXT if mode is "tracked"
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for vote witness
+            trc10_changes: vec![], // Not applicable for vote witness
         })
     }
 
@@ -1224,6 +1227,7 @@ impl BackendService {
             aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for account update
+            trc10_changes: vec![], // Not applicable for account update
         })
     }
 
@@ -1397,6 +1401,28 @@ impl BackendService {
             owner_tron, asset_info.name, asset_issue_fee, state_changes.len(), bandwidth_used
         );
 
+        // 12. Build TRC-10 Asset Issued change for Phase 2
+        let trc10_change = tron_backend_execution::Trc10Change::AssetIssued(
+            tron_backend_execution::Trc10AssetIssued {
+                owner_address: owner,
+                name: asset_info.name.as_bytes().to_vec(),
+                abbr: asset_info.abbr.as_bytes().to_vec(),
+                total_supply: asset_info.total_supply,
+                trx_num: asset_info.trx_num,
+                precision: asset_info.precision,
+                num: asset_info.num,
+                start_time: asset_info.start_time,
+                end_time: asset_info.end_time,
+                description: asset_info.description.as_bytes().to_vec(),
+                url: asset_info.url.as_bytes().to_vec(),
+                free_asset_net_limit: asset_info.free_asset_net_limit,
+                public_free_asset_net_limit: asset_info.public_free_asset_net_limit,
+                public_free_asset_net_usage: asset_info.public_free_asset_net_usage,
+                public_latest_free_net_time: asset_info.public_latest_free_net_time,
+                token_id: None, // Java will compute via TOKEN_ID_NUM
+            }
+        );
+
         Ok(TronExecutionResult {
             success: true,
             return_data: revm_primitives::Bytes::new(), // No return data for asset issue
@@ -1408,6 +1434,7 @@ impl BackendService {
             aext_map,
             freeze_changes: vec![], // Not applicable for asset issue
             global_resource_changes: vec![], // Not applicable for asset issue
+            trc10_changes: vec![trc10_change], // Phase 2: emit TRC-10 semantic change
         })
     }
 
@@ -1427,6 +1454,11 @@ impl BackendService {
         let mut end_time: i64 = 0;
         let mut description = String::new();
         let mut url = String::new();
+        // Phase 2 fields
+        let mut free_asset_net_limit: i64 = 0;
+        let mut public_free_asset_net_limit: i64 = 0;
+        let mut public_free_asset_net_usage: i64 = 0;
+        let mut public_latest_free_net_time: i64 = 0;
 
         let mut pos = 0;
 
@@ -1537,6 +1569,30 @@ impl BackendService {
 
                     url = String::from_utf8_lossy(url_bytes).to_string();
                 },
+                (22, 0) => { // free_asset_net_limit (int64, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read free_asset_net_limit: {}", e))?;
+                    pos += bytes_read;
+                    free_asset_net_limit = value as i64;
+                },
+                (23, 0) => { // public_free_asset_net_limit (int64, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read public_free_asset_net_limit: {}", e))?;
+                    pos += bytes_read;
+                    public_free_asset_net_limit = value as i64;
+                },
+                (24, 0) => { // public_free_asset_net_usage (int64, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read public_free_asset_net_usage: {}", e))?;
+                    pos += bytes_read;
+                    public_free_asset_net_usage = value as i64;
+                },
+                (25, 0) => { // public_latest_free_net_time (int64, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read public_latest_free_net_time: {}", e))?;
+                    pos += bytes_read;
+                    public_latest_free_net_time = value as i64;
+                },
                 _ => {
                     // Skip unknown fields
                     let bytes_skipped = Self::skip_protobuf_field(&data[pos..], wire_type)
@@ -1557,11 +1613,15 @@ impl BackendService {
             end_time,
             description,
             url,
+            free_asset_net_limit,
+            public_free_asset_net_limit,
+            public_free_asset_net_usage,
+            public_latest_free_net_time,
         })
     }
 }
 
-/// Parsed AssetIssueContract information (Phase 1)
+/// Parsed AssetIssueContract information (Phase 1 + Phase 2)
 #[derive(Debug, Clone)]
 struct AssetIssueInfo {
     name: String,
@@ -1574,6 +1634,11 @@ struct AssetIssueInfo {
     end_time: i64,
     description: String,
     url: String,
+    // Phase 2 fields
+    free_asset_net_limit: i64,
+    public_free_asset_net_limit: i64,
+    public_free_asset_net_usage: i64,
+    public_latest_free_net_time: i64,
 }
 
 #[cfg(test)]
