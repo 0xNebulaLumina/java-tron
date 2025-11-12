@@ -244,6 +244,13 @@ impl BackendService {
                 // TODO: Implement TRC-10 transfer handler
                 Err("TRC-10 transfers not yet implemented in Rust backend".to_string())
             },
+            Some(tron_backend_execution::TronContractType::AssetIssueContract) => {
+                if !remote_config.trc10_enabled {
+                    return Err("ASSET_ISSUE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing ASSET_ISSUE_CONTRACT");
+                self.execute_asset_issue_contract(storage_adapter, transaction, context)
+            },
             Some(tron_backend_execution::TronContractType::AccountUpdateContract) => {
                 debug!("Executing ACCOUNT_UPDATE_CONTRACT");
                 self.execute_account_update_contract(storage_adapter, transaction, context)
@@ -1219,6 +1226,354 @@ impl BackendService {
             global_resource_changes: vec![], // Not applicable for account update
         })
     }
+
+    /// Execute an ASSET_ISSUE_CONTRACT (TRC-10 token issuance)
+    /// Phase 1: Charge asset issue fee, emit fee deltas, bandwidth, and AEXT tracking
+    /// Phase 2 (future): Full TRC-10 persistence via proto extension
+    fn execute_asset_issue_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::{TronExecutionResult, TronStateChange};
+        use revm_primitives::Address;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        debug!("Executing ASSET_ISSUE_CONTRACT for owner {}", owner_tron);
+
+        // 1. Parse AssetIssueContract proto from transaction.data
+        let asset_info = Self::parse_asset_issue_contract(&transaction.data)?;
+
+        info!(
+            "AssetIssue: owner={}, name={}, total_supply={}, precision={}",
+            owner_tron, asset_info.name, asset_info.total_supply, asset_info.precision
+        );
+
+        // 2. Get execution configuration
+        let execution_config = self.get_execution_config()?;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
+
+        // 3. Load owner account
+        let owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or("Owner account does not exist".to_string())?;
+
+        // 4. Get asset issue fee from dynamic properties
+        let asset_issue_fee = storage_adapter.get_asset_issue_fee()
+            .map_err(|e| format!("Failed to get AssetIssueFee: {}", e))?;
+
+        debug!("AssetIssueFee: {} SUN", asset_issue_fee);
+
+        // 5. Validate owner balance >= fee
+        let owner_balance_u256 = owner_account.balance;
+        let fee_u256 = revm_primitives::U256::from(asset_issue_fee);
+
+        if owner_balance_u256 < fee_u256 {
+            return Err(format!(
+                "Insufficient balance for asset issue fee: owner has {} SUN, fee is {} SUN",
+                owner_balance_u256, asset_issue_fee
+            ));
+        }
+
+        // 6. Deduct fee from owner
+        let new_owner_balance = owner_balance_u256 - fee_u256;
+        let new_owner_account = revm_primitives::AccountInfo {
+            balance: new_owner_balance,
+            nonce: owner_account.nonce,
+            code_hash: owner_account.code_hash,
+            code: owner_account.code.clone(),
+        };
+
+        // 7. Emit state changes (deterministic ordering by address)
+        let mut state_changes = Vec::new();
+
+        // Always emit owner account change
+        state_changes.push(TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(owner_account.clone()),
+            new_account: Some(new_owner_account.clone()),
+        });
+
+        // Persist owner account update
+        storage_adapter
+            .set_account(owner, new_owner_account.clone())
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+        // 8. Handle fee burning/crediting
+        let support_blackhole = storage_adapter.support_black_hole_optimization()
+            .map_err(|e| format!("Failed to get blackhole optimization flag: {}", e))?;
+
+        if support_blackhole {
+            // Burn mode - no additional account change needed
+            info!("Burning {} SUN asset issue fee (blackhole optimization)", asset_issue_fee);
+        } else {
+            // Credit blackhole account
+            if let Some(blackhole_addr) = storage_adapter.get_blackhole_address()
+                .map_err(|e| format!("Failed to get blackhole address: {}", e))? {
+
+                let blackhole_account = storage_adapter.get_account(&blackhole_addr)
+                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
+                    .unwrap_or_default();
+
+                let new_blackhole_account = revm_primitives::AccountInfo {
+                    balance: blackhole_account.balance + fee_u256,
+                    nonce: blackhole_account.nonce,
+                    code_hash: blackhole_account.code_hash,
+                    code: blackhole_account.code.clone(),
+                };
+
+                // Emit account change for blackhole
+                state_changes.push(TronStateChange::AccountChange {
+                    address: blackhole_addr,
+                    old_account: Some(blackhole_account),
+                    new_account: Some(new_blackhole_account.clone()),
+                });
+
+                // Persist blackhole account update
+                storage_adapter
+                    .set_account(blackhole_addr, new_blackhole_account.clone())
+                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
+
+                let bh_tron = tron_backend_common::to_tron_address(&blackhole_addr);
+                info!(
+                    "Credited {} SUN asset issue fee to blackhole address {}",
+                    asset_issue_fee, bh_tron
+                );
+            }
+        }
+
+        // 9. Sort state changes deterministically by address for CSV parity
+        state_changes.sort_by_key(|change| match change {
+            TronStateChange::AccountChange { address, .. } => *address,
+            _ => Address::ZERO,
+        });
+
+        // 10. Calculate bandwidth
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // 11. AEXT tracking (if enabled)
+        let mut aext_map = std::collections::HashMap::new();
+
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for owner (or initialize with defaults)
+            let current_aext = storage_adapter.get_account_aext(&owner)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter.get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &owner,
+                bandwidth_used as i64,
+                context.block_number as i64, // Use block number as "now"
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter.set_account_aext(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
+
+            debug!(
+                "AEXT tracked for asset_issue: owner={}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                owner_tron, before_aext.net_usage, after_aext.net_usage,
+                before_aext.free_net_usage, after_aext.free_net_usage
+            );
+        }
+
+        info!(
+            "AssetIssue completed: owner={}, name={}, fee={} SUN, state_changes={}, bandwidth={}",
+            owner_tron, asset_info.name, asset_issue_fee, state_changes.len(), bandwidth_used
+        );
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(), // No return data for asset issue
+            energy_used: 0, // System contracts use 0 energy
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(), // No logs for asset issue
+            error: None,
+            aext_map,
+            freeze_changes: vec![], // Not applicable for asset issue
+            global_resource_changes: vec![], // Not applicable for asset issue
+        })
+    }
+
+    /// Parse AssetIssueContract protobuf from transaction data
+    /// Phase 1: Parse minimal fields (name, total_supply, precision, etc.)
+    /// Returns basic asset information without full validation
+    fn parse_asset_issue_contract(data: &[u8]) -> Result<AssetIssueInfo, String> {
+        use crate::service::contracts::proto::read_varint;
+
+        let mut name = String::new();
+        let mut abbr = String::new();
+        let mut total_supply: i64 = 0;
+        let mut precision: i32 = 0;
+        let mut trx_num: i32 = 0;
+        let mut num: i32 = 0;
+        let mut start_time: i64 = 0;
+        let mut end_time: i64 = 0;
+        let mut description = String::new();
+        let mut url = String::new();
+
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => { // owner_address (length-delimited) - skip, use transaction.from
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                },
+                (2, 2) => { // name (bytes)
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read name length: {}", e))?;
+                    pos += bytes_read;
+
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid name length".to_string());
+                    }
+
+                    let name_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    name = String::from_utf8_lossy(name_bytes).to_string();
+                },
+                (3, 2) => { // abbr (bytes)
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read abbr length: {}", e))?;
+                    pos += bytes_read;
+
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid abbr length".to_string());
+                    }
+
+                    let abbr_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    abbr = String::from_utf8_lossy(abbr_bytes).to_string();
+                },
+                (4, 0) => { // total_supply (int64, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read total_supply: {}", e))?;
+                    pos += bytes_read;
+                    total_supply = value as i64;
+                },
+                (6, 0) => { // trx_num (int32, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read trx_num: {}", e))?;
+                    pos += bytes_read;
+                    trx_num = value as i32;
+                },
+                (7, 0) => { // precision (int32, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read precision: {}", e))?;
+                    pos += bytes_read;
+                    precision = value as i32;
+                },
+                (8, 0) => { // num (int32, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read num: {}", e))?;
+                    pos += bytes_read;
+                    num = value as i32;
+                },
+                (9, 0) => { // start_time (int64, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read start_time: {}", e))?;
+                    pos += bytes_read;
+                    start_time = value as i64;
+                },
+                (10, 0) => { // end_time (int64, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read end_time: {}", e))?;
+                    pos += bytes_read;
+                    end_time = value as i64;
+                },
+                (20, 2) => { // description (bytes)
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read description length: {}", e))?;
+                    pos += bytes_read;
+
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid description length".to_string());
+                    }
+
+                    let desc_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    description = String::from_utf8_lossy(desc_bytes).to_string();
+                },
+                (21, 2) => { // url (bytes)
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read url length: {}", e))?;
+                    pos += bytes_read;
+
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid url length".to_string());
+                    }
+
+                    let url_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    url = String::from_utf8_lossy(url_bytes).to_string();
+                },
+                _ => {
+                    // Skip unknown fields
+                    let bytes_skipped = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += bytes_skipped;
+                }
+            }
+        }
+
+        Ok(AssetIssueInfo {
+            name,
+            abbr,
+            total_supply,
+            precision,
+            trx_num,
+            num,
+            start_time,
+            end_time,
+            description,
+            url,
+        })
+    }
+}
+
+/// Parsed AssetIssueContract information (Phase 1)
+#[derive(Debug, Clone)]
+struct AssetIssueInfo {
+    name: String,
+    abbr: String,
+    total_supply: i64,
+    precision: i32,
+    trx_num: i32,
+    num: i32,
+    start_time: i64,
+    end_time: i64,
+    description: String,
+    url: String,
 }
 
 #[cfg(test)]

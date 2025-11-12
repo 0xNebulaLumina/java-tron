@@ -313,7 +313,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             logger.debug("TRC-10 remote execution disabled, throwing exception to fallback to Java actuators");
             throw new UnsupportedOperationException("TRC-10 execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
-          
+
           TransferAssetContract transferAssetContract =
               contractParameter.unpack(TransferAssetContract.class);
           toAddress = transferAssetContract.getToAddress().toByteArray();
@@ -321,6 +321,28 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           assetId = transferAssetContract.getAssetName().toByteArray(); // TRC-10 asset ID
           txKind = TxKind.NON_VM; // TRC-10 asset transfer (when enabled)
           contractType = tron.backend.BackendOuterClass.ContractType.TRANSFER_ASSET_CONTRACT;
+          break;
+
+        case AssetIssueContract:
+          // TRC-10 Asset Issue: Gate behind the same TRC-10 feature flag
+          boolean assetIssueRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!assetIssueRemoteEnabled) {
+            logger.debug("TRC-10 AssetIssue remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("AssetIssue execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+
+          org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract assetIssueContract =
+              contractParameter.unpack(org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          value = 0; // Asset issue fee is charged, but not a value transfer
+          data = assetIssueContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // TRC-10 asset issuance
+          contractType = tron.backend.BackendOuterClass.ContractType.ASSET_ISSUE_CONTRACT;
+          logger.debug(
+              "Mapped AssetIssueContract to remote request; owner={}, name={}, total_supply={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              assetIssueContract.getName().toStringUtf8(),
+              assetIssueContract.getTotalSupply());
           break;
 
         case CreateSmartContract:

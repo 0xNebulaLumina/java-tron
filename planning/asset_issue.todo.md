@@ -27,11 +27,11 @@ Flags: Default disabled; opt-in via JVM system property and Rust config.
 
 ## Checklist (High-level)
 
-- [ ] Java: Add AssetIssueContract mapping in RemoteExecutionSPI
-- [ ] Rust: Add dispatch arm for AssetIssueContract in execute_non_vm_contract
-- [ ] Rust: Implement AssetIssue handler (fee, AEXT/bandwidth, state changes)
-- [ ] Rust: Add storage adapter getters for ASSET_ISSUE_FEE (and future TRC‑10 props)
-- [ ] Config: Keep disabled by default; add/confirm flags
+- [x] Java: Add AssetIssueContract mapping in RemoteExecutionSPI
+- [x] Rust: Add dispatch arm for AssetIssueContract in execute_non_vm_contract
+- [x] Rust: Implement AssetIssue handler (fee, AEXT/bandwidth, state changes)
+- [x] Rust: Add storage adapter getters for ASSET_ISSUE_FEE (and future TRC‑10 props)
+- [x] Config: Keep disabled by default; add/confirm flags (using existing trc10_enabled flag)
 - [ ] Tests: Java mapping unit test; Rust handler unit tests; e2e toggle test
 - [ ] Documentation: Feature flags, rollout notes, parity caveats
 
@@ -61,9 +61,9 @@ Add new `case AssetIssueContract` in `buildExecuteTransactionRequest(...)` switc
 
 Todo items (Java)
 
-- [ ] Insert switch arm with classification and payload.
-- [ ] Read `remote.exec.trc10.enabled` (and/or `.asset_issue.enabled`) and gate accordingly.
-- [ ] Add concise debug logs: inputs (name length, total_supply etc. if cheap to extract), classification, toggle state.
+- [x] Insert switch arm with classification and payload.
+- [x] Read `remote.exec.trc10.enabled` (and/or `.asset_issue.enabled`) and gate accordingly.
+- [x] Add concise debug logs: inputs (name length, total_supply etc. if cheap to extract), classification, toggle state.
 - [ ] Extend unit test: validate `TxKind`, `ContractType`, and `data` passthrough for AssetIssueContract.
 
 ---
@@ -142,15 +142,15 @@ Parsing cheat sheet (proto field numbers):
 
 Todo items (Rust)
 
-- [ ] Add dispatch arm for AssetIssueContract with config gating.
-- [ ] Implement `execute_asset_issue_contract` as per Phase 1 responsibilities.
-- [ ] Add `EngineBackedEvmStateStore::get_asset_issue_fee()` to read `ASSET_ISSUE_FEE` (8‑byte big endian) from `properties`.
+- [x] Add dispatch arm for AssetIssueContract with config gating.
+- [x] Implement `execute_asset_issue_contract` as per Phase 1 responsibilities.
+- [x] Add `EngineBackedEvmStateStore::get_asset_issue_fee()` to read `ASSET_ISSUE_FEE` (8‑byte big endian) from `properties`.
 - [ ] Unit tests:
      - Disabled flag returns error → Java fallback path.
      - Fee burn vs blackhole credit (two `state_changes` when not burning; one when burning).
      - Insufficient balance error.
      - AEXT tracked mode updates persisted and echoed.
-- [ ] Deterministic ordering of state_changes by address.
+- [x] Deterministic ordering of state_changes by address.
 
 ---
 
@@ -201,9 +201,9 @@ Rust (config.toml / env)
 
 Todo items (Config)
 
-- [ ] Keep feature disabled by default (both Java and Rust), document how to enable.
-- [ ] (Optional) Add granular `asset_issue_enabled` in `RemoteExecutionConfig` with defaults and config builder wiring.
-- [ ] Update `rust-backend/config.toml` docs/comments with the new flag.
+- [x] Keep feature disabled by default (both Java and Rust), document how to enable.
+- [x] (Optional - decided to reuse existing trc10_enabled flag for simplicity)
+- [x] Config documented in planning docs.
 
 ---
 
