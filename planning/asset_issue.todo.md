@@ -154,33 +154,67 @@ Todo items (Rust)
 
 ---
 
-## Phase 2: Full TRC‑10 Ledger Semantics (Optional Path)
+## Phase 2: Full TRC‑10 Ledger Semantics (Option A - Proto Extension)
 
-Two approaches; choose based on storage maturity:
+We will proceed with Option A. Rust emits high‑level TRC‑10 semantic diffs; Java applies them to existing stores.
 
-Option A — Proto extension (recommended for fast parity)
+Proto changes (backend.proto):
 
-- Extend `framework/src/main/proto/backend.proto`:
-  - Define `message Trc10Change` with oneof variants:
-    - `AssetIssued { name, abbr, total_supply, precision, trx_num, num, start_time, end_time, description, url, owner_address, token_id (v2), allow_same_token_name }`
-  - Add `repeated Trc10Change trc10_changes = <next_field>` to `ExecutionResult`.
-- Rust handler populates `AssetIssued` with parsed fields; computes next `TOKEN_ID_NUM` if doing ID assignment in Rust (or leave unset and let Java compute).
-- Java `RemoteExecutionSPI.convertExecuteTransactionResponse(...)` parses `trc10_changes` and applies to stores:
-  - Create AssetIssueCapsule in `AssetIssueStore` and `AssetIssueV2Store`.
-  - Update issuer `AccountCapsule` asset maps (V1 by name; V2 by id).
-  - Increment/persist `TOKEN_ID_NUM` in `DynamicPropertiesStore`.
-  - Recompute and persist TRC‑10 free bandwidth fields if needed.
+- Add new messages:
+  - `message Trc10AssetIssued {` (fields mirror AssetIssueContract; bytes where Java expects bytes)
+    - `bytes owner_address = 1;`
+    - `bytes name = 2;`
+    - `bytes abbr = 3;`
+    - `int64 total_supply = 4;`
+    - `int32 trx_num = 5;`
+    - `int32 precision = 6;`
+    - `int32 num = 7;`
+    - `int64 start_time = 8;`
+    - `int64 end_time = 9;`
+    - `bytes description = 10;`
+    - `bytes url = 11;`
+    - `int64 free_asset_net_limit = 12;`
+    - `int64 public_free_asset_net_limit = 13;`
+    - `int64 public_free_asset_net_usage = 14;`
+    - `int64 public_latest_free_net_time = 15;`
+    - `string token_id = 16; // optional; if empty, Java computes via TOKEN_ID_NUM`
+  - `message Trc10Change { oneof kind { Trc10AssetIssued asset_issued = 1; } }`
+- Extend `ExecutionResult` with:
+  - `repeated Trc10Change trc10_changes = <next_field_number>;`
 
-Option B — Rust storage support (longer path)
+Rust emission:
 
-- Add TRC‑10 stores in storage adapter (asset_issue, asset_issue_v2, account_asset maps) mirroring Java DB layout.
-- Perform all persistence in Rust and emit only account changes (plus optional explicit TRC‑10 changes for observability).
+- In `execute_asset_issue_contract`, after fee/bandwidth/AEXT, build a `Trc10Change.asset_issued` with parsed fields.
+- For `token_id`:
+  - Leave empty and let Java compute from `DynamicPropertiesStore.getTokenIdNum() + 1`, unless we later add a safe query/increment RPC.
+- Add to `ExecutionResult.trc10_changes` and return.
 
-Todo items (Phase 2)
+Java application:
 
-- [ ] Decide between Option A and B.
-- [ ] If Option A: design proto; implement result conversion on both sides.
-- [ ] If Option B: design DB schemas and implement storage adapter methods; add end‑to‑end tests.
+- Extend `RemoteExecutionSPI.convertExecuteTransactionResponse(...)` to parse `trc10_changes`.
+- For each `asset_issued`:
+  - Read/compute `token_id`:
+    - If present in message, trust it; else: `id = dynamicStore.getTokenIdNum() + 1` and then `dynamicStore.saveTokenIdNum(id)`.
+  - Create AssetIssueCapsule V1 or V2 (both):
+    - V1 key by `name` when `ALLOW_SAME_TOKEN_NAME == 0` (legacy paths), V2 by `token_id` string.
+    - Set `precision`, `trx_num`, `num`, `start_time`, `end_time`, `description`, `url`, and free asset net limits.
+  - Update issuer `AccountCapsule` asset balances:
+    - V1: `owner.asset[name] = total_supply` when same‑name disabled.
+    - V2: `owner.assetV2[token_id] = total_supply`.
+  - Put updated account and asset issue entries to their stores; log deterministic outcomes.
+- Ensure ordering of operations and store writes is deterministic; reuse existing helpers where possible.
+
+Testing (Phase 2):
+
+- Java
+  - Tests ensuring `trc10_changes` produce correct store mutations and TOKEN_ID_NUM increments.
+  - ALLOW_SAME_TOKEN_NAME toggles respected between V1 vs V2 addressability.
+- Rust
+  - Emission test: `trc10_changes` contains correctly populated `Trc10AssetIssued` from the input bytes.
+
+Notes:
+
+- Option B (Rust storage persistence) is not selected. Keep this as future consideration if we want Rust‑side TRC‑10 storage.
 
 ---
 
@@ -322,4 +356,3 @@ Integration (optional)
 - Rust AEXT tracking and bandwidth examples: witness/transfer handlers in `service/mod.rs`
 - Dynamic property keys (Java): `chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java`
 - TRC‑10 contract proto: `protocol/src/main/protos/core/contract/asset_issue_contract.proto`
-
