@@ -1605,7 +1605,10 @@ public class Manager {
     String contractType = contract.getType().name();
     Long blockNum = Objects.nonNull(blockCap) ? blockCap.getNum() : null;
     logger.info("TxId: {}, BlockNum: {}, ContractType: {}, Blackhole balance: before={} SUN, after={} SUN, diff={} SUN",
-        txId, blockNum, contractType, blackholeBalanceBefore, blackholeBalanceAfter, blackholeDiff);
+        txId, blockNum, contractType,
+        Long.toUnsignedString(blackholeBalanceBefore),
+        Long.toUnsignedString(blackholeBalanceAfter),
+        Long.toUnsignedString(blackholeDiff));
     if (getDynamicPropertiesStore().supportVM()) {
       trxCap.setResult(trace.getTransactionContext());
     }
