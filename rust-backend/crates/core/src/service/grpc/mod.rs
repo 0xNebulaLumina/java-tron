@@ -1053,8 +1053,11 @@ impl crate::backend::backend_server::Backend for BackendService {
                 .map(|ct| format!("{:?}", ct))
                 .unwrap_or_else(|| "UNKNOWN".to_string());
 
-            info!("Blackhole balance BEFORE execution: {} SUN (address: {}) - tx from: {}, contract_type: {}",
-                  balance, blackhole_base58, from_addr_base58, contract_type_str);
+            let tx_id = req.context.as_ref()
+                .map(|c| c.transaction_id.as_str())
+                .unwrap_or("");
+            info!("Blackhole balance BEFORE execution: {} SUN (address: {}) - block: {}, txId: {}, tx from: {}, contract_type: {}",
+                  balance, blackhole_base58, context.block_number, tx_id, from_addr_base58, contract_type_str);
             Some((blackhole_addr, balance, blackhole_base58))
         } else {
             warn!("Blackhole address not configured, skipping balance logging");
@@ -1133,8 +1136,11 @@ impl crate::backend::backend_server::Backend for BackendService {
                     .map(|ct| format!("{:?}", ct))
                     .unwrap_or_else(|| "UNKNOWN".to_string());
 
-                info!("Blackhole balance AFTER execution: {} SUN (address: {}, delta: {} SUN) - tx from: {}, contract_type: {}",
-                      balance_after, blackhole_base58, delta_signed, from_addr_base58, contract_type_str);
+                let tx_id = req.context.as_ref()
+                    .map(|c| c.transaction_id.as_str())
+                    .unwrap_or("");
+                info!("Blackhole balance AFTER execution: {} SUN (address: {}, delta: {} SUN) - block: {}, txId: {}, tx from: {}, contract_type: {}",
+                      balance_after, blackhole_base58, delta_signed, context.block_number, tx_id, from_addr_base58, contract_type_str);
             } else {
                 warn!("Blackhole account disappeared after execution (address: {})", blackhole_base58);
             }
