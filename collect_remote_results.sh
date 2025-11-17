@@ -132,7 +132,7 @@ echo ""
 
 # Step 11: Run CSV comparison
 echo "Step 11: Running CSV comparison..."
-python3 scripts/compare_exec_csv.py output-directory/execution-csv/20251113-124147-de6bcc79-embedded-embedded.csv "$NEWEST_CSV"
+python3 scripts/compare_exec_csv.py output-directory/execution-csv/20251117-102033-01aa61f2-embedded-embedded.csv "$NEWEST_CSV"
 
 echo ""
 echo "’‘’"
@@ -141,7 +141,7 @@ echo ""
 echo "I want to compare the (embedded execution + embedded storage) results vs the (remote execution + remote storage) results,"
 echo ""
 echo "The result csv are"
-echo "+ output-directory/execution-csv/20251113-124147-de6bcc79-embedded-embedded.csv"
+echo "+ output-directory/execution-csv/20251117-102033-01aa61f2-embedded-embedded.csv"
 echo "+ $NEWEST_CSV"
 echo "respectively."
 echo ""
