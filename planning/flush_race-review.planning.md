@@ -265,6 +265,11 @@ When I’d choose this
 - As a short‑term, low‑risk mitigation to stabilise remote vs Java pre‑balance logs while you design and implement a deeper architectural fix (like 1 or 2).
 - If you’re primarily debugging parity and need predictable logs now.
 
+———
+
+4. Versioned / height‑aware writes (long‑term, more invasive)
+
+Idea
 
 - Embed a version (e.g. block number or logical timestamp) in account values or in a side metadata table.
 - When writing to remote DB, a component only overwrites a key if its version ≥ the existing one.
@@ -300,3 +305,298 @@ behaviour with minimal blast radius and is easy to reason about.
 
 If you want, I can sketch what the “always flush blackhole” change would look like in ResourceSyncService.flushResourceDeltas and how to guard it behind a feature flag so you can enable/disable it per
 environment.
+
+
+---
+
+
+• Here’s a concrete, code‑aware plan for Option 1 (“single writer for the remote account DB”), based on how this repo actually works.
+
+———
+
+High‑Level Goal
+
+In REMOTE mode, make the Rust backend’s account DB the canonical store, and ensure Java never overwrites it via snapshot flush. Java can:
+
+- Read accounts (via chainbase over remote storage).
+- Stage mutations in snapshots.
+- Push only current account state to remote via explicit, controlled paths (ResourceSync / StorageSPI), not via SnapshotManager/Flusher.
+
+This removes the “old snapshot overwrote new remote state” class of bugs.
+
+———
+
+### 1. Establish Invariants and a Feature Gate
+
+Objective: Introduce a mode where we can enforce “single writer for account” without breaking existing behavior until we’re ready.
+
+- Add a config/system flag, e.g.:
+    - remote.account.singleWriter=true (system property or config key).
+- Define invariants for this mode:
+    - storage.mode == remote.
+    - Remote account DB in Rust is canonical.
+    - Java may only mutate remote account via:
+        - Rust execution (Rust writes directly via EngineBackedEvmStateStore.set_account).
+        - Java’s explicit sync path (ResourceSync/StorageSPI), never via chainbase flush.
+
+———
+
+### 2. Stop Snapshot Flush From Writing account in Remote Mode
+
+Where to change
+
+- chainbase/src/main/java/org/tron/core/db/StorageBackendDbSource.java
+- chainbase/src/main/java/org/tron/core/db/StorageBackendDB.java
+- chainbase/src/main/java/org/tron/core/db2/core/SnapshotRoot.java
+- chainbase/src/main/java/org/tron/core/db2/core/SnapshotManager.java
+
+2.1. Propagate storage mode into StorageBackend
+
+- In StorageBackendFactoryImpl.createStorageBackend(StorageMode mode, String dbName):
+    - Currently just creates StorageSPI and wraps it in StorageSpiBackendAdapter.
+    - When creating StorageBackendDbSource and StorageBackendDB in TronStoreWithRevoking:
+        - Extend constructors to also carry StorageMode:
+            - new StorageBackendDbSource(dbName, backend, mode)
+            - new StorageBackendDB(dbSource), with StorageBackendDB able to ask dbSource.getMode().
+- Add to StorageBackendDbSource:
+    - A StorageMode mode field with getter.
+    - Helper like boolean isRemote() { return mode == StorageMode.REMOTE; }.
+
+2.2. Gate StorageBackendDB.flush
+
+- In StorageBackendDB.flush(Map<WrappedByteArray, WrappedByteArray> batch):
+    - Add:
+        - If:
+            - dbSource.isRemote()
+            - getDbName().equals("account")
+            - and remote.account.singleWriter is true
+        - Then:
+            - Log once at INFO (with rate‑limiting or a boolean) e.g.:
+                - "Skipping flush for 'account' DB in remote single-writer mode; batch size={}".
+            - Do not call dbSource.getStorageBackend().batchPut(...).
+            - Still call putCache(batch) in caller (SnapshotRoot.merge) so Java’s cache stays coherent.
+    - For non‑account DBs or embedded mode, behavior is unchanged.
+
+Effect
+
+- SnapshotRoot.merge(...) and Chainbase.merge(...), which call Flusher.flush(batch) for the account DB, will no longer write any account bytes to remote RocksDB when in REMOTE+singleWriter mode.
+- Old snapshots can’t overwrite newer remote balances (e.g., blackhole) anymore.
+
+———
+
+### 3. Audit and Classify All Java Account Mutations
+
+We must ensure every intended Java account change that should persist to remote has an explicit sync path; anything else must remain local‑only.
+
+3.1. Pre‑execution resource consumption (already uses ResourceSync)
+
+Files:
+
+- chainbase/src/main/java/org/tron/core/db/BandwidthProcessor.java
+- framework/src/main/java/org/tron/core/db/Manager.java:consumeMultiSignFee, consumeMemoFee
+
+Patterns:
+
+- BandwidthProcessor:
+    - Adjusts account balances/usage, then:
+        - chainBaseManager.getAccountStore().put(accountCapsule.createDbKey(), accountCapsule);
+        - ResourceSyncContext.recordAccountDirty(accountCapsule.createDbKey());
+        - Similar for TOTAL_CREATE_ACCOUNT_COST: ResourceSyncContext.recordDynamicKeyDirty(...).
+- Multi‑sign and memo fee in Manager:
+    - Use adjustBalance(...) and then:
+        - ResourceSyncContext.recordAccountDirty(ownerAddress) and/or blackhole address.
+        - For blackhole fee credit, they also record dynamic keys when burning is enabled.
+- Manager.processTransaction:
+    - Calls ResourceSyncContext.begin(...).
+    - After consumeBandwidth/multiSign/memo, calls ResourceSyncContext.flushPreExec() (leading to ResourceSyncService.flushResourceDeltas), before remote execution.
+
+Implication
+
+- These Java pre‑exec mutations are already persisted to remote via ResourceSyncService, not via snapshot flush.
+- After we disable snapshot flush for accounts, these paths still work correctly.
+
+Plan
+
+- No functional change required here, but:
+    - Ensure that every pre‑exec AccountStore mutation that matters always marks accounts/dynamic keys dirty.
+    - Add assertions or debug logs if dirtyAccounts is empty when fees should have been charged.
+
+———
+
+3.2. Post‑execution state replication from Rust (should be local‑only)
+
+Files:
+
+- framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java
+
+Key paths:
+
+- updateAccountState(...):
+    - After deserializing AccountInfo from Rust’s state, it:
+        - Creates/updates AccountCapsule.
+        - Calls chainBaseManager.getAccountStore().put(address, accountCapsule);
+        - No ResourceSyncContext.recordAccountDirty here.
+- applyFreezeLedgerChange(...):
+    - Builds or updates the owner account.
+    - Calls chainBaseManager.getAccountStore().put(ownerAddress, accountCapsule);
+    - Then calls ResourceSyncContext.recordAccountDirty(ownerAddress); (currently).
+
+Rust side:
+
+- rust-backend/crates/execution/src/storage_adapter/engine.rs:
+    - set_account(...) writes account data directly to StorageEngine (account DB).
+- rust-backend/crates/core/src/service/grpc/mod.rs:
+    - For non‑VM and some VM paths, state_changes are computed and immediately committed into RocksDB.
+
+Desired behavior in singleWriter mode
+
+- Rust is canonical for these changes; Java just mirrors them for its own view and logs.
+- AccountStore.put here should not cause remote writes:
+    - With snapshot flush disabled, these writes stay in the chainbase snapshot overlay — which is exactly what we want.
+- The one exception is ResourceSyncContext.recordAccountDirty in freeze ledger code:
+    - That would cause ResourceSyncService.flushResourceDeltas on the next tx to write the account back to remote, potentially out of order.
+
+Plan
+
+- In REMOTE+singleWriter mode:
+    - Leave updateAccountState as is (local overlay only).
+    - For applyFreezeLedgerChange, stop marking accounts as dirty for ResourceSync:
+        - Either guard ResourceSyncContext.recordAccountDirty with a check on storage mode, or remove it fully if not needed for embedded.
+    - Rely on Rust’s own freeze ledger/account updates as the single source for remote.
+
+———
+
+3.3. Genesis, migrations, and permissions
+
+Files:
+
+- framework/src/main/java/org/tron/core/db/Manager.java:
+    - initGenesis()
+    - initWitness()
+    - resetBlackholeAccountPermission()
+- framework/src/main/java/org/tron/core/db/api/AssetUpdateHelper.java
+
+Patterns:
+
+- initGenesis():
+    - Creates genesis accounts with chainBaseManager.getAccountStore().put(account.getAddress(), accountCapsule);.
+- initWitness():
+    - Ensures witness accounts exist and sets isWitness, then getAccountStore().put(keyAddress, accountCapsule);.
+- resetBlackholeAccountPermission():
+    - Modifies blackhole permissions and calls getAccountStore().put(...) for Blackhole.
+- AssetUpdateHelper.doWork():
+    - Bulk-updates account asset metadata and calls chainBaseManager.getAccountStore().put(...).
+
+In EMBBEDDED, these are normal, single‑process DB migrations. In REMOTE, they currently rely on the fact that chainbase writes ultimately reach remote DB via snapshot flush.
+
+Plan: choose a clear remote‑mode policy
+
+- Preferred: For REMOTE+singleWriter, do not run these migrations against the live remote DB.
+    - Treat remote DB as pre‑built and already migrated.
+    - Implement gating:
+        - In Manager.init(), before calling initGenesis() and resetBlackholeAccountPermission(), check:
+            - If StorageSpiFactory.determineStorageMode() == StorageMode.REMOTE, either:
+                - Skip these operations entirely, or
+                - Require a separate “offline” bootstrap tool to prepare remote DB.
+        - Similarly for AssetUpdateHelper and initWitness().
+- If you must support Java applying these changes in REMOTE:
+    - After each change batch, explicitly push to remote via StorageSPI instead of snapshot flush:
+        - Collect touched account addresses.
+        - Use a helper along ResourceSync lines:
+            - Resolve each account’s current value with AccountStore.getUnchecked.
+            - Call StorageSpiFactory.createStorage(StorageMode.REMOTE).batchWrite("account", batch).
+    - Wrap this in a dedicated migration/sync method so it’s not tied to per‑tx ResourceSyncContext.
+
+But as a first, safer iteration, assume remote DB is pre‑bootstrapped and skip these in REMOTE mode.
+
+———
+
+3.4. Ongoing consensus‑level Java changes (e.g., witness rewards)
+
+Files:
+
+- framework/src/main/java/org/tron/core/db/Manager.java:payReward(...)
+
+Behavior:
+
+- For each block, pays block rewards by adjusting account.setAllowance(...) for witness accounts and writes:
+    - getAccountStore().put(account.createDbKey(), account);.
+
+Question: Does Rust backend implement block rewards in REMOTE mode?
+
+- If yes (i.e., reward logic is ported), then we should treat the Java payReward as a legacy path and disable it in REMOTE+singleWriter to avoid conflicts.
+- If no, and Java is the only source of witness reward updates:
+    - Then in REMOTE+singleWriter, these Java account changes must be explicitly synced to remote via StorageSPI, similar to migrations:
+        - Mark the witness account(s) as dirty with ResourceSyncContext.recordAccountDirty.
+        - Add a flushPostBlock() hook (or similar) that runs after processBlock but before the next block’s execution and calls ResourceSyncService with those dirty accounts.
+        - Ensure this path uses current head values (not merged snapshots) and does not rely on snapshot flush.
+
+For an initial implementation of Option 1, I’d recommend:
+
+- First, confirm whether Rust backend already adjusts witness balances in your current remote configuration.
+- If yes, guard payReward so it’s skipped in REMOTE mode, avoiding dual writes.
+
+———
+
+### 4. Add Guardrails and Instrumentation
+
+Once the structural changes are in place, add checks to ensure the invariant “no chainbase flush to account in REMOTE+singleWriter” is actually true.
+
+4.1. Instrument StorageSpiBackendAdapter
+
+File: framework/src/main/java/org/tron/core/storage/spi/StorageSpiBackendAdapter.java
+
+- In put, batchPut (via storageSPI.batchWrite), when dbName.equals("account"):
+    - If remote.account.singleWriter is true, log caller info:
+        - You can add a small helper that inspects the stack trace to see if the call came from StorageBackendDB.flush vs ResourceSyncService.
+- This helps catch any accidental writes from the wrong path.
+
+4.2. Metrics
+
+- Add counters, e.g.:
+    - storage.remote.account_writes_from_flush
+    - storage.remote.account_writes_from_resourcesync
+- In singleWriter mode, account_writes_from_flush should remain zero in production.
+
+———
+
+### 5. Validation Plan
+
+Use your existing replay / log comparison setup to validate.
+
+5.1. Reproduce the 2131 → 2140 scenario
+        - But no StorageBackendDB.flush calls for dbName="account" actually send batches to the remote backend.
+    - Rerun block 2120–2142:
+        - Java’s Manager logs for blackhole pre‑balance remain monotonic.
+        - Rust’s “Blackhole balance BEFORE execution” never reverts to earlier values (e.g., 2120’s value at 2140).
+
+5.2. Sanity check state equality
+
+- At a chosen height:
+    - Pick a small set of addresses: blackhole, a busy transfer sender, witness addresses, etc.
+    - From Java, use StorageSPI.get("account", key) to read remote values.
+    - From Rust backend, either use logging or a debug API to retrieve the same keys.
+    - Ensure they match.
+
+5.3. Observe migrations and rewards
+
+- In REMOTE mode, confirm:
+    - Genesis/migrations/blackhole permission paths are either:
+        - Not executed, or
+        - Use the explicit StorageSPI sync path rather than relying on snapshot flush.
+    - Witness rewards are applied exactly once, by either Java or Rust, but not both.
+
+———
+
+Summary of Option 1 Plan
+
+- Disable snapshot flush to the account DB in REMOTE+singleWriter mode by gating StorageBackendDB.flush based on dbName=="account" and storage mode.
+- Audit all AccountStore.put call sites:
+    - Pre‑exec resource fees → already use ResourceSync; keep as is.
+    - Post‑exec remote state replication → ensure they remain local‑only; avoid ResourceSync here.
+    - Genesis/migrations/permissions → in REMOTE, either skip or sync via a dedicated StorageSPI path.
+    - Witness rewards and other consensus updates → either port to Rust and disable Java side in REMOTE, or sync explicitly via ResourceSync/StorageSPI.
+- Add instrumentation to verify that, in singleWriter mode, no account writes originate from snapshot flush, only from ResourceSync or Rust execution.
+- Validate using your existing replay/log comparison around the 2120–2140 window and a small state cross‑check at a known height.
+
+If you want, next step I can narrow this into an exact change list (which methods to gate, which call sites to guard for migrations/rewards) so you can sanity‑check feasibility before any coding.
