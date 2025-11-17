@@ -309,294 +309,368 @@ environment.
 
 ---
 
+• High‑level goal for option 2
 
-• Here’s a concrete, code‑aware plan for Option 1 (“single writer for the remote account DB”), based on how this repo actually works.
+Make snapshot flush “forward‑only” so that when SnapshotManager collapses old snapshots into SnapshotRoot and writes to the underlying DB (which is the remote RocksDB in REMOTE mode), it never writes a value
+that is older than Java’s current head snapshot. Concretely, for each key touched by the snapshots being merged, we want to flush the value as seen at Chainbase.head() (the latest logical state), not the
+value as it appeared in an older snapshot.
 
-———
-
-High‑Level Goal
-
-In REMOTE mode, make the Rust backend’s account DB the canonical store, and ensure Java never overwrites it via snapshot flush. Java can:
-
-- Read accounts (via chainbase over remote storage).
-- Stage mutations in snapshots.
-- Push only current account state to remote via explicit, controlled paths (ResourceSync / StorageSPI), not via SnapshotManager/Flusher.
-
-This removes the “old snapshot overwrote new remote state” class of bugs.
+Below is a detailed plan for how to do that safely in this codebase.
 
 ———
 
-### 1. Establish Invariants and a Feature Gate
+1. Understand the current snapshot / flush flow
 
-Objective: Introduce a mode where we can enforce “single writer for account” without breaking existing behavior until we’re ready.
+Files:
 
-- Add a config/system flag, e.g.:
-    - remote.account.singleWriter=true (system property or config key).
-- Define invariants for this mode:
-    - storage.mode == remote.
-    - Remote account DB in Rust is canonical.
-    - Java may only mutate remote account via:
-        - Rust execution (Rust writes directly via EngineBackedEvmStateStore.set_account).
-        - Java’s explicit sync path (ResourceSync/StorageSPI), never via chainbase flush.
-
-———
-
-### 2. Stop Snapshot Flush From Writing account in Remote Mode
-
-Where to change
-
-- chainbase/src/main/java/org/tron/core/db/StorageBackendDbSource.java
-- chainbase/src/main/java/org/tron/core/db/StorageBackendDB.java
+- chainbase/src/main/java/org/tron/core/db2/core/Chainbase.java
 - chainbase/src/main/java/org/tron/core/db2/core/SnapshotRoot.java
+- chainbase/src/main/java/org/tron/core/db2/core/SnapshotImpl.java
 - chainbase/src/main/java/org/tron/core/db2/core/SnapshotManager.java
+- chainbase/src/main/java/org/tron/core/db/StorageBackendDB.java
+- framework/src/main/java/org/tron/core/db/TronStoreWithRevoking.java
 
-2.1. Propagate storage mode into StorageBackend
+Key pieces:
 
-- In StorageBackendFactoryImpl.createStorageBackend(StorageMode mode, String dbName):
-    - Currently just creates StorageSPI and wraps it in StorageSpiBackendAdapter.
-    - When creating StorageBackendDbSource and StorageBackendDB in TronStoreWithRevoking:
-        - Extend constructors to also carry StorageMode:
-            - new StorageBackendDbSource(dbName, backend, mode)
-            - new StorageBackendDB(dbSource), with StorageBackendDB able to ask dbSource.getMode().
-- Add to StorageBackendDbSource:
-    - A StorageMode mode field with getter.
-    - Helper like boolean isRemote() { return mode == StorageMode.REMOTE; }.
+- TronStoreWithRevoking constructs revokingDB as a Chainbase over a SnapshotRoot:
+    - In dual mode (storage.mode = embedded|remote), db is a StorageBackendDB that wraps a StorageBackendDbSource, which in REMOTE mode is ultimately a StorageSpiBackendAdapter over StorageSPI → gRPC → Rust
+    RocksDB.
+    - revokingDB = new Chainbase(new SnapshotRoot(this.db));.
+- Chainbase manages:
+    - SnapshotRoot (the base, persisted view).
+    - A chain of SnapshotImpl instances representing deltas (one per ISession / revoking window).
+    - get(key) walks from head (latest snapshot) down to root, returning the first value found (SnapshotImpl.get delegates to get(this, key)).
+- SnapshotManager:
+    - Holds a list of Chainbase dbs (account, properties, etc.).
+    - buildSession() creates new SnapshotImpls and advances head, increasing size.
+    - When size > maxSize, it:
 
-2.2. Gate StorageBackendDB.flush
+    flushCount = flushCount + (size - maxSize.get());
+    updateSolidity(size - maxSize.get());
+    size = maxSize.get();
+    flush();
+    - flush():
 
-- In StorageBackendDB.flush(Map<WrappedByteArray, WrappedByteArray> batch):
-    - Add:
-        - If:
-            - dbSource.isRemote()
-            - getDbName().equals("account")
-            - and remote.account.singleWriter is true
-        - Then:
-            - Log once at INFO (with rate‑limiting or a boolean) e.g.:
-                - "Skipping flush for 'account' DB in remote single-writer mode; batch size={}".
-            - Do not call dbSource.getStorageBackend().batchPut(...).
-            - Still call putCache(batch) in caller (SnapshotRoot.merge) so Java’s cache stays coherent.
-    - For non‑account DBs or embedded mode, behavior is unchanged.
+    if (shouldBeRefreshed()) {
+        createCheckpoint();
+        refresh();   // <-- this is the merge into root
+        flushCount = 0;
+        logger.info("Flush cost: ..., create checkpoint cost: ..., refresh cost: ...");
+    }
+    - refresh() iterates over dbs and calls refreshOne(db) on a per‑DB executor.
+- SnapshotManager.refreshOne(Chainbase db):
 
-Effect
+if (Snapshot.isRoot(db.getHead())) return;
 
-- SnapshotRoot.merge(...) and Chainbase.merge(...), which call Flusher.flush(batch) for the account DB, will no longer write any account bytes to remote RocksDB when in REMOTE+singleWriter mode.
-- Old snapshots can’t overwrite newer remote balances (e.g., blackhole) anymore.
+List<Snapshot> snapshots = new ArrayList<>();
+SnapshotRoot root = (SnapshotRoot) db.getHead().getRoot();
+Snapshot next = root;
+for (int i = 0; i < flushCount; ++i) {
+    next = next.getNext();
+    snapshots.add(next);
+}
 
-———
+root.merge(snapshots);     // <-- flush/merge logic
+root.resetSolidity();
+if (db.getHead() == next) {
+    db.setHead(root);
+} else {
+    next.getNext().setPrevious(root);
+    root.setNext(next.getNext());
+}
 
-### 3. Audit and Classify All Java Account Mutations
+So snapshots = [root.next, root.next.next, ..., snapshot_flushCount] (earliest layers after root). After merge, those snapshots are removed from the chain; only later snapshots remain.
+- SnapshotRoot.merge(List<Snapshot> snapshots) (current behaviour):
 
-We must ensure every intended Java account change that should persist to remote has an explicit sync path; anything else must remain local‑only.
+public void merge(List<Snapshot> snapshots) {
+    Map<WrappedByteArray, WrappedByteArray> batch = new HashMap<>();
+    for (Snapshot snapshot : snapshots) {
+    SnapshotImpl from = (SnapshotImpl) snapshot;
+    Streams.stream(from.db)
+        .map(e -> Maps.immutableEntry(
+            WrappedByteArray.of(e.getKey().getBytes()),
+            WrappedByteArray.of(e.getValue().getBytes())))
+        .forEach(e -> batch.put(e.getKey(), e.getValue()));
+    }
+    if (needOptAsset()) {
+    processAccount(batch);
+    } else {
+    ((Flusher) db).flush(batch);   // StorageBackendDB.flush
+    putCache(batch);
+    }
+}
+    - Later snapshots in the list overwrite earlier ones in batch for the same key.
+    - For account DBs (isAccountDB), needOptAsset() true → processAccount(batch) applies asset optimization and then flushes accounts to db.
+    - Flusher.flush for remote mode uses StorageBackendDB.flush:
 
-3.1. Pre‑execution resource consumption (already uses ResourceSync)
+    public void flush(Map<WrappedByteArray, WrappedByteArray> batch) {
+        Map<byte[], byte[]> convertedBatch = new HashMap<>();
+        batch.forEach((key, value) -> {
+        convertedBatch.put(key.getBytes(), value.getBytes());
+        });
+        dbSource.getStorageBackend().batchPut(convertedBatch); // → remote RocksDB
+    }
 
-Files:
-
-- chainbase/src/main/java/org/tron/core/db/BandwidthProcessor.java
-- framework/src/main/java/org/tron/core/db/Manager.java:consumeMultiSignFee, consumeMemoFee
-
-Patterns:
-
-- BandwidthProcessor:
-    - Adjusts account balances/usage, then:
-        - chainBaseManager.getAccountStore().put(accountCapsule.createDbKey(), accountCapsule);
-        - ResourceSyncContext.recordAccountDirty(accountCapsule.createDbKey());
-        - Similar for TOTAL_CREATE_ACCOUNT_COST: ResourceSyncContext.recordDynamicKeyDirty(...).
-- Multi‑sign and memo fee in Manager:
-    - Use adjustBalance(...) and then:
-        - ResourceSyncContext.recordAccountDirty(ownerAddress) and/or blackhole address.
-        - For blackhole fee credit, they also record dynamic keys when burning is enabled.
-- Manager.processTransaction:
-    - Calls ResourceSyncContext.begin(...).
-    - After consumeBandwidth/multiSign/memo, calls ResourceSyncContext.flushPreExec() (leading to ResourceSyncService.flushResourceDeltas), before remote execution.
-
-Implication
-
-- These Java pre‑exec mutations are already persisted to remote via ResourceSyncService, not via snapshot flush.
-- After we disable snapshot flush for accounts, these paths still work correctly.
-
-Plan
-
-- No functional change required here, but:
-    - Ensure that every pre‑exec AccountStore mutation that matters always marks accounts/dynamic keys dirty.
-    - Add assertions or debug logs if dirtyAccounts is empty when fees should have been charged.
-
-———
-
-3.2. Post‑execution state replication from Rust (should be local‑only)
-
-Files:
-
-- framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java
-
-Key paths:
-
-- updateAccountState(...):
-    - After deserializing AccountInfo from Rust’s state, it:
-        - Creates/updates AccountCapsule.
-        - Calls chainBaseManager.getAccountStore().put(address, accountCapsule);
-        - No ResourceSyncContext.recordAccountDirty here.
-- applyFreezeLedgerChange(...):
-    - Builds or updates the owner account.
-    - Calls chainBaseManager.getAccountStore().put(ownerAddress, accountCapsule);
-    - Then calls ResourceSyncContext.recordAccountDirty(ownerAddress); (currently).
-
-Rust side:
-
-- rust-backend/crates/execution/src/storage_adapter/engine.rs:
-    - set_account(...) writes account data directly to StorageEngine (account DB).
-- rust-backend/crates/core/src/service/grpc/mod.rs:
-    - For non‑VM and some VM paths, state_changes are computed and immediately committed into RocksDB.
-
-Desired behavior in singleWriter mode
-
-- Rust is canonical for these changes; Java just mirrors them for its own view and logs.
-- AccountStore.put here should not cause remote writes:
-    - With snapshot flush disabled, these writes stay in the chainbase snapshot overlay — which is exactly what we want.
-- The one exception is ResourceSyncContext.recordAccountDirty in freeze ledger code:
-    - That would cause ResourceSyncService.flushResourceDeltas on the next tx to write the account back to remote, potentially out of order.
-
-Plan
-
-- In REMOTE+singleWriter mode:
-    - Leave updateAccountState as is (local overlay only).
-    - For applyFreezeLedgerChange, stop marking accounts as dirty for ResourceSync:
-        - Either guard ResourceSyncContext.recordAccountDirty with a check on storage mode, or remove it fully if not needed for embedded.
-    - Rely on Rust’s own freeze ledger/account updates as the single source for remote.
+So in REMOTE mode, SnapshotRoot.merge(snapshots) is writing snapshot‑level values (from early snapshots) directly into the remote "account" / "properties" DBs via batchPut. That’s the second writer that can
+overwrite newer state.
 
 ———
 
-3.3. Genesis, migrations, and permissions
+2. Define the desired semantics for Option 2
 
-Files:
+We want SnapshotRoot.merge(snapshots) in REMOTE mode to obey:
 
-- framework/src/main/java/org/tron/core/db/Manager.java:
-    - initGenesis()
-    - initWitness()
-    - resetBlackholeAccountPermission()
-- framework/src/main/java/org/tron/core/db/api/AssetUpdateHelper.java
+- For any key k that is affected by the snapshots being merged:
+    - Let V_head(k) = value of k according to head (db.getHead().get(k)).
+    - Let V_root(k) = value of k according to root (before merge).
+    - Let V_remote_before(k) = whatever is currently in remote RocksDB (may have been advanced by ResourceSync and remote execution).
+- After merge+flush:
+    - The logical chain (root + remaining snapshots) seen by Java head must still reflect the same state as before merge (no semantic change).
+    - The write we send to the remote DB for key k must be consistent with V_head(k)—in particular, we must not write a value that predates V_head(k).
 
-Patterns:
+In practice:
 
-- initGenesis():
-    - Creates genesis accounts with chainBaseManager.getAccountStore().put(account.getAddress(), accountCapsule);.
-- initWitness():
-    - Ensures witness accounts exist and sets isWitness, then getAccountStore().put(keyAddress, accountCapsule);.
-- resetBlackholeAccountPermission():
-    - Modifies blackhole permissions and calls getAccountStore().put(...) for Blackhole.
-- AssetUpdateHelper.doWork():
-    - Bulk-updates account asset metadata and calls chainBaseManager.getAccountStore().put(...).
+- For keys that only exist in the early snapshots (no later updates), V_head(k) equals the merged snapshot value; so behaviour is unchanged.
+- For keys that have been updated again in later snapshots (e.g. blackhole after resource sync + remote exec), V_head(k) may differ from what snapshots 1..flushCount say. Today we flush the snapshot value; we
+want instead to flush V_head(k).
 
-In EMBBEDDED, these are normal, single‑process DB migrations. In REMOTE, they currently rely on the fact that chainbase writes ultimately reach remote DB via snapshot flush.
-
-Plan: choose a clear remote‑mode policy
-
-- Preferred: For REMOTE+singleWriter, do not run these migrations against the live remote DB.
-    - Treat remote DB as pre‑built and already migrated.
-    - Implement gating:
-        - In Manager.init(), before calling initGenesis() and resetBlackholeAccountPermission(), check:
-            - If StorageSpiFactory.determineStorageMode() == StorageMode.REMOTE, either:
-                - Skip these operations entirely, or
-                - Require a separate “offline” bootstrap tool to prepare remote DB.
-        - Similarly for AssetUpdateHelper and initWitness().
-- If you must support Java applying these changes in REMOTE:
-    - After each change batch, explicitly push to remote via StorageSPI instead of snapshot flush:
-        - Collect touched account addresses.
-        - Use a helper along ResourceSync lines:
-            - Resolve each account’s current value with AccountStore.getUnchecked.
-            - Call StorageSpiFactory.createStorage(StorageMode.REMOTE).batchWrite("account", batch).
-    - Wrap this in a dedicated migration/sync method so it’s not tied to per‑tx ResourceSyncContext.
-
-But as a first, safer iteration, assume remote DB is pre‑bootstrapped and skip these in REMOTE mode.
+This is what makes flush “forward‑only” with respect to the Java view.
 
 ———
 
-3.4. Ongoing consensus‑level Java changes (e.g., witness rewards)
+3. Design outline for a head‑based merge
 
-Files:
+We’ll change the semantics of SnapshotRoot.merge(List<Snapshot> snapshots) (or add a new variant) so that it uses the head view for each key.
 
-- framework/src/main/java/org/tron/core/db/Manager.java:payReward(...)
+At a high level:
 
-Behavior:
+1. In SnapshotManager.refreshOne(Chainbase db), capture:
+    - SnapshotRoot root = (SnapshotRoot) db.getHead().getRoot();
+    - Snapshot head = db.getHead();
+    - List<Snapshot> snapshotsToMerge = [...] as today.
+2. Replace the call root.merge(snapshotsToMerge) with a new API, e.g.:
 
-- For each block, pays block rewards by adjusting account.setAllowance(...) for witness accounts and writes:
-    - getAccountStore().put(account.createDbKey(), account);.
+    root.mergeWithHead(head, snapshotsToMerge);
+3. Implement SnapshotRoot.mergeWithHead(Snapshot head, List<Snapshot> snapshots) roughly as:
+    - Compute the set of affected keys:
 
-Question: Does Rust backend implement block rewards in REMOTE mode?
+    Set<WrappedByteArray> mergedKeys = new HashSet<>();
+    for (Snapshot snapshot : snapshots) {
+        SnapshotImpl from = (SnapshotImpl) snapshot;
+        Streams.stream(from.db)
+            .forEach(e -> mergedKeys.add(WrappedByteArray.of(e.getKey().getBytes())));
+    }
+    - For each WrappedByteArray key in mergedKeys:
+        - Extract byte[] rawKey = key.getBytes();.
+        - Compute byte[] headValue = head.get(rawKey);:
+            - head.get already walks snapshot chain down to root, so this reflects the latest logical value.
+        - Decide what to put in the batch:
+            - If headValue == null (key no longer exists at head):
+                - For non‑account DBs: we should treat this as delete; we can either:
+                    - Put value = null into the batch to trigger deletion via updateByBatch, or
+                    - Call db.remove(rawKey) directly before/after the batch flush.
+                - For account DBs (needOptAsset() == true), we need to feed the delete into processAccount the same way as today:
+                    - batch.put(key, WrappedByteArray.of(new byte[0])), and let processAccount interpret ByteArray.isEmpty(...) as deletion + related asset clean‑up.
+            - Else (headValue != null):
+                - For all DBs: batch.put(key, WrappedByteArray.of(headValue));.
+    - Now flush using the existing logic:
 
-- If yes (i.e., reward logic is ported), then we should treat the Java payReward as a legacy path and disable it in REMOTE+singleWriter to avoid conflicts.
-- If no, and Java is the only source of witness reward updates:
-    - Then in REMOTE+singleWriter, these Java account changes must be explicitly synced to remote via StorageSPI, similar to migrations:
-        - Mark the witness account(s) as dirty with ResourceSyncContext.recordAccountDirty.
-        - Add a flushPostBlock() hook (or similar) that runs after processBlock but before the next block’s execution and calls ResourceSyncService with those dirty accounts.
-        - Ensure this path uses current head values (not merged snapshots) and does not rely on snapshot flush.
+    if (needOptAsset()) {
+        processAccount(batch);
+    } else {
+        ((Flusher) db).flush(batch);
+        putCache(batch);
+    }
+4. After mergeWithHead returns, the rest of refreshOne can stay the same:
+    - root.resetSolidity();
+    - Fix up the snapshot chain (detach the merged snapshots).
+    - db.setHead(...) remains as today.
 
-For an initial implementation of Option 1, I’d recommend:
+Key property: even if some of these keys were updated in later snapshots (beyond snapshotsToMerge), we are using head.get(key) so we only ever write the latest logical value for each merged key into root/
+remote.
 
-- First, confirm whether Rust backend already adjusts witness balances in your current remote configuration.
-- If yes, guard payReward so it’s skipped in REMOTE mode, avoiding dual writes.
+Even if that means root “jumps ahead” of the snapshots being merged for some keys, the semantics remain correct because:
 
-———
-
-### 4. Add Guardrails and Instrumentation
-
-Once the structural changes are in place, add checks to ensure the invariant “no chainbase flush to account in REMOTE+singleWriter” is actually true.
-
-4.1. Instrument StorageSpiBackendAdapter
-
-File: framework/src/main/java/org/tron/core/storage/spi/StorageSpiBackendAdapter.java
-
-- In put, batchPut (via storageSPI.batchWrite), when dbName.equals("account"):
-    - If remote.account.singleWriter is true, log caller info:
-        - You can add a small helper that inspects the stack trace to see if the call came from StorageBackendDB.flush vs ResourceSyncService.
-- This helps catch any accidental writes from the wrong path.
-
-4.2. Metrics
-
-- Add counters, e.g.:
-    - storage.remote.account_writes_from_flush
-    - storage.remote.account_writes_from_resourcesync
-- In singleWriter mode, account_writes_from_flush should remain zero in production.
-
-———
-
-### 5. Validation Plan
-
-Use your existing replay / log comparison setup to validate.
-
-5.1. Reproduce the 2131 → 2140 scenario
-        - But no StorageBackendDB.flush calls for dbName="account" actually send batches to the remote backend.
-    - Rerun block 2120–2142:
-        - Java’s Manager logs for blackhole pre‑balance remain monotonic.
-        - Rust’s “Blackhole balance BEFORE execution” never reverts to earlier values (e.g., 2120’s value at 2140).
-
-5.2. Sanity check state equality
-
-- At a chosen height:
-    - Pick a small set of addresses: blackhole, a busy transfer sender, witness addresses, etc.
-    - From Java, use StorageSPI.get("account", key) to read remote values.
-    - From Rust backend, either use logging or a debug API to retrieve the same keys.
-    - Ensure they match.
-
-5.3. Observe migrations and rewards
-
-- In REMOTE mode, confirm:
-    - Genesis/migrations/blackhole permission paths are either:
-        - Not executed, or
-        - Use the explicit StorageSPI sync path rather than relying on snapshot flush.
-    - Witness rewards are applied exactly once, by either Java or Rust, but not both.
+- For keys where later snapshots re‑apply the same value, they become redundant overlays.
+- For keys where later snapshots set the same final value, root already has that value; snapshots still contain PUTs/DELETEs, but reading from head will find the topmost snapshot entry, which matches root, so
+no behavioural change.
 
 ———
 
-Summary of Option 1 Plan
+4. Detailed implementation steps
 
-- Disable snapshot flush to the account DB in REMOTE+singleWriter mode by gating StorageBackendDB.flush based on dbName=="account" and storage mode.
-- Audit all AccountStore.put call sites:
-    - Pre‑exec resource fees → already use ResourceSync; keep as is.
-    - Post‑exec remote state replication → ensure they remain local‑only; avoid ResourceSync here.
-    - Genesis/migrations/permissions → in REMOTE, either skip or sync via a dedicated StorageSPI path.
-    - Witness rewards and other consensus updates → either port to Rust and disable Java side in REMOTE, or sync explicitly via ResourceSync/StorageSPI.
-- Add instrumentation to verify that, in singleWriter mode, no account writes originate from snapshot flush, only from ResourceSync or Rust execution.
-- Validate using your existing replay/log comparison around the 2120–2140 window and a small state cross‑check at a known height.
+Below is the step‑by‑step plan, with the code we’ve just analysed in mind.
 
-If you want, next step I can narrow this into an exact change list (which methods to gate, which call sites to guard for migrations/rewards) so you can sanity‑check feasibility before any coding.
+Step 1: Add a head‑aware merge API on SnapshotRoot
+
+- In SnapshotRoot:
+    - Add a new public method:
+
+    public void mergeWithHead(Snapshot head, List<Snapshot> snapshots) { ... }
+    - Internally:
+        - Treat head as the current Chainbase.getHead() for this DB.
+        - Build Set<WrappedByteArray> mergedKeys by scanning the HashDB of each SnapshotImpl in snapshots (similar to existing merge(List<Snapshot>) but we ignore values there).
+        - For each key:
+            - Call byte[] headValue = head.get(rawKey); (this uses the existing snapshot chain logic).
+            - If headValue == null:
+                - If needOptAsset():
+                    - batch.put(key, WrappedByteArray.of(new byte[0])); – same pattern as existing processAccount deletion handling.
+                - Else:
+                    - We need a way to represent deletion to the underlying Flusher. For LevelDB/RocksDB, updateByBatch treats value == null as delete (RocksDbDataSourceImpl.updateByBatchInner). Right now
+                    SnapshotRoot.merge(List<Snapshot>) never passes null, it always passes WrappedByteArray; so we may either:
+                        - Allow batch to contain value = null for this key (and adjust Flusher to interpret that as deletion), or
+                        - Call db.remove(rawKey) directly outside of the batch for non‑account DBs.
+            - If headValue != null:
+                - batch.put(key, WrappedByteArray.of(headValue));.
+        - Then call the existing processAccount / ((Flusher) db).flush logic on that batch.
+    - Keep the existing merge(List<Snapshot> snapshots) API for:
+        - Non‑refresh use‑cases (e.g. checkpoint recovery) where using the snapshot values is acceptable or needed.
+        - Gradual rollout: we can later redirect those call sites to the head‑aware variant if safe.
+
+Step 2: Wire SnapshotManager.refreshOne to use the head‑aware merge
+
+- In SnapshotManager.refreshOne(Chainbase db):
+    - After computing root and snapshots:
+
+    Snapshot head = db.getHead();
+    root.mergeWithHead(head, snapshots);
+    - Replace the old root.merge(snapshots) call with this.
+- Ensure that flushCount and chain rewiring logic remain unchanged.
+
+The merged snapshots are still removed from the chain; the difference is only which value for each key is written into root/remote.
+
+Step 3: Handle deletion semantics carefully
+
+- For account DB (“account”) with asset optimization:
+    - processAccount(batch) already knows how to interpret an “empty value” as deletion:
+        - It checks ByteArray.isEmpty(v.getBytes()) to decide if the account is being deleted and handles asset clean‑up accordingly.
+        - It then calls ((Flusher) db).flush(accounts).
+    - So for “head says this account no longer exists”, we can represent that as:
+
+    batch.put(key, WrappedByteArray.of(new byte[0]));
+    - This keeps behaviour consistent.
+- For non‑account DBs:
+    - Check how deletion is currently represented. For LevelDB & RocksDB via updateByBatch:
+        - RocksDbDataSourceImpl.updateByBatchInner deletes when entry.getValue() == null.
+        - Currently SnapshotRoot.merge(List<Snapshot>) never passes null (always WrappedByteArray), so deletes are represented as Value.Operator.DELETE in SnapshotImpl.db, not as null values in SnapshotRoot’s
+        batch.
+    - For our head‑based merge we have two options:
+        - Option A: For “head says key is gone”, directly call db.remove(rawKey) for that key (bypassing the batch).
+            - Simpler to reason about; uses existing DB.remove, which is already implemented for all backends (local and remote via StorageBackendDbSource.deleteData).
+        - Option B: Allow batch to contain a special WrappedByteArray representing a delete, and teach Flusher.flush / StorageBackendDB.flush how to convert that to null and thus deletion.
+    - For a first iteration, Option A is usually simpler and less invasive:
+        - Collect a Set<byte[]> deletes while iterating keys where headValue == null.
+        - After the main flush, call db.remove(k) for each k in deletes.
+        - Be mindful that for account DBs you also have to call AccountAssetStore delete logic; but that is already handled by processAccount, so we don’t use db.remove there.
+
+Step 4: Keep recovery / checkpoint semantics separate
+
+- SnapshotManager.recover(TronDatabase<byte[]> tronDatabase) (at the bottom of SnapshotManager) uses:
+
+dbs.forEach(db -> db.getHead().getRoot().merge(db.getHead()));
+
+This calls SnapshotRoot.merge(Snapshot from) (single snapshot) rather than the multi‑snapshot merge.
+- For recovery, we are replaying checkpointed data into an empty in‑memory chain at startup. In that scenario:
+    - Remote DB and Java in‑memory state should be reconstructed from the checkpoint; there is no concurrent writer.
+    - The current merge(Snapshot from) (snapshot‑based) semantics are fine.
+- Plan:
+    - Leave SnapshotRoot.merge(Snapshot from) untouched.
+    - Only change merge(List<Snapshot> snapshots) / mergeWithHead used by flush/refresh.
+
+Step 5: Condition behaviour on storage mode if desired
+
+- Optionally, we can gate the head‑based merge behind a condition:
+    - For example, only use mergeWithHead when the underlying db is a StorageBackendDB configured in REMOTE mode; otherwise use the old merge semantics.
+- This can be done by:
+    - Adding a helper on SnapshotRoot:
+
+    private boolean isRemoteBackend() {
+        return db instanceof StorageBackendDB &&
+                CommonParameter.getInstance().getStorage().getStorageMode().equalsIgnoreCase("remote");
+    }
+    - In SnapshotManager.refreshOne, choose:
+
+    if (isRemoteBackend(root)) {
+        root.mergeWithHead(head, snapshots);
+    } else {
+        root.merge(snapshots);
+    }
+- This reduces risk for embedded / legacy setups while you validate the behaviour in REMOTE mode.
+
+———
+
+5. Testing and validation strategy
+
+To be confident in Option 2, you’ll want both targeted unit tests and end‑to‑end behaviour checks.
+
+Unit / integration tests in chainbase
+
+- Add tests for SnapshotRoot.mergeWithHead in a new test class (e.g. SnapshotRootForwardMergeTest):
+    1. Simple forward merge (no later snapshots)
+        - root: x=0
+        - snapshot1: x=1
+        - head = snapshot1
+        - snapshots = [snapshot1]
+        - After mergeWithHead, assert:
+            - root.get(x) == 1
+            - No snapshots remain
+            - Underlying DB received x=1.
+    2. Later snapshot override
+        - root: x=0
+        - snapshot1: x=1
+        - snapshot2: x=2
+        - head = snapshot2
+        - flushCount=1 → snapshots=[snapshot1]
+        - After mergeWithHead:
+            - root.get(x) == 2 (we want head’s value, not 1)
+            - snapshot2 still exists, and head.get(x) == 2
+            - Underlying DB ends up with x=2, not x=1.
+    3. Delete + re‑add cases: combinations of PUT/DELETE across snapshots, verifying root+snapshots still read correctly and flush uses head view.
+    4. Account DB with needOptAsset(): verify that deletions still trigger the correct asset store updates and that values are asset‑optimized.
+
+End‑to‑end regression for blackhole case
+
+- Re‑run the scenario that exposed the bug:
+    - Build a short chain where:
+        - At block B0, blackhole = B₀.
+        - Later transactions (pre‑exec sync + remote exec + state sync) advance blackhole to B₁.
+        - Snapshot flush is triggered with flushCount > 0 and includes older snapshots with the blackhole key.
+        - A later tx at block B2 does not include blackhole in ResourceSync (includes_blackhole=false).
+    - With the new head‑based merge, assert:
+        - Java’s Manager logs before=B₁.
+        - Rust logs Blackhole balance BEFORE execution: B₁, not B₀.
+- Also verify:
+    - For other accounts touched only in early snapshots (no later updates), remote still matches Java.
+
+———
+
+6. Pitfalls and things to watch carefully
+
+- Performance: head‑based merge will call head.get(key) for every key in the merged snapshots.
+    - These are in‑memory operations over SnapshotImpl + root; they do not hit the remote DB (they go through revokingDB).
+    - Still, flush may be called with many keys; you may want basic benchmarking and perhaps limit mergedKeys cardinality if needed.
+- Deletion semantics for non‑account DBs:
+    - Today, deletes for DBs other than “account” come from SnapshotImpl’s Value.Operator.DELETE, not from null values.
+    - When we switch to head‑based merge, we must ensure we still issue proper deletes, either via db.remove(key) or by mapping to null values in the batch.
+- Redundant snapshots:
+    - After head‑based merge, some later snapshots may contain PUTs that set the same value root already has.
+    - This is semantically harmless but can leave some “dead” entries in those snapshots until they’re eventually merged; not a correctness issue, but something to be aware of.
+- Behaviour difference in embedded mode:
+    - In purely embedded LevelDB/RocksDB mode, merging snapshots has historically been the only way to persist incremental changes to disk.
+    - Using head‑based values for flush is still logically correct (you’re essentially persisting the current head state), but you are changing which intermediate states get persisted.
+    - Gating this behaviour to REMOTE mode first, and validating, is safer.
+- Checkpoint / recovery:
+    - Keep SnapshotRoot.merge(Snapshot from) semantics unchanged for checkpoint recovery, so startup behaviour doesn’t change.
+    - Only the steady‑state flush (merge(List<Snapshot>) invoked from refreshOne) should switch to the head‑based semantics.
+
+———
+
+Summary
+
+Option 2 can be implemented by making SnapshotRoot.merge(List<Snapshot>) head‑aware:
+
+- When SnapshotManager flushes old snapshots into root, it should, for each key touched by those snapshots, write the value as seen at db.getHead() (Java’s latest view), not the raw snapshot values.
+- That ensures flush is “forward‑only” from Java’s perspective and prevents a stale snapshot from overwriting a newer remote state (as happened with the blackhole account).
+- The core mechanical change is localised to SnapshotManager.refreshOne and SnapshotRoot.merge(List<Snapshot>), with careful handling of deletions and asset optimization for the account DB.
+
+If you’d like, I can next sketch concrete pseudo‑code for mergeWithHead including the delete handling and a small example showing how it behaves on the exact blackhole race you hit.
