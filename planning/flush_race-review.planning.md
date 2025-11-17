@@ -167,3 +167,136 @@ mark the blackhole as dirty, ResourceSync didn’t repair it before Rust execute
 
 If you want, next step would be to design a concrete fix (e.g., never using REMOTE StorageBackend for the revoking/snapshot layer, or routing all remote writes through the ResourceSync/StorageSPI path) so
 that snapshots can’t clobber Rust’s canonical state.
+
+---
+
+which fix do you recommend? compare the pros & cons of the fixes that you think of.
+
+---
+
+• Here’s how I’d think about fixes and their trade‑offs.
+
+———
+
+1. Stop snapshot flush from writing the account DB in REMOTE mode (single writer for accounts)
+
+Idea
+
+- In REMOTE storage mode, treat the Rust backend’s RocksDB "account" column family as canonical and ensure there is only one logical writer:
+    - Remote execution (Rust) + pre‑exec ResourceSyncService writes.
+- Java’s chainbase (SnapshotManager / SnapshotRoot) still maintains snapshots and rollback capability, but its flush/merge does not push account deltas into the remote DB.
+- Practically: adjust StorageBackendDB.flush or the merge path so that for dbName == "account" and StorageMode.REMOTE, we either no‑op or only update local caches, not the remote RocksDB.
+
+Pros
+
+- Directly removes the root cause: two unsynchronised writers for the same remote table.
+- Conceptually clean: remote execution + ResourceSync define the state of accounts; Java snapshots are an in‑memory overlay and rollback mechanism.
+- Avoids subtle, order‑dependent bugs for all accounts, not just the blackhole.
+
+Cons
+
+- You must audit that no purely‑Java account mutations exist that must be persisted to remote but never go through:
+    - Remote execution, or
+    - ResourceSyncService (pre‑exec flush).
+- If such paths exist (e.g., some Java‑only maintenance logic still touching balances/allowances), you either:
+    - Need to route them via a ResourceSync‑like path, or
+    - Keep a separate, explicit “Java→remote” write path for those cases.
+- Changes are cross‑module: chainbase (Snapshot/Flusher) and framework (storage mode) must agree on the semantics.
+
+When I’d choose this
+
+- If you’re ready to treat the Rust backend as the canonical source of account state, and to enforce a single writer for the "account" DB.
+- This is the most principled fix for the “flush race” class of bugs.
+
+———
+
+2. Make snapshot flush “forward‑only” (flush current head state, not per‑snapshot values)
+
+Idea
+
+- Keep snapshot flush writing to remote, but never write a value that is older than Java’s current head snapshot.
+- Instead of merging raw SnapshotImpl.db entries into a batch and flushing them, compute the batch from the final view for each key:
+    - E.g. for each key touched in the snapshots being merged, look up the value as seen at Chainbase.head() and flush that.
+- Intuitively: flush is “commit the current state to disk”, not “replay the history of these N snapshots”.
+
+Pros
+
+- Fixes the general problem: snapshot flush cannot overwrite a more recent value in remote DB with an older one, because it always writes the head view.
+- Keeps the dual‑storage architecture (remote StorageBackendDB) intact; fewer policy decisions about which DBs are “single writer”.
+- Covers all keys, not just blackhole.
+
+Cons
+
+- Requires non‑trivial plumbing:
+    - SnapshotRoot.merge(List<Snapshot>) and/or Chainbase.merge(List<Snapshot>) need access to the head snapshot view, not just each snapshot’s local hashdb.
+    - For the account DB, you must preserve delete semantics and asset‑optimization logic while recomputing from head.
+- More computation at flush time (lots of get calls per key) and more subtle correctness considerations.
+- If you get the merge semantics wrong, you risk quiet state drift.
+
+When I’d choose this
+
+- If you want a robust fix that keeps the current dual‑storage design but are willing to do a deeper, careful refactor around snapshot merge semantics.
+
+———
+
+3. Always re‑sync the blackhole account before every remote execution
+
+Idea
+
+- In ResourceSyncService.flushResourceDeltas, ensure the blackhole account is always included in dirtyAccounts in REMOTE mode, even if it wasn’t touched in pre‑exec resource consumption for this transaction.
+- Effect: right before every ExecuteTransaction RPC, Java pushes the current blackhole balance from AccountStore to remote RocksDB, overriding whatever the snapshot flush may have written.
+
+Pros
+
+- Very small, surgical change (one place, clear log signal).
+- Directly fixes your observed mismatch:
+    - Even if a snapshot flush wrote an old blackhole value, the next tx’s pre‑exec sync overwrites it with the Java head value, so Rust’s “BEFORE execution” log matches Java’s Manager log again.
+- Low consensus risk: writing the current blackhole state to remote before exec is idempotent and monotonic.
+
+Cons
+
+- This is a symptom‑level fix:
+    - The underlying “two writer” problem still exists for other accounts/dynamic properties.
+    - It just keeps the one globally‑visible account you care about (blackhole) aligned.
+- Slight extra load: one extra account in every pre‑exec batch in REMOTE mode, though that’s negligible compared to a tx execution.
+
+When I’d choose this
+
+- As a short‑term, low‑risk mitigation to stabilise remote vs Java pre‑balance logs while you design and implement a deeper architectural fix (like 1 or 2).
+- If you’re primarily debugging parity and need predictable logs now.
+
+
+- Embed a version (e.g. block number or logical timestamp) in account values or in a side metadata table.
+- When writing to remote DB, a component only overwrites a key if its version ≥ the existing one.
+- Snapshot flushes would include the block height they correspond to; remote exec would always write newer versions.
+
+Pros
+
+- Makes stale writes structurally impossible: even if snapshot flush “replays” an old state, the backend rejects it.
+- Works even if multiple writers exist, as long as everyone respects the versioning rule.
+
+Cons
+
+- Requires changes on both Java and Rust sides:
+    - How accounts are encoded or how metadata is stored.
+    - How StorageEngine / StorageSPI decide to accept/reject writes.
+- Harder to roll out on an existing chain without a migration plan.
+- Adds complexity to every write path, not just the problematic ones.
+
+When I’d choose this
+
+- As a long‑term hardening step once the basic architecture has stabilised, not as the first fix.
+
+———
+
+My recommendation
+
+- Short term (to fix your immediate discrepancy): implement option 3 — always include the blackhole in ResourceSyncService.flushResourceDeltas in REMOTE mode. It directly fixes the “2131 ok, 2140 jumps back”
+behaviour with minimal blast radius and is easy to reason about.
+- Medium term (to eliminate the class of bugs): move towards 1 (single writer for account in REMOTE mode), i.e.:
+    - Treat Rust’s RocksDB as canonical for accounts.
+    - Ensure Java’s snapshot flush never pushes account deltas to remote, and route any Java‑only account mutations through a well‑defined remote‑sync path.
+- If you prefer to keep the current dual‑storage structure, invest in 2 (head‑based flush) instead, but that will be more intricate to get right.
+
+If you want, I can sketch what the “always flush blackhole” change would look like in ResourceSyncService.flushResourceDeltas and how to guard it behind a feature flag so you can enable/disable it per
+environment.
