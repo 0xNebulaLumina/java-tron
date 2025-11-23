@@ -78,6 +78,9 @@ public class RuntimeSpiImpl implements Runtime {
       // Apply freeze ledger changes to local database (Phase 2)
       applyFreezeLedgerChanges(executionResult, context);
 
+      // Apply TRC-10 changes to local database (Phase 2)
+      applyTrc10Changes(executionResult, context);
+
       // Since ExecutionProgramResult extends ProgramResult, we can use it directly
       context.setProgramResult(executionResult);
 
@@ -421,6 +424,170 @@ public class RuntimeSpiImpl implements Runtime {
 
     } catch (Exception e) {
       logger.error("Failed to apply global resource change, error: {}", e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Apply TRC-10 changes to local database (Phase 2: full TRC-10 ledger semantics).
+   * Creates AssetIssueCapsule entries and updates issuer account asset maps.
+   */
+  private void applyTrc10Changes(ExecutionProgramResult result, TransactionContext context) {
+    // Check JVM toggle for rapid rollback
+    // Default is true (apply enabled), can be disabled with -Dremote.exec.apply.trc10=false
+    boolean applyEnabled = Boolean.parseBoolean(
+        System.getProperty("remote.exec.apply.trc10", "true"));
+
+    if (!applyEnabled) {
+      logger.debug("TRC-10 changes application disabled by JVM property " +
+          "(-Dremote.exec.apply.trc10=false) for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    // Check for TRC-10 changes
+    if (result.getTrc10Changes() == null || result.getTrc10Changes().isEmpty()) {
+      logger.debug("No TRC-10 changes to apply for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    logger.info("Applying {} TRC-10 changes to local database for transaction: {}",
+        result.getTrc10Changes().size(), context.getTrxCap().getTransactionId());
+
+    try {
+      ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
+
+      // Apply TRC-10 changes
+      for (ExecutionSPI.Trc10Change trc10Change : result.getTrc10Changes()) {
+        if (trc10Change.hasAssetIssued()) {
+          applyAssetIssuedChange(trc10Change.getAssetIssued(), chainBaseManager, context);
+        }
+      }
+
+      logger.info("Successfully applied TRC-10 changes for transaction: {}",
+          context.getTrxCap().getTransactionId());
+
+    } catch (Exception e) {
+      logger.error("Failed to apply TRC-10 changes for transaction: {}, error: {}",
+          context.getTrxCap().getTransactionId(), e.getMessage(), e);
+      // Don't throw exception - maintain transaction flow
+    }
+  }
+
+  /**
+   * Apply a single AssetIssued change to create AssetIssueCapsule and update account.
+   */
+  private void applyAssetIssuedChange(ExecutionSPI.Trc10AssetIssued assetIssued,
+                                     ChainBaseManager chainBaseManager,
+                                     TransactionContext context) {
+    try {
+      byte[] ownerAddress = assetIssued.getOwnerAddress();
+      String addressStr = org.tron.common.utils.StringUtil.encode58Check(ownerAddress);
+      String name = new String(assetIssued.getName(), java.nio.charset.StandardCharsets.UTF_8);
+
+      logger.info("Applying AssetIssued change: owner={}, name={}, totalSupply={}, precision={}",
+          addressStr, name, assetIssued.getTotalSupply(), assetIssued.getPrecision());
+
+      // Get stores
+      org.tron.core.store.DynamicPropertiesStore dynamicStore =
+          chainBaseManager.getDynamicPropertiesStore();
+      org.tron.core.store.AssetIssueStore assetIssueStore =
+          chainBaseManager.getAssetIssueStore();
+      org.tron.core.store.AssetIssueV2Store assetIssueV2Store =
+          chainBaseManager.getAssetIssueV2Store();
+      org.tron.core.store.AccountStore accountStore =
+          chainBaseManager.getAccountStore();
+
+      // 1. Determine or compute token ID
+      String tokenId = assetIssued.getTokenId();
+      if (tokenId == null || tokenId.isEmpty()) {
+        // Java needs to compute TOKEN_ID_NUM
+        long currentTokenId = dynamicStore.getTokenIdNum();
+        long newTokenId = currentTokenId + 1;
+        tokenId = String.valueOf(newTokenId);
+
+        // Save incremented TOKEN_ID_NUM
+        dynamicStore.saveTokenIdNum(newTokenId);
+        org.tron.core.storage.sync.ResourceSyncContext.recordDynamicKeyDirty("TOKEN_ID_NUM".getBytes());
+
+        logger.debug("Computed new token ID: {} (previous: {})", newTokenId, currentTokenId);
+      }
+
+      // 2. Check ALLOW_SAME_TOKEN_NAME to determine V1 vs V2 behavior
+      long allowSameTokenName = dynamicStore.getAllowSameTokenName();
+      boolean createV1 = (allowSameTokenName == 0); // Legacy mode: create V1 entry
+
+      // 3. Create AssetIssueCapsule
+      org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.Builder contractBuilder =
+          org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.newBuilder()
+          .setOwnerAddress(com.google.protobuf.ByteString.copyFrom(ownerAddress))
+          .setName(com.google.protobuf.ByteString.copyFrom(assetIssued.getName()))
+          .setAbbr(com.google.protobuf.ByteString.copyFrom(assetIssued.getAbbr()))
+          .setTotalSupply(assetIssued.getTotalSupply())
+          .setTrxNum(assetIssued.getTrxNum())
+          .setPrecision(assetIssued.getPrecision())
+          .setNum(assetIssued.getNum())
+          .setStartTime(assetIssued.getStartTime())
+          .setEndTime(assetIssued.getEndTime())
+          .setDescription(com.google.protobuf.ByteString.copyFrom(assetIssued.getDescription()))
+          .setUrl(com.google.protobuf.ByteString.copyFrom(assetIssued.getUrl()))
+          .setFreeAssetNetLimit(assetIssued.getFreeAssetNetLimit())
+          .setPublicFreeAssetNetLimit(assetIssued.getPublicFreeAssetNetLimit())
+          .setPublicFreeAssetNetUsage(assetIssued.getPublicFreeAssetNetUsage())
+          .setPublicLatestFreeNetTime(assetIssued.getPublicLatestFreeNetTime())
+          .setId(tokenId);
+
+      org.tron.core.capsule.AssetIssueCapsule assetIssueCapsule =
+          new org.tron.core.capsule.AssetIssueCapsule(contractBuilder.build());
+
+      // 4. Store AssetIssue entries
+      if (createV1) {
+        // V1: Store by name
+        assetIssueStore.put(assetIssued.getName(), assetIssueCapsule);
+        logger.debug("Created AssetIssue V1 entry with name: {}", name);
+      }
+
+      // V2: Always store by token ID
+      assetIssueV2Store.put(tokenId.getBytes(), assetIssueCapsule);
+      logger.debug("Created AssetIssue V2 entry with token ID: {}", tokenId);
+
+      // 5. Update issuer account asset maps
+      org.tron.core.capsule.AccountCapsule issuerAccount = accountStore.get(ownerAddress);
+      if (issuerAccount == null) {
+        logger.warn("Issuer account not found, creating: {}", addressStr);
+        org.tron.protos.Protocol.Account.Builder accountBuilder =
+            org.tron.protos.Protocol.Account.newBuilder()
+            .setAddress(com.google.protobuf.ByteString.copyFrom(ownerAddress))
+            .setBalance(0)
+            .setCreateTime(System.currentTimeMillis())
+            .setType(org.tron.protos.Protocol.AccountType.Normal);
+        issuerAccount = new org.tron.core.capsule.AccountCapsule(accountBuilder.build());
+      }
+
+      // Update asset maps
+      if (createV1) {
+        // V1: asset map by name
+        issuerAccount.addAsset(assetIssued.getName(), assetIssued.getTotalSupply());
+        logger.debug("Updated issuer V1 asset map: {}={}", name, assetIssued.getTotalSupply());
+      }
+
+      // V2: assetV2 map by token ID
+      issuerAccount.addAssetV2(tokenId.getBytes(), assetIssued.getTotalSupply());
+      logger.debug("Updated issuer V2 asset map: {}={}", tokenId, assetIssued.getTotalSupply());
+
+      // Store updated account
+      accountStore.put(ownerAddress, issuerAccount);
+
+      // Mark account as dirty for resource processor synchronization
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(ownerAddress);
+
+      logger.info("Successfully applied AssetIssued change: owner={}, name={}, tokenId={}, allowSameTokenName={}",
+          addressStr, name, tokenId, allowSameTokenName);
+
+    } catch (Exception e) {
+      logger.error("Failed to apply AssetIssued change for owner: {}, error: {}",
+          org.tron.common.utils.StringUtil.encode58Check(assetIssued.getOwnerAddress()),
+          e.getMessage(), e);
     }
   }
 

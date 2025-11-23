@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 import org.tron.common.cache.CacheManager;
 import org.tron.common.cache.CacheType;
 import org.tron.common.cache.TronCache;
@@ -21,6 +22,7 @@ import org.tron.core.db2.common.Flusher;
 import org.tron.core.db2.common.WrappedByteArray;
 import org.tron.core.store.AccountAssetStore;
 
+@Slf4j(topic = "DB")
 public class SnapshotRoot extends AbstractSnapshot<byte[], byte[]> {
 
   @Getter
@@ -44,6 +46,15 @@ public class SnapshotRoot extends AbstractSnapshot<byte[], byte[]> {
   private boolean needOptAsset() {
     return isAccountDB && ChainBaseManager.getInstance().getDynamicPropertiesStore()
             .getAllowAccountAssetOptimizationFromRoot() == 1;
+  }
+
+  /**
+   * Check if this database is using REMOTE storage backend.
+   * In REMOTE mode, we should use head-based merge to avoid stale writes.
+   */
+  private boolean isRemoteBackend() {
+    return db instanceof org.tron.core.db.StorageBackendDB &&
+           "remote".equalsIgnoreCase(CommonParameter.getInstance().getStorage().getStorageMode());
   }
 
   @Override
@@ -118,6 +129,67 @@ public class SnapshotRoot extends AbstractSnapshot<byte[], byte[]> {
     } else {
       ((Flusher) db).flush(batch);
       putCache(batch);
+    }
+  }
+
+  /**
+   * Head-based merge: flushes the head view of keys touched by snapshots, not the snapshot values.
+   * This prevents stale snapshot data from overwriting newer remote state in REMOTE storage mode.
+   *
+   * @param head The current head snapshot (Chainbase.getHead())
+   * @param snapshots The list of snapshots being merged into root
+   */
+  public void mergeWithHead(Snapshot head, List<Snapshot> snapshots) {
+    long startTime = System.currentTimeMillis();
+
+    // Step 1: Collect all keys touched by the snapshots being merged
+    java.util.Set<WrappedByteArray> mergedKeys = new java.util.HashSet<>();
+    for (Snapshot snapshot : snapshots) {
+      SnapshotImpl from = (SnapshotImpl) snapshot;
+      Streams.stream(from.db)
+          .forEach(e -> mergedKeys.add(WrappedByteArray.of(e.getKey().getBytes())));
+    }
+
+    // Step 2: For each key, read the value from head and build the batch
+    Map<WrappedByteArray, WrappedByteArray> batch = new HashMap<>();
+    java.util.List<byte[]> deletes = new java.util.ArrayList<>();
+
+    for (WrappedByteArray key : mergedKeys) {
+      byte[] rawKey = key.getBytes();
+      byte[] headValue = head.get(rawKey);
+
+      if (headValue != null) {
+        // Key exists at head, write its current value
+        batch.put(key, WrappedByteArray.of(headValue));
+      } else {
+        // Key deleted at head
+        if (needOptAsset()) {
+          // For account DB: use empty byte array to signal deletion + asset cleanup
+          batch.put(key, WrappedByteArray.of(new byte[0]));
+        } else {
+          // For non-account DBs: track deletes separately
+          deletes.add(rawKey);
+        }
+      }
+    }
+
+    // Step 3: Flush the batch
+    if (needOptAsset()) {
+      processAccount(batch);
+    } else {
+      ((Flusher) db).flush(batch);
+      putCache(batch);
+
+      // Handle deletes for non-account DBs
+      for (byte[] key : deletes) {
+        db.remove(key);
+      }
+    }
+
+    // Debug logging (only if debug level is enabled)
+    if (logger.isDebugEnabled()) {
+      logger.debug("Head-based merge for DB '{}': flushed {} keys ({} deletes) in {} ms",
+          db.getDbName(), batch.size(), deletes.size(), System.currentTimeMillis() - startTime);
     }
   }
 

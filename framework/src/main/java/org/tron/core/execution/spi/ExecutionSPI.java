@@ -124,6 +124,7 @@ public interface ExecutionSPI {
     private final long bandwidthUsed;
     private final List<FreezeLedgerChange> freezeChanges;
     private final List<GlobalResourceTotalsChange> globalResourceChanges;
+    private final List<Trc10Change> trc10Changes;
 
     public ExecutionResult(
         boolean success,
@@ -135,7 +136,8 @@ public interface ExecutionSPI {
         String errorMessage,
         long bandwidthUsed,
         List<FreezeLedgerChange> freezeChanges,
-        List<GlobalResourceTotalsChange> globalResourceChanges) {
+        List<GlobalResourceTotalsChange> globalResourceChanges,
+        List<Trc10Change> trc10Changes) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -146,6 +148,7 @@ public interface ExecutionSPI {
       this.bandwidthUsed = bandwidthUsed;
       this.freezeChanges = freezeChanges;
       this.globalResourceChanges = globalResourceChanges;
+      this.trc10Changes = trc10Changes;
     }
 
     // Getters
@@ -187,6 +190,10 @@ public interface ExecutionSPI {
 
     public List<GlobalResourceTotalsChange> getGlobalResourceChanges() {
       return globalResourceChanges;
+    }
+
+    public List<Trc10Change> getTrc10Changes() {
+      return trc10Changes;
     }
   }
 
@@ -368,6 +375,138 @@ public interface ExecutionSPI {
 
     public long getTotalEnergyLimit() {
       return totalEnergyLimit;
+    }
+  }
+
+  /**
+   * TRC-10 Asset Issued (Phase 2: full TRC-10 ledger semantics).
+   * Describes a new TRC-10 asset issuance operation for Java-side persistence.
+   */
+  class Trc10AssetIssued {
+    private final byte[] ownerAddress;
+    private final byte[] name;
+    private final byte[] abbr;
+    private final long totalSupply;
+    private final int trxNum;
+    private final int precision;
+    private final int num;
+    private final long startTime;
+    private final long endTime;
+    private final byte[] description;
+    private final byte[] url;
+    private final long freeAssetNetLimit;
+    private final long publicFreeAssetNetLimit;
+    private final long publicFreeAssetNetUsage;
+    private final long publicLatestFreeNetTime;
+    private final String tokenId; // Empty if Java needs to compute via TOKEN_ID_NUM
+
+    public Trc10AssetIssued(byte[] ownerAddress, byte[] name, byte[] abbr, long totalSupply,
+                            int trxNum, int precision, int num, long startTime, long endTime,
+                            byte[] description, byte[] url, long freeAssetNetLimit,
+                            long publicFreeAssetNetLimit, long publicFreeAssetNetUsage,
+                            long publicLatestFreeNetTime, String tokenId) {
+      this.ownerAddress = ownerAddress;
+      this.name = name;
+      this.abbr = abbr;
+      this.totalSupply = totalSupply;
+      this.trxNum = trxNum;
+      this.precision = precision;
+      this.num = num;
+      this.startTime = startTime;
+      this.endTime = endTime;
+      this.description = description;
+      this.url = url;
+      this.freeAssetNetLimit = freeAssetNetLimit;
+      this.publicFreeAssetNetLimit = publicFreeAssetNetLimit;
+      this.publicFreeAssetNetUsage = publicFreeAssetNetUsage;
+      this.publicLatestFreeNetTime = publicLatestFreeNetTime;
+      this.tokenId = tokenId;
+    }
+
+    // Getters
+    public byte[] getOwnerAddress() {
+      return ownerAddress;
+    }
+
+    public byte[] getName() {
+      return name;
+    }
+
+    public byte[] getAbbr() {
+      return abbr;
+    }
+
+    public long getTotalSupply() {
+      return totalSupply;
+    }
+
+    public int getTrxNum() {
+      return trxNum;
+    }
+
+    public int getPrecision() {
+      return precision;
+    }
+
+    public int getNum() {
+      return num;
+    }
+
+    public long getStartTime() {
+      return startTime;
+    }
+
+    public long getEndTime() {
+      return endTime;
+    }
+
+    public byte[] getDescription() {
+      return description;
+    }
+
+    public byte[] getUrl() {
+      return url;
+    }
+
+    public long getFreeAssetNetLimit() {
+      return freeAssetNetLimit;
+    }
+
+    public long getPublicFreeAssetNetLimit() {
+      return publicFreeAssetNetLimit;
+    }
+
+    public long getPublicFreeAssetNetUsage() {
+      return publicFreeAssetNetUsage;
+    }
+
+    public long getPublicLatestFreeNetTime() {
+      return publicLatestFreeNetTime;
+    }
+
+    public String getTokenId() {
+      return tokenId;
+    }
+  }
+
+  /**
+   * TRC-10 Change (union type for different TRC-10 operations).
+   * Phase 2: Currently only supports AssetIssued.
+   * Future: add Trc10Transferred, Trc10Participated, Trc10Updated variants.
+   */
+  class Trc10Change {
+    private final Trc10AssetIssued assetIssued;
+
+    public Trc10Change(Trc10AssetIssued assetIssued) {
+      this.assetIssued = assetIssued;
+    }
+
+    public Trc10AssetIssued getAssetIssued() {
+      return assetIssued;
+    }
+
+    public boolean hasAssetIssued() {
+      return assetIssued != null;
     }
   }
 

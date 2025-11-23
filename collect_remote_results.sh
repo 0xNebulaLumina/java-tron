@@ -103,7 +103,7 @@ else
     RUST_LOG_PATH="rust.log (not found)"
 fi
 
-cp ../archive/3.embedded-java.log ./
+cp ../archive/9.embedded-java.log ./
 
 # Step 10: Find newest CSV file
 echo "Step 10: Finding newest CSV file..."
@@ -129,24 +129,28 @@ echo "10.2 Remote Rust log: $RUST_LOG_PATH"
 echo "10.3 Newest CSV file: $NEWEST_CSV"
 echo "============================================"
 echo ""
-echo "Script completed successfully!"
+
+# Step 11: Run CSV comparison
+echo "Step 11: Running CSV comparison..."
+python3 scripts/compare_exec_csv.py output-directory/execution-csv/20251117-102033-01aa61f2-embedded-embedded.csv "$NEWEST_CSV"
+
 echo ""
-echo ""
-echo ""
-echo "Generated prompt:"
 echo "’‘’"
 echo "Think harder."
 echo ""
 echo "I want to compare the (embedded execution + embedded storage) results vs the (remote execution + remote storage) results,"
 echo ""
 echo "The result csv are"
-echo "+ output-directory/execution-csv/20251028-095309-779948da-embedded-embedded.csv"
+echo "+ output-directory/execution-csv/20251117-102033-01aa61f2-embedded-embedded.csv"
 echo "+ $NEWEST_CSV"
 echo "respectively."
 echo ""
-echo "you will help me debug and figure out why there are mismatches, starting from the first tx."
-echo ""
-echo "(embedded execution + embedded storage) java log: 3.embedded-java.log"
+echo "Logs:"
+echo "(embedded execution + embedded storage) java log: 9.embedded-java.log"
 echo "(remote execution + remote storage) java log: $JAVA_LOG_PATH"
 echo "(remote execution + remote storage) rust log: $RUST_LOG_PATH"
+echo ""
+echo "You will help me debug and figure out why there are mismatches."
+echo ""
+echo "BTW, I think the 'Blackhole balance' log in 9.embedded-java.log and $JAVA_LOG_PATH will be helpful"
 echo "’‘’"

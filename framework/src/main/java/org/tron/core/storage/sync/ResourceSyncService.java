@@ -8,6 +8,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
+import java.nio.charset.StandardCharsets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -162,6 +164,61 @@ public class ResourceSyncService {
       
       boolean debugEnabled = getBooleanProperty(SYNC_DEBUG_PROPERTY, DEFAULT_SYNC_DEBUG);
       boolean confirmEnabled = getBooleanProperty(SYNC_CONFIRM_PROPERTY, DEFAULT_SYNC_CONFIRM);
+
+      // Temporary visibility: log exact dirty accounts at INFO to confirm blackhole inclusion
+      if (debugEnabled) {
+        try {
+          byte[] blackhole = accountStore != null && accountStore.getBlackhole() != null
+              ? accountStore.getBlackhole().getAddress().toByteArray()
+              : null;
+
+          final String blackholeBase58 = blackhole != null
+              ? org.tron.common.utils.StringUtil.encode58Check(blackhole)
+              : "<unknown>";
+
+          boolean includesBlackhole = false;
+          // Prepare account list in Base58 for readability
+          java.util.List<String> dirtyAccountsB58 = dirtyAccounts.stream()
+              .map(addr -> {
+                if (blackhole != null && java.util.Arrays.equals(addr, blackhole)) {
+                  // mark blackhole explicitly
+                  return org.tron.common.utils.StringUtil.encode58Check(addr) + " (blackhole)";
+                }
+                return org.tron.common.utils.StringUtil.encode58Check(addr);
+              })
+              .collect(Collectors.toList());
+
+          if (blackhole != null) {
+            includesBlackhole = dirtyAccounts.stream().anyMatch(a -> java.util.Arrays.equals(a, blackhole));
+          }
+
+          // Dynamic keys (mostly ASCII identifiers) for additional context
+          java.util.List<String> dynamicKeysPretty = dirtyDynamicKeys.stream()
+              .map(k -> {
+                try {
+                  String s = new String(k, StandardCharsets.UTF_8);
+                  // If looks readable ASCII uppercase/underscore, keep as-is; else hex encode
+                  boolean ascii = s.chars().allMatch(ch -> ch >= 32 && ch <= 126);
+                  return ascii ? s : org.tron.common.utils.ByteArray.toHexString(k);
+                } catch (Exception e) {
+                  return org.tron.common.utils.ByteArray.toHexString(k);
+                }
+              })
+              .collect(Collectors.toList());
+
+          logger.info("ResourceSync pre-exec flush: accounts={}, dynamic_keys={}, assetV1={}, assetV2={}, includes_blackhole={}, blackhole={}",
+              dirtyAccountsB58.size(), dirtyDynamicKeys.size(), dirtyAssetIssueV1Keys.size(), dirtyAssetIssueV2Keys.size(),
+              includesBlackhole, blackholeBase58);
+          if (!dirtyAccountsB58.isEmpty()) {
+            logger.info("ResourceSync pre-exec flush accounts: {}", String.join(", ", dirtyAccountsB58));
+          }
+          if (!dynamicKeysPretty.isEmpty()) {
+            logger.info("ResourceSync pre-exec flush dynamic keys: {}", String.join(", ", dynamicKeysPretty));
+          }
+        } catch (Exception logEx) {
+          logger.debug("Failed to compose ResourceSync visibility logs: {}", logEx.getMessage());
+        }
+      }
       
       // Build batches in the correct order: asset issues -> accounts -> dynamic props
       CompletableFuture<Void> flushFuture = CompletableFuture.completedFuture(null);

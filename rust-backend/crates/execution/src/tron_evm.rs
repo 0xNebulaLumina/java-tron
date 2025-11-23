@@ -196,6 +196,35 @@ pub struct GlobalResourceTotalsChange {
     pub total_energy_limit: i64,    // Current energy limit (from dynamic props, or 0 if N/A)
 }
 
+/// TRC-10 Asset Issued (Phase 2: full TRC-10 ledger semantics)
+/// Describes a new TRC-10 asset issuance operation for Java-side persistence
+#[derive(Debug, Clone)]
+pub struct Trc10AssetIssued {
+    pub owner_address: revm::primitives::Address,
+    pub name: Vec<u8>,
+    pub abbr: Vec<u8>,
+    pub total_supply: i64,
+    pub trx_num: i32,
+    pub precision: i32,
+    pub num: i32,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub description: Vec<u8>,
+    pub url: Vec<u8>,
+    pub free_asset_net_limit: i64,
+    pub public_free_asset_net_limit: i64,
+    pub public_free_asset_net_usage: i64,
+    pub public_latest_free_net_time: i64,
+    pub token_id: Option<String>,  // Optional; if None, Java computes via TOKEN_ID_NUM
+}
+
+/// TRC-10 Change (union type for different TRC-10 operations)
+/// Future: add Trc10Transferred, Trc10Participated, Trc10Updated variants
+#[derive(Debug, Clone)]
+pub enum Trc10Change {
+    AssetIssued(Trc10AssetIssued),
+}
+
 #[derive(Debug, Clone)]
 pub struct TronExecutionResult {
     pub success: bool,
@@ -216,6 +245,9 @@ pub struct TronExecutionResult {
     /// Fixes FREE_NET vs ACCOUNT_NET divergence by ensuring totalNetWeight/totalNetLimit
     /// are current before next tx in same block
     pub global_resource_changes: Vec<GlobalResourceTotalsChange>,
+    /// TRC-10 semantic changes (Phase 2: full TRC-10 ledger persistence)
+    /// Rust emits high-level TRC-10 operations; Java applies them to existing stores
+    pub trc10_changes: Vec<Trc10Change>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -343,6 +375,7 @@ where
                     aext_map: std::collections::HashMap::new(), // Will be populated by caller for tracked mode
                     freeze_changes: vec![], // Will be populated by contract handlers
                     global_resource_changes: vec![], // Will be populated by contract handlers
+                    trc10_changes: vec![], // Will be populated by TRC-10 contract handlers
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -357,6 +390,7 @@ where
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
+                    trc10_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -371,6 +405,7 @@ where
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
+                    trc10_changes: vec![],
                 })
             }
         }
@@ -399,6 +434,7 @@ where
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
+                    trc10_changes: vec![],
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -413,6 +449,7 @@ where
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
+                    trc10_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -427,6 +464,7 @@ where
                     aext_map: std::collections::HashMap::new(),
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
+                    trc10_changes: vec![],
                 })
             }
         }

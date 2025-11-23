@@ -315,7 +315,13 @@ public class SnapshotManager implements RevokingDatabase {
       snapshots.add(next);
     }
 
-    root.merge(snapshots);
+    // Use head-based merge in REMOTE mode to prevent stale writes
+    Snapshot head = db.getHead();
+    if (isRemoteBackend(root)) {
+      root.mergeWithHead(head, snapshots);
+    } else {
+      root.merge(snapshots);
+    }
 
     root.resetSolidity();
     if (db.getHead() == next) {
@@ -324,6 +330,15 @@ public class SnapshotManager implements RevokingDatabase {
       next.getNext().setPrevious(root);
       root.setNext(next.getNext());
     }
+  }
+
+  /**
+   * Check if the given SnapshotRoot is using REMOTE storage backend.
+   * In REMOTE mode, we should use head-based merge to avoid stale writes.
+   */
+  private boolean isRemoteBackend(SnapshotRoot root) {
+    return root.getDb() instanceof org.tron.core.db.StorageBackendDB &&
+           "remote".equalsIgnoreCase(CommonParameter.getInstance().getStorage().getStorageMode());
   }
 
   public void flush() {

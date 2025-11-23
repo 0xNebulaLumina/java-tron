@@ -223,6 +223,7 @@ impl BackendService {
             aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
             global_resource_changes, // Populated when emit_global_resource_changes is true
+            trc10_changes: vec![], // Not applicable for freeze contracts
         })
     }
 
@@ -376,6 +377,7 @@ impl BackendService {
             aext_map: std::collections::HashMap::new(),
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
             global_resource_changes, // Populated when emit_global_resource_changes is true
+            trc10_changes: vec![], // Not applicable for freeze contracts
         })
     }
 
@@ -620,6 +622,7 @@ impl BackendService {
             aext_map: std::collections::HashMap::new(),
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
             global_resource_changes, // Populated when emit_global_resource_changes is true
+            trc10_changes: vec![], // Not applicable for freeze contracts
         })
     }
 
@@ -816,6 +819,7 @@ impl BackendService {
             aext_map: std::collections::HashMap::new(),
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
             global_resource_changes, // Populated when emit_global_resource_changes is true
+            trc10_changes: vec![], // Not applicable for freeze contracts
         })
     }
 
