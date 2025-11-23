@@ -600,7 +600,7 @@ mod witness_tests {
         let remote_config = RemoteExecutionConfig::default();
         assert_eq!(remote_config.system_enabled, true, "System contracts should be enabled by default");
         assert_eq!(remote_config.witness_create_enabled, true, "WitnessCreate should be enabled by default");
-        assert_eq!(remote_config.witness_update_enabled, false, "WitnessUpdate should be disabled by default");
+        assert_eq!(remote_config.witness_update_enabled, true, "WitnessUpdate should be disabled by default");
         assert_eq!(remote_config.vote_witness_enabled, false, "VoteWitness should be disabled by default");
 
         // Test disabled configuration

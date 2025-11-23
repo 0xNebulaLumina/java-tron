@@ -224,7 +224,7 @@ impl Config {
         // Remote execution configuration defaults
         builder = builder.set_default("execution.remote.system_enabled", true)?;
         builder = builder.set_default("execution.remote.witness_create_enabled", true)?;
-        builder = builder.set_default("execution.remote.witness_update_enabled", false)?;
+        builder = builder.set_default("execution.remote.witness_update_enabled", true)?;
         builder = builder.set_default("execution.remote.vote_witness_enabled", false)?;
         builder = builder.set_default("execution.remote.trc10_enabled", false)?;
         builder = builder.set_default("execution.remote.freeze_balance_enabled", false)?;
@@ -246,7 +246,7 @@ impl Default for RemoteExecutionConfig {
         Self {
             system_enabled: true,
             witness_create_enabled: true,
-            witness_update_enabled: false,
+            witness_update_enabled: true,
             vote_witness_enabled: false,
             trc10_enabled: false,
             freeze_balance_enabled: false, // Default false until validated
