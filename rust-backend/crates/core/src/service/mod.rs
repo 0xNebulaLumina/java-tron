@@ -749,21 +749,132 @@ impl BackendService {
     }
 
     /// Execute a WITNESS_UPDATE_CONTRACT
-    /// Updates witness URL and other parameters
+    /// Updates an existing witness's URL. No balance/energy changes, no logs, energy_used=0.
+    /// Parity with Java WitnessUpdateActuator: validates owner account, witness existence, URL format.
     fn execute_witness_update_contract(
         &self,
-        _storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
-        _transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        // TODO: Implement witness update logic
-        // - Validate owner is an existing witness
-        // - Validate URL format
-        // - Update witness entry in WitnessStore
-        // - Emit minimal state changes (no balance changes)
+        use tron_backend_execution::{TronExecutionResult, TronStateChange, WitnessInfo};
 
-        warn!("WITNESS_UPDATE_CONTRACT not yet implemented - falling back to Java");
-        Err("WITNESS_UPDATE_CONTRACT not yet implemented".to_string())
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        debug!("Executing WITNESS_UPDATE_CONTRACT for owner {}", owner_tron);
+
+        // 1. Extract and validate URL from transaction.data
+        let url_bytes = &transaction.data;
+
+        // Validate: non-empty and ≤256 bytes (mirror TransactionUtil.validUrl with allowEmpty=false)
+        if url_bytes.is_empty() || url_bytes.len() > 256 {
+            warn!("WITNESS_UPDATE_CONTRACT: Invalid url (empty={}, len={})", url_bytes.is_empty(), url_bytes.len());
+            return Err("Invalid url".to_string());
+        }
+
+        // Decode URL as UTF-8 (consistent with existing WitnessCreate handler style)
+        let new_url = String::from_utf8(url_bytes.to_vec())
+            .map_err(|e| format!("Invalid UTF-8 in witness URL: {}", e))?;
+
+        debug!("WitnessUpdate: new URL = {}", new_url);
+
+        // 2. Load owner account (required)
+        let owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or_else(|| {
+                warn!("WITNESS_UPDATE_CONTRACT: account does not exist for {}", owner_tron);
+                "account does not exist".to_string()
+            })?;
+
+        // 3. Load existing witness (required)
+        let existing_witness = storage_adapter.get_witness(&owner)
+            .map_err(|e| format!("Failed to load witness: {}", e))?
+            .ok_or_else(|| {
+                warn!("WITNESS_UPDATE_CONTRACT: Witness does not exist for {}", owner_tron);
+                "Witness does not exist".to_string()
+            })?;
+
+        let old_url = existing_witness.url.clone();
+
+        // 4. Create updated witness entry with new URL, preserving address and vote_count
+        let updated_witness = WitnessInfo::new(
+            existing_witness.address,
+            new_url.clone(),
+            existing_witness.vote_count,
+        );
+
+        // 5. Persist updated witness
+        storage_adapter.put_witness(&updated_witness)
+            .map_err(|e| format!("Failed to update witness: {}", e))?;
+
+        info!("Updated witness URL: owner={}, old_url='{}', new_url='{}'", owner_tron, old_url, new_url);
+
+        // 6. Build state changes: exactly one AccountChange for owner with old_account == new_account
+        // (metadata update outside AccountInfo, no balance/nonce changes)
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: owner,
+                old_account: Some(owner_account.clone()),
+                new_account: Some(owner_account), // Same account, witness URL is metadata outside AccountInfo
+            }
+        ];
+
+        // 7. Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // 8. Handle AEXT tracking if enabled
+        let execution_config = self.get_execution_config()?;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
+        let mut aext_map = std::collections::HashMap::new();
+
+        if aext_mode == "tracked" {
+            debug!("AEXT tracking enabled for WITNESS_UPDATE_CONTRACT");
+
+            // Load current AEXT or default
+            let current_aext = storage_adapter.get_account_aext(&owner)
+                .map_err(|e| format!("Failed to load AEXT: {}", e))?
+                .unwrap_or_default();
+
+            // Load FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter.get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (_path, before_aext, after_aext) = tron_backend_execution::ResourceTracker::track_bandwidth(
+                &owner,
+                bandwidth_used as i64,
+                context.block_number as i64,
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist updated AEXT
+            storage_adapter.set_account_aext(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist AEXT: {}", e))?;
+
+            // Populate aext_map
+            aext_map.insert(owner, (before_aext, after_aext));
+
+            debug!("AEXT tracked for owner {}: bandwidth_used={}", owner_tron, bandwidth_used);
+        }
+
+        // 9. Return success result
+        debug!("WITNESS_UPDATE_CONTRACT completed successfully for {}", owner_tron);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,     // Witness update uses zero energy
+            bandwidth_used,
+            logs: Vec::new(),   // No logs for witness update
+            state_changes,
+            error: None,
+            aext_map,
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+        })
     }
 
     /// Parse VoteWitnessContract from protobuf bytes
