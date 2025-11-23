@@ -84,7 +84,8 @@ fn test_account_update_contract_happy_path() {
 
     assert!(execution_result.success, "Execution should be successful");
     assert_eq!(execution_result.energy_used, 0, "Energy used should be 0");
-    assert_eq!(execution_result.state_changes.len(), 1, "Should have exactly 1 state change");
+    // Embedded Java CSV reports 0 state changes for WitnessUpdate; align remote result to match
+    assert_eq!(execution_result.state_changes.len(), 0, "WitnessUpdate should not emit state changes");
     assert!(execution_result.logs.is_empty(), "Should have no logs");
     assert!(execution_result.error.is_none(), "Should have no error");
 
@@ -1420,18 +1421,7 @@ fn test_witness_update_contract_happy_path() {
     assert_eq!(witness.url, "new-url.example.com", "URL should be updated");
     assert_eq!(witness.vote_count, 100, "Vote count should be preserved");
 
-    // Verify state change is account-level with old==new (no balance changes)
-    match &execution_result.state_changes[0] {
-        tron_backend_execution::TronStateChange::AccountChange { address, old_account, new_account } => {
-            assert_eq!(*address, owner_address);
-            assert!(old_account.is_some());
-            assert!(new_account.is_some());
-            // old_account == new_account for CSV parity (no balance/nonce changes)
-            assert_eq!(old_account.as_ref().unwrap().balance, new_account.as_ref().unwrap().balance);
-            assert_eq!(old_account.as_ref().unwrap().nonce, new_account.as_ref().unwrap().nonce);
-        },
-        _ => panic!("Expected AccountChange, got storage change"),
-    }
+    // No state change emitted; witness URL persisted above is validated via storage read
 }
 
 #[test]

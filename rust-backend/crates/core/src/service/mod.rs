@@ -804,21 +804,25 @@ impl BackendService {
             existing_witness.vote_count,
         );
 
-        // 5. Persist updated witness
-        storage_adapter.put_witness(&updated_witness)
-            .map_err(|e| format!("Failed to update witness: {}", e))?;
+        // 5. Persist updated witness only if URL actually changes to avoid no-op writes
+        if new_url != old_url {
+            storage_adapter
+                .put_witness(&updated_witness)
+                .map_err(|e| format!("Failed to update witness: {}", e))?;
+            info!(
+                "Updated witness URL: owner={}, old_url='{}', new_url='{}'",
+                owner_tron, old_url, new_url
+            );
+        } else {
+            info!(
+                "Witness update is a no-op (URL unchanged): owner={}, url='{}'",
+                owner_tron, new_url
+            );
+        }
 
-        info!("Updated witness URL: owner={}, old_url='{}', new_url='{}'", owner_tron, old_url, new_url);
-
-        // 6. Build state changes: exactly one AccountChange for owner with old_account == new_account
-        // (metadata update outside AccountInfo, no balance/nonce changes)
-        let state_changes = vec![
-            TronStateChange::AccountChange {
-                address: owner,
-                old_account: Some(owner_account.clone()),
-                new_account: Some(owner_account), // Same account, witness URL is metadata outside AccountInfo
-            }
-        ];
+        // 6. Do not emit state changes for WitnessUpdateContract to match embedded semantics
+        // (Java embedded CSV logs 0 state changes and empty digest for witness updates)
+        let state_changes: Vec<TronStateChange> = Vec::new();
 
         // 7. Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
