@@ -19,7 +19,7 @@ fn create_test_config() -> ExecutionConfig {
 
     // Enable witness contracts
     config.remote.witness_create_enabled = true;
-    config.remote.witness_update_enabled = false; // Phase 2
+    config.remote.witness_update_enabled = true; // Phase 2
     config.remote.vote_witness_enabled = false;   // Phase 3
     config.remote.system_enabled = true;
 
