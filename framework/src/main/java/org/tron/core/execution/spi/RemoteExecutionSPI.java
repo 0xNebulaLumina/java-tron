@@ -468,6 +468,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       byte[] blockHash = blockCap.getBlockId().getBytes();
       byte[] coinbase = blockCap.getWitnessAddress().toByteArray();
 
+      String transactionId = context.getTrxCap().getTransactionId().toString();
+
       ExecutionContext.Builder contextBuilder =
           ExecutionContext.newBuilder()
               .setBlockNumber(blockNumber)
@@ -475,7 +477,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               .setBlockHash(ByteString.copyFrom(blockHash))
               .setCoinbase(ByteString.copyFrom(coinbase))
               .setEnergyLimit(energyLimit)
-              .setEnergyPrice(energyPrice);
+              .setEnergyPrice(energyPrice)
+              .setTransactionId(transactionId);
 
       // Collect pre-execution AEXT snapshots for hybrid mode
       List<AccountAextSnapshot> preExecAextList = collectPreExecutionAext(context, fromAddress, toAddress, contract.getType());
