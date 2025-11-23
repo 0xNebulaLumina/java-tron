@@ -386,6 +386,36 @@ impl BackendService {
             }
         }).collect();
 
+        // Convert TRC-10 changes from execution result to protobuf (Phase 2)
+        let trc10_changes: Vec<crate::backend::Trc10Change> = result.trc10_changes.iter().map(|change| {
+            match change {
+                tron_backend_execution::Trc10Change::AssetIssued(issued) => {
+                    crate::backend::Trc10Change {
+                        kind: Some(crate::backend::trc10_change::Kind::AssetIssued(
+                            crate::backend::Trc10AssetIssued {
+                                owner_address: add_tron_address_prefix(&issued.owner_address),
+                                name: issued.name.clone(),
+                                abbr: issued.abbr.clone(),
+                                total_supply: issued.total_supply,
+                                trx_num: issued.trx_num,
+                                precision: issued.precision,
+                                num: issued.num,
+                                start_time: issued.start_time,
+                                end_time: issued.end_time,
+                                description: issued.description.clone(),
+                                url: issued.url.clone(),
+                                free_asset_net_limit: issued.free_asset_net_limit,
+                                public_free_asset_net_limit: issued.public_free_asset_net_limit,
+                                public_free_asset_net_usage: issued.public_free_asset_net_usage,
+                                public_latest_free_net_time: issued.public_latest_free_net_time,
+                                token_id: issued.token_id.clone().unwrap_or_default(),
+                            }
+                        ))
+                    }
+                }
+            }
+        }).collect();
+
         let error_message = result.error.unwrap_or_default();
 
         ExecuteTransactionResponse {
@@ -401,6 +431,7 @@ impl BackendService {
                 resource_usage: vec![], // Not implemented yet
                 freeze_changes, // Converted from TronExecutionResult
                 global_resource_changes, // Converted from TronExecutionResult
+                trc10_changes, // Phase 2: Converted TRC-10 semantic changes
             }),
             success: result.success,
             error_message,

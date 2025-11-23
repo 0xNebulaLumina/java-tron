@@ -299,6 +299,31 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get AssetIssueFee dynamic property
+    /// Default value for TRC-10 asset issuance cost in SUN
+    /// Java reference: DynamicPropertiesStore.java:1554, 1568
+    pub fn get_asset_issue_fee(&self) -> Result<u64> {
+        let key = b"ASSET_ISSUE_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let fee = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(fee)
+                } else {
+                    // Use default value for AssetIssueFee
+                    Ok(1024000000) // 1024 TRX in SUN (default from TRON mainnet)
+                }
+            },
+            None => {
+                // Use default value for AssetIssueFee
+                Ok(1024000000) // 1024 TRX in SUN (default from TRON mainnet)
+            }
+        }
+    }
+
     /// Get AllowMultiSign dynamic property
     /// Default value: 1 (enabled)
     pub fn get_allow_multi_sign(&self) -> Result<bool> {

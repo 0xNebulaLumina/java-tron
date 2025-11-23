@@ -313,7 +313,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             logger.debug("TRC-10 remote execution disabled, throwing exception to fallback to Java actuators");
             throw new UnsupportedOperationException("TRC-10 execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
-          
+
           TransferAssetContract transferAssetContract =
               contractParameter.unpack(TransferAssetContract.class);
           toAddress = transferAssetContract.getToAddress().toByteArray();
@@ -321,6 +321,28 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           assetId = transferAssetContract.getAssetName().toByteArray(); // TRC-10 asset ID
           txKind = TxKind.NON_VM; // TRC-10 asset transfer (when enabled)
           contractType = tron.backend.BackendOuterClass.ContractType.TRANSFER_ASSET_CONTRACT;
+          break;
+
+        case AssetIssueContract:
+          // TRC-10 Asset Issue: Gate behind the same TRC-10 feature flag
+          boolean assetIssueRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!assetIssueRemoteEnabled) {
+            logger.debug("TRC-10 AssetIssue remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("AssetIssue execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+
+          org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract assetIssueContract =
+              contractParameter.unpack(org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          value = 0; // Asset issue fee is charged, but not a value transfer
+          data = assetIssueContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // TRC-10 asset issuance
+          contractType = tron.backend.BackendOuterClass.ContractType.ASSET_ISSUE_CONTRACT;
+          logger.debug(
+              "Mapped AssetIssueContract to remote request; owner={}, name={}, total_supply={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              assetIssueContract.getName().toStringUtf8(),
+              assetIssueContract.getTotalSupply());
           break;
 
         case CreateSmartContract:
@@ -446,6 +468,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       byte[] blockHash = blockCap.getBlockId().getBytes();
       byte[] coinbase = blockCap.getWitnessAddress().toByteArray();
 
+      String transactionId = context.getTrxCap().getTransactionId().toString();
+
       ExecutionContext.Builder contextBuilder =
           ExecutionContext.newBuilder()
               .setBlockNumber(blockNumber)
@@ -453,7 +477,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               .setBlockHash(ByteString.copyFrom(blockHash))
               .setCoinbase(ByteString.copyFrom(coinbase))
               .setEnergyLimit(energyLimit)
-              .setEnergyPrice(energyPrice);
+              .setEnergyPrice(energyPrice)
+              .setTransactionId(transactionId);
 
       // Collect pre-execution AEXT snapshots for hybrid mode
       List<AccountAextSnapshot> preExecAextList = collectPreExecutionAext(context, fromAddress, toAddress, contract.getType());
@@ -680,7 +705,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           response.getErrorMessage(), // errorMessage
           0, // bandwidthUsed
           new ArrayList<>(), // freezeChanges
-          new ArrayList<>() // globalResourceChanges
+          new ArrayList<>(), // globalResourceChanges
+          new ArrayList<>() // trc10Changes
           );
     }
 
@@ -839,6 +865,42 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       });
     }
 
+    // Convert protobuf TRC-10 changes (Phase 2: full TRC-10 ledger semantics)
+    List<Trc10Change> trc10Changes = new ArrayList<>();
+    for (tron.backend.BackendOuterClass.Trc10Change protoTrc10 : protoResult.getTrc10ChangesList()) {
+      // Handle the oneof union type
+      if (protoTrc10.hasAssetIssued()) {
+        tron.backend.BackendOuterClass.Trc10AssetIssued protoAssetIssued = protoTrc10.getAssetIssued();
+
+        Trc10AssetIssued assetIssued = new Trc10AssetIssued(
+            protoAssetIssued.getOwnerAddress().toByteArray(),
+            protoAssetIssued.getName().toByteArray(),
+            protoAssetIssued.getAbbr().toByteArray(),
+            protoAssetIssued.getTotalSupply(),
+            protoAssetIssued.getTrxNum(),
+            protoAssetIssued.getPrecision(),
+            protoAssetIssued.getNum(),
+            protoAssetIssued.getStartTime(),
+            protoAssetIssued.getEndTime(),
+            protoAssetIssued.getDescription().toByteArray(),
+            protoAssetIssued.getUrl().toByteArray(),
+            protoAssetIssued.getFreeAssetNetLimit(),
+            protoAssetIssued.getPublicFreeAssetNetLimit(),
+            protoAssetIssued.getPublicFreeAssetNetUsage(),
+            protoAssetIssued.getPublicLatestFreeNetTime(),
+            protoAssetIssued.getTokenId());
+
+        trc10Changes.add(new Trc10Change(assetIssued));
+
+        logger.debug("Parsed TRC-10 asset issued: owner={}, name={}, totalSupply={}, precision={}, tokenId={}",
+            org.tron.common.utils.ByteArray.toHexString(protoAssetIssued.getOwnerAddress().toByteArray()),
+            new String(protoAssetIssued.getName().toByteArray(), java.nio.charset.StandardCharsets.UTF_8),
+            protoAssetIssued.getTotalSupply(),
+            protoAssetIssued.getPrecision(),
+            protoAssetIssued.getTokenId());
+      }
+    }
+
     // Report metrics if callback is registered
     if (metricsCallback != null) {
       metricsCallback.onMetric("remote.energy_used", protoResult.getEnergyUsed());
@@ -860,7 +922,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         protoResult.getErrorMessage(),
         protoResult.getBandwidthUsed(),
         freezeChanges,
-        globalResourceChanges);
+        globalResourceChanges,
+        trc10Changes);
   }
 
   /**

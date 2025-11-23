@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use super::BackendService;
 use crate::backend::*;
 use tron_backend_execution::{TronTransaction, TronExecutionContext, ExecutionModule, EvmStateStore};
-use tron_backend_common::HealthStatus;
+use tron_backend_common::{HealthStatus, to_tron_address};
 use self::conversion::*;
 use self::aext::parse_pre_execution_aext;
 #[tonic::async_trait]
@@ -994,6 +994,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                         resource_usage: vec![],
                         freeze_changes: vec![],
                         global_resource_changes: vec![],
+                        trc10_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Transaction conversion error: {}", e),
@@ -1022,6 +1023,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                         resource_usage: vec![],
                         freeze_changes: vec![],
                         global_resource_changes: vec![],
+                        trc10_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Context conversion error: {}", e),
@@ -1034,6 +1036,33 @@ impl crate::backend::backend_server::Backend for BackendService {
         let mut storage_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
             storage_engine.clone(),
         );
+
+        // Log blackhole balance before execution
+        let blackhole_balance_before = if let Ok(Some(blackhole_addr)) = storage_adapter.get_blackhole_address() {
+            let balance = storage_adapter.get_account(&blackhole_addr)
+                .ok()
+                .flatten()
+                .map(|acc| acc.balance)
+                .unwrap_or(revm_primitives::U256::ZERO);
+            let blackhole_addr_array: [u8; 20] = blackhole_addr.as_slice().try_into().unwrap();
+            let blackhole_base58 = to_tron_address(&blackhole_addr_array);
+            let from_addr_array: [u8; 20] = transaction.from.as_slice().try_into().unwrap();
+            let from_addr_base58 = to_tron_address(&from_addr_array);
+            let contract_type_str = transaction.metadata.contract_type
+                .as_ref()
+                .map(|ct| format!("{:?}", ct))
+                .unwrap_or_else(|| "UNKNOWN".to_string());
+
+            let tx_id = req.context.as_ref()
+                .map(|c| c.transaction_id.as_str())
+                .unwrap_or("");
+            info!("Blackhole balance BEFORE execution: {} SUN (address: {}) - block: {}, txId: {}, tx from: {}, contract_type: {}",
+                  balance, blackhole_base58, context.block_number, tx_id, from_addr_base58, contract_type_str);
+            Some((blackhole_addr, balance, blackhole_base58))
+        } else {
+            warn!("Blackhole address not configured, skipping balance logging");
+            None
+        };
 
         // Phase 3: Branch execution based on transaction kind
         let execution_result = match tx_kind {
@@ -1084,6 +1113,39 @@ impl crate::backend::backend_server::Backend for BackendService {
             }
         };
 
+        // Log blackhole balance after execution and compute delta
+        if let Some((blackhole_addr, balance_before, blackhole_base58)) = blackhole_balance_before.as_ref() {
+            // Create a fresh storage adapter to query post-execution state
+            let post_exec_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
+                storage_engine.clone(),
+            );
+
+            if let Ok(Some(account)) = post_exec_adapter.get_account(blackhole_addr) {
+                let balance_after = account.balance;
+                let delta_signed = if balance_after >= *balance_before {
+                    let delta = balance_after.saturating_sub(*balance_before);
+                    format!("+{}", delta)
+                } else {
+                    let delta = balance_before.saturating_sub(balance_after);
+                    format!("-{}", delta)
+                };
+                let from_addr_array: [u8; 20] = transaction.from.as_slice().try_into().unwrap();
+                let from_addr_base58 = to_tron_address(&from_addr_array);
+                let contract_type_str = transaction.metadata.contract_type
+                    .as_ref()
+                    .map(|ct| format!("{:?}", ct))
+                    .unwrap_or_else(|| "UNKNOWN".to_string());
+
+                let tx_id = req.context.as_ref()
+                    .map(|c| c.transaction_id.as_str())
+                    .unwrap_or("");
+                info!("Blackhole balance AFTER execution: {} SUN (address: {}, delta: {} SUN) - block: {}, txId: {}, tx from: {}, contract_type: {}",
+                      balance_after, blackhole_base58, delta_signed, context.block_number, tx_id, from_addr_base58, contract_type_str);
+            } else {
+                warn!("Blackhole account disappeared after execution (address: {})", blackhole_base58);
+            }
+        }
+
         // Handle execution result
         match execution_result {
             Ok(result) => {
@@ -1115,6 +1177,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                         resource_usage: vec![],
                         freeze_changes: vec![],
                         global_resource_changes: vec![],
+                        trc10_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Execution error: {}", e),

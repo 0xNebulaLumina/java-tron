@@ -611,6 +611,8 @@ message ExecutionResult {
   // Phase 2: Freeze/resource ledger changes
   repeated FreezeLedgerChange freeze_changes = 10;
   repeated GlobalResourceTotalsChange global_resource_changes = 11;
+  // Phase 2: TRC-10 semantic changes
+  repeated Trc10Change trc10_changes = 12;
 }
 
 // Account information for account changes
@@ -696,6 +698,35 @@ message GlobalResourceTotalsChange {
   int64 total_net_limit = 2;     // Total network bandwidth limit
   int64 total_energy_weight = 3; // Total energy weight across all accounts
   int64 total_energy_limit = 4;  // Total energy limit
+}
+
+// TRC-10 Asset Issued (Phase 2: full TRC-10 ledger semantics)
+// Describes a new TRC-10 asset issuance operation for Java-side persistence
+message Trc10AssetIssued {
+  bytes owner_address = 1;              // 21-byte Tron address (issuer)
+  bytes name = 2;                       // Asset name
+  bytes abbr = 3;                       // Asset abbreviation
+  int64 total_supply = 4;               // Total supply
+  int32 trx_num = 5;                    // TRX exchange rate numerator
+  int32 precision = 6;                  // Decimal precision
+  int32 num = 7;                        // Token exchange rate numerator
+  int64 start_time = 8;                 // ICO start time (milliseconds)
+  int64 end_time = 9;                   // ICO end time (milliseconds)
+  bytes description = 10;               // Asset description
+  bytes url = 11;                       // Asset URL
+  int64 free_asset_net_limit = 12;      // Free bandwidth limit per account
+  int64 public_free_asset_net_limit = 13; // Public free bandwidth limit
+  int64 public_free_asset_net_usage = 14; // Current public usage
+  int64 public_latest_free_net_time = 15; // Last public usage timestamp
+  string token_id = 16;                 // Token ID (optional; if empty, Java computes via TOKEN_ID_NUM)
+}
+
+// TRC-10 Change (union type for different TRC-10 operations)
+// Future: add Trc10Transferred, Trc10Participated, Trc10Updated variants
+message Trc10Change {
+  oneof kind {
+    Trc10AssetIssued asset_issued = 1;
+  }
 }
 
 message CallContractRequest {
