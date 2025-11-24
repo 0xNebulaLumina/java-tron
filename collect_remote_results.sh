@@ -2,7 +2,11 @@
 
 set -e
 
+# Configurable sleep duration (in seconds), default 600 (10 minutes)
+SLEEP_DURATION=${1:-600}
+
 echo "Starting remote execution + remote storage result collection..."
+echo "Sleep duration: ${SLEEP_DURATION} seconds ($(($SLEEP_DURATION / 60)) minutes)"
 
 # Step 1: Clean up previous data
 echo "Step 1: Cleaning up previous data..."
@@ -49,9 +53,9 @@ JAVA_PID=$!
 echo "Java-tron started with PID: $JAVA_PID"
 echo "Rust-backend started with PID: $RUST_PID"
 
-# Step 6: Wait 10 minutes then stop services
-echo "Waiting 10 minutes for data collection..."
-sleep 600
+# Step 6: Wait for configured duration then stop services
+echo "Waiting ${SLEEP_DURATION} seconds for data collection..."
+sleep $SLEEP_DURATION
 
 echo "Step 6: Stopping services..."
 # Stop java-tron first
