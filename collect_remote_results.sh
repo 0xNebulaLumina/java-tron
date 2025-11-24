@@ -4,9 +4,15 @@ set -e
 
 # Configurable sleep duration (in seconds), default 600 (10 minutes)
 SLEEP_DURATION=${1:-600}
+# Configurable embedded Java log path
+EMBEDDED_JAVA_LOG=${2:-9.embedded-java.log}
+# Configurable embedded-embedded CSV path
+EMBEDDED_CSV=${3:-output-directory/execution-csv/20251117-102033-01aa61f2-embedded-embedded.csv}
 
 echo "Starting remote execution + remote storage result collection..."
 echo "Sleep duration: ${SLEEP_DURATION} seconds ($(($SLEEP_DURATION / 60)) minutes)"
+echo "Embedded Java log: ${EMBEDDED_JAVA_LOG}"
+echo "Embedded CSV: ${EMBEDDED_CSV}"
 
 # Step 1: Clean up previous data
 echo "Step 1: Cleaning up previous data..."
@@ -107,7 +113,7 @@ else
     RUST_LOG_PATH="rust.log (not found)"
 fi
 
-cp ../archive/9.embedded-java.log ./
+cp "../archive/${EMBEDDED_JAVA_LOG}" ./
 
 # Step 10: Find newest CSV file
 echo "Step 10: Finding newest CSV file..."
@@ -136,7 +142,7 @@ echo ""
 
 # Step 11: Run CSV comparison
 echo "Step 11: Running CSV comparison..."
-python3 scripts/compare_exec_csv.py output-directory/execution-csv/20251117-102033-01aa61f2-embedded-embedded.csv "$NEWEST_CSV"
+python3 scripts/compare_exec_csv.py "$EMBEDDED_CSV" "$NEWEST_CSV"
 
 echo ""
 echo "’‘’"
@@ -145,12 +151,12 @@ echo ""
 echo "I want to compare the (embedded execution + embedded storage) results vs the (remote execution + remote storage) results,"
 echo ""
 echo "The result csv are"
-echo "+ output-directory/execution-csv/20251117-102033-01aa61f2-embedded-embedded.csv"
+echo "+ $EMBEDDED_CSV"
 echo "+ $NEWEST_CSV"
 echo "respectively."
 echo ""
 echo "Logs:"
-echo "(embedded execution + embedded storage) java log: 9.embedded-java.log"
+echo "(embedded execution + embedded storage) java log: $EMBEDDED_JAVA_LOG"
 echo "(remote execution + remote storage) java log: $JAVA_LOG_PATH"
 echo "(remote execution + remote storage) rust log: $RUST_LOG_PATH"
 echo ""
