@@ -806,7 +806,9 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get tron power for an address in SUN
-    /// Sums frozen amounts across BANDWIDTH (0), ENERGY (1), and TRON_POWER (2) resources
+    /// Parity rules:
+    /// - Old model (new_model = false): sum BANDWIDTH + ENERGY (V1 and V2), exclude TRON_POWER.
+    /// - New model (new_model = true): include TRON_POWER as part of total (V2 model semantics).
     pub fn get_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
         // Resource types as defined in Tron protocol
         const BANDWIDTH: u8 = 0;
@@ -818,8 +820,16 @@ impl EngineBackedEvmStateStore {
         let mut energy_amount: u64 = 0;
         let mut tron_power_amount: u64 = 0;
 
-        // Sum frozen amounts across all three resource types
-        for resource in [BANDWIDTH, ENERGY, TRON_POWER] {
+        // Sum frozen amounts per parity rules
+        let resources: &[u8] = if new_model {
+            // In new resource model, include TRON_POWER alongside BANDWIDTH and ENERGY
+            &[BANDWIDTH, ENERGY, TRON_POWER]
+        } else {
+            // In legacy model, only BANDWIDTH and ENERGY contribute to tron power
+            &[BANDWIDTH, ENERGY]
+        };
+
+        for &resource in resources.iter() {
             if let Some(record) = self.get_freeze_record(address, resource)? {
                 let amount = record.frozen_amount;
                 total = total.checked_add(amount)
