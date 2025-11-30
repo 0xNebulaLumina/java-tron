@@ -613,6 +613,8 @@ message ExecutionResult {
   repeated GlobalResourceTotalsChange global_resource_changes = 11;
   // Phase 2: TRC-10 semantic changes
   repeated Trc10Change trc10_changes = 12;
+  // Phase 2: Delegation changes
+  repeated DelegationChange delegation_changes = 13;
 }
 
 // Account information for account changes
@@ -727,6 +729,30 @@ message Trc10Change {
   oneof kind {
     Trc10AssetIssued asset_issued = 1;
   }
+}
+
+// Delegation change (Phase 2: delegation parity)
+// Describes a single delegation operation for Java-side application to
+// DelegatedResourceStore and AccountCapsule delegated fields
+message DelegationChange {
+  enum Resource {
+    BANDWIDTH = 0;
+    ENERGY = 1;
+  }
+
+  enum Operation {
+    ADD = 0;     // Create/increase delegation
+    REMOVE = 1;  // Reduce/cancel delegation
+    UNLOCK = 2;  // Move from lock to unlock (expiry)
+  }
+
+  bytes from_address = 1;     // 21-byte Tron address (delegator/owner)
+  bytes to_address = 2;       // 21-byte Tron address (receiver)
+  Resource resource = 3;       // Resource type being delegated
+  int64 amount = 4;           // Amount in SUN (positive for add, absolute for unlock)
+  int64 expire_time_ms = 5;   // Expiration timestamp in milliseconds (0 if no lock)
+  bool v2_model = 6;          // true for V2 model delegation
+  Operation op = 7;           // Operation type
 }
 
 message CallContractRequest {

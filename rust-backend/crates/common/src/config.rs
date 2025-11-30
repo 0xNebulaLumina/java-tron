@@ -91,9 +91,17 @@ pub struct RemoteExecutionConfig {
     pub freeze_balance_v2_enabled: bool,
     /// Enable UNFREEZE_BALANCE_V2_CONTRACT execution
     pub unfreeze_balance_v2_enabled: bool,
+    /// Enable DELEGATE_RESOURCE_CONTRACT execution (Phase 2 delegation parity)
+    pub delegate_resource_enabled: bool,
+    /// Enable UNDELEGATE_RESOURCE_CONTRACT execution (Phase 2 delegation parity)
+    pub undelegate_resource_enabled: bool,
     /// Emit storage changes for freeze ledger (EXPERIMENTAL - may affect CSV output)
     /// Default: false to maintain CSV parity with Phase 1
     pub emit_freeze_ledger_changes: bool,
+    /// Emit delegation changes for state sync to Java
+    /// When enabled, DelegationChange records are included in execution results
+    /// Default: false for backward compatibility
+    pub emit_delegation_changes: bool,
     /// Emit GlobalResourceTotalsChange alongside freeze/unfreeze operations
     /// When enabled, backend computes and sends total net/energy weight and limits
     /// so Java can update DynamicPropertiesStore immediately (fixes FREE_NET vs ACCOUNT_NET divergence)
@@ -109,6 +117,9 @@ pub struct RemoteExecutionConfig {
     /// - "tracked": Some(real values) when backend supports resource metrics (future)
     /// Default: "none" for backward compatibility; set to "defaults" for full CSV parity with embedded
     pub accountinfo_aext_mode: String,
+    /// Use full tron power calculation (including delegated-out) for vote validation
+    /// Default: false for backward compatibility; enable true for Phase 2 parity
+    pub use_full_tron_power: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,10 +242,14 @@ impl Config {
         builder = builder.set_default("execution.remote.unfreeze_balance_enabled", false)?;
         builder = builder.set_default("execution.remote.freeze_balance_v2_enabled", false)?;
         builder = builder.set_default("execution.remote.unfreeze_balance_v2_enabled", false)?;
+        builder = builder.set_default("execution.remote.delegate_resource_enabled", false)?;
+        builder = builder.set_default("execution.remote.undelegate_resource_enabled", false)?;
         builder = builder.set_default("execution.remote.emit_freeze_ledger_changes", false)?;
+        builder = builder.set_default("execution.remote.emit_delegation_changes", false)?;
         builder = builder.set_default("execution.remote.emit_global_resource_changes", false)?;
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
         builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
+        builder = builder.set_default("execution.remote.use_full_tron_power", false)?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -253,10 +268,14 @@ impl Default for RemoteExecutionConfig {
             unfreeze_balance_enabled: false, // Default false until validated
             freeze_balance_v2_enabled: false, // Default false until validated
             unfreeze_balance_v2_enabled: false, // Default false until validated
+            delegate_resource_enabled: false, // Default false until Phase 2 validated
+            undelegate_resource_enabled: false, // Default false until Phase 2 validated
             emit_freeze_ledger_changes: false, // Default false for CSV parity
+            emit_delegation_changes: false, // Default false for backward compatibility
             emit_global_resource_changes: false, // Default false for backward compatibility
             emit_storage_changes: false,
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
+            use_full_tron_power: false, // Default false for backward compatibility
         }
     }
 } 

@@ -224,6 +224,7 @@ impl BackendService {
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
             global_resource_changes, // Populated when emit_global_resource_changes is true
             trc10_changes: vec![], // Not applicable for freeze contracts
+            delegation_changes: vec![], // Will be populated by delegation contracts
         })
     }
 
@@ -378,6 +379,7 @@ impl BackendService {
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
             global_resource_changes, // Populated when emit_global_resource_changes is true
             trc10_changes: vec![], // Not applicable for freeze contracts
+            delegation_changes: vec![], // Will be populated by delegation contracts
         })
     }
 
@@ -623,6 +625,7 @@ impl BackendService {
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
             global_resource_changes, // Populated when emit_global_resource_changes is true
             trc10_changes: vec![], // Not applicable for freeze contracts
+            delegation_changes: vec![], // Will be populated by delegation contracts
         })
     }
 
@@ -820,6 +823,7 @@ impl BackendService {
             freeze_changes, // Populated when emit_freeze_ledger_changes is true
             global_resource_changes, // Populated when emit_global_resource_changes is true
             trc10_changes: vec![], // Not applicable for freeze contracts
+            delegation_changes: vec![], // Will be populated by delegation contracts
         })
     }
 

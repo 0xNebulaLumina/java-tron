@@ -81,6 +81,9 @@ public class RuntimeSpiImpl implements Runtime {
       // Apply TRC-10 changes to local database (Phase 2)
       applyTrc10Changes(executionResult, context);
 
+      // Apply delegation changes to local database (Phase 2: delegation parity)
+      applyDelegationChanges(executionResult, context);
+
       // Since ExecutionProgramResult extends ProgramResult, we can use it directly
       context.setProgramResult(executionResult);
 
@@ -589,6 +592,319 @@ public class RuntimeSpiImpl implements Runtime {
           org.tron.common.utils.StringUtil.encode58Check(assetIssued.getOwnerAddress()),
           e.getMessage(), e);
     }
+  }
+
+  /**
+   * Apply delegation changes from remote execution to the local Java-Tron database (Phase 2: delegation parity).
+   * This updates DelegatedResourceStore entries and account delegated/acquired balance fields to ensure
+   * BandwidthProcessor sees correct resource limits for subsequent transactions in the same block.
+   * Can be disabled via JVM property: -Dremote.exec.apply.delegation=false for rapid rollback.
+   */
+  private void applyDelegationChanges(ExecutionProgramResult result, TransactionContext context) {
+    // Check JVM toggle for rapid rollback
+    // Default is true (apply enabled), can be disabled with -Dremote.exec.apply.delegation=false
+    boolean applyEnabled = Boolean.parseBoolean(
+        System.getProperty("remote.exec.apply.delegation", "true"));
+
+    if (!applyEnabled) {
+      logger.debug("Delegation changes application disabled by JVM property " +
+          "(-Dremote.exec.apply.delegation=false) for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    // Check for delegation changes
+    if (result.getDelegationChanges() == null || result.getDelegationChanges().isEmpty()) {
+      logger.debug("No delegation changes to apply for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    logger.info("Applying {} delegation changes to local database for transaction: {}",
+        result.getDelegationChanges().size(), context.getTrxCap().getTransactionId());
+
+    try {
+      ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
+
+      // Apply each delegation change
+      for (ExecutionSPI.DelegationChange delegationChange : result.getDelegationChanges()) {
+        applyDelegationChange(delegationChange, chainBaseManager, context);
+      }
+
+      logger.info("Successfully applied {} delegation changes for transaction: {}",
+          result.getDelegationChanges().size(), context.getTrxCap().getTransactionId());
+
+    } catch (Exception e) {
+      logger.error("Failed to apply delegation changes for transaction: {}, error: {}",
+          context.getTrxCap().getTransactionId(), e.getMessage(), e);
+      // Don't throw exception - maintain transaction flow
+    }
+  }
+
+  /**
+   * Apply a single delegation change to DelegatedResourceStore and account balances.
+   */
+  private void applyDelegationChange(ExecutionSPI.DelegationChange delegationChange,
+                                     ChainBaseManager chainBaseManager,
+                                     TransactionContext context) {
+    try {
+      byte[] fromAddress = delegationChange.getFromAddress();
+      byte[] toAddress = delegationChange.getToAddress();
+      String fromStr = org.tron.common.utils.StringUtil.encode58Check(fromAddress);
+      String toStr = org.tron.common.utils.StringUtil.encode58Check(toAddress);
+
+      ExecutionSPI.DelegationChange.Resource resource = delegationChange.getResource();
+      ExecutionSPI.DelegationChange.Operation operation = delegationChange.getOperation();
+      long amount = delegationChange.getAmount();
+      long expireTimeMs = delegationChange.getExpireTimeMs();
+      boolean v2Model = delegationChange.isV2Model();
+
+      logger.debug("Applying delegation change: from={}, to={}, resource={}, amount={}, expire={}, v2={}, op={}",
+          fromStr, toStr, resource, amount, expireTimeMs, v2Model, operation);
+
+      // Get stores
+      org.tron.core.store.DelegatedResourceStore delegatedResourceStore =
+          chainBaseManager.getDelegatedResourceStore();
+      org.tron.core.store.AccountStore accountStore = chainBaseManager.getAccountStore();
+
+      // Determine if this is a lock (has expiration) or unlock record
+      boolean isLocked = (expireTimeMs > 0);
+
+      // Create DB key for V2 (lock or unlock)
+      byte[] dbKey = org.tron.core.capsule.DelegatedResourceCapsule.createDbKeyV2(
+          fromAddress, toAddress, isLocked);
+
+      // Get or create the DelegatedResourceCapsule
+      org.tron.core.capsule.DelegatedResourceCapsule delegatedResource =
+          delegatedResourceStore.get(dbKey);
+      if (delegatedResource == null) {
+        delegatedResource = new org.tron.core.capsule.DelegatedResourceCapsule(
+            com.google.protobuf.ByteString.copyFrom(fromAddress),
+            com.google.protobuf.ByteString.copyFrom(toAddress));
+      }
+
+      // Apply the operation
+      switch (operation) {
+        case ADD:
+          applyDelegationAdd(delegatedResource, resource, amount, expireTimeMs, v2Model,
+              fromAddress, toAddress, accountStore);
+          break;
+
+        case REMOVE:
+          applyDelegationRemove(delegatedResource, resource, amount, v2Model,
+              fromAddress, toAddress, accountStore);
+          break;
+
+        case UNLOCK:
+          // For UNLOCK, we need to move from lock record to unlock record
+          applyDelegationUnlock(fromAddress, toAddress, resource, amount, expireTimeMs, v2Model,
+              delegatedResourceStore, accountStore);
+          return; // UNLOCK handles its own persistence
+
+        default:
+          logger.warn("Unknown delegation operation: {}", operation);
+          return;
+      }
+
+      // Persist the delegation record (for ADD/REMOVE)
+      // Check if the record is now empty and should be deleted
+      if (delegatedResource.getFrozenBalanceForBandwidth() == 0 &&
+          delegatedResource.getFrozenBalanceForEnergy() == 0) {
+        delegatedResourceStore.delete(dbKey);
+        logger.debug("Deleted empty DelegatedResource record: from={}, to={}, lock={}",
+            fromStr, toStr, isLocked);
+      } else {
+        delegatedResourceStore.put(dbKey, delegatedResource);
+        logger.debug("Persisted DelegatedResource record: from={}, to={}, lock={}, bw={}, energy={}",
+            fromStr, toStr, isLocked,
+            delegatedResource.getFrozenBalanceForBandwidth(),
+            delegatedResource.getFrozenBalanceForEnergy());
+      }
+
+      // Mark accounts as dirty for resource processor synchronization
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(fromAddress);
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(toAddress);
+
+    } catch (Exception e) {
+      logger.error("Failed to apply delegation change: from={}, to={}, error: {}",
+          org.tron.common.utils.StringUtil.encode58Check(delegationChange.getFromAddress()),
+          org.tron.common.utils.StringUtil.encode58Check(delegationChange.getToAddress()),
+          e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Apply ADD delegation operation: increase delegated amount and update account balances.
+   */
+  private void applyDelegationAdd(org.tron.core.capsule.DelegatedResourceCapsule delegatedResource,
+                                  ExecutionSPI.DelegationChange.Resource resource,
+                                  long amount, long expireTimeMs, boolean v2Model,
+                                  byte[] fromAddress, byte[] toAddress,
+                                  org.tron.core.store.AccountStore accountStore) {
+    // Update the DelegatedResourceCapsule
+    boolean isBandwidth = (resource == ExecutionSPI.DelegationChange.Resource.BANDWIDTH);
+    if (isBandwidth) {
+      delegatedResource.addFrozenBalanceForBandwidth(amount, expireTimeMs);
+    } else {
+      delegatedResource.addFrozenBalanceForEnergy(amount, expireTimeMs);
+    }
+
+    // Update delegator account (from) - increase delegated-out totals
+    AccountCapsule delegatorAccount = accountStore.get(fromAddress);
+    if (delegatorAccount != null) {
+      if (v2Model) {
+        if (isBandwidth) {
+          delegatorAccount.addDelegatedFrozenV2BalanceForBandwidth(amount);
+        } else {
+          delegatorAccount.addDelegatedFrozenV2BalanceForEnergy(amount);
+        }
+      } else {
+        if (isBandwidth) {
+          delegatorAccount.addDelegatedFrozenBalanceForBandwidth(amount);
+        } else {
+          delegatorAccount.addDelegatedFrozenBalanceForEnergy(amount);
+        }
+      }
+      accountStore.put(fromAddress, delegatorAccount);
+    }
+
+    // Update receiver account (to) - increase acquired delegated totals
+    AccountCapsule receiverAccount = accountStore.get(toAddress);
+    if (receiverAccount != null) {
+      if (v2Model) {
+        if (isBandwidth) {
+          receiverAccount.addAcquiredDelegatedFrozenV2BalanceForBandwidth(amount);
+        } else {
+          receiverAccount.addAcquiredDelegatedFrozenV2BalanceForEnergy(amount);
+        }
+      } else {
+        if (isBandwidth) {
+          receiverAccount.addAcquiredDelegatedFrozenBalanceForBandwidth(amount);
+        } else {
+          receiverAccount.addAcquiredDelegatedFrozenBalanceForEnergy(amount);
+        }
+      }
+      accountStore.put(toAddress, receiverAccount);
+    }
+  }
+
+  /**
+   * Apply REMOVE delegation operation: decrease delegated amount and update account balances.
+   */
+  private void applyDelegationRemove(org.tron.core.capsule.DelegatedResourceCapsule delegatedResource,
+                                     ExecutionSPI.DelegationChange.Resource resource,
+                                     long amount, boolean v2Model,
+                                     byte[] fromAddress, byte[] toAddress,
+                                     org.tron.core.store.AccountStore accountStore) {
+    // Update the DelegatedResourceCapsule (subtract amount)
+    boolean isBandwidth = (resource == ExecutionSPI.DelegationChange.Resource.BANDWIDTH);
+    if (isBandwidth) {
+      long currentBw = delegatedResource.getFrozenBalanceForBandwidth();
+      delegatedResource.setFrozenBalanceForBandwidth(Math.max(0, currentBw - amount), 0);
+    } else {
+      long currentEnergy = delegatedResource.getFrozenBalanceForEnergy();
+      delegatedResource.setFrozenBalanceForEnergy(Math.max(0, currentEnergy - amount), 0);
+    }
+
+    // Update delegator account (from) - decrease delegated-out totals
+    AccountCapsule delegatorAccount = accountStore.get(fromAddress);
+    if (delegatorAccount != null) {
+      if (v2Model) {
+        if (isBandwidth) {
+          delegatorAccount.addDelegatedFrozenV2BalanceForBandwidth(-amount);
+        } else {
+          delegatorAccount.addDelegatedFrozenV2BalanceForEnergy(-amount);
+        }
+      } else {
+        if (isBandwidth) {
+          delegatorAccount.addDelegatedFrozenBalanceForBandwidth(-amount);
+        } else {
+          delegatorAccount.addDelegatedFrozenBalanceForEnergy(-amount);
+        }
+      }
+      accountStore.put(fromAddress, delegatorAccount);
+    }
+
+    // Update receiver account (to) - decrease acquired delegated totals
+    AccountCapsule receiverAccount = accountStore.get(toAddress);
+    if (receiverAccount != null) {
+      if (v2Model) {
+        if (isBandwidth) {
+          receiverAccount.addAcquiredDelegatedFrozenV2BalanceForBandwidth(-amount);
+        } else {
+          receiverAccount.addAcquiredDelegatedFrozenV2BalanceForEnergy(-amount);
+        }
+      } else {
+        if (isBandwidth) {
+          receiverAccount.addAcquiredDelegatedFrozenBalanceForBandwidth(-amount);
+        } else {
+          receiverAccount.addAcquiredDelegatedFrozenBalanceForEnergy(-amount);
+        }
+      }
+      accountStore.put(toAddress, receiverAccount);
+    }
+  }
+
+  /**
+   * Apply UNLOCK delegation operation: move amount from lock record to unlock record.
+   * This is triggered when a delegation's expiration time has passed.
+   */
+  private void applyDelegationUnlock(byte[] fromAddress, byte[] toAddress,
+                                     ExecutionSPI.DelegationChange.Resource resource,
+                                     long amount, long expireTimeMs, boolean v2Model,
+                                     org.tron.core.store.DelegatedResourceStore delegatedResourceStore,
+                                     org.tron.core.store.AccountStore accountStore) {
+    // Get lock record
+    byte[] lockKey = org.tron.core.capsule.DelegatedResourceCapsule.createDbKeyV2(
+        fromAddress, toAddress, true);
+    org.tron.core.capsule.DelegatedResourceCapsule lockRecord =
+        delegatedResourceStore.get(lockKey);
+
+    if (lockRecord == null) {
+      logger.warn("Lock record not found for UNLOCK operation: from={}, to={}",
+          org.tron.common.utils.StringUtil.encode58Check(fromAddress),
+          org.tron.common.utils.StringUtil.encode58Check(toAddress));
+      return;
+    }
+
+    // Get or create unlock record
+    byte[] unlockKey = org.tron.core.capsule.DelegatedResourceCapsule.createDbKeyV2(
+        fromAddress, toAddress, false);
+    org.tron.core.capsule.DelegatedResourceCapsule unlockRecord =
+        delegatedResourceStore.get(unlockKey);
+    if (unlockRecord == null) {
+      unlockRecord = new org.tron.core.capsule.DelegatedResourceCapsule(
+          com.google.protobuf.ByteString.copyFrom(fromAddress),
+          com.google.protobuf.ByteString.copyFrom(toAddress));
+    }
+
+    // Move amount from lock to unlock
+    boolean isBandwidth = (resource == ExecutionSPI.DelegationChange.Resource.BANDWIDTH);
+    if (isBandwidth) {
+      long lockBw = lockRecord.getFrozenBalanceForBandwidth();
+      long moveAmount = Math.min(amount, lockBw);
+      lockRecord.setFrozenBalanceForBandwidth(lockBw - moveAmount, 0);
+      unlockRecord.addFrozenBalanceForBandwidth(moveAmount, 0);
+    } else {
+      long lockEnergy = lockRecord.getFrozenBalanceForEnergy();
+      long moveAmount = Math.min(amount, lockEnergy);
+      lockRecord.setFrozenBalanceForEnergy(lockEnergy - moveAmount, 0);
+      unlockRecord.addFrozenBalanceForEnergy(moveAmount, 0);
+    }
+
+    // Persist records
+    if (lockRecord.getFrozenBalanceForBandwidth() == 0 &&
+        lockRecord.getFrozenBalanceForEnergy() == 0) {
+      delegatedResourceStore.delete(lockKey);
+    } else {
+      delegatedResourceStore.put(lockKey, lockRecord);
+    }
+    delegatedResourceStore.put(unlockKey, unlockRecord);
+
+    logger.debug("Applied UNLOCK: from={}, to={}, resource={}, amount={}",
+        org.tron.common.utils.StringUtil.encode58Check(fromAddress),
+        org.tron.common.utils.StringUtil.encode58Check(toAddress),
+        resource, amount);
   }
 
   /**

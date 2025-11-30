@@ -248,6 +248,10 @@ pub struct TronExecutionResult {
     /// TRC-10 semantic changes (Phase 2: full TRC-10 ledger persistence)
     /// Rust emits high-level TRC-10 operations; Java applies them to existing stores
     pub trc10_changes: Vec<Trc10Change>,
+    /// Delegation changes (Phase 2: delegation parity)
+    /// Emitted when emit_delegation_changes is enabled, for Java to apply to
+    /// DelegatedResourceStore and AccountCapsule delegated fields
+    pub delegation_changes: Vec<crate::storage_adapter::DelegationChange>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -376,6 +380,7 @@ where
                     freeze_changes: vec![], // Will be populated by contract handlers
                     global_resource_changes: vec![], // Will be populated by contract handlers
                     trc10_changes: vec![], // Will be populated by TRC-10 contract handlers
+                    delegation_changes: vec![], // Will be populated by delegation contract handlers
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -391,6 +396,7 @@ where
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
+                    delegation_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -406,6 +412,7 @@ where
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
+                    delegation_changes: vec![],
                 })
             }
         }
@@ -435,6 +442,7 @@ where
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
+                    delegation_changes: vec![],
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -450,6 +458,7 @@ where
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
+                    delegation_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -465,6 +474,7 @@ where
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
+                    delegation_changes: vec![],
                 })
             }
         }

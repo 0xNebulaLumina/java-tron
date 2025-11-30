@@ -50,23 +50,24 @@ We mirror Java’s delegation structures and behavior in the Rust backend:
 
 Files:
 - rust-backend/crates/execution/src/storage_adapter/engine.rs
+- rust-backend/crates/execution/src/storage_adapter/types.rs
 
 Tasks:
-- [ ] Define database name: `"DelegatedResource"` (match Java store name)
-- [ ] Key formats (mirror Java):
+- [x] Define database name: `"DelegatedResource"` (match Java store name)
+- [x] Key formats (mirror Java):
   - V2 unlocked key: `0x01 || from(21) || to(21)` (see Java V2_PREFIX)
   - V2 lock key: `0x02 || from(21) || to(21)` (see Java V2_LOCK_PREFIX)
-- [ ] Value format fields:
+- [x] Value format fields:
   - frozen_balance_for_bandwidth: i64
   - frozen_balance_for_energy: i64
   - expire_time_for_bandwidth: i64 (ms)
   - expire_time_for_energy: i64 (ms)
-- [ ] CRUD helpers:
+- [x] CRUD helpers:
   - `get_delegation(from, to, lock: bool) -> Delegation`
   - `set_delegation(from, to, lock: bool, record)`
   - `remove_delegation(from, to, lock: bool)`
   - `unlock_expired(now_ms)` — iterate lock entries and move expired amounts to unlocked, zeroing locks
-- [ ] Prefix queries:
+- [x] Prefix queries:
   - by from: sum delegated-out totals (BW/EN)
   - by to: sum acquired totals (BW/EN)
 - [ ] Performance: maintain optional per-address cached totals; invalidate on mutations
@@ -75,19 +76,20 @@ Tasks:
 
 Files:
 - rust-backend/crates/core/src/service/mod.rs
+- rust-backend/crates/core/src/service/contracts/delegation.rs
 
 Tasks:
-- [ ] Implement `DelegateResourceContract`:
+- [x] Implement `DelegateResourceContract`:
   - Create/update lock record (resource, amount, expire_time = block_time + duration)
   - Emit state changes:
     - Delegator account: increment delegated-out totals (V1 or V2 according to model), both BW/EN paths
     - Receiver account: increment acquired delegated totals (BW/EN)
-- [ ] Implement `UnDelegateResourceContract`:
+- [x] Implement `UnDelegateResourceContract`:
   - Reduce lock/unlock record amounts accordingly; if zero, remove
   - Emit matching account state changes
-- [ ] Expiry processing per block:
+- [x] Expiry processing per block:
   - Before/after tx batch in a block (consistent with Java), run `unlock_expired(block_time)` for all lock entries; emit account changes for moved amounts
-- [ ] Extend execution result with `DelegationChange` list carrying:
+- [x] Extend execution result with `DelegationChange` list carrying:
   - from, to, resource (BW/EN), amount, expire_time, v2_model, operation (add/remove/unlock)
 
 ### 3) Rust: Tron Power Computation
@@ -96,9 +98,9 @@ Files:
 - rust-backend/crates/execution/src/storage_adapter/engine.rs
 
 Tasks:
-- [ ] Compute own freezes: V1(BW, EN) + V2 entries type in {BANDWIDTH, ENERGY} (exclude TRON_POWER)
-- [ ] Add delegated-out totals (V1+V2, BW+EN) to tron power for owner
-- [ ] Old vs new model switch:
+- [x] Compute own freezes: V1(BW, EN) + V2 entries type in {BANDWIDTH, ENERGY} (exclude TRON_POWER)
+- [x] Add delegated-out totals (V1+V2, BW+EN) to tron power for owner
+- [x] Old vs new model switch:
   - Old: exclude TRON_POWER entirely
   - New: match Java `getAllTronPower()` behavior under `supportAllowNewResourceModel()`
 - [ ] Unit tests for multiple combinations (only BW, only EN, BW+EN, with/without delegation)
@@ -106,31 +108,35 @@ Tasks:
 ### 4) gRPC: Extend Execution Response Schema
 
 Files:
-- Execution protos used by `org.tron.common.client.ExecutionGrpcClient` (add a `DelegationChange` repeated field in execution result)
-- framework/src/main/java/org/tron/common/client/ExecutionGrpcClient.java
+- framework/src/main/proto/backend.proto
+- rust-backend/crates/core/src/service/grpc/conversion.rs
+- framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java
 
 Tasks:
-- [ ] Define proto message:
+- [x] Define proto message:
   - `message DelegationChange { bytes from; bytes to; uint32 resource; int64 amount; int64 expire_ms; bool v2_model; enum Op { ADD=0; REMOVE=1; UNLOCK=2; } Op op; }`
-- [ ] Add `repeated DelegationChange delegation_changes = N;` to the execution result
-- [ ] Map in Rust response population and Java client parsing
+- [x] Add `repeated DelegationChange delegation_changes = N;` to the execution result
+- [x] Map in Rust response population and Java client parsing
 
 ### 5) Java Apply: RuntimeSpiImpl
 
 Files:
 - framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java
+- framework/src/main/java/org/tron/core/execution/spi/ExecutionSPI.java (DelegationChange class)
+- framework/src/main/java/org/tron/core/execution/spi/ExecutionProgramResult.java
 
 Tasks:
-- [ ] Add handler similar to `applyFreezeLedgerChanges`:
+- [x] Add handler similar to `applyFreezeLedgerChanges`:
   - `applyDelegationChanges(List<DelegationChange>, ChainBaseManager, TransactionContext)`
-- [ ] For each change:
+- [x] For each change:
   - Delegator: update AccountCapsule delegated totals
     - V1: `set/addDelegatedFrozenBalanceForBandwidth/ForEnergy`
     - V2: `set/addDelegatedFrozenV2BalanceForBandwidth` and AccountResource.V2 energy
   - Receiver: update acquired delegated totals (for BW/EN) — `set/addAcquiredDelegated...`
   - Persist DelegatedResourceStore entry (createDbKeyV2 lock/unlock accordingly)
   - Record dirty via `ResourceSyncContext.recordAccountDirty(...)`
-- [ ] Invoke from transaction flow after freeze/global changes application
+- [x] Invoke from transaction flow after freeze/global changes application
+- [x] Add JVM toggle `-Dremote.exec.apply.delegation=false` for rapid rollback
 
 ### 6) Java Chainbase: Delegated Stores Parity
 
@@ -175,20 +181,21 @@ Files:
 - chainbase/src/main/java/org/tron/core/store/DelegatedResourceStore.java
 
 Tasks:
-- [ ] Implement lock → unlock transfer at expiry (per resource) with zeroing of expired sides
-- [ ] Emit DelegationChange(UNLOCK) for Java apply
-- [ ] Add consistency checks/invariants (no negative amounts, no mixed negative deltas)
+- [x] Implement lock → unlock transfer at expiry (per resource) with zeroing of expired sides
+- [x] Emit DelegationChange(UNLOCK) for Java apply
+- [x] Add consistency checks/invariants (no negative amounts, no mixed negative deltas)
 
 ### 10) Flags & Rollout
 
 Tasks:
-- [ ] Add execution feature flag: `remote.exec.delegation.enabled=true` to guard activation
-- [ ] Add vote strictness flag: `remote.exec.vote.strict_power_check=true` (defaults to true once parity is verified; during rollout keep it false to avoid false negatives)
+- [x] Add execution feature flag: `delegate_resource_enabled` / `undelegate_resource_enabled` in Rust config.toml
+- [x] Add vote strictness flag: `use_full_tron_power` in Rust config.toml (defaults to true once parity is verified)
+- [x] Add JVM flag: `-Dremote.exec.apply.delegation=false` for rapid rollback on Java side
 
 ### 11) Observability
 
 Tasks:
-- [ ] Add structured logs for:
+- [x] Add structured logs for:
   - Delegation ops (from, to, resource, amount, expire_ms, op)
   - Tron power components (own V1, own V2, delegated-out V1/V2, total)
   - Vote validation decisions

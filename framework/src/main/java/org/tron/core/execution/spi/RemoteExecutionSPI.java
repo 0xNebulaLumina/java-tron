@@ -706,7 +706,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           0, // bandwidthUsed
           new ArrayList<>(), // freezeChanges
           new ArrayList<>(), // globalResourceChanges
-          new ArrayList<>() // trc10Changes
+          new ArrayList<>(), // trc10Changes
+          new ArrayList<>() // delegationChanges
           );
     }
 
@@ -901,6 +902,60 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       }
     }
 
+    // Convert protobuf delegation changes (Phase 2: delegation parity)
+    List<DelegationChange> delegationChanges = new ArrayList<>();
+    for (tron.backend.BackendOuterClass.DelegationChange protoDelegation : protoResult.getDelegationChangesList()) {
+      // Convert proto Resource enum to ExecutionSPI Resource enum
+      DelegationChange.Resource resource;
+      switch (protoDelegation.getResource()) {
+        case BANDWIDTH:
+          resource = DelegationChange.Resource.BANDWIDTH;
+          break;
+        case ENERGY:
+          resource = DelegationChange.Resource.ENERGY;
+          break;
+        default:
+          logger.warn("Unknown delegation resource type: {}, skipping entry", protoDelegation.getResource());
+          continue;
+      }
+
+      // Convert proto Operation enum to ExecutionSPI Operation enum
+      DelegationChange.Operation operation;
+      switch (protoDelegation.getOp()) {
+        case ADD:
+          operation = DelegationChange.Operation.ADD;
+          break;
+        case REMOVE:
+          operation = DelegationChange.Operation.REMOVE;
+          break;
+        case UNLOCK:
+          operation = DelegationChange.Operation.UNLOCK;
+          break;
+        default:
+          logger.warn("Unknown delegation operation type: {}, skipping entry", protoDelegation.getOp());
+          continue;
+      }
+
+      DelegationChange delegationChange = new DelegationChange(
+          protoDelegation.getFromAddress().toByteArray(),
+          protoDelegation.getToAddress().toByteArray(),
+          resource,
+          protoDelegation.getAmount(),
+          protoDelegation.getExpireTimeMs(),
+          protoDelegation.getV2Model(),
+          operation);
+      delegationChanges.add(delegationChange);
+
+      logger.debug("Parsed delegation change: from={}, to={}, resource={}, amount={}, expire={}, v2={}, op={}",
+          org.tron.common.utils.ByteArray.toHexString(protoDelegation.getFromAddress().toByteArray()),
+          org.tron.common.utils.ByteArray.toHexString(protoDelegation.getToAddress().toByteArray()),
+          resource,
+          protoDelegation.getAmount(),
+          protoDelegation.getExpireTimeMs(),
+          protoDelegation.getV2Model(),
+          operation);
+    }
+
     // Report metrics if callback is registered
     if (metricsCallback != null) {
       metricsCallback.onMetric("remote.energy_used", protoResult.getEnergyUsed());
@@ -923,7 +978,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         protoResult.getBandwidthUsed(),
         freezeChanges,
         globalResourceChanges,
-        trc10Changes);
+        trc10Changes,
+        delegationChanges);
   }
 
   /**

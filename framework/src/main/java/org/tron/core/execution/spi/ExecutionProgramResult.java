@@ -32,6 +32,8 @@ public class ExecutionProgramResult extends ProgramResult {
   @Getter @Setter private List<ExecutionSPI.GlobalResourceTotalsChange> globalResourceChanges;
   // Phase 2: TRC-10 semantic changes for Java-side application
   @Getter @Setter private List<ExecutionSPI.Trc10Change> trc10Changes;
+  // Phase 2: Delegation changes for Java-side application
+  @Getter @Setter private List<ExecutionSPI.DelegationChange> delegationChanges;
 
   /** Default constructor creates an empty result. */
   public ExecutionProgramResult() {
@@ -41,6 +43,7 @@ public class ExecutionProgramResult extends ProgramResult {
     this.freezeChanges = new ArrayList<>();
     this.globalResourceChanges = new ArrayList<>();
     this.trc10Changes = new ArrayList<>();
+    this.delegationChanges = new ArrayList<>();
   }
 
   /**
@@ -140,6 +143,9 @@ public class ExecutionProgramResult extends ProgramResult {
     result.trc10Changes = executionResult.getTrc10Changes() != null
         ? new ArrayList<>(executionResult.getTrc10Changes())
         : new ArrayList<>();
+    result.delegationChanges = executionResult.getDelegationChanges() != null
+        ? new ArrayList<>(executionResult.getDelegationChanges())
+        : new ArrayList<>();
 
     return result;
   }
@@ -180,7 +186,8 @@ public class ExecutionProgramResult extends ProgramResult {
         bandwidthUsed,
         freezeChanges != null ? new ArrayList<>(freezeChanges) : new ArrayList<>(),
         globalResourceChanges != null ? new ArrayList<>(globalResourceChanges) : new ArrayList<>(),
-        new ArrayList<>() // trc10Changes - not applicable for VM execution
+        new ArrayList<>(), // trc10Changes - not applicable for VM execution
+        delegationChanges != null ? new ArrayList<>(delegationChanges) : new ArrayList<>()
     );
   }
 

@@ -125,6 +125,7 @@ public interface ExecutionSPI {
     private final List<FreezeLedgerChange> freezeChanges;
     private final List<GlobalResourceTotalsChange> globalResourceChanges;
     private final List<Trc10Change> trc10Changes;
+    private final List<DelegationChange> delegationChanges;
 
     public ExecutionResult(
         boolean success,
@@ -137,7 +138,8 @@ public interface ExecutionSPI {
         long bandwidthUsed,
         List<FreezeLedgerChange> freezeChanges,
         List<GlobalResourceTotalsChange> globalResourceChanges,
-        List<Trc10Change> trc10Changes) {
+        List<Trc10Change> trc10Changes,
+        List<DelegationChange> delegationChanges) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -149,6 +151,7 @@ public interface ExecutionSPI {
       this.freezeChanges = freezeChanges;
       this.globalResourceChanges = globalResourceChanges;
       this.trc10Changes = trc10Changes;
+      this.delegationChanges = delegationChanges;
     }
 
     // Getters
@@ -194,6 +197,10 @@ public interface ExecutionSPI {
 
     public List<Trc10Change> getTrc10Changes() {
       return trc10Changes;
+    }
+
+    public List<DelegationChange> getDelegationChanges() {
+      return delegationChanges;
     }
   }
 
@@ -507,6 +514,111 @@ public interface ExecutionSPI {
 
     public boolean hasAssetIssued() {
       return assetIssued != null;
+    }
+  }
+
+  /**
+   * Delegation change (Phase 2: delegation parity).
+   * Describes a single delegation operation for Java-side application to
+   * DelegatedResourceStore and AccountCapsule delegated fields.
+   */
+  class DelegationChange {
+    public enum Resource {
+      BANDWIDTH(0),
+      ENERGY(1);
+
+      private final int value;
+
+      Resource(int value) {
+        this.value = value;
+      }
+
+      public int getValue() {
+        return value;
+      }
+
+      public static Resource fromValue(int value) {
+        for (Resource r : Resource.values()) {
+          if (r.value == value) {
+            return r;
+          }
+        }
+        throw new IllegalArgumentException("Unknown delegation resource value: " + value);
+      }
+    }
+
+    public enum Operation {
+      ADD(0),      // Create/increase delegation
+      REMOVE(1),   // Reduce/cancel delegation
+      UNLOCK(2);   // Move from lock to unlock (expiry)
+
+      private final int value;
+
+      Operation(int value) {
+        this.value = value;
+      }
+
+      public int getValue() {
+        return value;
+      }
+
+      public static Operation fromValue(int value) {
+        for (Operation op : Operation.values()) {
+          if (op.value == value) {
+            return op;
+          }
+        }
+        throw new IllegalArgumentException("Unknown delegation operation value: " + value);
+      }
+    }
+
+    private final byte[] fromAddress;   // Delegator/owner address
+    private final byte[] toAddress;     // Receiver address
+    private final Resource resource;    // BANDWIDTH or ENERGY
+    private final long amount;          // Amount in SUN
+    private final long expireTimeMs;    // Expiration timestamp (0 if no lock)
+    private final boolean v2Model;      // V2 model delegation
+    private final Operation operation;  // ADD, REMOVE, or UNLOCK
+
+    public DelegationChange(byte[] fromAddress, byte[] toAddress, Resource resource,
+                           long amount, long expireTimeMs, boolean v2Model,
+                           Operation operation) {
+      this.fromAddress = fromAddress;
+      this.toAddress = toAddress;
+      this.resource = resource;
+      this.amount = amount;
+      this.expireTimeMs = expireTimeMs;
+      this.v2Model = v2Model;
+      this.operation = operation;
+    }
+
+    // Getters
+    public byte[] getFromAddress() {
+      return fromAddress;
+    }
+
+    public byte[] getToAddress() {
+      return toAddress;
+    }
+
+    public Resource getResource() {
+      return resource;
+    }
+
+    public long getAmount() {
+      return amount;
+    }
+
+    public long getExpireTimeMs() {
+      return expireTimeMs;
+    }
+
+    public boolean isV2Model() {
+      return v2Model;
+    }
+
+    public Operation getOperation() {
+      return operation;
     }
   }
 

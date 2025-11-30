@@ -35,6 +35,7 @@ mod tests;
 pub use traits::EvmStateStore;
 pub use types::{
     WitnessInfo, FreezeRecord, Vote, VotesRecord, AccountAext, StateChangeRecord,
+    DelegatedResource, DelegationChange, DelegationOp,
 };
 pub use in_memory::InMemoryEvmStateStore;
 pub use engine::EngineBackedEvmStateStore;

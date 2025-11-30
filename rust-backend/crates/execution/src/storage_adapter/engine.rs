@@ -999,6 +999,313 @@ impl EngineBackedEvmStateStore {
     pub fn compute_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
         self.get_tron_power_in_sun(address, new_model)
     }
+
+    // ============================================================================
+    // Delegated Resource Storage (Phase 2 Delegation Parity)
+    // ============================================================================
+
+    /// Get the database name for delegated resources (matches Java DelegatedResourceStore)
+    fn delegated_resource_database(&self) -> &str {
+        "DelegatedResource"
+    }
+
+    /// Get a delegation record by from/to addresses and lock status
+    pub fn get_delegation(&self, from: &Address, to: &Address, lock: bool) -> Result<Option<super::types::DelegatedResource>> {
+        use super::types::DelegatedResource;
+
+        let key = DelegatedResource::create_db_key_v2(from, to, lock);
+        tracing::debug!("Getting delegation: from={:?}, to={:?}, lock={}, key={}",
+                       from, to, lock, hex::encode(&key));
+
+        match self.storage_engine.get(self.delegated_resource_database(), &key)? {
+            Some(data) => {
+                let record = DelegatedResource::deserialize(&data)?;
+                tracing::debug!("Found delegation: bw={}, energy={}, expire_bw={}, expire_energy={}",
+                               record.frozen_balance_for_bandwidth,
+                               record.frozen_balance_for_energy,
+                               record.expire_time_for_bandwidth,
+                               record.expire_time_for_energy);
+                Ok(Some(record))
+            },
+            None => {
+                tracing::debug!("No delegation found");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Set/update a delegation record
+    pub fn set_delegation(&self, from: &Address, to: &Address, lock: bool, record: &super::types::DelegatedResource) -> Result<()> {
+        use super::types::DelegatedResource;
+
+        let key = DelegatedResource::create_db_key_v2(from, to, lock);
+        let data = record.serialize();
+
+        tracing::debug!("Setting delegation: from={:?}, to={:?}, lock={}, bw={}, energy={}, key={}",
+                       from, to, lock,
+                       record.frozen_balance_for_bandwidth,
+                       record.frozen_balance_for_energy,
+                       hex::encode(&key));
+
+        self.storage_engine.put(self.delegated_resource_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Remove a delegation record
+    pub fn remove_delegation(&self, from: &Address, to: &Address, lock: bool) -> Result<()> {
+        use super::types::DelegatedResource;
+
+        let key = DelegatedResource::create_db_key_v2(from, to, lock);
+
+        tracing::debug!("Removing delegation: from={:?}, to={:?}, lock={}, key={}",
+                       from, to, lock, hex::encode(&key));
+
+        self.storage_engine.delete(self.delegated_resource_database(), &key)?;
+        Ok(())
+    }
+
+    /// Get delegated-out totals for an address (sum of all delegations FROM this address)
+    /// Returns (bandwidth_total, energy_total) in SUN
+    pub fn get_delegated_out_totals(&self, from: &Address) -> Result<(i64, i64)> {
+        use super::types::DelegatedResource;
+
+        let mut bandwidth_total: i64 = 0;
+        let mut energy_total: i64 = 0;
+
+        // Scan V2 unlocked records (prefix 0x01)
+        let unlocked_prefix = {
+            let mut p = Vec::with_capacity(22);
+            p.push(DelegatedResource::V2_PREFIX);
+            p.push(0x41);
+            p.extend_from_slice(from.as_slice());
+            p
+        };
+
+        let unlocked_records = self.storage_engine.prefix_query(
+            self.delegated_resource_database(),
+            &unlocked_prefix
+        )?;
+
+        for kv in unlocked_records {
+            if let Ok(record) = DelegatedResource::deserialize(&kv.value) {
+                bandwidth_total = bandwidth_total.checked_add(record.frozen_balance_for_bandwidth)
+                    .ok_or_else(|| anyhow::anyhow!("Bandwidth total overflow"))?;
+                energy_total = energy_total.checked_add(record.frozen_balance_for_energy)
+                    .ok_or_else(|| anyhow::anyhow!("Energy total overflow"))?;
+            }
+        }
+
+        // Scan V2 lock records (prefix 0x02)
+        let lock_prefix = {
+            let mut p = Vec::with_capacity(22);
+            p.push(DelegatedResource::V2_LOCK_PREFIX);
+            p.push(0x41);
+            p.extend_from_slice(from.as_slice());
+            p
+        };
+
+        let lock_records = self.storage_engine.prefix_query(
+            self.delegated_resource_database(),
+            &lock_prefix
+        )?;
+
+        for kv in lock_records {
+            if let Ok(record) = DelegatedResource::deserialize(&kv.value) {
+                bandwidth_total = bandwidth_total.checked_add(record.frozen_balance_for_bandwidth)
+                    .ok_or_else(|| anyhow::anyhow!("Bandwidth total overflow (lock)"))?;
+                energy_total = energy_total.checked_add(record.frozen_balance_for_energy)
+                    .ok_or_else(|| anyhow::anyhow!("Energy total overflow (lock)"))?;
+            }
+        }
+
+        tracing::debug!("Delegated-out totals for {:?}: bandwidth={}, energy={}",
+                       from, bandwidth_total, energy_total);
+
+        Ok((bandwidth_total, energy_total))
+    }
+
+    /// Get acquired delegated totals for an address (sum of all delegations TO this address)
+    /// Returns (bandwidth_total, energy_total) in SUN
+    /// Note: This requires scanning all records, which is O(n). Consider caching for performance.
+    pub fn get_acquired_delegated_totals(&self, to: &Address) -> Result<(i64, i64)> {
+        use super::types::DelegatedResource;
+
+        let mut bandwidth_total: i64 = 0;
+        let mut energy_total: i64 = 0;
+
+        // Scan all records in both prefixes and filter by 'to' address
+        // This is expensive - in production, we'd use a secondary index or cache
+
+        for prefix in [DelegatedResource::V2_PREFIX, DelegatedResource::V2_LOCK_PREFIX] {
+            let records = self.storage_engine.prefix_query(
+                self.delegated_resource_database(),
+                &[prefix]
+            )?;
+
+            for kv in records {
+                // Parse key to get the 'to' address
+                if let Ok((_, key_to)) = DelegatedResource::parse_db_key_v2(&kv.key) {
+                    if &key_to == to {
+                        if let Ok(record) = DelegatedResource::deserialize(&kv.value) {
+                            bandwidth_total = bandwidth_total.checked_add(record.frozen_balance_for_bandwidth)
+                                .ok_or_else(|| anyhow::anyhow!("Acquired bandwidth total overflow"))?;
+                            energy_total = energy_total.checked_add(record.frozen_balance_for_energy)
+                                .ok_or_else(|| anyhow::anyhow!("Acquired energy total overflow"))?;
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::debug!("Acquired delegated totals for {:?}: bandwidth={}, energy={}",
+                       to, bandwidth_total, energy_total);
+
+        Ok((bandwidth_total, energy_total))
+    }
+
+    /// Unlock expired delegation resources
+    /// Moves amounts from lock records to unlock records when expire_time < now
+    /// Returns list of DelegationChanges for state sync to Java
+    pub fn unlock_expired_delegations(&self, now_ms: i64) -> Result<Vec<super::types::DelegationChange>> {
+        use super::types::{DelegatedResource, DelegationChange, DelegationOp};
+
+        let mut changes = Vec::new();
+
+        // Scan all V2 lock records
+        let lock_prefix = [DelegatedResource::V2_LOCK_PREFIX];
+        let lock_records = self.storage_engine.prefix_query(
+            self.delegated_resource_database(),
+            &lock_prefix
+        )?;
+
+        for kv in lock_records {
+            let (from, to) = DelegatedResource::parse_db_key_v2(&kv.key)?;
+            let mut lock_record = DelegatedResource::deserialize(&kv.value)?;
+            let mut modified = false;
+
+            // Check bandwidth expiration
+            if lock_record.expire_time_for_bandwidth > 0
+                && lock_record.expire_time_for_bandwidth < now_ms
+                && lock_record.frozen_balance_for_bandwidth > 0
+            {
+                // Get or create unlock record
+                let mut unlock_record = self.get_delegation(&from, &to, false)?
+                    .unwrap_or_default();
+
+                // Move bandwidth from lock to unlock
+                let bw_amount = lock_record.frozen_balance_for_bandwidth;
+                unlock_record.frozen_balance_for_bandwidth = unlock_record.frozen_balance_for_bandwidth
+                    .checked_add(bw_amount)
+                    .ok_or_else(|| anyhow::anyhow!("Unlock bandwidth overflow"))?;
+
+                lock_record.frozen_balance_for_bandwidth = 0;
+                lock_record.expire_time_for_bandwidth = 0;
+                modified = true;
+
+                // Emit change for bandwidth unlock
+                changes.push(DelegationChange::new(
+                    from,
+                    to,
+                    DelegationChange::RESOURCE_BANDWIDTH,
+                    bw_amount,
+                    0, // No expiration for unlocked
+                    true, // V2 model
+                    DelegationOp::Unlock,
+                ));
+
+                // Save unlock record
+                self.set_delegation(&from, &to, false, &unlock_record)?;
+
+                tracing::info!("Unlocked bandwidth delegation: from={:?}, to={:?}, amount={}",
+                              from, to, bw_amount);
+            }
+
+            // Check energy expiration
+            if lock_record.expire_time_for_energy > 0
+                && lock_record.expire_time_for_energy < now_ms
+                && lock_record.frozen_balance_for_energy > 0
+            {
+                // Get or create unlock record
+                let mut unlock_record = self.get_delegation(&from, &to, false)?
+                    .unwrap_or_default();
+
+                // Move energy from lock to unlock
+                let energy_amount = lock_record.frozen_balance_for_energy;
+                unlock_record.frozen_balance_for_energy = unlock_record.frozen_balance_for_energy
+                    .checked_add(energy_amount)
+                    .ok_or_else(|| anyhow::anyhow!("Unlock energy overflow"))?;
+
+                lock_record.frozen_balance_for_energy = 0;
+                lock_record.expire_time_for_energy = 0;
+                modified = true;
+
+                // Emit change for energy unlock
+                changes.push(DelegationChange::new(
+                    from,
+                    to,
+                    DelegationChange::RESOURCE_ENERGY,
+                    energy_amount,
+                    0, // No expiration for unlocked
+                    true, // V2 model
+                    DelegationOp::Unlock,
+                ));
+
+                // Save unlock record
+                self.set_delegation(&from, &to, false, &unlock_record)?;
+
+                tracing::info!("Unlocked energy delegation: from={:?}, to={:?}, amount={}",
+                              from, to, energy_amount);
+            }
+
+            // Update or remove lock record if modified
+            if modified {
+                if lock_record.is_empty() {
+                    self.remove_delegation(&from, &to, true)?;
+                } else {
+                    self.set_delegation(&from, &to, true, &lock_record)?;
+                }
+            }
+        }
+
+        tracing::info!("Unlock expired delegations complete: {} changes at now_ms={}",
+                      changes.len(), now_ms);
+
+        Ok(changes)
+    }
+
+    /// Compute tron power including delegated-out totals
+    /// This is the full tron power calculation matching Java's getTronPower() method:
+    /// - Own frozen V1 (bandwidth + energy)
+    /// - Own frozen V2 (bandwidth + energy, excluding TRON_POWER in old model)
+    /// - Delegated-out V1+V2 (bandwidth + energy)
+    pub fn compute_full_tron_power(&self, address: &Address, new_model: bool) -> Result<u64> {
+        // 1. Get own frozen amounts (from freeze records)
+        let own_frozen = self.get_tron_power_in_sun(address, new_model)?;
+
+        // 2. Get delegated-out totals
+        let (delegated_bw, delegated_energy) = self.get_delegated_out_totals(address)?;
+
+        // Convert to u64 (should always be positive)
+        let delegated_out_total = (delegated_bw.max(0) as u64)
+            .checked_add(delegated_energy.max(0) as u64)
+            .ok_or_else(|| anyhow::anyhow!("Delegated out total overflow"))?;
+
+        // 3. Total tron power
+        let total = own_frozen.checked_add(delegated_out_total)
+            .ok_or_else(|| anyhow::anyhow!("Total tron power overflow"))?;
+
+        tracing::info!(
+            address = ?address,
+            new_model = new_model,
+            own_frozen = own_frozen,
+            delegated_bw = delegated_bw,
+            delegated_energy = delegated_energy,
+            total = total,
+            "Computed full tron power (including delegated-out)"
+        );
+
+        Ok(total)
+    }
 }
 
 impl EvmStateStore for EngineBackedEvmStateStore {

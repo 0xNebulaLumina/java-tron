@@ -610,6 +610,313 @@ impl VotesRecord {
     }
 }
 
+/// TRON Delegated Resource record - tracks delegated resources between accounts
+/// Mirrors Java's DelegatedResourceCapsule
+/// Key format in storage:
+///   - V2 unlocked: 0x01 || from(21) || to(21)
+///   - V2 lock:     0x02 || from(21) || to(21)
+#[derive(Debug, Clone, Default)]
+pub struct DelegatedResource {
+    /// Frozen balance delegated for bandwidth (V1+V2)
+    pub frozen_balance_for_bandwidth: i64,
+    /// Frozen balance delegated for energy (V1+V2)
+    pub frozen_balance_for_energy: i64,
+    /// Expiration time for bandwidth delegation (milliseconds since epoch)
+    pub expire_time_for_bandwidth: i64,
+    /// Expiration time for energy delegation (milliseconds since epoch)
+    pub expire_time_for_energy: i64,
+}
+
+impl DelegatedResource {
+    /// V2 unlocked key prefix (matches Java DelegatedResourceCapsule.V2_PREFIX)
+    pub const V2_PREFIX: u8 = 0x01;
+    /// V2 lock key prefix (matches Java DelegatedResourceCapsule.V2_LOCK_PREFIX)
+    pub const V2_LOCK_PREFIX: u8 = 0x02;
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a new DelegatedResource with specified values
+    pub fn with_values(
+        frozen_balance_for_bandwidth: i64,
+        frozen_balance_for_energy: i64,
+        expire_time_for_bandwidth: i64,
+        expire_time_for_energy: i64,
+    ) -> Self {
+        Self {
+            frozen_balance_for_bandwidth,
+            frozen_balance_for_energy,
+            expire_time_for_bandwidth,
+            expire_time_for_energy,
+        }
+    }
+
+    /// Check if this delegation record is empty (no delegated resources)
+    pub fn is_empty(&self) -> bool {
+        self.frozen_balance_for_bandwidth == 0 && self.frozen_balance_for_energy == 0
+    }
+
+    /// Create storage key for V2 delegation (unlocked or locked)
+    /// Key format: prefix(1) + from(21) + to(21) = 43 bytes
+    /// from/to are 21-byte Tron addresses (0x41 prefix + 20-byte address)
+    pub fn create_db_key_v2(from: &Address, to: &Address, lock: bool) -> Vec<u8> {
+        let prefix = if lock { Self::V2_LOCK_PREFIX } else { Self::V2_PREFIX };
+        let mut key = Vec::with_capacity(43);
+        key.push(prefix);
+        // Add from address (21 bytes with 0x41 prefix)
+        key.push(0x41);
+        key.extend_from_slice(from.as_slice());
+        // Add to address (21 bytes with 0x41 prefix)
+        key.push(0x41);
+        key.extend_from_slice(to.as_slice());
+        key
+    }
+
+    /// Parse from/to addresses from a V2 delegation key
+    /// Returns (from_address, to_address) or error if key format is invalid
+    pub fn parse_db_key_v2(key: &[u8]) -> Result<(Address, Address)> {
+        if key.len() != 43 {
+            return Err(anyhow::anyhow!("Invalid delegation key length: expected 43, got {}", key.len()));
+        }
+        let prefix = key[0];
+        if prefix != Self::V2_PREFIX && prefix != Self::V2_LOCK_PREFIX {
+            return Err(anyhow::anyhow!("Invalid delegation key prefix: {}", prefix));
+        }
+        // Parse from address (bytes 1-21, skip 0x41 prefix at byte 1)
+        if key[1] != 0x41 {
+            return Err(anyhow::anyhow!("Invalid from address prefix"));
+        }
+        let mut from_bytes = [0u8; 20];
+        from_bytes.copy_from_slice(&key[2..22]);
+        let from = Address::from(from_bytes);
+
+        // Parse to address (bytes 22-42, skip 0x41 prefix at byte 22)
+        if key[22] != 0x41 {
+            return Err(anyhow::anyhow!("Invalid to address prefix"));
+        }
+        let mut to_bytes = [0u8; 20];
+        to_bytes.copy_from_slice(&key[23..43]);
+        let to = Address::from(to_bytes);
+
+        Ok((from, to))
+    }
+
+    /// Serialize DelegatedResource to protobuf-compatible bytes
+    /// Uses protobuf wire format for Java compatibility
+    /// message DelegatedResource {
+    ///   bytes from = 1;  // Not stored in value, only in key
+    ///   bytes to = 2;    // Not stored in value, only in key
+    ///   int64 frozen_balance_for_bandwidth = 3;
+    ///   int64 frozen_balance_for_energy = 4;
+    ///   int64 expire_time_for_bandwidth = 5;
+    ///   int64 expire_time_for_energy = 6;
+    /// }
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Field 3: frozen_balance_for_bandwidth (varint)
+        if self.frozen_balance_for_bandwidth != 0 {
+            data.push(0x18); // field 3, wire type 0 (varint)
+            Self::write_signed_varint(&mut data, self.frozen_balance_for_bandwidth);
+        }
+
+        // Field 4: frozen_balance_for_energy (varint)
+        if self.frozen_balance_for_energy != 0 {
+            data.push(0x20); // field 4, wire type 0 (varint)
+            Self::write_signed_varint(&mut data, self.frozen_balance_for_energy);
+        }
+
+        // Field 5: expire_time_for_bandwidth (varint)
+        if self.expire_time_for_bandwidth != 0 {
+            data.push(0x28); // field 5, wire type 0 (varint)
+            Self::write_signed_varint(&mut data, self.expire_time_for_bandwidth);
+        }
+
+        // Field 6: expire_time_for_energy (varint)
+        if self.expire_time_for_energy != 0 {
+            data.push(0x30); // field 6, wire type 0 (varint)
+            Self::write_signed_varint(&mut data, self.expire_time_for_energy);
+        }
+
+        data
+    }
+
+    /// Deserialize DelegatedResource from protobuf bytes
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        let mut result = Self::default();
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, new_pos) = Self::read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) | (2, 2) => {
+                    // Skip from/to addresses (length-delimited) - they're in the key
+                    let (length, new_pos) = Self::read_varint(data, pos)?;
+                    pos = new_pos + length as usize;
+                },
+                (3, 0) => { // frozen_balance_for_bandwidth (varint)
+                    let (value, new_pos) = Self::read_signed_varint(data, pos)?;
+                    pos = new_pos;
+                    result.frozen_balance_for_bandwidth = value;
+                },
+                (4, 0) => { // frozen_balance_for_energy (varint)
+                    let (value, new_pos) = Self::read_signed_varint(data, pos)?;
+                    pos = new_pos;
+                    result.frozen_balance_for_energy = value;
+                },
+                (5, 0) => { // expire_time_for_bandwidth (varint)
+                    let (value, new_pos) = Self::read_signed_varint(data, pos)?;
+                    pos = new_pos;
+                    result.expire_time_for_bandwidth = value;
+                },
+                (6, 0) => { // expire_time_for_energy (varint)
+                    let (value, new_pos) = Self::read_signed_varint(data, pos)?;
+                    pos = new_pos;
+                    result.expire_time_for_energy = value;
+                },
+                _ => {
+                    // Skip unknown field
+                    pos = Self::skip_field(data, pos, wire_type)?;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    // Helper methods for protobuf encoding/decoding
+
+    fn write_signed_varint(output: &mut Vec<u8>, value: i64) {
+        // ZigZag encoding for signed integers
+        let zigzag = ((value << 1) ^ (value >> 63)) as u64;
+        Self::write_unsigned_varint(output, zigzag);
+    }
+
+    fn write_unsigned_varint(output: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            output.push(((value & 0x7F) | 0x80) as u8);
+            value >>= 7;
+        }
+        output.push(value as u8);
+    }
+
+    fn read_varint(data: &[u8], mut pos: usize) -> Result<(u64, usize)> {
+        let mut result = 0u64;
+        let mut shift = 0;
+
+        while pos < data.len() {
+            let byte = data[pos];
+            pos += 1;
+
+            result |= ((byte & 0x7F) as u64) << shift;
+
+            if (byte & 0x80) == 0 {
+                return Ok((result, pos));
+            }
+
+            shift += 7;
+            if shift >= 64 {
+                return Err(anyhow::anyhow!("Varint too long"));
+            }
+        }
+
+        Err(anyhow::anyhow!("Unexpected end of data while reading varint"))
+    }
+
+    fn read_signed_varint(data: &[u8], pos: usize) -> Result<(i64, usize)> {
+        let (zigzag, new_pos) = Self::read_varint(data, pos)?;
+        // ZigZag decoding
+        let value = ((zigzag >> 1) as i64) ^ -((zigzag & 1) as i64);
+        Ok((value, new_pos))
+    }
+
+    fn skip_field(data: &[u8], pos: usize, wire_type: u64) -> Result<usize> {
+        match wire_type {
+            0 => { // Varint
+                let (_, new_pos) = Self::read_varint(data, pos)?;
+                Ok(new_pos)
+            },
+            1 => { // 64-bit
+                Ok(pos + 8)
+            },
+            2 => { // Length-delimited
+                let (length, new_pos) = Self::read_varint(data, pos)?;
+                Ok(new_pos + length as usize)
+            },
+            5 => { // 32-bit
+                Ok(pos + 4)
+            },
+            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type))
+        }
+    }
+}
+
+/// Delegation change operation type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelegationOp {
+    /// Add/create delegation
+    Add = 0,
+    /// Remove/cancel delegation
+    Remove = 1,
+    /// Unlock expired delegation (move from lock to unlock)
+    Unlock = 2,
+}
+
+/// Delegation change record for state sync between Rust and Java
+/// Carries all information needed to update Java's DelegatedResourceStore
+/// and AccountCapsule delegated fields
+#[derive(Debug, Clone)]
+pub struct DelegationChange {
+    /// Delegator address (from)
+    pub from: Address,
+    /// Receiver address (to)
+    pub to: Address,
+    /// Resource type: 0=BANDWIDTH, 1=ENERGY
+    pub resource: u8,
+    /// Amount in SUN (positive for add, negative for remove)
+    pub amount: i64,
+    /// Expiration time in milliseconds
+    pub expire_time_ms: i64,
+    /// Whether this is V2 model (true) or V1 model (false)
+    pub v2_model: bool,
+    /// Operation type
+    pub op: DelegationOp,
+}
+
+impl DelegationChange {
+    /// Resource type for bandwidth
+    pub const RESOURCE_BANDWIDTH: u8 = 0;
+    /// Resource type for energy
+    pub const RESOURCE_ENERGY: u8 = 1;
+
+    pub fn new(
+        from: Address,
+        to: Address,
+        resource: u8,
+        amount: i64,
+        expire_time_ms: i64,
+        v2_model: bool,
+        op: DelegationOp,
+    ) -> Self {
+        Self {
+            from,
+            to,
+            resource,
+            amount,
+            expire_time_ms,
+            v2_model,
+            op,
+        }
+    }
+}
+
 /// State change tracking for debugging and verification.
 /// Records old/new values for both storage slots and account-level changes.
 #[derive(Debug, Clone)]

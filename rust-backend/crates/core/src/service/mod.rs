@@ -283,6 +283,20 @@ impl BackendService {
                 debug!("Executing UNFREEZE_BALANCE_V2_CONTRACT");
                 self.execute_unfreeze_balance_v2_contract(storage_adapter, transaction, context)
             },
+            Some(tron_backend_execution::TronContractType::DelegateResourceContract) => {
+                if !remote_config.delegate_resource_enabled {
+                    return Err("DELEGATE_RESOURCE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing DELEGATE_RESOURCE_CONTRACT");
+                self.execute_delegate_resource_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::UndelegateResourceContract) => {
+                if !remote_config.undelegate_resource_enabled {
+                    return Err("UNDELEGATE_RESOURCE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing UNDELEGATE_RESOURCE_CONTRACT");
+                self.execute_undelegate_resource_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -532,6 +546,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for value transfers
             trc10_changes: vec![], // Not applicable for value transfers
+            delegation_changes: vec![], // Not applicable for value transfers
         })
     }
 
@@ -745,6 +760,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for witness creation
             trc10_changes: vec![], // Not applicable for witness creation
+            delegation_changes: vec![], // Not applicable for witness creation
         })
     }
 
@@ -878,6 +894,7 @@ impl BackendService {
             freeze_changes: vec![],
             global_resource_changes: vec![],
             trc10_changes: vec![],
+            delegation_changes: vec![],
         })
     }
 
@@ -1235,6 +1252,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for vote witness
             trc10_changes: vec![], // Not applicable for vote witness
+            delegation_changes: vec![], // Not applicable for vote witness
         })
     }
 
@@ -1342,6 +1360,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for account update
             trc10_changes: vec![], // Not applicable for account update
+            delegation_changes: vec![], // Not applicable for account update
         })
     }
 
@@ -1549,6 +1568,7 @@ impl BackendService {
             freeze_changes: vec![], // Not applicable for asset issue
             global_resource_changes: vec![], // Not applicable for asset issue
             trc10_changes: vec![trc10_change], // Phase 2: emit TRC-10 semantic change
+            delegation_changes: vec![], // Not applicable for asset issue
         })
     }
 

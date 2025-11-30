@@ -416,6 +416,34 @@ impl BackendService {
             }
         }).collect();
 
+        // Convert delegation changes from execution result to protobuf (Phase 2: delegation parity)
+        let delegation_changes: Vec<crate::backend::DelegationChange> = result.delegation_changes.iter().map(|change| {
+            use crate::backend::delegation_change::{Resource, Operation};
+            use tron_backend_execution::DelegationOp;
+
+            let resource = match change.resource {
+                0 => Resource::Bandwidth,
+                1 => Resource::Energy,
+                _ => Resource::Bandwidth, // Default to bandwidth for unknown
+            };
+
+            let op = match change.op {
+                DelegationOp::Add => Operation::Add,
+                DelegationOp::Remove => Operation::Remove,
+                DelegationOp::Unlock => Operation::Unlock,
+            };
+
+            crate::backend::DelegationChange {
+                from_address: add_tron_address_prefix(&change.from),
+                to_address: add_tron_address_prefix(&change.to),
+                resource: resource as i32,
+                amount: change.amount,
+                expire_time_ms: change.expire_time_ms,
+                v2_model: change.v2_model,
+                op: op as i32,
+            }
+        }).collect();
+
         let error_message = result.error.unwrap_or_default();
 
         ExecuteTransactionResponse {
@@ -432,6 +460,7 @@ impl BackendService {
                 freeze_changes, // Converted from TronExecutionResult
                 global_resource_changes, // Converted from TronExecutionResult
                 trc10_changes, // Phase 2: Converted TRC-10 semantic changes
+                delegation_changes, // Phase 2: Converted delegation changes
             }),
             success: result.success,
             error_message,
