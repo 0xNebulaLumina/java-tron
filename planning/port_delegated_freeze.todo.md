@@ -142,12 +142,13 @@ Tasks:
 
 Files:
 - chainbase/src/main/java/org/tron/core/store/DelegatedResourceStore.java
+- chainbase/src/main/java/org/tron/core/store/DelegatedResourceAccountIndexStore.java
 - chainbase/src/main/java/org/tron/core/capsule/DelegatedResourceCapsule.java
 - chainbase/src/main/java/org/tron/core/capsule/DelegatedResourceAccountIndexCapsule.java
 
 Tasks:
-- [ ] Ensure writes done by RuntimeSpiImpl mirror fields Java normally updates in embedded path
-- [ ] Maintain indices (from/to lists in DelegatedResourceAccountIndexCapsule) if required by consumers
+- [x] Ensure writes done by RuntimeSpiImpl mirror fields Java normally updates in embedded path
+- [x] Maintain indices (from/to lists in DelegatedResourceAccountIndexStore) using delegateV2/unDelegateV2 methods
 
 ### 7) Storage SPI: Remote DB and Account Serialization (Optional)
 
@@ -156,13 +157,15 @@ Files:
 - rust-backend/crates/execution/src/storage_adapter/engine.rs (serialize_account)
 
 Tasks:
-- [ ] Expose `"DelegatedResource"` DB through StorageSPI to Rust backend
-- [ ] Enrich remote Account serialization to include:
+- [x] DelegatedResource storage implemented in Rust backend (engine.rs, types.rs)
+- [x] Delegation changes emitted via gRPC and applied through RuntimeSpiImpl
+- [ ] (Optional) Enrich remote Account serialization to include:
   - V1 frozen (BW, EN) fields
   - V2 FreezeV2 entries for BANDWIDTH/ENERGY
   - Delegated-out totals (V1+V2) for BW/EN
   - Acquired delegated totals for receiver (for resource accounting)
   - Keep fields Java reads intact even after restart
+- Note: Account serialization enrichment is optional; current implementation uses gRPC DelegationChange emissions for parity
 
 ### 8) Resource Accounting Parity
 
@@ -171,8 +174,11 @@ Files:
 - framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java
 
 Tasks:
-- [ ] Ensure receiver’s acquired delegated fields influence bandwidth/energy accounting (not tron power)
-- [ ] Continue emitting/consuming global resource totals (TOTAL_NET_WEIGHT/LIMIT, TOTAL_ENERGY_WEIGHT/LIMIT)
+- [x] Ensure receiver's acquired delegated fields influence bandwidth/energy accounting (not tron power)
+  - RuntimeSpiImpl.applyDelegationAdd updates AccountCapsule.addAcquiredDelegatedFrozen* fields
+  - RuntimeSpiImpl.applyDelegationRemove decrements acquired delegated fields
+- [x] Continue emitting/consuming global resource totals (TOTAL_NET_WEIGHT/LIMIT, TOTAL_ENERGY_WEIGHT/LIMIT)
+  - Already implemented via GlobalResourceTotalsChange in freeze ledger changes
 
 ### 9) Expiry Semantics
 

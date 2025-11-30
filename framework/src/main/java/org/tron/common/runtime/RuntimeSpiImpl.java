@@ -665,6 +665,8 @@ public class RuntimeSpiImpl implements Runtime {
       // Get stores
       org.tron.core.store.DelegatedResourceStore delegatedResourceStore =
           chainBaseManager.getDelegatedResourceStore();
+      org.tron.core.store.DelegatedResourceAccountIndexStore delegatedResourceAccountIndexStore =
+          chainBaseManager.getDelegatedResourceAccountIndexStore();
       org.tron.core.store.AccountStore accountStore = chainBaseManager.getAccountStore();
 
       // Determine if this is a lock (has expiration) or unlock record
@@ -687,12 +689,13 @@ public class RuntimeSpiImpl implements Runtime {
       switch (operation) {
         case ADD:
           applyDelegationAdd(delegatedResource, resource, amount, expireTimeMs, v2Model,
-              fromAddress, toAddress, accountStore);
+              fromAddress, toAddress, accountStore, delegatedResourceAccountIndexStore);
           break;
 
         case REMOVE:
           applyDelegationRemove(delegatedResource, resource, amount, v2Model,
-              fromAddress, toAddress, accountStore);
+              fromAddress, toAddress, accountStore, delegatedResourceAccountIndexStore,
+              delegatedResourceStore);
           break;
 
         case UNLOCK:
@@ -740,7 +743,8 @@ public class RuntimeSpiImpl implements Runtime {
                                   ExecutionSPI.DelegationChange.Resource resource,
                                   long amount, long expireTimeMs, boolean v2Model,
                                   byte[] fromAddress, byte[] toAddress,
-                                  org.tron.core.store.AccountStore accountStore) {
+                                  org.tron.core.store.AccountStore accountStore,
+                                  org.tron.core.store.DelegatedResourceAccountIndexStore indexStore) {
     // Update the DelegatedResourceCapsule
     boolean isBandwidth = (resource == ExecutionSPI.DelegationChange.Resource.BANDWIDTH);
     if (isBandwidth) {
@@ -786,6 +790,23 @@ public class RuntimeSpiImpl implements Runtime {
       }
       accountStore.put(toAddress, receiverAccount);
     }
+
+    // Update delegation index (from->to mapping for queries)
+    // Use the delegation timestamp (expireTimeMs or current time) for ordering
+    long indexTimestamp = expireTimeMs > 0 ? expireTimeMs : System.currentTimeMillis();
+    if (v2Model) {
+      indexStore.delegateV2(fromAddress, toAddress, indexTimestamp);
+      logger.debug("Added V2 delegation index: from={}, to={}, time={}",
+          org.tron.common.utils.StringUtil.encode58Check(fromAddress),
+          org.tron.common.utils.StringUtil.encode58Check(toAddress),
+          indexTimestamp);
+    } else {
+      indexStore.delegate(fromAddress, toAddress, indexTimestamp);
+      logger.debug("Added V1 delegation index: from={}, to={}, time={}",
+          org.tron.common.utils.StringUtil.encode58Check(fromAddress),
+          org.tron.common.utils.StringUtil.encode58Check(toAddress),
+          indexTimestamp);
+    }
   }
 
   /**
@@ -795,7 +816,9 @@ public class RuntimeSpiImpl implements Runtime {
                                      ExecutionSPI.DelegationChange.Resource resource,
                                      long amount, boolean v2Model,
                                      byte[] fromAddress, byte[] toAddress,
-                                     org.tron.core.store.AccountStore accountStore) {
+                                     org.tron.core.store.AccountStore accountStore,
+                                     org.tron.core.store.DelegatedResourceAccountIndexStore indexStore,
+                                     org.tron.core.store.DelegatedResourceStore delegatedResourceStore) {
     // Update the DelegatedResourceCapsule (subtract amount)
     boolean isBandwidth = (resource == ExecutionSPI.DelegationChange.Resource.BANDWIDTH);
     if (isBandwidth) {
@@ -842,6 +865,47 @@ public class RuntimeSpiImpl implements Runtime {
         }
       }
       accountStore.put(toAddress, receiverAccount);
+    }
+
+    // Check if delegation is now fully removed (both resources are zero)
+    // and remove the index if so
+    boolean shouldRemoveIndex = false;
+    if (delegatedResource.getFrozenBalanceForBandwidth() == 0 &&
+        delegatedResource.getFrozenBalanceForEnergy() == 0) {
+      // Check both locked and unlocked records to see if any delegation remains
+      byte[] lockedKey = org.tron.core.capsule.DelegatedResourceCapsule.createDbKeyV2(
+          fromAddress, toAddress, true);
+      byte[] unlockedKey = org.tron.core.capsule.DelegatedResourceCapsule.createDbKeyV2(
+          fromAddress, toAddress, false);
+
+      org.tron.core.capsule.DelegatedResourceCapsule lockedRecord =
+          delegatedResourceStore.get(lockedKey);
+      org.tron.core.capsule.DelegatedResourceCapsule unlockedRecord =
+          delegatedResourceStore.get(unlockedKey);
+
+      // Only remove index if both locked and unlocked records are empty or null
+      boolean lockedEmpty = (lockedRecord == null ||
+          (lockedRecord.getFrozenBalanceForBandwidth() == 0 &&
+           lockedRecord.getFrozenBalanceForEnergy() == 0));
+      boolean unlockedEmpty = (unlockedRecord == null ||
+          (unlockedRecord.getFrozenBalanceForBandwidth() == 0 &&
+           unlockedRecord.getFrozenBalanceForEnergy() == 0));
+
+      shouldRemoveIndex = lockedEmpty && unlockedEmpty;
+    }
+
+    if (shouldRemoveIndex) {
+      if (v2Model) {
+        indexStore.unDelegateV2(fromAddress, toAddress);
+        logger.debug("Removed V2 delegation index: from={}, to={}",
+            org.tron.common.utils.StringUtil.encode58Check(fromAddress),
+            org.tron.common.utils.StringUtil.encode58Check(toAddress));
+      } else {
+        indexStore.unDelegate(fromAddress, toAddress);
+        logger.debug("Removed V1 delegation index: from={}, to={}",
+            org.tron.common.utils.StringUtil.encode58Check(fromAddress),
+            org.tron.common.utils.StringUtil.encode58Check(toAddress));
+      }
     }
   }
 
