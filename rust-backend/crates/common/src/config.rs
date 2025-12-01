@@ -102,6 +102,12 @@ pub struct RemoteExecutionConfig {
     /// When enabled, DelegationChange records are included in execution results
     /// Default: false for backward compatibility
     pub emit_delegation_changes: bool,
+    /// Process delegation expiry (lock -> unlock) around each executed transaction
+    /// When enabled, the backend will run a best-effort sweep before and after
+    /// transaction execution to move expired locked delegation into unlocked entries,
+    /// and optionally emit DelegationChange(UNLOCK) records to Java for parity when
+    /// emit_delegation_changes is also enabled. Default: false.
+    pub process_delegation_expiry: bool,
     /// Emit GlobalResourceTotalsChange alongside freeze/unfreeze operations
     /// When enabled, backend computes and sends total net/energy weight and limits
     /// so Java can update DynamicPropertiesStore immediately (fixes FREE_NET vs ACCOUNT_NET divergence)
@@ -248,6 +254,7 @@ impl Config {
         builder = builder.set_default("execution.remote.emit_delegation_changes", false)?;
         builder = builder.set_default("execution.remote.emit_global_resource_changes", false)?;
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
+        builder = builder.set_default("execution.remote.process_delegation_expiry", false)?;
         builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
         builder = builder.set_default("execution.remote.use_full_tron_power", false)?;
 
@@ -274,6 +281,7 @@ impl Default for RemoteExecutionConfig {
             emit_delegation_changes: false, // Default false for backward compatibility
             emit_global_resource_changes: false, // Default false for backward compatibility
             emit_storage_changes: false,
+            process_delegation_expiry: false, // Default off; call unlock only when enabled
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
             use_full_tron_power: false, // Default false for backward compatibility
         }

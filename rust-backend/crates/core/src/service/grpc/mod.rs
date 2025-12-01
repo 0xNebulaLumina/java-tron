@@ -1039,6 +1039,26 @@ impl crate::backend::backend_server::Backend for BackendService {
             storage_engine.clone(),
         );
 
+        // Pre-execution: optionally process delegation expiry (lock -> unlock)
+        // Guarded by remote.process_delegation_expiry; emission of changes is further
+        // gated by remote.emit_delegation_changes
+        let mut pre_unlock_changes: Vec<tron_backend_execution::DelegationChange> = Vec::new();
+        if let Ok(exec_cfg) = self.get_execution_config() {
+            let remote_cfg = &exec_cfg.remote;
+            if remote_cfg.process_delegation_expiry {
+                match storage_adapter.unlock_expired_delegations(context.block_timestamp as i64) {
+                    Ok(changes) => {
+                        if remote_cfg.emit_delegation_changes {
+                            pre_unlock_changes = changes;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Pre-exec delegation expiry processing failed: {}", e);
+                    }
+                }
+            }
+        }
+
         // Log blackhole balance before execution
         let blackhole_balance_before = if let Ok(Some(blackhole_addr)) = storage_adapter.get_blackhole_address() {
             let balance = storage_adapter.get_account(&blackhole_addr)
@@ -1150,9 +1170,37 @@ impl crate::backend::backend_server::Backend for BackendService {
 
         // Handle execution result
         match execution_result {
-            Ok(result) => {
+            Ok(mut result) => {
                 info!("Transaction executed successfully - energy_used: {}, bandwidth_used: {}",
                       result.energy_used, result.bandwidth_used);
+                // Post-execution: optionally process delegation expiry again and merge UNLOCK changes
+                if let Ok(exec_cfg) = self.get_execution_config() {
+                    let remote_cfg = &exec_cfg.remote;
+                    if remote_cfg.process_delegation_expiry {
+                        // Create a fresh adapter (the VM branch may have consumed the original adapter)
+                        let post_exec_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
+                            storage_engine.clone(),
+                        );
+                        match post_exec_adapter.unlock_expired_delegations(context.block_timestamp as i64) {
+                            Ok(mut post_changes) => {
+                                if remote_cfg.emit_delegation_changes {
+                                    if !pre_unlock_changes.is_empty() {
+                                        result.delegation_changes.extend(pre_unlock_changes);
+                                    }
+                                    if !post_changes.is_empty() {
+                                        result.delegation_changes.append(&mut post_changes);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Post-exec delegation expiry processing failed: {}", e);
+                                if !pre_unlock_changes.is_empty() && remote_cfg.emit_delegation_changes {
+                                    result.delegation_changes.extend(pre_unlock_changes);
+                                }
+                            }
+                        }
+                    }
+                }
                 let response = self.convert_execution_result_to_protobuf(result, &pre_exec_aext_map);
                 Ok(Response::new(response))
             }

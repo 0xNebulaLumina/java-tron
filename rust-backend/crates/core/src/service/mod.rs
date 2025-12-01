@@ -1147,9 +1147,24 @@ impl BackendService {
               owner_tron, sum_trx, sum_sun, tron_power_sun, new_model);
 
         if sum_sun > tron_power_sun {
-            // Parity note: delegation fields are not fully ported yet; avoid undercounting tron power
-            // which would cause false negatives versus java-tron. Log and continue for now.
-            warn!("Vote sum {} exceeds computed tron power {} – accepting for parity", sum_sun, tron_power_sun);
+            // Enforce strictly when configured; otherwise, keep Phase 1 parity behavior
+            if execution_config.remote.use_full_tron_power {
+                warn!(
+                    "Vote sum {} exceeds tron power {} – rejecting (use_full_tron_power=true)",
+                    sum_sun, tron_power_sun
+                );
+                return Err(format!(
+                    "Vote sum exceeds tron power: sum={} SUN, tronPower={} SUN",
+                    sum_sun, tron_power_sun
+                ));
+            } else {
+                // Parity note: delegation fields were not fully ported previously; avoid undercounting
+                // which would cause false negatives versus java-tron. Log and continue for now.
+                warn!(
+                    "Vote sum {} exceeds computed tron power {} – accepting for parity (use_full_tron_power=false)",
+                    sum_sun, tron_power_sun
+                );
+            }
         }
 
         // 5. Phase 1: Skip withdrawReward (log only)
