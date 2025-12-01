@@ -248,15 +248,15 @@ impl Config {
         builder = builder.set_default("execution.remote.unfreeze_balance_enabled", false)?;
         builder = builder.set_default("execution.remote.freeze_balance_v2_enabled", false)?;
         builder = builder.set_default("execution.remote.unfreeze_balance_v2_enabled", false)?;
-        builder = builder.set_default("execution.remote.delegate_resource_enabled", false)?;
-        builder = builder.set_default("execution.remote.undelegate_resource_enabled", false)?;
+        builder = builder.set_default("execution.remote.delegate_resource_enabled", true)?;
+        builder = builder.set_default("execution.remote.undelegate_resource_enabled", true)?;
         builder = builder.set_default("execution.remote.emit_freeze_ledger_changes", false)?;
-        builder = builder.set_default("execution.remote.emit_delegation_changes", false)?;
+        builder = builder.set_default("execution.remote.emit_delegation_changes", true)?;
         builder = builder.set_default("execution.remote.emit_global_resource_changes", false)?;
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
-        builder = builder.set_default("execution.remote.process_delegation_expiry", false)?;
+        builder = builder.set_default("execution.remote.process_delegation_expiry", true)?;
         builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
-        builder = builder.set_default("execution.remote.use_full_tron_power", false)?;
+        builder = builder.set_default("execution.remote.use_full_tron_power", true)?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -275,15 +275,15 @@ impl Default for RemoteExecutionConfig {
             unfreeze_balance_enabled: false, // Default false until validated
             freeze_balance_v2_enabled: false, // Default false until validated
             unfreeze_balance_v2_enabled: false, // Default false until validated
-            delegate_resource_enabled: false, // Default false until Phase 2 validated
-            undelegate_resource_enabled: false, // Default false until Phase 2 validated
+            delegate_resource_enabled: true, // Default false until Phase 2 validated
+            undelegate_resource_enabled: true, // Default false until Phase 2 validated
             emit_freeze_ledger_changes: false, // Default false for CSV parity
-            emit_delegation_changes: false, // Default false for backward compatibility
+            emit_delegation_changes: true, // Default false for backward compatibility
             emit_global_resource_changes: false, // Default false for backward compatibility
             emit_storage_changes: false,
-            process_delegation_expiry: false, // Default off; call unlock only when enabled
+            process_delegation_expiry: true, // Default off; call unlock only when enabled
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
-            use_full_tron_power: false, // Default false for backward compatibility
+            use_full_tron_power: true, // Default false for backward compatibility
         }
     }
 } 
