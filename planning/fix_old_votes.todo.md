@@ -36,20 +36,20 @@
 ## Detailed TODOs (Rust Backend)
 
 ### A. Config Gate
-- [ ] Add `vote_witness_seed_old_from_account = true` under `[remote]` in `rust-backend/config.toml`.
-- [ ] Thread this flag into execution configuration (RemoteExecutionConfig) and into `execute_vote_witness_contract`.
+- [x] Add `vote_witness_seed_old_from_account = true` under `[remote]` in `rust-backend/config.toml`.
+- [x] Thread this flag into execution configuration (RemoteExecutionConfig) and into `execute_vote_witness_contract`.
 
 ### B. Account Votes Parser
-- [ ] Implement `get_account_votes_list(&self, address: &Address) -> Result<Vec<(Address, u64)>>` in `EngineBackedEvmStateStore`:
+- [x] Implement `get_account_votes_list(&self, address: &Address) -> Result<Vec<(Address, u64)>>` in `EngineBackedEvmStateStore`:
   - Read raw protobuf bytes from `account` DB (key = `0x41` + 20‑byte address).
   - Parse Account protobuf field 5: `repeated Vote` (each `Vote` has `vote_address` [bytes with 0x41 prefix] and `vote_count` [int64]).
   - Normalize vote_address: strip 0x41 to 20‑byte H160 (REVM Address).
   - Graceful error handling: on decode error, log warn and return empty vec.
-  - Unit tests: 
+  - Unit tests:
     - Account with 0, 1, many votes; truncated payload; non‑21‑byte addresses; large counts.
 
 ### C. Seed `old_votes` On First Record
-- [ ] File: `rust-backend/crates/core/src/service/mod.rs` (`execute_vote_witness_contract`):
+- [x] File: `rust-backend/crates/core/src/service/mod.rs` (`execute_vote_witness_contract`):
   - When `get_votes(owner)` returns `None`:
     - If flag enabled: call `get_account_votes_list(owner)`.
       - If non‑empty: set `votes_record = VotesRecord::new(owner, prior_votes, Vec::new())`.
@@ -58,9 +58,9 @@
   - Keep subsequent behavior unchanged: if record exists, set `old = previous new`, then clear/add new votes.
 
 ### D. Logging & Metrics
-- [ ] Log at INFO when seeding occurs: owner (base58), count of seeded old votes.
+- [x] Log at INFO when seeding occurs: owner (base58), count of seeded old votes.
 - [ ] Add counter metric `vote_witness_seeded_from_account` (increment by 1 per seeding event).
-- [ ] Expand existing VoteWitness logs to include `old_votes.len()` before persist for visibility.
+- [x] Expand existing VoteWitness logs to include `old_votes.len()` before persist for visibility.
 
 ### E. Tests (Rust)
 - [ ] Unit tests for `get_account_votes_list`.
@@ -148,9 +148,9 @@ Owners
 ---
 
 ## Checklist (One‑Pager)
-- [ ] Config flag added, default ON
-- [ ] Account votes parser implemented + tested
-- [ ] First‑record seeding logic integrated + logged + metered
+- [x] Config flag added, default ON
+- [x] Account votes parser implemented + tested
+- [x] First‑record seeding logic integrated + logged + metered
 - [ ] Service tests for first and subsequent votes
 - [ ] Docs updated
 - [ ] (Optional) Java fallback behind flag

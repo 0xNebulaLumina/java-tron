@@ -1140,6 +1140,10 @@ impl BackendService {
         info!("Skipping withdrawReward for {} (Phase 1 - delegation not yet ported)", owner_tron);
 
         // 6. Load or create VotesRecord
+        // When creating a new record (no existing VotesRecord), seed old_votes from Account.votes
+        // to match embedded behavior. This ensures correct delta computation in maintenance.
+        let seed_from_account = execution_config.remote.vote_witness_seed_old_from_account;
+
         let mut votes_record = match storage_adapter.get_votes(&owner) {
             Ok(Some(record)) => {
                 info!("Found existing votes for {}: old_votes={}, new_votes={}",
@@ -1148,8 +1152,33 @@ impl BackendService {
                 VotesRecord::new(owner, record.new_votes.clone(), Vec::new())
             },
             Ok(None) => {
-                info!("No existing votes for {}, creating new record", owner_tron);
-                VotesRecord::empty(owner)
+                // No existing VotesRecord - this is the first vote for this account in this epoch
+                if seed_from_account {
+                    // Seed old_votes from Account.votes field (matches embedded behavior)
+                    let prior_votes_tuples = storage_adapter.get_account_votes_list(&owner)
+                        .map_err(|e| format!("Failed to get account votes list: {}", e))?;
+
+                    if prior_votes_tuples.is_empty() {
+                        info!("No existing votes for {} and no Account.votes, creating empty record (seed_enabled=true)",
+                              owner_tron);
+                        VotesRecord::empty(owner)
+                    } else {
+                        info!("Seeding old_votes from Account.votes for {}: {} entries (seed_enabled=true)",
+                              owner_tron, prior_votes_tuples.len());
+                        // Convert (Address, u64) tuples to Vote structs
+                        use tron_backend_execution::Vote;
+                        let prior_votes: Vec<Vote> = prior_votes_tuples
+                            .into_iter()
+                            .map(|(addr, count)| Vote::new(addr, count))
+                            .collect();
+                        VotesRecord::new(owner, prior_votes, Vec::new())
+                    }
+                } else {
+                    // Legacy behavior: empty old_votes
+                    info!("No existing votes for {}, creating new record with empty old_votes (seed_enabled=false)",
+                          owner_tron);
+                    VotesRecord::empty(owner)
+                }
             },
             Err(e) => {
                 error!("Failed to get votes for {}: {}", owner_tron, e);
