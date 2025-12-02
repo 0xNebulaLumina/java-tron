@@ -281,7 +281,8 @@ public class ShadowExecutionSPITest {
         50L, // bandwidthUsed
         new ArrayList<>(), // freezeChanges
         new ArrayList<>(), // globalResourceChanges
-        new ArrayList<>() // trc10Changes
+        new ArrayList<>(), // trc10Changes
+        new ArrayList<>() // voteChanges
         );
   }
 
@@ -297,7 +298,8 @@ public class ShadowExecutionSPITest {
         25L, // bandwidthUsed
         new ArrayList<>(), // freezeChanges
         new ArrayList<>(), // globalResourceChanges
-        new ArrayList<>() // trc10Changes
+        new ArrayList<>(), // trc10Changes
+        new ArrayList<>() // voteChanges
         );
   }
 }

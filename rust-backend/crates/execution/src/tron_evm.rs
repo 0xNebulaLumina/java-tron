@@ -225,6 +225,22 @@ pub enum Trc10Change {
     AssetIssued(Trc10AssetIssued),
 }
 
+/// Vote entry for VoteChange - represents a single vote for a witness
+#[derive(Debug, Clone)]
+pub struct VoteEntry {
+    pub vote_address: revm::primitives::Address,  // Witness address (20-byte EVM format)
+    pub vote_count: u64,
+}
+
+/// VoteChange carries updated votes for an account after VoteWitness execution.
+/// Java should apply this to Account.votes to maintain parity with embedded mode.
+/// This ensures correct old_votes seeding on subsequent votes in the same or later epochs.
+#[derive(Debug, Clone)]
+pub struct VoteChange {
+    pub owner_address: revm::primitives::Address,  // Voter address (20-byte EVM format)
+    pub votes: Vec<VoteEntry>,  // New votes list (replaces Account.votes)
+}
+
 #[derive(Debug, Clone)]
 pub struct TronExecutionResult {
     pub success: bool,
@@ -248,6 +264,10 @@ pub struct TronExecutionResult {
     /// TRC-10 semantic changes (Phase 2: full TRC-10 ledger persistence)
     /// Rust emits high-level TRC-10 operations; Java applies them to existing stores
     pub trc10_changes: Vec<Trc10Change>,
+    /// Vote changes (Phase 2: Account.votes update after VoteWitness)
+    /// Rust emits the new votes list; Java applies it to Account.votes
+    /// This ensures correct old_votes seeding for subsequent epochs
+    pub vote_changes: Vec<VoteChange>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -376,6 +396,7 @@ where
                     freeze_changes: vec![], // Will be populated by contract handlers
                     global_resource_changes: vec![], // Will be populated by contract handlers
                     trc10_changes: vec![], // Will be populated by TRC-10 contract handlers
+                    vote_changes: vec![], // Will be populated by vote contract handlers
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -391,6 +412,7 @@ where
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
+                    vote_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -406,6 +428,7 @@ where
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
+                    vote_changes: vec![],
                 })
             }
         }
@@ -435,6 +458,7 @@ where
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
+                    vote_changes: vec![],
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -450,6 +474,7 @@ where
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
+                    vote_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -465,6 +490,7 @@ where
                     freeze_changes: vec![],
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
+                    vote_changes: vec![],
                 })
             }
         }

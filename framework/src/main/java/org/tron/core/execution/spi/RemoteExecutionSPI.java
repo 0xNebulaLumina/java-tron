@@ -76,9 +76,17 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             // Call grpcClient.executeTransaction()
             ExecuteTransactionResponse response = grpcClient.executeTransaction(request);
 
-            // Convert gRPC response to ExecutionProgramResult
-            return ExecutionProgramResult.fromExecutionResult(
-                convertExecuteTransactionResponse(response));
+            // Convert gRPC response to ExecutionResult
+            ExecutionResult executionResult = convertExecuteTransactionResponse(response);
+
+            // Apply VoteChanges to Account.votes (Phase 2: Account.votes update after VoteWitness)
+            // This ensures Account.votes is populated for correct old_votes seeding in subsequent epochs
+            if (executionResult.getVoteChanges() != null && !executionResult.getVoteChanges().isEmpty()) {
+              applyVoteChanges(context, executionResult.getVoteChanges());
+            }
+
+            // Convert to ExecutionProgramResult
+            return ExecutionProgramResult.fromExecutionResult(executionResult);
 
           } catch (UnsupportedOperationException | IllegalArgumentException e) {
             logger.warn(
@@ -96,6 +104,48 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             return result;
           }
         });
+  }
+
+  /**
+   * Apply VoteChanges to Account.votes to maintain parity with embedded mode.
+   * This ensures correct old_votes seeding for subsequent VoteWitness executions.
+   *
+   * @param context Transaction context with access to account store
+   * @param voteChanges List of vote changes to apply
+   */
+  private void applyVoteChanges(TransactionContext context, List<VoteChange> voteChanges) {
+    org.tron.core.store.AccountStore accountStore = context.getStoreFactory()
+        .getChainBaseManager().getAccountStore();
+    if (accountStore == null) {
+      logger.warn("AccountStore not available, cannot apply VoteChanges");
+      return;
+    }
+
+    for (VoteChange voteChange : voteChanges) {
+      byte[] ownerAddress = voteChange.getOwnerAddress();
+      org.tron.core.capsule.AccountCapsule accountCapsule = accountStore.get(ownerAddress);
+
+      if (accountCapsule == null) {
+        logger.warn("Account not found for VoteChange: {}",
+            org.tron.common.utils.ByteArray.toHexString(ownerAddress));
+        continue;
+      }
+
+      // Clear existing votes and add new ones (same as VoteWitnessActuator in embedded mode)
+      accountCapsule.clearVotes();
+      for (VoteEntry voteEntry : voteChange.getVotes()) {
+        accountCapsule.addVotes(
+            com.google.protobuf.ByteString.copyFrom(voteEntry.getVoteAddress()),
+            voteEntry.getVoteCount());
+      }
+
+      // Persist the updated account
+      accountStore.put(ownerAddress, accountCapsule);
+
+      logger.debug("Applied VoteChange to Account.votes: owner={}, votes={}",
+          org.tron.common.utils.ByteArray.toHexString(ownerAddress),
+          voteChange.getVotes().size());
+    }
   }
 
   @Override
@@ -706,7 +756,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           0, // bandwidthUsed
           new ArrayList<>(), // freezeChanges
           new ArrayList<>(), // globalResourceChanges
-          new ArrayList<>() // trc10Changes
+          new ArrayList<>(), // trc10Changes
+          new ArrayList<>()  // voteChanges
           );
     }
 
@@ -901,6 +952,24 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       }
     }
 
+    // Convert protobuf VoteChange (Phase 2: Account.votes update after VoteWitness)
+    List<VoteChange> voteChanges = new ArrayList<>();
+    for (tron.backend.BackendOuterClass.VoteChange protoVoteChange : protoResult.getVoteChangesList()) {
+      List<VoteEntry> votes = new ArrayList<>();
+      for (tron.backend.BackendOuterClass.Vote protoVote : protoVoteChange.getVotesList()) {
+        votes.add(new VoteEntry(
+            protoVote.getVoteAddress().toByteArray(),
+            protoVote.getVoteCount()));
+      }
+      voteChanges.add(new VoteChange(
+          protoVoteChange.getOwnerAddress().toByteArray(),
+          votes));
+
+      logger.debug("Parsed VoteChange: owner={}, votes={}",
+          org.tron.common.utils.ByteArray.toHexString(protoVoteChange.getOwnerAddress().toByteArray()),
+          votes.size());
+    }
+
     // Report metrics if callback is registered
     if (metricsCallback != null) {
       metricsCallback.onMetric("remote.energy_used", protoResult.getEnergyUsed());
@@ -910,6 +979,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               ? 1.0
               : 0.0);
       metricsCallback.onMetric("remote.freeze_changes_count", freezeChanges.size());
+      metricsCallback.onMetric("remote.vote_changes_count", voteChanges.size());
     }
 
     return new ExecutionResult(
@@ -923,7 +993,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         protoResult.getBandwidthUsed(),
         freezeChanges,
         globalResourceChanges,
-        trc10Changes);
+        trc10Changes,
+        voteChanges);
   }
 
   /**

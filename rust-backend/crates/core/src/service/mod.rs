@@ -532,6 +532,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for value transfers
             trc10_changes: vec![], // Not applicable for value transfers
+            vote_changes: vec![], // Not applicable for value transfers
         })
     }
 
@@ -745,6 +746,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for witness creation
             trc10_changes: vec![], // Not applicable for witness creation
+            vote_changes: vec![], // Not applicable for witness creation
         })
     }
 
@@ -878,6 +880,7 @@ impl BackendService {
             freeze_changes: vec![],
             global_resource_changes: vec![],
             trc10_changes: vec![],
+            vote_changes: vec![], // Not applicable for witness update
         })
     }
 
@@ -1250,8 +1253,19 @@ impl BackendService {
                    before_aext.free_net_usage, after_aext.free_net_usage);
         }
 
-        info!("VoteWitness completed: owner={}, votes={}, state_changes={}, bandwidth={}",
-              owner_tron, votes_record.new_votes.len(), state_changes.len(), bandwidth_used);
+        // Build VoteChange for Java to update Account.votes
+        // This ensures correct old_votes seeding in subsequent epochs
+        use tron_backend_execution::{VoteChange, VoteEntry};
+        let vote_change = VoteChange {
+            owner_address: owner,
+            votes: votes_record.new_votes.iter().map(|v| VoteEntry {
+                vote_address: v.vote_address.clone(),
+                vote_count: v.vote_count,
+            }).collect(),
+        };
+
+        info!("VoteWitness completed: owner={}, votes={}, state_changes={}, bandwidth={}, vote_change_entries={}",
+              owner_tron, votes_record.new_votes.len(), state_changes.len(), bandwidth_used, vote_change.votes.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -1265,6 +1279,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for vote witness
             trc10_changes: vec![], // Not applicable for vote witness
+            vote_changes: vec![vote_change], // VoteChange for Account.votes update
         })
     }
 
@@ -1372,6 +1387,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for account update
             trc10_changes: vec![], // Not applicable for account update
+            vote_changes: vec![], // Not applicable for account update
         })
     }
 
@@ -1579,6 +1595,7 @@ impl BackendService {
             freeze_changes: vec![], // Not applicable for asset issue
             global_resource_changes: vec![], // Not applicable for asset issue
             trc10_changes: vec![trc10_change], // Phase 2: emit TRC-10 semantic change
+            vote_changes: vec![], // Not applicable for asset issue
         })
     }
 
