@@ -109,6 +109,11 @@ pub struct RemoteExecutionConfig {
     /// - "tracked": Some(real values) when backend supports resource metrics (future)
     /// Default: "none" for backward compatibility; set to "defaults" for full CSV parity with embedded
     pub accountinfo_aext_mode: String,
+    /// Seed old_votes from Account.votes on first VotesRecord creation
+    /// When true: On first VoteWitness for an account, old_votes is seeded from Account.votes field
+    /// When false: On first VoteWitness, old_votes is empty (legacy remote behavior)
+    /// Default: true to match embedded semantics
+    pub vote_witness_seed_old_from_account: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +240,7 @@ impl Config {
         builder = builder.set_default("execution.remote.emit_global_resource_changes", false)?;
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
         builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
+        builder = builder.set_default("execution.remote.vote_witness_seed_old_from_account", true)?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -257,6 +263,7 @@ impl Default for RemoteExecutionConfig {
             emit_global_resource_changes: false, // Default false for backward compatibility
             emit_storage_changes: false,
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
+            vote_witness_seed_old_from_account: true, // Default true to match embedded semantics
         }
     }
 } 

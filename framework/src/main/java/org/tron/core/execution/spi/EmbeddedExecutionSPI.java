@@ -254,7 +254,8 @@ public class EmbeddedExecutionSPI implements ExecutionSPI {
           0, // bandwidthUsed
           new ArrayList<>(), // freezeChanges (Phase 2 - not used in embedded mode)
           new ArrayList<>(), // globalResourceChanges (Phase 2 - not used in embedded mode)
-          new ArrayList<>() // trc10Changes (Phase 2 - not used in embedded mode)
+          new ArrayList<>(), // trc10Changes (Phase 2 - not used in embedded mode)
+          new ArrayList<>() // voteChanges (Phase 2 - not used in embedded mode)
           );
     }
 
@@ -296,7 +297,8 @@ public class EmbeddedExecutionSPI implements ExecutionSPI {
         0, // TODO: Calculate bandwidth usage
         new ArrayList<>(), // freezeChanges (Phase 2 - not used in embedded mode)
         new ArrayList<>(), // globalResourceChanges (Phase 2 - not used in embedded mode)
-        new ArrayList<>() // trc10Changes (Phase 2 - not used in embedded mode)
+        new ArrayList<>(), // trc10Changes (Phase 2 - not used in embedded mode)
+        new ArrayList<>() // voteChanges (Phase 2 - not used in embedded mode)
         );
   }
 }

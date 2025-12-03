@@ -532,6 +532,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for value transfers
             trc10_changes: vec![], // Not applicable for value transfers
+            vote_changes: vec![], // Not applicable for value transfers
         })
     }
 
@@ -745,6 +746,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for witness creation
             trc10_changes: vec![], // Not applicable for witness creation
+            vote_changes: vec![], // Not applicable for witness creation
         })
     }
 
@@ -878,6 +880,7 @@ impl BackendService {
             freeze_changes: vec![],
             global_resource_changes: vec![],
             trc10_changes: vec![],
+            vote_changes: vec![], // Not applicable for witness update
         })
     }
 
@@ -1140,6 +1143,10 @@ impl BackendService {
         info!("Skipping withdrawReward for {} (Phase 1 - delegation not yet ported)", owner_tron);
 
         // 6. Load or create VotesRecord
+        // When creating a new record (no existing VotesRecord), seed old_votes from Account.votes
+        // to match embedded behavior. This ensures correct delta computation in maintenance.
+        let seed_from_account = execution_config.remote.vote_witness_seed_old_from_account;
+
         let mut votes_record = match storage_adapter.get_votes(&owner) {
             Ok(Some(record)) => {
                 info!("Found existing votes for {}: old_votes={}, new_votes={}",
@@ -1148,8 +1155,33 @@ impl BackendService {
                 VotesRecord::new(owner, record.new_votes.clone(), Vec::new())
             },
             Ok(None) => {
-                info!("No existing votes for {}, creating new record", owner_tron);
-                VotesRecord::empty(owner)
+                // No existing VotesRecord - this is the first vote for this account in this epoch
+                if seed_from_account {
+                    // Seed old_votes from Account.votes field (matches embedded behavior)
+                    let prior_votes_tuples = storage_adapter.get_account_votes_list(&owner)
+                        .map_err(|e| format!("Failed to get account votes list: {}", e))?;
+
+                    if prior_votes_tuples.is_empty() {
+                        info!("No existing votes for {} and no Account.votes, creating empty record (seed_enabled=true)",
+                              owner_tron);
+                        VotesRecord::empty(owner)
+                    } else {
+                        info!("Seeding old_votes from Account.votes for {}: {} entries (seed_enabled=true)",
+                              owner_tron, prior_votes_tuples.len());
+                        // Convert (Address, u64) tuples to Vote structs
+                        use tron_backend_execution::Vote;
+                        let prior_votes: Vec<Vote> = prior_votes_tuples
+                            .into_iter()
+                            .map(|(addr, count)| Vote::new(addr, count))
+                            .collect();
+                        VotesRecord::new(owner, prior_votes, Vec::new())
+                    }
+                } else {
+                    // Legacy behavior: empty old_votes
+                    info!("No existing votes for {}, creating new record with empty old_votes (seed_enabled=false)",
+                          owner_tron);
+                    VotesRecord::empty(owner)
+                }
             },
             Err(e) => {
                 error!("Failed to get votes for {}: {}", owner_tron, e);
@@ -1221,8 +1253,19 @@ impl BackendService {
                    before_aext.free_net_usage, after_aext.free_net_usage);
         }
 
-        info!("VoteWitness completed: owner={}, votes={}, state_changes={}, bandwidth={}",
-              owner_tron, votes_record.new_votes.len(), state_changes.len(), bandwidth_used);
+        // Build VoteChange for Java to update Account.votes
+        // This ensures correct old_votes seeding in subsequent epochs
+        use tron_backend_execution::{VoteChange, VoteEntry};
+        let vote_change = VoteChange {
+            owner_address: owner,
+            votes: votes_record.new_votes.iter().map(|v| VoteEntry {
+                vote_address: v.vote_address.clone(),
+                vote_count: v.vote_count,
+            }).collect(),
+        };
+
+        info!("VoteWitness completed: owner={}, votes={}, state_changes={}, bandwidth={}, vote_change_entries={}",
+              owner_tron, votes_record.new_votes.len(), state_changes.len(), bandwidth_used, vote_change.votes.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -1236,6 +1279,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for vote witness
             trc10_changes: vec![], // Not applicable for vote witness
+            vote_changes: vec![vote_change], // VoteChange for Account.votes update
         })
     }
 
@@ -1343,6 +1387,7 @@ impl BackendService {
             freeze_changes: vec![], // Will be populated by freeze-related contracts
             global_resource_changes: vec![], // Not applicable for account update
             trc10_changes: vec![], // Not applicable for account update
+            vote_changes: vec![], // Not applicable for account update
         })
     }
 
@@ -1550,6 +1595,7 @@ impl BackendService {
             freeze_changes: vec![], // Not applicable for asset issue
             global_resource_changes: vec![], // Not applicable for asset issue
             trc10_changes: vec![trc10_change], // Phase 2: emit TRC-10 semantic change
+            vote_changes: vec![], // Not applicable for asset issue
         })
     }
 

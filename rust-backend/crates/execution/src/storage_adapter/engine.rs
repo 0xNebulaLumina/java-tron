@@ -744,6 +744,153 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
+    /// Get the votes list from the Account protobuf (field 5: repeated Vote)
+    /// This reads the persisted Account record and extracts the votes field.
+    /// Used to seed old_votes when creating a new VotesRecord (to match embedded behavior).
+    ///
+    /// Account protobuf structure:
+    ///   repeated Vote votes = 5;  // field 5, length-delimited
+    ///
+    /// Vote protobuf structure:
+    ///   bytes vote_address = 1;   // 21-byte Tron address
+    ///   int64 vote_count = 2;     // vote count
+    pub fn get_account_votes_list(&self, address: &Address) -> Result<Vec<(Address, u64)>> {
+        let key = self.account_key(address);
+        let address_tron = to_tron_address(address);
+        tracing::debug!("Getting account votes list for address {:?} (tron: {}), key: {}",
+                       address, address_tron, hex::encode(&key));
+
+        match self.storage_engine.get(self.account_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found account data for votes extraction, length: {}", data.len());
+                match self.extract_votes_from_account_protobuf(&data) {
+                    Ok(votes) => {
+                        tracing::info!("Extracted {} votes from Account.votes field for {}",
+                                      votes.len(), address_tron);
+                        Ok(votes)
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to extract votes from Account protobuf: {}, returning empty", e);
+                        Ok(Vec::new())
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("No account found for address {:?}, returning empty votes list", address);
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    /// Extract the votes field (field 5) from an Account protobuf message
+    /// Returns a vector of (witness_address, vote_count) tuples
+    fn extract_votes_from_account_protobuf(&self, data: &[u8]) -> Result<Vec<(Address, u64)>> {
+        let mut votes = Vec::new();
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, new_pos) = self.read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            if field_number == 5 && wire_type == 2 {
+                // Field 5: repeated Vote (length-delimited)
+                let (length, new_pos) = self.read_varint(data, pos)?;
+                pos = new_pos;
+
+                if pos + length as usize > data.len() {
+                    return Err(anyhow::anyhow!("Invalid Vote field length"));
+                }
+
+                let vote_data = &data[pos..pos + length as usize];
+                pos += length as usize;
+
+                // Parse the Vote message
+                match self.parse_vote_message(vote_data) {
+                    Ok((vote_address, vote_count)) => {
+                        votes.push((vote_address, vote_count));
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to parse Vote message: {}, skipping", e);
+                    }
+                }
+            } else {
+                // Skip other fields
+                pos = self.skip_field(data, pos, wire_type)?;
+            }
+        }
+
+        Ok(votes)
+    }
+
+    /// Parse a single Vote protobuf message
+    /// Vote structure:
+    ///   bytes vote_address = 1;  (length-delimited, 21-byte Tron address)
+    ///   int64 vote_count = 2;    (varint)
+    fn parse_vote_message(&self, data: &[u8]) -> Result<(Address, u64)> {
+        let mut vote_address: Option<Address> = None;
+        let mut vote_count: Option<u64> = None;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, new_pos) = self.read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // vote_address (length-delimited)
+                    let (length, new_pos) = self.read_varint(data, pos)?;
+                    pos = new_pos;
+
+                    if pos + length as usize > data.len() {
+                        return Err(anyhow::anyhow!("Invalid vote_address length"));
+                    }
+
+                    let addr_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    // Remove 0x41 prefix if present (21-byte Tron → 20-byte EVM)
+                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                        &addr_bytes[1..]
+                    } else if addr_bytes.len() == 20 {
+                        addr_bytes
+                    } else {
+                        return Err(anyhow::anyhow!("Invalid vote_address length: {}", addr_bytes.len()));
+                    };
+
+                    if evm_addr.len() != 20 {
+                        return Err(anyhow::anyhow!("Invalid EVM address length: {}", evm_addr.len()));
+                    }
+
+                    let mut addr = [0u8; 20];
+                    addr.copy_from_slice(evm_addr);
+                    vote_address = Some(Address::from(addr));
+                },
+                (2, 0) => {
+                    // vote_count (varint)
+                    let (count, new_pos) = self.read_varint(data, pos)?;
+                    pos = new_pos;
+                    vote_count = Some(count);
+                },
+                _ => {
+                    // Skip unknown fields
+                    pos = self.skip_field(data, pos, wire_type)?;
+                }
+            }
+        }
+
+        let addr = vote_address.ok_or_else(|| anyhow::anyhow!("Missing vote_address"))?;
+        let count = vote_count.ok_or_else(|| anyhow::anyhow!("Missing vote_count"))?;
+        Ok((addr, count))
+    }
+
     /// Get freeze record for an address and resource type
     /// resource: 0=BANDWIDTH, 1=ENERGY, 2=TRON_POWER
     pub fn get_freeze_record(&self, address: &Address, resource: u8) -> Result<Option<FreezeRecord>> {
