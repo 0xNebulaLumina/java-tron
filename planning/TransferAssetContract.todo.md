@@ -2,7 +2,7 @@
 
 Owner: Core Runtime/Remote SPI + Rust Backend
 Scope: Java mapping in RemoteExecutionSPI; Rust non‑VM handler in `execute_non_vm_contract`; bandwidth/AEXT accounting; optional TRX fee deltas (config‑gated); Phase 2 TRC‑10 semantic change (Java applies to stores).
-Status: Design/Planning (do not implement yet)
+Status: ✅ **IMPLEMENTED** (core logic complete, tests pending)
 
 ---
 
@@ -70,67 +70,67 @@ Status: Design/Planning (do not implement yet)
 
 ### A. Protocol & Types
 
-- [ ] Extend `framework/src/main/proto/backend.proto`:
-  - [ ] Add `message Trc10AssetTransferred { bytes owner_address = 1; bytes to_address = 2; bytes asset_name = 3; string token_id = 4; int64 amount = 5; }`
-  - [ ] Extend `message Trc10Change { oneof kind { Trc10AssetIssued asset_issued = 1; Trc10AssetTransferred asset_transferred = 2; } }`
-- [ ] Rust types (execution):
-  - [ ] Add `struct Trc10AssetTransferred` and enum variant `Trc10Change::AssetTransferred` in `rust-backend/crates/execution/src/tron_evm.rs`.
-- [ ] Rust→proto conversion:
-  - [ ] Update `rust-backend/crates/core/src/service/grpc/conversion.rs` to convert the new variant to/from proto.
-- [ ] Java SPI parsing:
-  - [ ] Update `framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java` to parse `asset_transferred` into a new `ExecutionSPI.Trc10AssetTransferred` type.
-- [ ] Java apply path:
-  - [ ] Add `applyAssetTransferredChange(ExecutionSPI.Trc10AssetTransferred, ChainBaseManager, TransactionContext)` in `RuntimeSpiImpl` and hook it in the loop beside asset_issued.
+- [x] Extend `framework/src/main/proto/backend.proto`:
+  - [x] Add `message Trc10AssetTransferred { bytes owner_address = 1; bytes to_address = 2; bytes asset_name = 3; string token_id = 4; int64 amount = 5; }`
+  - [x] Extend `message Trc10Change { oneof kind { Trc10AssetIssued asset_issued = 1; Trc10AssetTransferred asset_transferred = 2; } }`
+- [x] Rust types (execution):
+  - [x] Add `struct Trc10AssetTransferred` and enum variant `Trc10Change::AssetTransferred` in `rust-backend/crates/execution/src/tron_evm.rs`.
+- [x] Rust→proto conversion:
+  - [x] Update `rust-backend/crates/core/src/service/grpc/conversion.rs` to convert the new variant to/from proto.
+- [x] Java SPI parsing:
+  - [x] Update `framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java` to parse `asset_transferred` into a new `ExecutionSPI.Trc10AssetTransferred` type.
+- [x] Java apply path:
+  - [x] Add `applyAssetTransferredChange(ExecutionSPI.Trc10AssetTransferred, ChainBaseManager, TransactionContext)` in `RuntimeSpiImpl` and hook it in the loop beside asset_issued.
 
 ### B. Java Mapping (RemoteExecutionSPI)
 
-- [ ] Keep existing gate in place: if `remote.exec.trc10.enabled` is false, throw `UnsupportedOperationException` to fall back to Java actuator.
-- [ ] Ensure we include `asset_id` bytes from `TransferAssetContract.asset_name`.
-- [ ] Ensure AEXT pre‑snapshots include both `from` and `to` for this contract type.
-- [ ] Add concise debug logs (owner, to, amount, asset_id length, toggle state).
+- [x] Keep existing gate in place: if `remote.exec.trc10.enabled` is false, throw `UnsupportedOperationException` to fall back to Java actuator.
+- [x] Ensure we include `asset_id` bytes from `TransferAssetContract.asset_name`.
+- [x] Ensure AEXT pre‑snapshots include both `from` and `to` for this contract type.
+- [x] Add concise debug logs (owner, to, amount, asset_id length, toggle state).
 
 ### C. Rust Dispatch & Handler
 
-- [ ] Replace the TODO at `rust-backend/crates/core/src/service/mod.rs:239–246` to call the new handler.
-- [ ] Implement `execute_trc10_transfer_contract(...)` in `mod.rs`:
-  - [ ] Validate feature flag `remote.trc10_enabled` (defensive check).
-  - [ ] Extract inputs from `transaction` and `metadata`.
-  - [ ] Validate `amount > 0`, `asset_id != None`, and `to.is_some()`.
-  - [ ] Compute `bandwidth_used`.
-  - [ ] AEXT tracking for owner if `aext_mode == "tracked"`; persist after AEXT; populate `aext_map`.
-  - [ ] State changes:
-    - [ ] Default path: single no‑op owner AccountChange (old==new).
-    - [ ] Optional fee path (when `fees.non_vm_blackhole_credit_flat` present):
-      - [ ] Debit owner; emit owner AccountChange; persist.
-      - [ ] Credit blackhole (if mode="blackhole"); emit AccountChange; persist.
-  - [ ] Build `Trc10Change::AssetTransferred` with {owner, to, asset_name=asset_id bytes, token_id=Some(..) only if ascii‑numeric, amount} and attach to result.
-  - [ ] Keep `energy_used=0`, `logs=[]`, `error=None`.
-  - [ ] Deterministic sort of state changes.
+- [x] Replace the TODO at `rust-backend/crates/core/src/service/mod.rs:239–246` to call the new handler.
+- [x] Implement `execute_trc10_transfer_contract(...)` in `mod.rs`:
+  - [x] Validate feature flag `remote.trc10_enabled` (defensive check).
+  - [x] Extract inputs from `transaction` and `metadata`.
+  - [x] Validate `amount > 0`, `asset_id != None`, and `to.is_some()`.
+  - [x] Compute `bandwidth_used`.
+  - [x] AEXT tracking for owner if `aext_mode == "tracked"`; persist after AEXT; populate `aext_map`.
+  - [x] State changes:
+    - [x] Default path: single no‑op owner AccountChange (old==new).
+    - [x] Optional fee path (when `fees.non_vm_blackhole_credit_flat` present):
+      - [x] Debit owner; emit owner AccountChange; persist.
+      - [x] Credit blackhole (if mode="blackhole"); emit AccountChange; persist.
+  - [x] Build `Trc10Change::AssetTransferred` with {owner, to, asset_name=asset_id bytes, token_id=Some(..) only if ascii‑numeric, amount} and attach to result.
+  - [x] Keep `energy_used=0`, `logs=[]`, `error=None`.
+  - [x] Deterministic sort of state changes.
 
 ### D. Java Apply (RuntimeSpiImpl)
 
-- [ ] Add handler to apply `asset_transferred`:
-  - [ ] Determine V1 vs V2 via `DynamicPropertiesStore.getAllowSameTokenName()`.
-  - [ ] Look up or create owner and recipient accounts in `AccountStore`.
-  - [ ] Validate owner TRC‑10 balance; debit/credit asset map:
-    - [ ] V1: `AccountCapsule.asset[name_bytes]`.
-    - [ ] V2: `AccountCapsule.assetV2[token_id]`.
-  - [ ] Persist back to stores; mark accounts dirty for resource sync.
-  - [ ] Logs at INFO for deterministic outcomes (owner, to, amount, asset key).
+- [x] Add handler to apply `asset_transferred`:
+  - [x] Determine V1 vs V2 via `DynamicPropertiesStore.getAllowSameTokenName()`.
+  - [x] Look up or create owner and recipient accounts in `AccountStore`.
+  - [x] Validate owner TRC‑10 balance; debit/credit asset map:
+    - [x] V1: `AccountCapsule.asset[name_bytes]`.
+    - [x] V2: `AccountCapsule.assetV2[token_id]`.
+  - [x] Persist back to stores; mark accounts dirty for resource sync.
+  - [x] Logs at INFO for deterministic outcomes (owner, to, amount, asset key).
 
 ### E. Fees & Parity Rules (Non‑VM)
 
-- [ ] Disable forced TRX deduction for non‑VM by default when `fees.non_vm_blackhole_credit_flat` is None.
-- [ ] When a flat fee is configured:
-  - [ ] Deduct from `owner` TRX; `mode=burn` → no extra AccountChange; `mode=blackhole` → credit blackhole account (requires valid base58 address).
-- [ ] Do not increment EVM nonce for non‑VM.
-- [ ] Keep “Don’t treat TRC‑10 as TRX” — never touch TRX balances for the TRC‑10 transfer itself.
+- [x] Disable forced TRX deduction for non‑VM by default when `fees.non_vm_blackhole_credit_flat` is None.
+- [x] When a flat fee is configured:
+  - [x] Deduct from `owner` TRX; `mode=burn` → no extra AccountChange; `mode=blackhole` → credit blackhole account (requires valid base58 address).
+- [x] Do not increment EVM nonce for non‑VM.
+- [x] Keep "Don't treat TRC‑10 as TRX" — never touch TRX balances for the TRC‑10 transfer itself.
 
 ### F. Determinism & Ordering
 
-- [ ] `energy_used = 0`, `logs = []`.
-- [ ] Deterministic sort of `state_changes` (by address; owner before blackhole if both present).
-- [ ] Stable serialization of AEXT per configured mode (via existing conversion pipeline).
+- [x] `energy_used = 0`, `logs = []`.
+- [x] Deterministic sort of `state_changes` (by address; owner before blackhole if both present).
+- [x] Stable serialization of AEXT per configured mode (via existing conversion pipeline).
 
 ### G. Tests
 
@@ -148,21 +148,21 @@ Status: Design/Planning (do not implement yet)
 
 ### H. Observability
 
-- [ ] Add trace/debug logs in Rust: inputs (owner, to, amount, asset_id len), bandwidth, AEXT path (FREE_NET vs ACCOUNT_NET when available), emitted trc10_changes count.
-- [ ] Add INFO in Java apply with concise summary (owner, to, token key, amount, mode V1/V2).
+- [x] Add trace/debug logs in Rust: inputs (owner, to, amount, asset_id len), bandwidth, AEXT path (FREE_NET vs ACCOUNT_NET when available), emitted trc10_changes count.
+- [x] Add INFO in Java apply with concise summary (owner, to, token key, amount, mode V1/V2).
 
 ### I. Rollout Plan
 
-- [ ] Keep feature off by default in Java (`remote.exec.trc10.enabled=false`).
-- [ ] Land proto/types/conversions + Java apply support first.
+- [x] Keep feature off by default in Java (`remote.exec.trc10.enabled=false`).
+- [x] Land proto/types/conversions + Java apply support first.
 - [ ] Enable on a small replay window; compare CSV parity; verify no unintended extra state changes.
 - [ ] Expand coverage and validate against embedded CSVs.
 
 ### J. Edge Cases & Follow‑Ups
 
 - Asset identifier handling
-  - [ ] Detect V2 `token_id` when `asset_id` bytes are ASCII digits; otherwise treat as V1 name bytes. Preserve raw bytes for V1.
-  - [ ] If V2 id provided but missing in stores, Java apply should create recipient account but fail gracefully on missing asset supply (match actuator behavior).
+  - [x] Detect V2 `token_id` when `asset_id` bytes are ASCII digits; otherwise treat as V1 name bytes. Preserve raw bytes for V1.
+  - [x] If V2 id provided but missing in stores, Java apply should create recipient account but fail gracefully on missing asset supply (match actuator behavior).
 
 - FREE_ASSET_NET / PUBLIC_NET semantics (follow‑up)
   - [ ] Implement issuer free asset limits, public pool counters, and path selection consistent with `BandwidthProcessor`.

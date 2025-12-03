@@ -241,8 +241,7 @@ impl BackendService {
                     return Err("TRC-10 transfers are disabled - falling back to Java".to_string());
                 }
                 debug!("Executing TRANSFER_ASSET_CONTRACT (TRC-10)");
-                // TODO: Implement TRC-10 transfer handler
-                Err("TRC-10 transfers not yet implemented in Rust backend".to_string())
+                self.execute_trc10_transfer_contract(storage_adapter, transaction, context)
             },
             Some(tron_backend_execution::TronContractType::AssetIssueContract) => {
                 if !remote_config.trc10_enabled {
@@ -1394,6 +1393,263 @@ impl BackendService {
     /// Execute an ASSET_ISSUE_CONTRACT (TRC-10 token issuance)
     /// Phase 1: Charge asset issue fee, emit fee deltas, bandwidth, and AEXT tracking
     /// Phase 2 (future): Full TRC-10 persistence via proto extension
+    /// Execute a TRANSFER_ASSET_CONTRACT (TRC-10 transfer, non-VM)
+    ///
+    /// This handler processes TRC-10 token transfers. Unlike TRX transfers:
+    /// - No TRX balance changes (unless fee is configured)
+    /// - Emits a Trc10Change::AssetTransferred for Java to apply to TRC-10 stores
+    /// - energy_used = 0, bandwidth_used > 0
+    /// - AEXT tracking for bandwidth consumption
+    fn execute_trc10_transfer_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::{TronExecutionResult, TronStateChange};
+        use revm_primitives::Address;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        debug!("Executing TRANSFER_ASSET_CONTRACT for owner {}", owner_tron);
+
+        // 1. Extract required fields from transaction
+        let to_address = transaction.to.ok_or("to address is required for TransferAssetContract")?;
+        let to_tron = tron_backend_common::to_tron_address(&to_address);
+
+        // Get asset_id from metadata (Java passes it as metadata.asset_id)
+        let asset_id = transaction.metadata.asset_id.as_ref()
+            .ok_or("asset_id is required for TransferAssetContract")?
+            .clone();
+
+        if asset_id.is_empty() {
+            return Err("asset_id cannot be empty".to_string());
+        }
+
+        // Convert value (U256) to i64 for TRC-10 amount
+        // TransferAssetContract amounts are typically i64
+        let amount_u64: u64 = transaction.value.try_into()
+            .map_err(|_| "TransferAssetContract amount overflow: value too large for i64")?;
+        let amount = amount_u64 as i64;
+
+        if amount <= 0 {
+            return Err("Invalid amount: must be positive".to_string());
+        }
+
+        info!(
+            "TRC-10 Transfer: owner={}, to={}, asset_id_len={}, amount={}",
+            owner_tron, to_tron, asset_id.len(), amount
+        );
+
+        // 2. Get execution configuration
+        let execution_config = self.get_execution_config()?;
+        let fee_config = &execution_config.fees;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
+
+        // 3. Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // 4. Track AEXT for bandwidth if in tracked mode
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for owner (or initialize with defaults)
+            let current_aext = storage_adapter.get_account_aext(&owner)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter.get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &owner,
+                bandwidth_used as i64,
+                context.block_number as i64,
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter.set_account_aext(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
+
+            debug!(
+                "AEXT tracked for TRC-10 transfer: owner={}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                owner_tron, before_aext.net_usage, after_aext.net_usage,
+                before_aext.free_net_usage, after_aext.free_net_usage
+            );
+        }
+
+        // 5. Build state changes
+        let mut state_changes = Vec::new();
+
+        // Load owner account for AccountChange (needed for AEXT passthrough)
+        let owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or("Owner account does not exist".to_string())?;
+
+        // Check if there's a TRX fee configured for non-VM transactions
+        let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
+            Some(flat_fee) => {
+                debug!("Using configured flat fee for TRC-10 transfer: {} SUN", flat_fee);
+                flat_fee
+            },
+            None => {
+                // Default: no TRX fee for TRC-10 transfers (TRON free bandwidth semantics)
+                debug!("No flat fee configured for TRC-10 transfer, using 0 (TRON free bandwidth semantics)");
+                0
+            }
+        };
+
+        if fee_amount > 0 {
+            // Validate owner has enough TRX for fee
+            let fee_u256 = revm_primitives::U256::from(fee_amount);
+            if owner_account.balance < fee_u256 {
+                return Err(format!(
+                    "Insufficient TRX balance for fee: owner has {} SUN, fee is {} SUN",
+                    owner_account.balance, fee_amount
+                ));
+            }
+
+            // Deduct fee from owner
+            let new_owner_balance = owner_account.balance - fee_u256;
+            let new_owner_account = revm_primitives::AccountInfo {
+                balance: new_owner_balance,
+                nonce: owner_account.nonce, // Do NOT increment nonce for non-VM
+                code_hash: owner_account.code_hash,
+                code: owner_account.code.clone(),
+            };
+
+            // Emit owner account change
+            state_changes.push(TronStateChange::AccountChange {
+                address: owner,
+                old_account: Some(owner_account.clone()),
+                new_account: Some(new_owner_account.clone()),
+            });
+
+            // Persist owner account update
+            storage_adapter
+                .set_account(owner, new_owner_account.clone())
+                .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+            // Handle fee crediting based on mode
+            match fee_config.mode.as_str() {
+                "burn" => {
+                    debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
+                },
+                "blackhole" => {
+                    if !fee_config.blackhole_address_base58.is_empty() {
+                        match tron_backend_common::from_tron_address(&fee_config.blackhole_address_base58) {
+                            Ok(blackhole_bytes) => {
+                                let blackhole_address = revm_primitives::Address::from_slice(&blackhole_bytes);
+
+                                let blackhole_account = storage_adapter.get_account(&blackhole_address)
+                                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
+                                    .unwrap_or_default();
+
+                                let new_blackhole_balance = blackhole_account.balance + fee_u256;
+                                let new_blackhole_account = revm_primitives::AccountInfo {
+                                    balance: new_blackhole_balance,
+                                    nonce: blackhole_account.nonce,
+                                    code_hash: blackhole_account.code_hash,
+                                    code: blackhole_account.code.clone(),
+                                };
+
+                                let old_blackhole_account = if blackhole_account.balance.is_zero() && blackhole_account.nonce == 0 {
+                                    None
+                                } else {
+                                    Some(blackhole_account)
+                                };
+
+                                state_changes.push(TronStateChange::AccountChange {
+                                    address: blackhole_address,
+                                    old_account: old_blackhole_account,
+                                    new_account: Some(new_blackhole_account.clone()),
+                                });
+
+                                storage_adapter
+                                    .set_account(blackhole_address, new_blackhole_account.clone())
+                                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
+
+                                debug!("Credited fee {} SUN to blackhole address {}",
+                                       fee_amount, fee_config.blackhole_address_base58);
+                            },
+                            Err(e) => {
+                                warn!("Invalid blackhole address '{}': {}, falling back to burn mode",
+                                      fee_config.blackhole_address_base58, e);
+                            }
+                        }
+                    }
+                },
+                _ => {
+                    debug!("Unknown fee mode '{}', defaulting to burn", fee_config.mode);
+                }
+            }
+        } else {
+            // No TRX fee - emit a no-op AccountChange for owner to carry AEXT
+            // This ensures the owner account is included in state changes for CSV parity
+            state_changes.push(TronStateChange::AccountChange {
+                address: owner,
+                old_account: Some(owner_account.clone()),
+                new_account: Some(owner_account.clone()), // Same account (no-op)
+            });
+        }
+
+        // 6. Sort state changes deterministically by address for CSV parity
+        state_changes.sort_by_key(|change| match change {
+            TronStateChange::AccountChange { address, .. } => *address,
+            _ => Address::ZERO,
+        });
+
+        // 7. Determine token_id if asset_id bytes are ASCII digits (V2 path)
+        let token_id = if asset_id.iter().all(|&b| b.is_ascii_digit()) {
+            match String::from_utf8(asset_id.clone()) {
+                Ok(id_str) => Some(id_str),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        // 8. Build TRC-10 Asset Transferred change for Phase 2
+        let trc10_change = tron_backend_execution::Trc10Change::AssetTransferred(
+            tron_backend_execution::Trc10AssetTransferred {
+                owner_address: owner,
+                to_address,
+                asset_name: asset_id.clone(),
+                token_id,
+                amount,
+            }
+        );
+
+        info!(
+            "TRC-10 Transfer completed: owner={}, to={}, asset_id_len={}, amount={}, fee={} SUN, state_changes={}, bandwidth={}",
+            owner_tron, to_tron, asset_id.len(), amount, fee_amount, state_changes.len(), bandwidth_used
+        );
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(), // No return data for TRC-10 transfers
+            energy_used: 0, // Non-VM transactions use 0 energy
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(), // No logs for TRC-10 transfers
+            error: None,
+            aext_map,
+            freeze_changes: vec![], // Not applicable for TRC-10 transfers
+            global_resource_changes: vec![], // Not applicable for TRC-10 transfers
+            trc10_changes: vec![trc10_change], // Phase 2: emit TRC-10 semantic change
+            vote_changes: vec![], // Not applicable for TRC-10 transfers
+        })
+    }
+
     fn execute_asset_issue_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
