@@ -499,10 +499,17 @@ public class RuntimeSpiImpl implements Runtime {
     }
 
     try {
-      org.tron.core.store.AccountStore accountStore = context.getStoreFactory()
-          .getChainBaseManager().getAccountStore();
+      org.tron.core.ChainBaseManager chainBaseManager = context.getStoreFactory()
+          .getChainBaseManager();
+      org.tron.core.store.AccountStore accountStore = chainBaseManager.getAccountStore();
+      org.tron.core.store.VotesStore votesStore = chainBaseManager.getVotesStore();
+
       if (accountStore == null) {
         logger.warn("AccountStore not available, cannot apply VoteChanges");
+        return;
+      }
+      if (votesStore == null) {
+        logger.warn("VotesStore not available, cannot apply VoteChanges");
         return;
       }
 
@@ -516,19 +523,36 @@ public class RuntimeSpiImpl implements Runtime {
           continue;
         }
 
-        // Replace votes list with new values
-        accountCapsule.clearVotes();
-        for (org.tron.core.execution.spi.ExecutionSPI.VoteEntry voteEntry : voteChange.getVotes()) {
-          accountCapsule.addVotes(
-              com.google.protobuf.ByteString.copyFrom(voteEntry.getVoteAddress()),
-              voteEntry.getVoteCount());
+        // Get or create VotesCapsule (matches VoteWitnessActuator pattern)
+        org.tron.core.capsule.VotesCapsule votesCapsule;
+        if (!votesStore.has(ownerAddress)) {
+          votesCapsule = new org.tron.core.capsule.VotesCapsule(
+              com.google.protobuf.ByteString.copyFrom(ownerAddress),
+              accountCapsule.getVotesList());
+        } else {
+          votesCapsule = votesStore.get(ownerAddress);
         }
 
-        // Persist
-        accountStore.put(ownerAddress, accountCapsule);
+        // Clear old votes from both capsules
+        accountCapsule.clearVotes();
+        votesCapsule.clearNewVotes();
+
+        // Add new votes to both capsules
+        for (org.tron.core.execution.spi.ExecutionSPI.VoteEntry voteEntry : voteChange.getVotes()) {
+          com.google.protobuf.ByteString voteAddress =
+              com.google.protobuf.ByteString.copyFrom(voteEntry.getVoteAddress());
+          accountCapsule.addVotes(voteAddress, voteEntry.getVoteCount());
+          votesCapsule.addNewVotes(voteAddress, voteEntry.getVoteCount());
+        }
+
+        // Persist to both stores (matches VoteWitnessActuator pattern)
+        accountStore.put(accountCapsule.createDbKey(), accountCapsule);
+        votesStore.put(ownerAddress, votesCapsule);
+
+        // Mark dirty for resource sync
         org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(ownerAddress);
 
-        logger.debug("Applied VoteChange to Account.votes: owner={}, votes={}",
+        logger.debug("Applied VoteChange to Account.votes and VotesStore: owner={}, votes={}",
             org.tron.common.utils.ByteArray.toHexString(ownerAddress),
             voteChange.getVotes().size());
       }
