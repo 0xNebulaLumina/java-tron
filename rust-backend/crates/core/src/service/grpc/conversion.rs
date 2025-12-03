@@ -416,6 +416,17 @@ impl BackendService {
             }
         }).collect();
 
+        // Convert VoteChange from execution result to protobuf (Phase 2: Account.votes update)
+        let vote_changes: Vec<crate::backend::VoteChange> = result.vote_changes.iter().map(|change| {
+            crate::backend::VoteChange {
+                owner_address: add_tron_address_prefix(&change.owner_address),
+                votes: change.votes.iter().map(|v| crate::backend::Vote {
+                    vote_address: add_tron_address_prefix(&v.vote_address),
+                    vote_count: v.vote_count as i64,
+                }).collect(),
+            }
+        }).collect();
+
         let error_message = result.error.unwrap_or_default();
 
         ExecuteTransactionResponse {
@@ -432,6 +443,7 @@ impl BackendService {
                 freeze_changes, // Converted from TronExecutionResult
                 global_resource_changes, // Converted from TronExecutionResult
                 trc10_changes, // Phase 2: Converted TRC-10 semantic changes
+                vote_changes, // Phase 2: VoteChange for Account.votes update
             }),
             success: result.success,
             error_message,

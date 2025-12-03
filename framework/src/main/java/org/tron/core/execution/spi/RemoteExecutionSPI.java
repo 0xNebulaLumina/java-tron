@@ -76,9 +76,11 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             // Call grpcClient.executeTransaction()
             ExecuteTransactionResponse response = grpcClient.executeTransaction(request);
 
-            // Convert gRPC response to ExecutionProgramResult
-            return ExecutionProgramResult.fromExecutionResult(
-                convertExecuteTransactionResponse(response));
+            // Convert gRPC response to ExecutionResult
+            ExecutionResult executionResult = convertExecuteTransactionResponse(response);
+
+            // Convert to ExecutionProgramResult
+            return ExecutionProgramResult.fromExecutionResult(executionResult);
 
           } catch (UnsupportedOperationException | IllegalArgumentException e) {
             logger.warn(
@@ -97,6 +99,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           }
         });
   }
+
+  
 
   @Override
   public CompletableFuture<ExecutionProgramResult> callContract(TransactionContext context)
@@ -706,7 +710,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           0, // bandwidthUsed
           new ArrayList<>(), // freezeChanges
           new ArrayList<>(), // globalResourceChanges
-          new ArrayList<>() // trc10Changes
+          new ArrayList<>(), // trc10Changes
+          new ArrayList<>()  // voteChanges
           );
     }
 
@@ -901,6 +906,24 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       }
     }
 
+    // Convert protobuf VoteChange (Phase 2: Account.votes update after VoteWitness)
+    List<VoteChange> voteChanges = new ArrayList<>();
+    for (tron.backend.BackendOuterClass.VoteChange protoVoteChange : protoResult.getVoteChangesList()) {
+      List<VoteEntry> votes = new ArrayList<>();
+      for (tron.backend.BackendOuterClass.Vote protoVote : protoVoteChange.getVotesList()) {
+        votes.add(new VoteEntry(
+            protoVote.getVoteAddress().toByteArray(),
+            protoVote.getVoteCount()));
+      }
+      voteChanges.add(new VoteChange(
+          protoVoteChange.getOwnerAddress().toByteArray(),
+          votes));
+
+      logger.debug("Parsed VoteChange: owner={}, votes={}",
+          org.tron.common.utils.ByteArray.toHexString(protoVoteChange.getOwnerAddress().toByteArray()),
+          votes.size());
+    }
+
     // Report metrics if callback is registered
     if (metricsCallback != null) {
       metricsCallback.onMetric("remote.energy_used", protoResult.getEnergyUsed());
@@ -910,6 +933,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               ? 1.0
               : 0.0);
       metricsCallback.onMetric("remote.freeze_changes_count", freezeChanges.size());
+      metricsCallback.onMetric("remote.vote_changes_count", voteChanges.size());
     }
 
     return new ExecutionResult(
@@ -923,7 +947,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         protoResult.getBandwidthUsed(),
         freezeChanges,
         globalResourceChanges,
-        trc10Changes);
+        trc10Changes,
+        voteChanges);
   }
 
   /**

@@ -125,6 +125,7 @@ public interface ExecutionSPI {
     private final List<FreezeLedgerChange> freezeChanges;
     private final List<GlobalResourceTotalsChange> globalResourceChanges;
     private final List<Trc10Change> trc10Changes;
+    private final List<VoteChange> voteChanges;
 
     public ExecutionResult(
         boolean success,
@@ -137,7 +138,8 @@ public interface ExecutionSPI {
         long bandwidthUsed,
         List<FreezeLedgerChange> freezeChanges,
         List<GlobalResourceTotalsChange> globalResourceChanges,
-        List<Trc10Change> trc10Changes) {
+        List<Trc10Change> trc10Changes,
+        List<VoteChange> voteChanges) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -149,6 +151,7 @@ public interface ExecutionSPI {
       this.freezeChanges = freezeChanges;
       this.globalResourceChanges = globalResourceChanges;
       this.trc10Changes = trc10Changes;
+      this.voteChanges = voteChanges;
     }
 
     // Getters
@@ -194,6 +197,10 @@ public interface ExecutionSPI {
 
     public List<Trc10Change> getTrc10Changes() {
       return trc10Changes;
+    }
+
+    public List<VoteChange> getVoteChanges() {
+      return voteChanges;
     }
   }
 
@@ -507,6 +514,50 @@ public interface ExecutionSPI {
 
     public boolean hasAssetIssued() {
       return assetIssued != null;
+    }
+  }
+
+  /**
+   * Vote entry for VoteChange - represents a single vote for a witness.
+   */
+  class VoteEntry {
+    private final byte[] voteAddress;  // 21-byte Tron witness address
+    private final long voteCount;
+
+    public VoteEntry(byte[] voteAddress, long voteCount) {
+      this.voteAddress = voteAddress;
+      this.voteCount = voteCount;
+    }
+
+    public byte[] getVoteAddress() {
+      return voteAddress;
+    }
+
+    public long getVoteCount() {
+      return voteCount;
+    }
+  }
+
+  /**
+   * VoteChange carries updated votes for an account after VoteWitness execution.
+   * Java should apply this to Account.votes to maintain parity with embedded mode.
+   * This ensures correct old_votes seeding on subsequent votes in the same or later epochs.
+   */
+  class VoteChange {
+    private final byte[] ownerAddress;  // 21-byte Tron address of the voter
+    private final java.util.List<VoteEntry> votes;  // New votes list (replaces Account.votes)
+
+    public VoteChange(byte[] ownerAddress, java.util.List<VoteEntry> votes) {
+      this.ownerAddress = ownerAddress;
+      this.votes = votes;
+    }
+
+    public byte[] getOwnerAddress() {
+      return ownerAddress;
+    }
+
+    public java.util.List<VoteEntry> getVotes() {
+      return votes;
     }
   }
 

@@ -115,4 +115,11 @@ emit_storage_changes = false
 # Recommendation: Set to "hybrid" for full CSV digest parity with embedded execution
 # In "hybrid" mode, Java passes its pre-execution resource usage values via gRPC, and the Rust backend
 # echoes these values in AccountInfo for both old and new accounts, ensuring byte-level parity for unchanged fields.
-accountinfo_aext_mode = "hybrid" 
+accountinfo_aext_mode = "hybrid"
+
+# Seed old_votes from Account.votes on first VotesRecord creation (matches embedded behavior)
+# When true: On first VoteWitness for an account, old_votes is seeded from Account.votes field
+# When false: On first VoteWitness, old_votes is empty (legacy remote behavior)
+# This flag ensures maintenance vote delta computation is correct (new_votes - old_votes)
+# Default: true to match embedded semantics
+vote_witness_seed_old_from_account = true 

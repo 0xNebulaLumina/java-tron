@@ -613,6 +613,8 @@ message ExecutionResult {
   repeated GlobalResourceTotalsChange global_resource_changes = 11;
   // Phase 2: TRC-10 semantic changes
   repeated Trc10Change trc10_changes = 12;
+  // Phase 2: Vote changes (for Account.votes update after VoteWitness)
+  repeated VoteChange vote_changes = 13;
 }
 
 // Account information for account changes
@@ -727,6 +729,20 @@ message Trc10Change {
   oneof kind {
     Trc10AssetIssued asset_issued = 1;
   }
+}
+
+// Vote entry for VoteChange
+message Vote {
+  bytes vote_address = 1;  // 21-byte Tron witness address (0x41 prefix + 20 bytes)
+  int64 vote_count = 2;    // Number of votes for this witness
+}
+
+// VoteChange carries updated votes for an account after VoteWitness execution.
+// Java should apply this to Account.votes to maintain parity with embedded mode.
+// This ensures correct old_votes seeding on subsequent votes in the same or later epochs.
+message VoteChange {
+  bytes owner_address = 1;   // 21-byte Tron address of the voter
+  repeated Vote votes = 2;   // New votes list (replaces Account.votes)
 }
 
 message CallContractRequest {

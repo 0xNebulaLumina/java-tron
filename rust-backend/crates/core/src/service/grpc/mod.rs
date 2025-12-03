@@ -995,16 +995,17 @@ impl crate::backend::backend_server::Backend for BackendService {
                         freeze_changes: vec![],
                         global_resource_changes: vec![],
                         trc10_changes: vec![],
+                        vote_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Transaction conversion error: {}", e),
                 }));
             }
         };
-        
+
         let context = match self.convert_protobuf_context(req.context.as_ref()) {
             Ok(ctx) => {
-                debug!("Converted context - block_gas_limit: {}, energy_price: {}", 
+                debug!("Converted context - block_gas_limit: {}, energy_price: {}",
                        ctx.block_gas_limit, ctx.energy_price);
                 ctx
             },
@@ -1024,6 +1025,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                         freeze_changes: vec![],
                         global_resource_changes: vec![],
                         trc10_changes: vec![],
+                        vote_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Context conversion error: {}", e),
@@ -1178,6 +1180,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                         freeze_changes: vec![],
                         global_resource_changes: vec![],
                         trc10_changes: vec![],
+                        vote_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Execution error: {}", e),
@@ -1185,7 +1188,7 @@ impl crate::backend::backend_server::Backend for BackendService {
             }
         }
     }
-    
+
     async fn call_contract(&self, request: Request<CallContractRequest>) -> Result<Response<CallContractResponse>, Status> {
         debug!("Call contract request: {:?}", request.get_ref());
 
