@@ -81,6 +81,9 @@ public class RuntimeSpiImpl implements Runtime {
       // Apply TRC-10 changes to local database (Phase 2)
       applyTrc10Changes(executionResult, context);
 
+      // Apply Vote changes to local database (Phase 2)
+      applyVoteChanges(executionResult, context);
+
       // Since ExecutionProgramResult extends ProgramResult, we can use it directly
       context.setProgramResult(executionResult);
 
@@ -471,6 +474,71 @@ public class RuntimeSpiImpl implements Runtime {
       logger.error("Failed to apply TRC-10 changes for transaction: {}, error: {}",
           context.getTrxCap().getTransactionId(), e.getMessage(), e);
       // Don't throw exception - maintain transaction flow
+    }
+  }
+
+  /**
+   * Apply VoteChanges to Account.votes to maintain parity with embedded mode.
+   * Toggle with -Dremote.exec.apply.vote=false to disable if needed.
+   */
+  private void applyVoteChanges(ExecutionProgramResult result, TransactionContext context) {
+    // JVM gate: default true
+    boolean applyEnabled = Boolean.parseBoolean(
+        System.getProperty("remote.exec.apply.vote", "true"));
+
+    if (!applyEnabled) {
+      logger.debug("Vote changes application disabled by JVM property (-Dremote.exec.apply.vote=false) for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    if (result.getVoteChanges() == null || result.getVoteChanges().isEmpty()) {
+      logger.debug("No VoteChanges to apply for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    try {
+      org.tron.core.store.AccountStore accountStore = context.getStoreFactory()
+          .getChainBaseManager().getAccountStore();
+      if (accountStore == null) {
+        logger.warn("AccountStore not available, cannot apply VoteChanges");
+        return;
+      }
+
+      for (org.tron.core.execution.spi.ExecutionSPI.VoteChange voteChange : result.getVoteChanges()) {
+        byte[] ownerAddress = voteChange.getOwnerAddress();
+        org.tron.core.capsule.AccountCapsule accountCapsule = accountStore.get(ownerAddress);
+
+        if (accountCapsule == null) {
+          logger.warn("Account not found for VoteChange: {}",
+              org.tron.common.utils.ByteArray.toHexString(ownerAddress));
+          continue;
+        }
+
+        // Replace votes list with new values
+        accountCapsule.clearVotes();
+        for (org.tron.core.execution.spi.ExecutionSPI.VoteEntry voteEntry : voteChange.getVotes()) {
+          accountCapsule.addVotes(
+              com.google.protobuf.ByteString.copyFrom(voteEntry.getVoteAddress()),
+              voteEntry.getVoteCount());
+        }
+
+        // Persist
+        accountStore.put(ownerAddress, accountCapsule);
+        org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(ownerAddress);
+
+        logger.debug("Applied VoteChange to Account.votes: owner={}, votes={}",
+            org.tron.common.utils.ByteArray.toHexString(ownerAddress),
+            voteChange.getVotes().size());
+      }
+
+      logger.info("Successfully applied {} VoteChanges for transaction: {}",
+          result.getVoteChanges().size(), context.getTrxCap().getTransactionId());
+
+    } catch (Exception e) {
+      logger.error("Failed to apply VoteChanges for transaction: {}, error: {}",
+          context.getTrxCap().getTransactionId(), e.getMessage(), e);
     }
   }
 

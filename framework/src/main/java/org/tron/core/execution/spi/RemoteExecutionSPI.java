@@ -79,12 +79,6 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             // Convert gRPC response to ExecutionResult
             ExecutionResult executionResult = convertExecuteTransactionResponse(response);
 
-            // Apply VoteChanges to Account.votes (Phase 2: Account.votes update after VoteWitness)
-            // This ensures Account.votes is populated for correct old_votes seeding in subsequent epochs
-            if (executionResult.getVoteChanges() != null && !executionResult.getVoteChanges().isEmpty()) {
-              applyVoteChanges(context, executionResult.getVoteChanges());
-            }
-
             // Convert to ExecutionProgramResult
             return ExecutionProgramResult.fromExecutionResult(executionResult);
 
@@ -106,47 +100,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         });
   }
 
-  /**
-   * Apply VoteChanges to Account.votes to maintain parity with embedded mode.
-   * This ensures correct old_votes seeding for subsequent VoteWitness executions.
-   *
-   * @param context Transaction context with access to account store
-   * @param voteChanges List of vote changes to apply
-   */
-  private void applyVoteChanges(TransactionContext context, List<VoteChange> voteChanges) {
-    org.tron.core.store.AccountStore accountStore = context.getStoreFactory()
-        .getChainBaseManager().getAccountStore();
-    if (accountStore == null) {
-      logger.warn("AccountStore not available, cannot apply VoteChanges");
-      return;
-    }
-
-    for (VoteChange voteChange : voteChanges) {
-      byte[] ownerAddress = voteChange.getOwnerAddress();
-      org.tron.core.capsule.AccountCapsule accountCapsule = accountStore.get(ownerAddress);
-
-      if (accountCapsule == null) {
-        logger.warn("Account not found for VoteChange: {}",
-            org.tron.common.utils.ByteArray.toHexString(ownerAddress));
-        continue;
-      }
-
-      // Clear existing votes and add new ones (same as VoteWitnessActuator in embedded mode)
-      accountCapsule.clearVotes();
-      for (VoteEntry voteEntry : voteChange.getVotes()) {
-        accountCapsule.addVotes(
-            com.google.protobuf.ByteString.copyFrom(voteEntry.getVoteAddress()),
-            voteEntry.getVoteCount());
-      }
-
-      // Persist the updated account
-      accountStore.put(ownerAddress, accountCapsule);
-
-      logger.debug("Applied VoteChange to Account.votes: owner={}, votes={}",
-          org.tron.common.utils.ByteArray.toHexString(ownerAddress),
-          voteChange.getVotes().size());
-    }
-  }
+  
 
   @Override
   public CompletableFuture<ExecutionProgramResult> callContract(TransactionContext context)
