@@ -352,16 +352,18 @@ impl BackendService {
 
         // Start with empty state changes
         let mut state_changes = Vec::new();
-        
-        // Load sender account
-        let sender_account = storage_adapter.get_account(&transaction.from)
-            .map_err(|e| format!("Failed to load sender account: {}", e))?
-            .unwrap_or_default();
-        
-        // Load recipient account  
-        let recipient_account = storage_adapter.get_account(&to_address)
-            .map_err(|e| format!("Failed to load recipient account: {}", e))?
-            .unwrap_or_default();
+
+        // Load sender account (track existence)
+        let sender_opt = storage_adapter
+            .get_account(&transaction.from)
+            .map_err(|e| format!("Failed to load sender account: {}", e))?;
+        let sender_account = sender_opt.clone().unwrap_or_default();
+
+        // Load recipient account (track existence)
+        let recipient_opt = storage_adapter
+            .get_account(&to_address)
+            .map_err(|e| format!("Failed to load recipient account: {}", e))?;
+        let recipient_account = recipient_opt.clone().unwrap_or_default();
         
         // Phase 3 Fix: Only calculate fee if explicitly configured for non-VM transactions
         let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
@@ -415,7 +417,8 @@ impl BackendService {
         };
         
         // Add recipient account change
-        let old_recipient_account = if recipient_account.balance.is_zero() && recipient_account.nonce == 0 {
+        // Creation should be based on true storage absence, not zero balance
+        let old_recipient_account = if recipient_opt.is_none() {
             None // Account creation
         } else {
             Some(recipient_account)
@@ -445,10 +448,10 @@ impl BackendService {
                             Ok(blackhole_bytes) => {
                                 let blackhole_address = revm_primitives::Address::from_slice(&blackhole_bytes);
                                 
-                                // Load blackhole account
-                                let blackhole_account = storage_adapter.get_account(&blackhole_address)
-                                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
-                                    .unwrap_or_default();
+                                // Load blackhole account (track existence)
+                                let blackhole_opt = storage_adapter.get_account(&blackhole_address)
+                                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?;
+                                let blackhole_account = blackhole_opt.clone().unwrap_or_default();
                                 
                                 // Credit blackhole account with fee
                                 let new_blackhole_balance = blackhole_account.balance + revm_primitives::U256::from(fee_amount);
@@ -460,7 +463,7 @@ impl BackendService {
                                 };
                                 
                                 // Add blackhole account change
-                                let old_blackhole_account = if blackhole_account.balance.is_zero() && blackhole_account.nonce == 0 {
+                                let old_blackhole_account = if blackhole_opt.is_none() {
                                     None // Account creation if needed
                                 } else {
                                     Some(blackhole_account)
