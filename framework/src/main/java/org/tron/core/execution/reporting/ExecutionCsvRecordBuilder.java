@@ -130,10 +130,10 @@ public class ExecutionCsvRecordBuilder {
 
     // Handle state changes and domain extraction
     if (programResult instanceof ExecutionProgramResult) {
-      extractFromExecutionProgramResult(builder, (ExecutionProgramResult) programResult);
+      extractFromExecutionProgramResult(builder, (ExecutionProgramResult) programResult, trace);
     } else {
       // For embedded execution, get state changes from journal
-      extractFromEmbeddedExecution(builder, programResult);
+      extractFromEmbeddedExecution(builder, programResult, trace);
     }
   }
 
@@ -141,7 +141,8 @@ public class ExecutionCsvRecordBuilder {
    * Extract domain data from ExecutionProgramResult (remote execution).
    */
   private static void extractFromExecutionProgramResult(
-      ExecutionCsvRecord.Builder builder, ExecutionProgramResult execResult) {
+      ExecutionCsvRecord.Builder builder, ExecutionProgramResult execResult,
+      TransactionTrace trace) {
 
     List<StateChange> stateChanges = execResult.getStateChanges();
 
@@ -197,6 +198,10 @@ public class ExecutionCsvRecordBuilder {
     // Domain: Account resource usage (AEXT) - parsed from account state change bytes
     List<DomainCanonicalizer.AccountResourceUsageDelta> aextDeltas =
         DomainCanonicalizer.extractAccountResourceUsage(stateChanges);
+
+    // Enrich AEXT deltas with accurate net_limit and energy_limit using processor logic
+    AccountLimitEnricher.enrichLimits(aextDeltas, trace, AccountLimitEnricher.Mode.REMOTE);
+
     DomainCanonicalizer.DomainResult aextResult =
         DomainCanonicalizer.accountAextToJsonAndDigest(aextDeltas);
     builder.accountResourceUsageDomain(aextResult);
@@ -335,7 +340,8 @@ public class ExecutionCsvRecordBuilder {
    * Extract domain data from embedded execution (using journals).
    */
   private static void extractFromEmbeddedExecution(
-      ExecutionCsvRecord.Builder builder, ProgramResult programResult) {
+      ExecutionCsvRecord.Builder builder, ProgramResult programResult,
+      TransactionTrace trace) {
 
     // Get state changes from journal (don't finalize here, just get current changes)
     List<StateChange> journaledChanges = StateChangeJournalRegistry.getCurrentTransactionStateChanges();
@@ -403,6 +409,10 @@ public class ExecutionCsvRecordBuilder {
     // Domain: Account resource usage (AEXT) - parsed from account state change bytes
     List<DomainCanonicalizer.AccountResourceUsageDelta> aextDeltas =
         DomainCanonicalizer.extractAccountResourceUsage(journaledChanges);
+
+    // Enrich AEXT deltas with accurate net_limit and energy_limit using processor logic
+    AccountLimitEnricher.enrichLimits(aextDeltas, trace, AccountLimitEnricher.Mode.EMBEDDED);
+
     DomainCanonicalizer.DomainResult aextResult =
         DomainCanonicalizer.accountAextToJsonAndDigest(aextDeltas);
     builder.accountResourceUsageDomain(aextResult);

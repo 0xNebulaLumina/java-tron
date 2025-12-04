@@ -59,6 +59,9 @@ public class PreStateSnapshotRegistry {
     // Key: ownerHex + ":" + resourceType + ":" + recipientHex -> FreezeSnapshot
     private final Map<String, FreezeSnapshot> freezes = new HashMap<>();
 
+    // Key: addressHex -> AccountFrozenTotals (per-account frozen sums for limit computation)
+    private final Map<String, AccountFrozenTotals> accountFrozenTotals = new HashMap<>();
+
     // Global resource totals
     private long totalNetWeight;
     private long totalNetLimit;
@@ -71,6 +74,7 @@ public class PreStateSnapshotRegistry {
       trc10Balances.clear();
       votes.clear();
       freezes.clear();
+      accountFrozenTotals.clear();
       globalsInitialized = false;
     }
   }
@@ -134,6 +138,29 @@ public class PreStateSnapshotRegistry {
 
     public long getExpireTimeMs() {
       return expireTimeMs;
+    }
+  }
+
+  /**
+   * Per-account frozen totals for computing net_limit and energy_limit.
+   * These are the inputs to BandwidthProcessor.calculateGlobalNetLimit() and
+   * EnergyProcessor.calculateGlobalEnergyLimit().
+   */
+  public static class AccountFrozenTotals {
+    private final long frozenForBandwidth;
+    private final long frozenForEnergy;
+
+    public AccountFrozenTotals(long frozenForBandwidth, long frozenForEnergy) {
+      this.frozenForBandwidth = frozenForBandwidth;
+      this.frozenForEnergy = frozenForEnergy;
+    }
+
+    public long getFrozenForBandwidth() {
+      return frozenForBandwidth;
+    }
+
+    public long getFrozenForEnergy() {
+      return frozenForEnergy;
     }
   }
 
@@ -420,6 +447,56 @@ public class PreStateSnapshotRegistry {
   }
 
   // ================================
+  // Account Frozen Totals Capture
+  // ================================
+
+  /**
+   * Capture per-account frozen totals for computing net_limit and energy_limit.
+   *
+   * @param address account address bytes
+   * @param frozenForBandwidth total frozen balance for bandwidth (from getAllFrozenBalanceForBandwidth)
+   * @param frozenForEnergy total frozen balance for energy (from getAllFrozenBalanceForEnergy)
+   */
+  public static void captureAccountFrozenTotals(byte[] address, long frozenForBandwidth,
+                                                long frozenForEnergy) {
+    PreStateSnapshot snapshot = snapshotThreadLocal.get();
+    if (snapshot != null) {
+      String key = ByteArray.toHexString(address).toLowerCase();
+      snapshot.accountFrozenTotals.put(key, new AccountFrozenTotals(frozenForBandwidth, frozenForEnergy));
+      if (logger.isTraceEnabled()) {
+        logger.trace("Captured account frozen totals: address={}, frozenBw={}, frozenEnergy={}",
+                     key, frozenForBandwidth, frozenForEnergy);
+      }
+    }
+  }
+
+  /**
+   * Get captured frozen totals for an account.
+   *
+   * @param address account address bytes
+   * @return AccountFrozenTotals if captured, or null if not found
+   */
+  public static AccountFrozenTotals getAccountFrozenTotals(byte[] address) {
+    PreStateSnapshot snapshot = snapshotThreadLocal.get();
+    if (snapshot != null) {
+      String key = ByteArray.toHexString(address).toLowerCase();
+      return snapshot.accountFrozenTotals.get(key);
+    }
+    return null;
+  }
+
+  /**
+   * Get all captured account frozen totals.
+   */
+  public static Map<String, AccountFrozenTotals> getAllAccountFrozenTotals() {
+    PreStateSnapshot snapshot = snapshotThreadLocal.get();
+    if (snapshot != null) {
+      return Collections.unmodifiableMap(snapshot.accountFrozenTotals);
+    }
+    return Collections.emptyMap();
+  }
+
+  // ================================
   // Helper Methods
   // ================================
 
@@ -448,10 +525,12 @@ public class PreStateSnapshotRegistry {
     if (snapshot == null) {
       return "No pre-state snapshot active";
     }
-    return String.format("PreStateSnapshot: %d TRC-10 balances, %d votes, %d freezes, globals=%s",
-                         snapshot.trc10Balances.size(),
-                         snapshot.votes.size(),
-                         snapshot.freezes.size(),
-                         snapshot.globalsInitialized ? "captured" : "not captured");
+    return String.format(
+        "PreStateSnapshot: %d TRC-10 balances, %d votes, %d freezes, %d account frozen totals, globals=%s",
+        snapshot.trc10Balances.size(),
+        snapshot.votes.size(),
+        snapshot.freezes.size(),
+        snapshot.accountFrozenTotals.size(),
+        snapshot.globalsInitialized ? "captured" : "not captured");
   }
 }

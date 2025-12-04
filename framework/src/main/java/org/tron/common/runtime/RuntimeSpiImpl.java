@@ -1,6 +1,9 @@
 package org.tron.common.runtime;
 
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import lombok.extern.slf4j.Slf4j;
 import org.tron.core.capsule.AccountCapsule;
@@ -12,6 +15,7 @@ import org.tron.core.execution.reporting.PreStateSnapshotRegistry;
 
 import org.tron.core.execution.spi.ExecutionProgramResult;
 import org.tron.core.execution.spi.ExecutionSPI;
+import org.tron.core.execution.spi.ExecutionSPI.StateChange;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.Protocol.Account;
@@ -1318,6 +1322,43 @@ public class RuntimeSpiImpl implements Runtime {
 
         PreStateSnapshotRegistry.captureGlobalTotals(
             totalNetWeight, totalNetLimit, totalEnergyWeight, totalEnergyLimit, totalTronPowerWeight);
+      }
+
+      // 4. Capture per-account frozen totals for limit computation
+      // Build set of affected addresses from state changes (empty key = account changes)
+      // and freeze changes owners
+      Set<String> affectedAddresses = new HashSet<>();
+      List<StateChange> stateChanges = result.getStateChanges();
+      if (stateChanges != null) {
+        for (StateChange sc : stateChanges) {
+          // Empty key means account state change
+          if (sc.getKey() == null || sc.getKey().length == 0) {
+            if (sc.getAddress() != null) {
+              affectedAddresses.add(org.tron.common.utils.ByteArray.toHexString(sc.getAddress()).toLowerCase());
+            }
+          }
+        }
+      }
+      // Also include freeze change owners
+      if (result.getFreezeChanges() != null) {
+        for (ExecutionSPI.FreezeLedgerChange freezeChange : result.getFreezeChanges()) {
+          if (freezeChange.getOwnerAddress() != null) {
+            affectedAddresses.add(
+                org.tron.common.utils.ByteArray.toHexString(freezeChange.getOwnerAddress()).toLowerCase());
+          }
+        }
+      }
+
+      // Capture frozen totals for each affected address
+      for (String addressHex : affectedAddresses) {
+        byte[] addressBytes = org.tron.common.utils.ByteArray.fromHexString(addressHex);
+        AccountCapsule account = accountStore.get(addressBytes);
+        if (account != null) {
+          long frozenForBandwidth = account.getAllFrozenBalanceForBandwidth();
+          long frozenForEnergy = account.getAllFrozenBalanceForEnergy();
+          PreStateSnapshotRegistry.captureAccountFrozenTotals(
+              addressBytes, frozenForBandwidth, frozenForEnergy);
+        }
       }
 
       logger.debug("Captured pre-state snapshot for transaction: {} - {}",

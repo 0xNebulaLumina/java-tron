@@ -29,60 +29,59 @@ Key References
 Implementation Plan
 
 1) Snapshot Inputs (Remote Pre‑State)
-- [ ] Add per‑account frozen snapshots to `PreStateSnapshotRegistry`:
+- [x] Add per‑account frozen snapshots to `PreStateSnapshotRegistry`:
   - API: `captureAccountFrozenTotals(byte[] address, long frozenBw, long frozenEnergy)`
-  - API: `getAccountFrozenTotals(byte[] address)` → `(frozenBw, frozenEnergy)`
-- [ ] In `RuntimeSpiImpl.capturePreStateSnapshot(...)`:
-  - [ ] Build set of affected addresses from `ExecutionProgramResult.getStateChanges()` (empty key ⇒ account changes) and from `getFreezeChanges()` owners.
-  - [ ] For each address, load `AccountCapsule` and capture `getAllFrozenBalanceForBandwidth()` and `getAllFrozenBalanceForEnergy()`.
-  - [ ] Ensure we already capture global totals pre‑state (present):
+  - API: `getAccountFrozenTotals(byte[] address)` → `AccountFrozenTotals(frozenBw, frozenEnergy)`
+- [x] In `RuntimeSpiImpl.capturePreStateSnapshot(...)`:
+  - [x] Build set of affected addresses from `ExecutionProgramResult.getStateChanges()` (empty key ⇒ account changes) and from `getFreezeChanges()` owners.
+  - [x] For each address, load `AccountCapsule` and capture `getAllFrozenBalanceForBandwidth()` and `getAllFrozenBalanceForEnergy()`.
+  - [x] Ensure we already capture global totals pre‑state (present):
         `total_net_weight`, `total_net_limit`, `total_energy_weight`, `total_energy_current_limit`.
-  - [ ] Optionally capture flags if needed (usually stable intra‑tx): `supportUnfreezeDelay`, `allowNewReward`.
+  - [x] Flags (`supportUnfreezeDelay`, `allowNewReward`) are read from live store at computation time (stable intra‑tx).
 
 2) Embedded Pre‑State Reconstruction
-- [ ] From `DomainChangeJournalRegistry` obtain freeze deltas and global resource deltas.
-  - [ ] For each account address we will enrich, derive pre‑state frozen sums by resource:
+- [x] From `DomainChangeJournalRegistry` obtain freeze deltas and global resource deltas.
+  - [x] For each account address we will enrich, derive pre‑state frozen sums by resource:
         `frozenBw_old` = sum of `old_amount_sun` for `BANDWIDTH`,
         `frozenEnergy_old` = sum of `old_amount_sun` for `ENERGY`.
-  - [ ] Derive global totals at pre‑state:
-        if journal contains `total_*` entries, take their `old` values; else read current totals as approximation (no change occured).
-- [ ] If an account has no freeze deltas, assume its frozen sums did not change in tx; you may use post‑state values for both old/new (explicitly logged as fallback).
+  - [x] Derive global totals at pre‑state:
+        if journal contains `total_*` entries, take their `old` values; else read current totals as approximation (no change occurred).
+- [x] If an account has no freeze deltas, assume its frozen sums did not change in tx; use post‑state values for both old/new (logged as fallback).
 
 3) Snapshot Wrappers for Processor Reuse
-- [ ] Create `SnapshotDynamicPropertiesStore` (framework) that delegates to the real store except:
-  - [ ] Override getters used by processors to return pre‑state totals:
+- [x] Create `SnapshotDynamicPropertiesStore` (framework) that delegates to the real store except:
+  - [x] Override getters used by processors to return pre‑state totals:
         `getTotalNetWeight()`, `getTotalNetLimit()`, `getTotalEnergyWeight()`, `getTotalEnergyCurrentLimit()`
-  - [ ] Optionally override relevant flags if snapshot captured them.
-- [ ] Create `SnapshotAccountView` (framework) for processor inputs:
-  - [ ] Provide account `getAllFrozenBalanceForBandwidth() / Energy()` from snapshot values.
-  - [ ] Delegate other methods to the live `AccountCapsule` as needed by processors.
-- [ ] Instantiate processors for old computation with `SnapshotDynamicPropertiesStore + AccountStore`, and pass `SnapshotAccountView` (or a minimal adapter that exposes the needed methods).
+  - [x] Flags delegated to live store (stable intra‑tx).
+- [x] Create `SnapshotAccountView` (framework) for processor inputs:
+  - [x] Provide account `getAllFrozenBalanceForBandwidth() / Energy()` from snapshot values.
+- [x] Limit calculation implemented directly in `AccountLimitEnricher` using the same formulas as processors (avoids complex wrapping).
 
 4) AccountLimitEnricher Helper
-- [ ] Create `AccountLimitEnricher` (framework) to enrich AEXT deltas with limits.
+- [x] Create `AccountLimitEnricher` (framework) to enrich AEXT deltas with limits.
   - API: `enrichLimits(List<AccountResourceUsageDelta> deltas, TransactionTrace trace, Mode mode)` where `Mode={REMOTE, EMBEDDED}`.
-  - [ ] Resolve `ChainBaseManager` via `trace.getTransactionContext().getStoreFactory().getChainBaseManager()`.
-  - [ ] Build processors for new (post‑state):
+  - [x] Resolve `ChainBaseManager` via `trace.getTransactionContext().getStoreFactory().getChainBaseManager()`.
+  - [x] Build processors for new (post‑state):
         `newNetLimit = BandwidthProcessor.calculateGlobalNetLimit(liveAccount)`
         `newEnergyLimit = EnergyProcessor.calculateGlobalEnergyLimit(liveAccount)`
-  - [ ] Build snapshot inputs for old (pre‑state):
+  - [x] Build snapshot inputs for old (pre‑state):
         REMOTE → from `PreStateSnapshotRegistry` per address, plus globals.
         EMBEDDED → from `DomainChangeJournalRegistry` freeze/globals; fallback when missing.
-  - [ ] Use processors with snapshot wrappers to compute `oldNetLimit` and `oldEnergyLimit`.
-  - [ ] Find the matching `AccountResourceUsageDelta` by address and set:
+  - [x] Compute `oldNetLimit` and `oldEnergyLimit` using snapshot formula matching processor logic.
+  - [x] Find the matching `AccountResourceUsageDelta` by address and set:
         `net_limit:{old,new}` and `energy_limit:{old,new}`.
-  - [ ] Log when old is unavailable and we fallback.
+  - [x] Log when old is unavailable and we fallback.
 
 5) Builder Integration
-- [ ] ExecutionCsvRecordBuilder (remote): `extractFromExecutionProgramResult(...)`
-  - [ ] After computing AEXT deltas and after apply is done, call `AccountLimitEnricher.enrichLimits(..., REMOTE)`.
-  - [ ] Then pass enriched deltas to `DomainCanonicalizer.accountAextToJsonAndDigest(...)`.
-- [ ] ExecutionCsvRecordBuilder (embedded): `extractFromEmbeddedExecution(...)`
-  - [ ] After computing AEXT deltas, call `AccountLimitEnricher.enrichLimits(..., EMBEDDED)`.
-  - [ ] Then canonicalize.
+- [x] ExecutionCsvRecordBuilder (remote): `extractFromExecutionProgramResult(...)`
+  - [x] After computing AEXT deltas and after apply is done, call `AccountLimitEnricher.enrichLimits(..., REMOTE)`.
+  - [x] Then pass enriched deltas to `DomainCanonicalizer.accountAextToJsonAndDigest(...)`.
+- [x] ExecutionCsvRecordBuilder (embedded): `extractFromEmbeddedExecution(...)`
+  - [x] After computing AEXT deltas, call `AccountLimitEnricher.enrichLimits(..., EMBEDDED)`.
+  - [x] Then canonicalize.
 
 6) Canonicalization
-- [ ] DomainCanonicalizer already includes `net_limit` and `energy_limit` field writers in `accountAextDeltaToJson`. No header changes required.
+- [x] DomainCanonicalizer already includes `net_limit` and `energy_limit` field writers in `accountAextDeltaToJson`. No header changes required.
 
 7) Tests
 - Unit
@@ -108,18 +107,20 @@ Implementation Plan
 - [ ] No CSV header changes; digest determinism preserved.
 
 11) Rollout & Fallback
-- [ ] Guard enrichment behind existing `-Dexec.csv.stateChanges.enabled=true` alongside other CSV features.
-- [ ] If snapshot inputs are missing in embedded mode, set old = new and log a debug note (temporary, to avoid partial data).
+- [x] Guard enrichment behind `-Dexec.csv.limit.enrichment.enabled=true` (default true) alongside other CSV features.
+- [x] If snapshot inputs are missing in embedded mode, set old = new and log a debug note (temporary, to avoid partial data).
 
 Open Questions
 - Do we need to snapshot feature flags (`supportUnfreezeDelay`, `allowNewReward`) per tx for absolute fidelity? If these are stable intra‑tx, live lookups suffice; snapshotting is safer for edge cases.
 - For embedded mode when no domain deltas exist for freezes/globals, do we prefer skipping old fields entirely or duplicating new values? Current proposal duplicates new values and logs debug.
 
-Quick Task Index (Files to Touch)
-- `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java` — extend pre‑state capture (remote/addresses/frozen sums)
-- `framework/src/main/java/org/tron/core/execution/reporting/PreStateSnapshotRegistry.java` — per‑account frozen capture APIs
-- `framework/src/main/java/org/tron/core/execution/reporting/` — `SnapshotDynamicPropertiesStore`, `SnapshotAccountView`, `AccountLimitEnricher`
-- `framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvRecordBuilder.java` — call enrichment (remote + embedded)
+Quick Task Index (Files Touched)
+- [x] `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java` — extend pre‑state capture (section 4: capture per-account frozen totals)
+- [x] `framework/src/main/java/org/tron/core/execution/reporting/PreStateSnapshotRegistry.java` — per‑account frozen capture APIs (AccountFrozenTotals class + capture/get methods)
+- [x] `framework/src/main/java/org/tron/core/execution/reporting/SnapshotDynamicPropertiesStore.java` — NEW: wrapper for pre-state global totals
+- [x] `framework/src/main/java/org/tron/core/execution/reporting/SnapshotAccountView.java` — NEW: wrapper for pre-state frozen balances
+- [x] `framework/src/main/java/org/tron/core/execution/reporting/AccountLimitEnricher.java` — NEW: enrichment helper with limit computation
+- [x] `framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvRecordBuilder.java` — call enrichment (remote + embedded)
 - `framework/src/main/java/org/tron/core/execution/reporting/DomainCanonicalizer.java` — no change needed for JSON fields
-- Tests in `framework/src/test/java/org/tron/core/execution/reporting/` — unit + integration
+- Tests in `framework/src/test/java/org/tron/core/execution/reporting/` — unit + integration (TODO)
 
