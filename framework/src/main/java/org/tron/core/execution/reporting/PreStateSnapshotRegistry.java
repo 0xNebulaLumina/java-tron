@@ -56,6 +56,9 @@ public class PreStateSnapshotRegistry {
     // Key: voterHex + ":" + witnessHex -> voteCount
     private final Map<String, Long> votes = new HashMap<>();
 
+    // Key: ownerHex + ":" + resourceType + ":" + recipientHex -> FreezeSnapshot
+    private final Map<String, FreezeSnapshot> freezes = new HashMap<>();
+
     // Global resource totals
     private long totalNetWeight;
     private long totalNetLimit;
@@ -67,6 +70,7 @@ public class PreStateSnapshotRegistry {
     public void clear() {
       trc10Balances.clear();
       votes.clear();
+      freezes.clear();
       globalsInitialized = false;
     }
   }
@@ -109,6 +113,27 @@ public class PreStateSnapshotRegistry {
 
     public long getTotalTronPowerWeight() {
       return totalTronPowerWeight;
+    }
+  }
+
+  /**
+   * Freeze snapshot for a specific (owner, resource, recipient) tuple.
+   */
+  public static class FreezeSnapshot {
+    private final long amount;
+    private final long expireTimeMs;
+
+    public FreezeSnapshot(long amount, long expireTimeMs) {
+      this.amount = amount;
+      this.expireTimeMs = expireTimeMs;
+    }
+
+    public long getAmount() {
+      return amount;
+    }
+
+    public long getExpireTimeMs() {
+      return expireTimeMs;
     }
   }
 
@@ -338,6 +363,63 @@ public class PreStateSnapshotRegistry {
   }
 
   // ================================
+  // Freeze Capture
+  // ================================
+
+  /**
+   * Capture a freeze state for later lookup.
+   *
+   * @param ownerAddress owner address bytes
+   * @param resourceType resource type (BANDWIDTH, ENERGY, TRON_POWER)
+   * @param recipientAddress recipient address bytes (null if self-freeze)
+   * @param amount pre-execution frozen amount in SUN
+   * @param expireTimeMs pre-execution expiration timestamp in ms
+   */
+  public static void captureFreeze(byte[] ownerAddress, String resourceType,
+                                   byte[] recipientAddress, long amount, long expireTimeMs) {
+    PreStateSnapshot snapshot = snapshotThreadLocal.get();
+    if (snapshot != null) {
+      String key = makeFreezeKey(ownerAddress, resourceType, recipientAddress);
+      snapshot.freezes.put(key, new FreezeSnapshot(amount, expireTimeMs));
+      if (logger.isTraceEnabled()) {
+        logger.trace("Captured freeze: owner={}, resource={}, recipient={}, amount={}, expire={}",
+                     ByteArray.toHexString(ownerAddress), resourceType,
+                     recipientAddress != null ? ByteArray.toHexString(recipientAddress) : "self",
+                     amount, expireTimeMs);
+      }
+    }
+  }
+
+  /**
+   * Get captured freeze state for an owner/resource/recipient tuple.
+   *
+   * @param ownerAddress owner address bytes
+   * @param resourceType resource type (BANDWIDTH, ENERGY, TRON_POWER)
+   * @param recipientAddress recipient address bytes (null if self-freeze)
+   * @return FreezeSnapshot if captured, or null if not found
+   */
+  public static FreezeSnapshot getFreeze(byte[] ownerAddress, String resourceType,
+                                         byte[] recipientAddress) {
+    PreStateSnapshot snapshot = snapshotThreadLocal.get();
+    if (snapshot != null) {
+      String key = makeFreezeKey(ownerAddress, resourceType, recipientAddress);
+      return snapshot.freezes.get(key);
+    }
+    return null;
+  }
+
+  /**
+   * Get all captured freeze snapshots.
+   */
+  public static Map<String, FreezeSnapshot> getAllFreezes() {
+    PreStateSnapshot snapshot = snapshotThreadLocal.get();
+    if (snapshot != null) {
+      return Collections.unmodifiableMap(snapshot.freezes);
+    }
+    return Collections.emptyMap();
+  }
+
+  // ================================
   // Helper Methods
   // ================================
 
@@ -350,6 +432,14 @@ public class PreStateSnapshotRegistry {
            + ByteArray.toHexString(witnessAddress).toLowerCase();
   }
 
+  private static String makeFreezeKey(byte[] ownerAddress, String resourceType,
+                                      byte[] recipientAddress) {
+    String ownerHex = ByteArray.toHexString(ownerAddress).toLowerCase();
+    String recipientHex = recipientAddress != null
+        ? ByteArray.toHexString(recipientAddress).toLowerCase() : "";
+    return ownerHex + ":" + resourceType + ":" + recipientHex;
+  }
+
   /**
    * Get current snapshot metrics (for monitoring).
    */
@@ -358,9 +448,10 @@ public class PreStateSnapshotRegistry {
     if (snapshot == null) {
       return "No pre-state snapshot active";
     }
-    return String.format("PreStateSnapshot: %d TRC-10 balances, %d votes, globals=%s",
+    return String.format("PreStateSnapshot: %d TRC-10 balances, %d votes, %d freezes, globals=%s",
                          snapshot.trc10Balances.size(),
                          snapshot.votes.size(),
+                         snapshot.freezes.size(),
                          snapshot.globalsInitialized ? "captured" : "not captured");
   }
 }

@@ -1368,6 +1368,20 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
 
   @Deprecated
   public void saveTotalEnergyLimit(long totalEnergyLimit) {
+    // Record global resource change for domain journal
+    if (DomainChangeRecorderContext.isEnabled()) {
+      try {
+        long oldValue = getTotalEnergyLimit();
+        if (oldValue != totalEnergyLimit) {
+          DomainChangeRecorderContext.recordGlobalResourceChange(
+              "total_energy_limit", oldValue, totalEnergyLimit);
+        }
+      } catch (IllegalArgumentException e) {
+        // First-time initialization, record as create with old=0
+        DomainChangeRecorderContext.recordGlobalResourceChange(
+            "total_energy_limit", 0, totalEnergyLimit);
+      }
+    }
     this.put(DynamicResourceProperties.TOTAL_ENERGY_LIMIT,
         new BytesCapsule(ByteArray.fromLong(totalEnergyLimit)));
 

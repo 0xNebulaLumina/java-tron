@@ -2,6 +2,7 @@ package org.tron.core.execution.reporting;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
@@ -424,6 +425,219 @@ public class DomainCanonicalizerTest {
     assertEquals("[]", accountResult.getJson());
     assertEquals(0, accountResult.getCount());
     assertEquals(EMPTY_DIGEST, accountResult.getDigest());
+  }
+
+  // ================================
+  // AEXT Parse/Serialize Tests
+  // ================================
+
+  @Test
+  public void testParseAextFromValidAccountBytes() {
+    // Build account bytes: balance(32) + nonce(8) + codeHash(32) + codeLen(4) + code(0) + AEXT
+    byte[] accountBytes = buildAccountBytesWithAext(
+        1000000000L, // balance
+        5L,          // nonce
+        new byte[32], // codeHash
+        0,           // codeLen
+        100L,        // netUsage
+        50L,         // freeNetUsage
+        200L,        // energyUsage
+        1640000000L, // latestConsumeTime
+        1640000100L, // latestConsumeFreeTime
+        1640000200L, // latestConsumeTimeForEnergy
+        1000L,       // netWindowSize
+        2000L,       // energyWindowSize
+        true,        // netWindowOptimized
+        false        // energyWindowOptimized
+    );
+
+    DomainCanonicalizer.ParsedAext aext = DomainCanonicalizer.parseAext(accountBytes);
+
+    assertNotNull("AEXT should be parsed", aext);
+    assertEquals("Net usage should match", 100L, aext.netUsage);
+    assertEquals("Free net usage should match", 50L, aext.freeNetUsage);
+    assertEquals("Energy usage should match", 200L, aext.energyUsage);
+    assertEquals("Net window size should match", 1000L, aext.netWindowSize);
+    assertEquals("Energy window size should match", 2000L, aext.energyWindowSize);
+    assertTrue("Net window optimized should be true", aext.netWindowOptimized);
+  }
+
+  @Test
+  public void testParseAextReturnsNullForDataWithoutAext() {
+    // Build minimal account bytes without AEXT (just 76 bytes)
+    byte[] minimalBytes = new byte[76];
+
+    DomainCanonicalizer.ParsedAext aext = DomainCanonicalizer.parseAext(minimalBytes);
+
+    assertNull("AEXT should be null for data without AEXT", aext);
+  }
+
+  @Test
+  public void testParseAextReturnsNullForNullData() {
+    DomainCanonicalizer.ParsedAext aext = DomainCanonicalizer.parseAext(null);
+    assertNull("AEXT should be null for null data", aext);
+  }
+
+  @Test
+  public void testParseAextReturnsNullForShortData() {
+    byte[] shortBytes = new byte[50]; // Less than minimum 76
+    DomainCanonicalizer.ParsedAext aext = DomainCanonicalizer.parseAext(shortBytes);
+    assertNull("AEXT should be null for short data", aext);
+  }
+
+  @Test
+  public void testParseAextReturnsNullForWrongMagic() {
+    // Build account bytes with wrong AEXT magic
+    byte[] accountBytes = new byte[76 + 8 + 68]; // base + header + payload
+    // Set code length to 0
+    accountBytes[72] = 0;
+    accountBytes[73] = 0;
+    accountBytes[74] = 0;
+    accountBytes[75] = 0;
+    // Set wrong magic at offset 76 (should be "AEXT" = 0x41 0x45 0x58 0x54)
+    accountBytes[76] = 'X';
+    accountBytes[77] = 'Y';
+    accountBytes[78] = 'Z';
+    accountBytes[79] = 'W';
+
+    DomainCanonicalizer.ParsedAext aext = DomainCanonicalizer.parseAext(accountBytes);
+    assertNull("AEXT should be null for wrong magic", aext);
+  }
+
+  @Test
+  public void testParseAextIsEmptyForZeroValues() {
+    byte[] accountBytes = buildAccountBytesWithAext(
+        1000000000L, 5L, new byte[32], 0,
+        0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, false, false
+    );
+
+    DomainCanonicalizer.ParsedAext aext = DomainCanonicalizer.parseAext(accountBytes);
+
+    assertNotNull("AEXT should be parsed", aext);
+    assertTrue("AEXT with zero values should be empty", aext.isEmpty());
+  }
+
+  @Test
+  public void testExtractAccountResourceUsageFromStateChanges() {
+    // Create state change with AEXT difference
+    byte[] oldAccountBytes = buildAccountBytesWithAext(
+        1000000000L, 5L, new byte[32], 0,
+        100L, 50L, 200L, 0L, 0L, 0L, 1000L, 2000L, false, false
+    );
+    byte[] newAccountBytes = buildAccountBytesWithAext(
+        1000000000L, 5L, new byte[32], 0,
+        150L, 75L, 250L, 0L, 0L, 0L, 1000L, 2000L, false, false
+    );
+
+    List<StateChange> stateChanges = new ArrayList<>();
+    stateChanges.add(new StateChange(
+        new byte[]{0x41, 0x01, 0x02, 0x03},
+        new byte[0], // empty key = account change
+        oldAccountBytes,
+        newAccountBytes
+    ));
+
+    List<DomainCanonicalizer.AccountResourceUsageDelta> deltas =
+        DomainCanonicalizer.extractAccountResourceUsage(stateChanges);
+
+    assertEquals("Should extract one delta", 1, deltas.size());
+    DomainCanonicalizer.AccountResourceUsageDelta delta = deltas.get(0);
+    assertEquals("Old net usage should match", Long.valueOf(100L), delta.getOldNetUsage());
+    assertEquals("New net usage should match", Long.valueOf(150L), delta.getNewNetUsage());
+    assertEquals("Old energy usage should match", Long.valueOf(200L), delta.getOldEnergyUsage());
+    assertEquals("New energy usage should match", Long.valueOf(250L), delta.getNewEnergyUsage());
+  }
+
+  @Test
+  public void testExtractAccountResourceUsageSkipsUnchangedAext() {
+    // Create state change with identical AEXT
+    byte[] accountBytes = buildAccountBytesWithAext(
+        1000000000L, 5L, new byte[32], 0,
+        100L, 50L, 200L, 0L, 0L, 0L, 1000L, 2000L, false, false
+    );
+
+    List<StateChange> stateChanges = new ArrayList<>();
+    stateChanges.add(new StateChange(
+        new byte[]{0x41, 0x01, 0x02, 0x03},
+        new byte[0],
+        accountBytes,
+        accountBytes // same AEXT
+    ));
+
+    List<DomainCanonicalizer.AccountResourceUsageDelta> deltas =
+        DomainCanonicalizer.extractAccountResourceUsage(stateChanges);
+
+    assertEquals("Should skip unchanged AEXT", 0, deltas.size());
+  }
+
+  /**
+   * Helper to build account bytes with AEXT.
+   * Format: balance(32) + nonce(8) + codeHash(32) + codeLen(4) + code(0) + AEXT
+   * AEXT: magic(4) + version(2) + length(2) + payload(68)
+   */
+  private byte[] buildAccountBytesWithAext(
+      long balance, long nonce, byte[] codeHash, int codeLen,
+      long netUsage, long freeNetUsage, long energyUsage,
+      long latestConsumeTime, long latestConsumeFreeTime, long latestConsumeTimeForEnergy,
+      long netWindowSize, long energyWindowSize,
+      boolean netWindowOptimized, boolean energyWindowOptimized) {
+
+    byte[] result = new byte[76 + 8 + 68]; // base + AEXT header + AEXT payload
+
+    // Balance: first 32 bytes (big-endian, but simplified for test)
+    result[31] = (byte) (balance & 0xFF);
+    result[30] = (byte) ((balance >> 8) & 0xFF);
+    result[29] = (byte) ((balance >> 16) & 0xFF);
+    result[28] = (byte) ((balance >> 24) & 0xFF);
+
+    // Nonce: bytes 32-39 (big-endian)
+    for (int i = 0; i < 8; i++) {
+      result[39 - i] = (byte) ((nonce >> (8 * i)) & 0xFF);
+    }
+
+    // Code hash: bytes 40-71
+    System.arraycopy(codeHash, 0, result, 40, Math.min(32, codeHash.length));
+
+    // Code length: bytes 72-75 (big-endian)
+    result[72] = (byte) ((codeLen >> 24) & 0xFF);
+    result[73] = (byte) ((codeLen >> 16) & 0xFF);
+    result[74] = (byte) ((codeLen >> 8) & 0xFF);
+    result[75] = (byte) (codeLen & 0xFF);
+
+    // AEXT header at offset 76
+    int offset = 76;
+    // Magic: "AEXT" (0x41 0x45 0x58 0x54)
+    result[offset++] = 0x41;
+    result[offset++] = 0x45;
+    result[offset++] = 0x58;
+    result[offset++] = 0x54;
+    // Version: 1 (big-endian)
+    result[offset++] = 0x00;
+    result[offset++] = 0x01;
+    // Length: 68 (big-endian)
+    result[offset++] = 0x00;
+    result[offset++] = 0x44;
+
+    // AEXT payload (68 bytes)
+    offset = writeI64BigEndian(result, offset, netUsage);
+    offset = writeI64BigEndian(result, offset, freeNetUsage);
+    offset = writeI64BigEndian(result, offset, energyUsage);
+    offset = writeI64BigEndian(result, offset, latestConsumeTime);
+    offset = writeI64BigEndian(result, offset, latestConsumeFreeTime);
+    offset = writeI64BigEndian(result, offset, latestConsumeTimeForEnergy);
+    offset = writeI64BigEndian(result, offset, netWindowSize);
+    offset = writeI64BigEndian(result, offset, energyWindowSize);
+    result[offset++] = (byte) (netWindowOptimized ? 1 : 0);
+    result[offset] = (byte) (energyWindowOptimized ? 1 : 0);
+
+    return result;
+  }
+
+  private int writeI64BigEndian(byte[] dest, int offset, long value) {
+    for (int i = 0; i < 8; i++) {
+      dest[offset + i] = (byte) ((value >> (56 - 8 * i)) & 0xFF);
+    }
+    return offset + 8;
   }
 
   @Test

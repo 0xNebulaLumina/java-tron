@@ -338,6 +338,44 @@ public class ExecutionCsvRecordTest {
         csvRow.contains("digest123"));
   }
 
+  @Test
+  public void testTsMsPresenceInConstructorAndCsvRow() {
+    long beforeMs = System.currentTimeMillis();
+    ExecutionCsvRecord record = ExecutionCsvRecord.builder()
+        .runId("test-tsms")
+        .build();
+    long afterMs = System.currentTimeMillis();
+
+    // Verify ts_ms is set in constructor
+    long tsMs = record.getTsMs();
+    assertTrue("ts_ms should be set to current time on construction",
+        tsMs >= beforeMs && tsMs <= afterMs);
+
+    // Verify ts_ms appears in CSV row
+    String csvRow = record.toCsvRow();
+    assertTrue("CSV row should contain ts_ms value",
+        csvRow.contains(String.valueOf(tsMs)));
+
+    // Verify ts_ms column is in header
+    String header = ExecutionCsvRecord.getCsvHeader();
+    assertTrue("Header should contain ts_ms", header.contains("ts_ms"));
+  }
+
+  @Test
+  public void testTsMsWithExplicitValue() {
+    long explicitTs = 1640995200000L; // 2022-01-01 00:00:00 UTC
+    ExecutionCsvRecord record = ExecutionCsvRecord.builder()
+        .runId("test-tsms-explicit")
+        .tsMs(explicitTs)
+        .build();
+
+    assertEquals("ts_ms should match explicit value", explicitTs, record.getTsMs());
+
+    String csvRow = record.toCsvRow();
+    assertTrue("CSV should contain explicit ts_ms value",
+        csvRow.contains("1640995200000"));
+  }
+
   /**
    * Helper method to convert hex string to byte array.
    */

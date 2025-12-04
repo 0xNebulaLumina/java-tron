@@ -1411,6 +1411,7 @@ public class DomainCanonicalizer {
 
   /**
    * Convert FreezeLedgerChange list to FreezeDelta list.
+   * Uses PreStateSnapshotRegistry for absolute old/new values.
    */
   public static List<FreezeDelta> convertFreezeChanges(List<FreezeLedgerChange> freezeChanges) {
     if (freezeChanges == null || freezeChanges.isEmpty()) {
@@ -1419,15 +1420,40 @@ public class DomainCanonicalizer {
 
     List<FreezeDelta> deltas = new ArrayList<>();
     for (FreezeLedgerChange fc : freezeChanges) {
+      byte[] ownerAddr = fc.getOwnerAddress();
+      String resourceType = fc.getResource().name();
+      // FreezeLedgerChange doesn't have recipient info; use null for self-freeze
+      byte[] recipientAddr = null;
+
+      // Get old values from snapshot
+      PreStateSnapshotRegistry.FreezeSnapshot oldSnapshot =
+          PreStateSnapshotRegistry.getFreeze(ownerAddr, resourceType, recipientAddr);
+      long oldAmount = oldSnapshot != null ? oldSnapshot.getAmount() : 0L;
+      long oldExpireTime = oldSnapshot != null ? oldSnapshot.getExpireTimeMs() : 0L;
+
+      // New values from the change
+      long newAmount = fc.getAmount();
+      long newExpireTime = fc.getExpirationMs();
+
+      // Determine operation
+      String op;
+      if (oldAmount == 0 && newAmount > 0) {
+        op = "freeze";
+      } else if (oldAmount > 0 && newAmount == 0) {
+        op = "unfreeze";
+      } else {
+        op = "update";
+      }
+
       FreezeDelta delta = new FreezeDelta();
-      delta.setOwnerAddressHex(fc.getOwnerAddress() != null
-          ? ByteArray.toHexString(fc.getOwnerAddress()) : "");
-      delta.setResourceType(fc.getResource().name());
-      delta.setOp(fc.getAmount() > 0 ? "freeze" : "unfreeze");
-      delta.setOldAmountSun("0");
-      delta.setNewAmountSun(String.valueOf(fc.getAmount()));
-      delta.setOldExpireTimeMs("0");
-      delta.setNewExpireTimeMs(String.valueOf(fc.getExpirationMs()));
+      delta.setOwnerAddressHex(ownerAddr != null ? ByteArray.toHexString(ownerAddr) : "");
+      delta.setResourceType(resourceType);
+      // recipientAddr is null for self-freeze (no recipient)
+      delta.setOp(op);
+      delta.setOldAmountSun(String.valueOf(oldAmount));
+      delta.setNewAmountSun(String.valueOf(newAmount));
+      delta.setOldExpireTimeMs(String.valueOf(oldExpireTime));
+      delta.setNewExpireTimeMs(String.valueOf(newExpireTime));
       deltas.add(delta);
     }
     return deltas;

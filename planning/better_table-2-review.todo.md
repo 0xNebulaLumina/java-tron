@@ -168,30 +168,47 @@ C) Remote Builder Mappings (absolute old/new)
   - File: framework/src/main/java/org/tron/core/execution/reporting/DomainCanonicalizer.java
 - [x] Global resources: build deltas with old from snapshot and new from post-apply values.
   - File: framework/src/main/java/org/tron/core/execution/reporting/DomainCanonicalizer.java (conversion helper) or builder
-- [ ] Freeze changes: use backend payload for new; get old from snapshot keyed by (owner, resource, recipient/null); V2 expiration=0.
+- [x] Freeze changes: use backend payload for new; get old from snapshot keyed by (owner, resource, recipient/null); V2 expiration=0.
+  - Added FreezeSnapshot class to PreStateSnapshotRegistry
+  - Updated DomainCanonicalizer.convertFreezeChanges to use snapshot for absolute old/new values
+  - File: framework/src/main/java/org/tron/core/execution/reporting/PreStateSnapshotRegistry.java
   - File: framework/src/main/java/org/tron/core/execution/reporting/DomainCanonicalizer.java
 
 D) Embedded Coverage & Hooks
-- [ ] Ensure TRC‑10 balance hooks cover all update paths (including TransferAssetActuator).
-  - File: actuator/src/main/java/org/tron/core/actuator/TransferAssetActuator.java
+- [x] Ensure TRC‑10 balance hooks cover all update paths (including TransferAssetActuator).
+  - Verified: TransferAssetActuator calls AccountCapsule.reduceAssetAmountV2 and addAssetAmountV2
+  - Both methods already have DomainChangeRecorderContext.recordTrc10BalanceChange hooks
+  - File: chainbase/src/main/java/org/tron/core/capsule/AccountCapsule.java (lines 754-757, 772-775, 811-814, 829-832)
 - [x] Add freeze/unfreeze V1 journaling similar to V2.
   - File: actuator/src/main/java/org/tron/core/actuator/FreezeBalanceActuator.java
   - File: actuator/src/main/java/org/tron/core/actuator/UnfreezeBalanceActuator.java
-- [ ] Review additional DynamicPropertiesStore fields emitted by backend and add hooks if missing.
+- [x] Review additional DynamicPropertiesStore fields emitted by backend and add hooks if missing.
+  - Added hook to saveTotalEnergyLimit (was missing, only saveTotalEnergyLimit2 had it)
+  - Verified: total_net_weight, total_energy_weight, total_tron_power_weight, total_net_limit all have hooks
   - File: chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java
 
 E) Builder polish
 - [x] When using returnDataHex(String), set return_data_len from hex string length/2.
   - File: framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvRecord.java
-- [ ] Confirm ts_ms set in constructor and included in CSV row (already present); add test for ts_ms presence.
+- [x] Confirm ts_ms set in constructor and included in CSV row (already present); add test for ts_ms presence.
+  - Added testTsMsPresenceInConstructorAndCsvRow() and testTsMsWithExplicitValue() tests
   - File: framework/src/test/java/org/tron/core/execution/reporting/ExecutionCsvRecordTest.java
 
 F) Tests
 - [x] Extend DomainCanonicalizerTest with:
   - [x] Empty-array digest policy check per domain.
   - [x] Sorting stability (varied input orders → same digest).
-  - [ ] AEXT parse/serialize changes.
-- [ ] Add DomainChangeJournal tests for merge semantics per domain.
+  - [x] AEXT parse/serialize changes.
+    - Added tests: testParseAextFromValidAccountBytes, testParseAextReturnsNullForDataWithoutAext,
+      testParseAextReturnsNullForNullData, testParseAextReturnsNullForShortData,
+      testParseAextReturnsNullForWrongMagic, testParseAextIsEmptyForZeroValues,
+      testExtractAccountResourceUsageFromStateChanges, testExtractAccountResourceUsageSkipsUnchangedAext
+    - File: framework/src/test/java/org/tron/core/execution/reporting/DomainCanonicalizerTest.java
+- [x] Add DomainChangeJournal tests for merge semantics per domain.
+  - Created new test file with comprehensive merge semantics tests
+  - Tests: TRC-10 balance, votes, freezes, global resources, TRC-10 issuance merge semantics
+  - Tests: lifecycle (clear, finalized state, isEnabled flag)
+  - File: framework/src/test/java/org/tron/core/execution/reporting/DomainChangeJournalTest.java
 - [ ] Add integration tests for remote/embedded parity with golden vectors.
 
 G) Docs
