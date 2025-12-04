@@ -1340,7 +1340,8 @@ public class DomainCanonicalizer {
 
   /**
    * Convert VoteChange list to VoteDelta list.
-   * Uses old_votes = 0 for new votes, tracks per-witness changes.
+   * Uses PreStateSnapshotRegistry for absolute old/new vote counts.
+   * Tracks per-witness changes including deletes when witnesses are removed.
    */
   public static List<VoteDelta> convertVoteChanges(List<VoteChange> voteChanges) {
     if (voteChanges == null || voteChanges.isEmpty()) {
@@ -1349,19 +1350,59 @@ public class DomainCanonicalizer {
 
     List<VoteDelta> deltas = new ArrayList<>();
     for (VoteChange vc : voteChanges) {
-      String voterHex = vc.getOwnerAddress() != null
-          ? ByteArray.toHexString(vc.getOwnerAddress()) : "";
+      byte[] voterAddr = vc.getOwnerAddress();
+      String voterHex = voterAddr != null ? ByteArray.toHexString(voterAddr) : "";
+
+      // Track new witnesses for detecting deletes
+      java.util.Set<String> newWitnessSet = new java.util.HashSet<>();
 
       if (vc.getVotes() != null) {
         for (VoteEntry ve : vc.getVotes()) {
+          byte[] witnessAddr = ve.getVoteAddress();
+          String witnessHex = witnessAddr != null ? ByteArray.toHexString(witnessAddr) : "";
+          newWitnessSet.add(witnessHex.toLowerCase());
+
+          // Get old vote count from snapshot
+          Long oldVotesL = PreStateSnapshotRegistry.getVote(voterAddr, witnessAddr);
+          long oldVotes = oldVotesL != null ? oldVotesL : 0L;
+          long newVotes = ve.getVoteCount();
+
+          // Determine operation
+          String op;
+          if (oldVotes == 0 && newVotes > 0) {
+            op = "create";
+          } else if (oldVotes > 0 && newVotes == 0) {
+            op = "delete";
+          } else {
+            op = "update";
+          }
+
           VoteDelta delta = new VoteDelta();
           delta.setVoterAddressHex(voterHex);
-          delta.setWitnessAddressHex(ve.getVoteAddress() != null
-              ? ByteArray.toHexString(ve.getVoteAddress()) : "");
-          delta.setOp("set");
-          delta.setOldVotes("0"); // Assume old is 0 for now (can be enhanced with pre-state)
-          delta.setNewVotes(String.valueOf(ve.getVoteCount()));
+          delta.setWitnessAddressHex(witnessHex);
+          delta.setOp(op);
+          delta.setOldVotes(String.valueOf(oldVotes));
+          delta.setNewVotes(String.valueOf(newVotes));
           deltas.add(delta);
+        }
+      }
+
+      // Check for deleted votes (witnesses that were in old but not in new)
+      java.util.Map<String, Long> allOldVotes = PreStateSnapshotRegistry.getAllVotes();
+      String voterPrefix = voterHex.toLowerCase() + ":";
+      for (java.util.Map.Entry<String, Long> entry : allOldVotes.entrySet()) {
+        if (entry.getKey().startsWith(voterPrefix)) {
+          String witnessHex = entry.getKey().substring(voterPrefix.length());
+          if (!newWitnessSet.contains(witnessHex)) {
+            // This witness was in old but not in new - it's a delete
+            VoteDelta delta = new VoteDelta();
+            delta.setVoterAddressHex(voterHex);
+            delta.setWitnessAddressHex(witnessHex);
+            delta.setOp("delete");
+            delta.setOldVotes(String.valueOf(entry.getValue()));
+            delta.setNewVotes("0");
+            deltas.add(delta);
+          }
         }
       }
     }
@@ -1394,6 +1435,7 @@ public class DomainCanonicalizer {
 
   /**
    * Convert GlobalResourceTotalsChange list to GlobalResourceDelta list.
+   * Uses PreStateSnapshotRegistry for absolute old/new values.
    */
   public static List<GlobalResourceDelta> convertGlobalResourceChanges(
       List<GlobalResourceTotalsChange> globalChanges) {
@@ -1401,36 +1443,45 @@ public class DomainCanonicalizer {
       return new ArrayList<>();
     }
 
+    // Get old global totals from snapshot
+    PreStateSnapshotRegistry.GlobalSnapshot oldGlobals =
+        PreStateSnapshotRegistry.getGlobalTotals();
+
     List<GlobalResourceDelta> deltas = new ArrayList<>();
     for (GlobalResourceTotalsChange gc : globalChanges) {
       // Each GlobalResourceTotalsChange contains multiple fields
       // We emit separate delta entries for each field
 
+      long oldNetWeight = oldGlobals != null ? oldGlobals.getTotalNetWeight() : 0;
+      long oldNetLimit = oldGlobals != null ? oldGlobals.getTotalNetLimit() : 0;
+      long oldEnergyWeight = oldGlobals != null ? oldGlobals.getTotalEnergyWeight() : 0;
+      long oldEnergyLimit = oldGlobals != null ? oldGlobals.getTotalEnergyLimit() : 0;
+
       GlobalResourceDelta netWeight = new GlobalResourceDelta();
       netWeight.setField("total_net_weight");
       netWeight.setOp("update");
-      netWeight.setOldValue("0"); // Placeholder - needs pre-state
+      netWeight.setOldValue(String.valueOf(oldNetWeight));
       netWeight.setNewValue(String.valueOf(gc.getTotalNetWeight()));
       deltas.add(netWeight);
 
       GlobalResourceDelta netLimit = new GlobalResourceDelta();
       netLimit.setField("total_net_limit");
       netLimit.setOp("update");
-      netLimit.setOldValue("0");
+      netLimit.setOldValue(String.valueOf(oldNetLimit));
       netLimit.setNewValue(String.valueOf(gc.getTotalNetLimit()));
       deltas.add(netLimit);
 
       GlobalResourceDelta energyWeight = new GlobalResourceDelta();
       energyWeight.setField("total_energy_weight");
       energyWeight.setOp("update");
-      energyWeight.setOldValue("0");
+      energyWeight.setOldValue(String.valueOf(oldEnergyWeight));
       energyWeight.setNewValue(String.valueOf(gc.getTotalEnergyWeight()));
       deltas.add(energyWeight);
 
       GlobalResourceDelta energyLimit = new GlobalResourceDelta();
       energyLimit.setField("total_energy_limit");
       energyLimit.setOp("update");
-      energyLimit.setOldValue("0");
+      energyLimit.setOldValue(String.valueOf(oldEnergyLimit));
       energyLimit.setNewValue(String.valueOf(gc.getTotalEnergyLimit()));
       deltas.add(energyLimit);
     }
@@ -1760,18 +1811,23 @@ public class DomainCanonicalizer {
   // ================================
 
   /**
-   * Create empty domain result.
+   * SHA-256 digest of an empty string, used for empty arrays.
+   * This provides a consistent non-empty digest for cross-tooling compatibility.
    */
+  private static final String EMPTY_DIGEST =
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
   public static DomainResult emptyDomainResult() {
-    return new DomainResult("[]", 0, "");
+    return new DomainResult("[]", 0, EMPTY_DIGEST);
   }
 
   /**
    * Compute SHA-256 digest of string.
+   * For empty arrays (null, empty, or "[]"), returns sha256("") for consistency.
    */
   private static String computeDigest(String data) {
     if (data == null || data.isEmpty() || data.equals("[]")) {
-      return "";
+      return EMPTY_DIGEST;
     }
 
     try {
@@ -1780,7 +1836,7 @@ public class DomainCanonicalizer {
       return ByteArray.toHexString(hashBytes).toLowerCase();
     } catch (NoSuchAlgorithmException e) {
       logger.error("SHA-256 algorithm not available", e);
-      return "";
+      return EMPTY_DIGEST;
     }
   }
 

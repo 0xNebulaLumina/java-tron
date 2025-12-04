@@ -15,13 +15,64 @@ import org.tron.core.execution.spi.ExecutionSPI.StateChange;
  */
 public class DomainCanonicalizerTest {
 
+  // SHA-256 of empty string, used for empty array digest consistency
+  private static final String EMPTY_DIGEST =
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
   @Test
   public void testEmptyDomainResult() {
     DomainCanonicalizer.DomainResult result = DomainCanonicalizer.emptyDomainResult();
 
     assertEquals("[]", result.getJson());
     assertEquals(0, result.getCount());
-    assertEquals("", result.getDigest());
+    // Empty arrays should return sha256("") for cross-tooling compatibility
+    assertEquals(EMPTY_DIGEST, result.getDigest());
+  }
+
+  @Test
+  public void testEmptyArrayDigestPolicy() {
+    // Test that all domain types return sha256("") for empty arrays
+    List<DomainCanonicalizer.AccountDelta> emptyAccountDeltas = new ArrayList<>();
+    DomainCanonicalizer.DomainResult accountResult =
+        DomainCanonicalizer.accountToJsonAndDigest(emptyAccountDeltas);
+    assertEquals("[]", accountResult.getJson());
+    assertEquals(0, accountResult.getCount());
+    assertEquals(EMPTY_DIGEST, accountResult.getDigest());
+
+    List<DomainCanonicalizer.EvmStorageDelta> emptyEvmDeltas = new ArrayList<>();
+    DomainCanonicalizer.DomainResult evmResult =
+        DomainCanonicalizer.evmStorageToJsonAndDigest(emptyEvmDeltas);
+    assertEquals("[]", evmResult.getJson());
+    assertEquals(0, evmResult.getCount());
+    assertEquals(EMPTY_DIGEST, evmResult.getDigest());
+
+    List<DomainCanonicalizer.Trc10BalanceDelta> emptyTrc10Deltas = new ArrayList<>();
+    DomainCanonicalizer.DomainResult trc10Result =
+        DomainCanonicalizer.trc10BalancesToJsonAndDigest(emptyTrc10Deltas);
+    assertEquals("[]", trc10Result.getJson());
+    assertEquals(0, trc10Result.getCount());
+    assertEquals(EMPTY_DIGEST, trc10Result.getDigest());
+
+    List<DomainCanonicalizer.VoteDelta> emptyVoteDeltas = new ArrayList<>();
+    DomainCanonicalizer.DomainResult voteResult =
+        DomainCanonicalizer.votesToJsonAndDigest(emptyVoteDeltas);
+    assertEquals("[]", voteResult.getJson());
+    assertEquals(0, voteResult.getCount());
+    assertEquals(EMPTY_DIGEST, voteResult.getDigest());
+
+    List<DomainCanonicalizer.FreezeDelta> emptyFreezeDeltas = new ArrayList<>();
+    DomainCanonicalizer.DomainResult freezeResult =
+        DomainCanonicalizer.freezesToJsonAndDigest(emptyFreezeDeltas);
+    assertEquals("[]", freezeResult.getJson());
+    assertEquals(0, freezeResult.getCount());
+    assertEquals(EMPTY_DIGEST, freezeResult.getDigest());
+
+    List<DomainCanonicalizer.GlobalResourceDelta> emptyGlobalDeltas = new ArrayList<>();
+    DomainCanonicalizer.DomainResult globalResult =
+        DomainCanonicalizer.globalsToJsonAndDigest(emptyGlobalDeltas);
+    assertEquals("[]", globalResult.getJson());
+    assertEquals(0, globalResult.getCount());
+    assertEquals(EMPTY_DIGEST, globalResult.getDigest());
   }
 
   @Test
@@ -351,19 +402,19 @@ public class DomainCanonicalizerTest {
         DomainCanonicalizer.accountToJsonAndDigest(new ArrayList<>());
     assertEquals("[]", accountResult.getJson());
     assertEquals(0, accountResult.getCount());
-    assertEquals("", accountResult.getDigest());
+    assertEquals(EMPTY_DIGEST, accountResult.getDigest());
 
     DomainCanonicalizer.DomainResult evmResult =
         DomainCanonicalizer.evmStorageToJsonAndDigest(new ArrayList<>());
     assertEquals("[]", evmResult.getJson());
     assertEquals(0, evmResult.getCount());
-    assertEquals("", evmResult.getDigest());
+    assertEquals(EMPTY_DIGEST, evmResult.getDigest());
 
     DomainCanonicalizer.DomainResult logResult =
         DomainCanonicalizer.logsToJsonAndDigest(new ArrayList<>());
     assertEquals("[]", logResult.getJson());
     assertEquals(0, logResult.getCount());
-    assertEquals("", logResult.getDigest());
+    assertEquals(EMPTY_DIGEST, logResult.getDigest());
   }
 
   @Test
@@ -372,7 +423,7 @@ public class DomainCanonicalizerTest {
         DomainCanonicalizer.accountToJsonAndDigest(null);
     assertEquals("[]", accountResult.getJson());
     assertEquals(0, accountResult.getCount());
-    assertEquals("", accountResult.getDigest());
+    assertEquals(EMPTY_DIGEST, accountResult.getDigest());
   }
 
   @Test
@@ -398,5 +449,137 @@ public class DomainCanonicalizerTest {
 
     assertTrue("Keys should be sorted alphabetically",
         addrPos < balancePos && balancePos < noncePos && noncePos < opPos);
+  }
+
+  @Test
+  public void testDigestStabilityWithPermutedInputs() {
+    // Create account deltas in different orders and verify same digest
+    DomainCanonicalizer.AccountDelta delta1 = new DomainCanonicalizer.AccountDelta();
+    delta1.setAddressHex("41aaa");
+    delta1.setOp("update");
+    delta1.setOldBalance(100L);
+    delta1.setNewBalance(200L);
+
+    DomainCanonicalizer.AccountDelta delta2 = new DomainCanonicalizer.AccountDelta();
+    delta2.setAddressHex("41bbb");
+    delta2.setOp("create");
+    delta2.setNewBalance(300L);
+
+    DomainCanonicalizer.AccountDelta delta3 = new DomainCanonicalizer.AccountDelta();
+    delta3.setAddressHex("41ccc");
+    delta3.setOp("delete");
+    delta3.setOldBalance(50L);
+
+    // Order 1: delta1, delta2, delta3
+    List<DomainCanonicalizer.AccountDelta> order1 = new ArrayList<>();
+    order1.add(delta1);
+    order1.add(delta2);
+    order1.add(delta3);
+    DomainCanonicalizer.DomainResult result1 =
+        DomainCanonicalizer.accountToJsonAndDigest(order1);
+
+    // Order 2: delta3, delta1, delta2 (different input order)
+    List<DomainCanonicalizer.AccountDelta> order2 = new ArrayList<>();
+    order2.add(delta3);
+    order2.add(delta1);
+    order2.add(delta2);
+    DomainCanonicalizer.DomainResult result2 =
+        DomainCanonicalizer.accountToJsonAndDigest(order2);
+
+    // Order 3: delta2, delta3, delta1 (yet another input order)
+    List<DomainCanonicalizer.AccountDelta> order3 = new ArrayList<>();
+    order3.add(delta2);
+    order3.add(delta3);
+    order3.add(delta1);
+    DomainCanonicalizer.DomainResult result3 =
+        DomainCanonicalizer.accountToJsonAndDigest(order3);
+
+    // All digests should be identical regardless of input order
+    assertEquals("Digests should be identical for different input orders",
+        result1.getDigest(), result2.getDigest());
+    assertEquals("Digests should be identical for different input orders",
+        result2.getDigest(), result3.getDigest());
+
+    // JSON should also be identical
+    assertEquals("JSON should be identical for different input orders",
+        result1.getJson(), result2.getJson());
+    assertEquals("JSON should be identical for different input orders",
+        result2.getJson(), result3.getJson());
+  }
+
+  @Test
+  public void testEvmStorageDigestStabilityWithPermutedInputs() {
+    // Create EVM storage deltas in different orders and verify same digest
+    DomainCanonicalizer.EvmStorageDelta delta1 = new DomainCanonicalizer.EvmStorageDelta();
+    delta1.setContractAddressHex("41contract1");
+    delta1.setSlotKeyHex("0000000000000000000000000000000000000000000000000000000000000001");
+    delta1.setOp("set");
+    delta1.setNewValueHex("deadbeef");
+
+    DomainCanonicalizer.EvmStorageDelta delta2 = new DomainCanonicalizer.EvmStorageDelta();
+    delta2.setContractAddressHex("41contract1");
+    delta2.setSlotKeyHex("0000000000000000000000000000000000000000000000000000000000000002");
+    delta2.setOp("set");
+    delta2.setNewValueHex("cafebabe");
+
+    DomainCanonicalizer.EvmStorageDelta delta3 = new DomainCanonicalizer.EvmStorageDelta();
+    delta3.setContractAddressHex("41contract2");
+    delta3.setSlotKeyHex("0000000000000000000000000000000000000000000000000000000000000001");
+    delta3.setOp("delete");
+    delta3.setOldValueHex("12345678");
+
+    // Different input orders
+    List<DomainCanonicalizer.EvmStorageDelta> order1 = new ArrayList<>();
+    order1.add(delta1);
+    order1.add(delta2);
+    order1.add(delta3);
+    DomainCanonicalizer.DomainResult result1 =
+        DomainCanonicalizer.evmStorageToJsonAndDigest(order1);
+
+    List<DomainCanonicalizer.EvmStorageDelta> order2 = new ArrayList<>();
+    order2.add(delta3);
+    order2.add(delta1);
+    order2.add(delta2);
+    DomainCanonicalizer.DomainResult result2 =
+        DomainCanonicalizer.evmStorageToJsonAndDigest(order2);
+
+    // All digests should be identical regardless of input order
+    assertEquals("EVM storage digests should be identical for different input orders",
+        result1.getDigest(), result2.getDigest());
+    assertEquals("EVM storage JSON should be identical for different input orders",
+        result1.getJson(), result2.getJson());
+  }
+
+  @Test
+  public void testVoteDigestStabilityWithPermutedInputs() {
+    // Create vote deltas in different orders
+    DomainCanonicalizer.VoteDelta delta1 = new DomainCanonicalizer.VoteDelta();
+    delta1.setVoterAddressHex("41voter1");
+    delta1.setWitnessAddressHex("41witness1");
+    delta1.setOp("create");
+    delta1.setOldVotes("0");
+    delta1.setNewVotes("100");
+
+    DomainCanonicalizer.VoteDelta delta2 = new DomainCanonicalizer.VoteDelta();
+    delta2.setVoterAddressHex("41voter1");
+    delta2.setWitnessAddressHex("41witness2");
+    delta2.setOp("update");
+    delta2.setOldVotes("50");
+    delta2.setNewVotes("75");
+
+    List<DomainCanonicalizer.VoteDelta> order1 = new ArrayList<>();
+    order1.add(delta1);
+    order1.add(delta2);
+    DomainCanonicalizer.DomainResult result1 =
+        DomainCanonicalizer.votesToJsonAndDigest(order1);
+
+    List<DomainCanonicalizer.VoteDelta> order2 = new ArrayList<>();
+    order2.add(delta2);
+    order2.add(delta1);
+    DomainCanonicalizer.DomainResult result2 =
+        DomainCanonicalizer.votesToJsonAndDigest(order2);
+
+    assertEquals("Vote digests should be identical for different input orders",
+        result1.getDigest(), result2.getDigest());
   }
 }

@@ -24,6 +24,7 @@ import org.tron.core.capsule.DelegatedResourceCapsule;
 import org.tron.core.capsule.TransactionResultCapsule;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.db.DomainChangeRecorderContext;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.DelegatedResourceAccountIndexStore;
 import org.tron.core.store.DelegatedResourceStore;
@@ -77,8 +78,16 @@ public class FreezeBalanceActuator extends AbstractActuator {
     byte[] receiverAddress = freezeBalanceContract.getReceiverAddress().toByteArray();
 
     long increment;
+    // Capture old frozen amounts for domain journaling
+    long oldFrozenBandwidth = accountCapsule.getFrozenBalance();
+    long oldFrozenEnergy = accountCapsule.getEnergyFrozenBalance();
+    long oldFrozenTronPower = accountCapsule.getTronPowerFrozenBalance();
+    long oldExpireTime = 0L;
+
     switch (freezeBalanceContract.getResource()) {
       case BANDWIDTH:
+        oldExpireTime = accountCapsule.getFrozenList().isEmpty() ? 0
+            : accountCapsule.getFrozenList().get(0).getExpireTime();
         if (!ArrayUtils.isEmpty(receiverAddress)
             && dynamicStore.supportDR()) {
           increment = delegateResource(ownerAddress, receiverAddress, true,
@@ -93,8 +102,16 @@ public class FreezeBalanceActuator extends AbstractActuator {
           increment = newNetWeight - oldNetWeight;
         }
         addTotalWeight(BANDWIDTH, dynamicStore, frozenBalance, increment);
+        // Record V1 freeze for bandwidth to domain journal
+        if (DomainChangeRecorderContext.isEnabled()) {
+          DomainChangeRecorderContext.recordFreezeChange(ownerAddress, "BANDWIDTH",
+              ArrayUtils.isEmpty(receiverAddress) ? null : receiverAddress,
+              oldFrozenBandwidth, accountCapsule.getFrozenBalance(),
+              oldExpireTime, expireTime, "freeze");
+        }
         break;
       case ENERGY:
+        oldExpireTime = accountCapsule.getAccountResource().getFrozenBalanceForEnergy().getExpireTime();
         if (!ArrayUtils.isEmpty(receiverAddress)
             && dynamicStore.supportDR()) {
           increment = delegateResource(ownerAddress, receiverAddress, false,
@@ -109,8 +126,16 @@ public class FreezeBalanceActuator extends AbstractActuator {
           increment = newEnergyWeight - oldEnergyWeight;
         }
         addTotalWeight(ENERGY, dynamicStore, frozenBalance, increment);
+        // Record V1 freeze for energy to domain journal
+        if (DomainChangeRecorderContext.isEnabled()) {
+          DomainChangeRecorderContext.recordFreezeChange(ownerAddress, "ENERGY",
+              ArrayUtils.isEmpty(receiverAddress) ? null : receiverAddress,
+              oldFrozenEnergy, accountCapsule.getEnergyFrozenBalance(),
+              oldExpireTime, expireTime, "freeze");
+        }
         break;
       case TRON_POWER:
+        oldExpireTime = accountCapsule.getInstance().getTronPower().getExpireTime();
         long oldTPWeight = accountCapsule.getTronPowerFrozenBalance() / TRX_PRECISION;
         long newFrozenBalanceForTronPower =
             frozenBalance + accountCapsule.getTronPowerFrozenBalance();
@@ -118,6 +143,13 @@ public class FreezeBalanceActuator extends AbstractActuator {
         long newTPWeight = accountCapsule.getTronPowerFrozenBalance() / TRX_PRECISION;
         increment = newTPWeight - oldTPWeight;
         addTotalWeight(TRON_POWER, dynamicStore, frozenBalance, increment);
+        // Record V1 freeze for tron power to domain journal
+        if (DomainChangeRecorderContext.isEnabled()) {
+          DomainChangeRecorderContext.recordFreezeChange(ownerAddress, "TRON_POWER",
+              null,
+              oldFrozenTronPower, accountCapsule.getTronPowerFrozenBalance(),
+              oldExpireTime, expireTime, "freeze");
+        }
         break;
       default:
         logger.debug("Resource Code Error.");

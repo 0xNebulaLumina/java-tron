@@ -17,8 +17,10 @@ import org.tron.core.execution.spi.ExecutionSPI.Trc10AssetIssued;
 import org.tron.core.execution.spi.ExecutionSPI.Trc10AssetTransferred;
 import org.tron.core.execution.spi.ExecutionSPI.Trc10Change;
 import org.tron.core.execution.spi.ExecutionSPI.VoteChange;
+import org.tron.core.execution.spi.ExecutionSPI.VoteEntry;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
 import org.tron.core.storage.spi.StorageSpiFactory;
+import org.tron.common.utils.ByteArray;
 import org.tron.protos.Protocol.Transaction.Contract;
 
 /**
@@ -209,6 +211,7 @@ public class ExecutionCsvRecordBuilder {
 
   /**
    * Extract TRC-10 balance and issuance domains from Trc10Change list.
+   * Uses PreStateSnapshotRegistry for absolute old/new values when available.
    */
   private static void extractTrc10Domains(
       ExecutionCsvRecord.Builder builder, List<Trc10Change> trc10Changes) {
@@ -223,28 +226,46 @@ public class ExecutionCsvRecordBuilder {
           Trc10AssetTransferred transfer = change.getAssetTransferred();
           String tokenId = transfer.getTokenId() != null && !transfer.getTokenId().isEmpty()
               ? transfer.getTokenId()
-              : org.tron.common.utils.ByteArray.toHexString(transfer.getAssetName());
+              : ByteArray.toHexString(transfer.getAssetName());
+
+          byte[] senderAddr = transfer.getOwnerAddress();
+          byte[] recipientAddr = transfer.getToAddress();
+          long amount = transfer.getAmount();
+
+          // Get absolute old balances from pre-state snapshot (if available)
+          Long senderOldBalance = PreStateSnapshotRegistry.getTrc10Balance(senderAddr, tokenId);
+          Long recipientOldBalance = PreStateSnapshotRegistry.getTrc10Balance(recipientAddr, tokenId);
+
+          // Compute absolute new balances
+          long senderOld = senderOldBalance != null ? senderOldBalance : 0L;
+          long recipientOld = recipientOldBalance != null ? recipientOldBalance : 0L;
+          long senderNew = senderOld - amount;
+          long recipientNew = recipientOld + amount;
+
+          // Determine op based on old/new values
+          String senderOp = (senderOld == 0) ? "delete" : (senderNew == 0) ? "delete" : "update";
+          String recipientOp = (recipientOld == 0) ? "create" : "update";
 
           // Sender decrease
           DomainCanonicalizer.Trc10BalanceDelta senderDelta =
               new DomainCanonicalizer.Trc10BalanceDelta();
           senderDelta.setTokenId(tokenId);
-          senderDelta.setOwnerAddressHex(transfer.getOwnerAddress() != null
-              ? org.tron.common.utils.ByteArray.toHexString(transfer.getOwnerAddress()) : "");
-          senderDelta.setOp("decrease");
-          senderDelta.setOldBalance("0"); // Placeholder
-          senderDelta.setNewBalance(String.valueOf(-transfer.getAmount()));
+          senderDelta.setOwnerAddressHex(senderAddr != null
+              ? ByteArray.toHexString(senderAddr) : "");
+          senderDelta.setOp(senderOp);
+          senderDelta.setOldBalance(String.valueOf(senderOld));
+          senderDelta.setNewBalance(String.valueOf(senderNew));
           balanceDeltas.add(senderDelta);
 
           // Recipient increase
           DomainCanonicalizer.Trc10BalanceDelta recipientDelta =
               new DomainCanonicalizer.Trc10BalanceDelta();
           recipientDelta.setTokenId(tokenId);
-          recipientDelta.setOwnerAddressHex(transfer.getToAddress() != null
-              ? org.tron.common.utils.ByteArray.toHexString(transfer.getToAddress()) : "");
-          recipientDelta.setOp("increase");
-          recipientDelta.setOldBalance("0");
-          recipientDelta.setNewBalance(String.valueOf(transfer.getAmount()));
+          recipientDelta.setOwnerAddressHex(recipientAddr != null
+              ? ByteArray.toHexString(recipientAddr) : "");
+          recipientDelta.setOp(recipientOp);
+          recipientDelta.setOldBalance(String.valueOf(recipientOld));
+          recipientDelta.setNewBalance(String.valueOf(recipientNew));
           balanceDeltas.add(recipientDelta);
         }
 

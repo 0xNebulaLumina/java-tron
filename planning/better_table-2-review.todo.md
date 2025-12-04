@@ -144,29 +144,29 @@ Rollout Plan
 Detailed TODOs
 
 A) Canonicalization & Digest
-- [ ] Decide empty-array digest policy and update code/docs accordingly.
-  - [ ] If Option B: update DomainCanonicalizer.computeDigest to return sha256("") for "[]"; adjust tests.
+- [x] Decide empty-array digest policy and update code/docs accordingly.
+  - [x] If Option B: update DomainCanonicalizer.computeDigest to return sha256("") for "[]"; adjust tests.
     - File: framework/src/main/java/org/tron/core/execution/reporting/DomainCanonicalizer.java
     - File: framework/src/test/java/org/tron/core/execution/reporting/DomainCanonicalizerTest.java
-- [ ] Add test vectors covering empty arrays per domain and ordering invariants.
+- [x] Add test vectors covering empty arrays per domain and ordering invariants.
 
 B) Remote Pre-State Snapshot
-- [ ] Add PreStateSnapshotRegistry (thread-local) with minimal getters/setters.
-  - File: framework/src/main/java/org/tron/core/execution/reporting/ (new class)
-- [ ] In RuntimeSpiImpl, before applying ExecutionProgramResult, capture pre-state into snapshot for:
-  - [ ] Votes: AccountStore.get(owner).getVotesList() → Map<(owner,witness), votes>
-  - [ ] TRC‑10 balances: AccountCapsule assetV2 → Map<(owner,token_id), balance>
-  - [ ] Global totals: DynamicPropertiesStore fields
+- [x] Add PreStateSnapshotRegistry (thread-local) with minimal getters/setters.
+  - File: framework/src/main/java/org/tron/core/execution/reporting/PreStateSnapshotRegistry.java (new class)
+- [x] In RuntimeSpiImpl, before applying ExecutionProgramResult, capture pre-state into snapshot for:
+  - [x] Votes: AccountStore.get(owner).getVotesList() → Map<(owner,witness), votes>
+  - [x] TRC‑10 balances: AccountCapsule assetV2 → Map<(owner,token_id), balance>
+  - [x] Global totals: DynamicPropertiesStore fields
   - File: framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java
-- [ ] Clear snapshot after CSV logging (Manager already clears journals; extend to snapshot).
+- [x] Clear snapshot after CSV logging (Manager already clears journals; extend to snapshot).
   - File: framework/src/main/java/org/tron/core/db/Manager.java
 
 C) Remote Builder Mappings (absolute old/new)
-- [ ] TRC‑10 balances: compute absolute old/new using snapshot (old) and post-apply store (new); set op accordingly.
+- [x] TRC‑10 balances: compute absolute old/new using snapshot (old) and post-apply store (new); set op accordingly.
   - File: framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvRecordBuilder.java
-- [ ] Votes: compare snapshot vs post-apply votes per (owner,witness); add deletes where new=0.
-  - File: framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvRecordBuilder.java
-- [ ] Global resources: build deltas with old from snapshot and new from post-apply values.
+- [x] Votes: compare snapshot vs post-apply votes per (owner,witness); add deletes where new=0.
+  - File: framework/src/main/java/org/tron/core/execution/reporting/DomainCanonicalizer.java
+- [x] Global resources: build deltas with old from snapshot and new from post-apply values.
   - File: framework/src/main/java/org/tron/core/execution/reporting/DomainCanonicalizer.java (conversion helper) or builder
 - [ ] Freeze changes: use backend payload for new; get old from snapshot keyed by (owner, resource, recipient/null); V2 expiration=0.
   - File: framework/src/main/java/org/tron/core/execution/reporting/DomainCanonicalizer.java
@@ -174,22 +174,22 @@ C) Remote Builder Mappings (absolute old/new)
 D) Embedded Coverage & Hooks
 - [ ] Ensure TRC‑10 balance hooks cover all update paths (including TransferAssetActuator).
   - File: actuator/src/main/java/org/tron/core/actuator/TransferAssetActuator.java
-- [ ] Add freeze/unfreeze V1 journaling similar to V2.
+- [x] Add freeze/unfreeze V1 journaling similar to V2.
   - File: actuator/src/main/java/org/tron/core/actuator/FreezeBalanceActuator.java
   - File: actuator/src/main/java/org/tron/core/actuator/UnfreezeBalanceActuator.java
 - [ ] Review additional DynamicPropertiesStore fields emitted by backend and add hooks if missing.
   - File: chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java
 
 E) Builder polish
-- [ ] When using returnDataHex(String), set return_data_len from hex string length/2.
+- [x] When using returnDataHex(String), set return_data_len from hex string length/2.
   - File: framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvRecord.java
 - [ ] Confirm ts_ms set in constructor and included in CSV row (already present); add test for ts_ms presence.
   - File: framework/src/test/java/org/tron/core/execution/reporting/ExecutionCsvRecordTest.java
 
 F) Tests
-- [ ] Extend DomainCanonicalizerTest with:
-  - [ ] Empty-array digest policy check per domain.
-  - [ ] Sorting stability (varied input orders → same digest).
+- [x] Extend DomainCanonicalizerTest with:
+  - [x] Empty-array digest policy check per domain.
+  - [x] Sorting stability (varied input orders → same digest).
   - [ ] AEXT parse/serialize changes.
 - [ ] Add DomainChangeJournal tests for merge semantics per domain.
 - [ ] Add integration tests for remote/embedded parity with golden vectors.

@@ -57,6 +57,7 @@ import org.tron.core.execution.reporting.StateChangeJournalRegistry;
 import org.tron.core.execution.reporting.StateChangeRecorderBridge;
 import org.tron.core.execution.reporting.DomainChangeJournalRegistry;
 import org.tron.core.execution.reporting.DomainChangeRecorderBridge;
+import org.tron.core.execution.reporting.PreStateSnapshotRegistry;
 import org.tron.core.db.StateChangeRecorderContext;
 import org.tron.core.db.DomainChangeRecorderContext;
 import org.tron.core.storage.sync.ResourceSyncContext;
@@ -1624,11 +1625,12 @@ public class Manager {
     // Log execution details to CSV for remote vs embedded comparison
     logExecutionToCsv(trxCap, blockCap, trace);
     
-    // Clean up journals after CSV logging is complete
+    // Clean up journals and snapshots after CSV logging is complete
     StateChangeJournalRegistry.clearForCurrentTransaction();
     StateChangeRecorderContext.clear();
     DomainChangeJournalRegistry.clearForCurrentTransaction();
     DomainChangeRecorderContext.clear();
+    PreStateSnapshotRegistry.clearForCurrentTransaction();
 
     // Finish resource sync context
     ResourceSyncContext.finish();

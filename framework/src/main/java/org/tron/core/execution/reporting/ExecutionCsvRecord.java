@@ -247,7 +247,14 @@ public class ExecutionCsvRecord {
     }
 
     public Builder returnDataHex(String returnDataHex) {
-      record.returnDataHex = returnDataHex != null ? returnDataHex : "";
+      if (returnDataHex != null && !returnDataHex.isEmpty()) {
+        record.returnDataHex = returnDataHex;
+        // Compute length from hex string (2 hex chars = 1 byte)
+        record.returnDataLen = returnDataHex.length() / 2;
+      } else {
+        record.returnDataHex = "";
+        record.returnDataLen = 0;
+      }
       return this;
     }
 

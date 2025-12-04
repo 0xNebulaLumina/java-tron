@@ -1,5 +1,6 @@
 package org.tron.common.runtime;
 
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import lombok.extern.slf4j.Slf4j;
 import org.tron.core.capsule.AccountCapsule;
@@ -7,12 +8,14 @@ import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.ChainBaseManager;
+import org.tron.core.execution.reporting.PreStateSnapshotRegistry;
 
 import org.tron.core.execution.spi.ExecutionProgramResult;
 import org.tron.core.execution.spi.ExecutionSPI;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.Protocol.Account;
+import org.tron.protos.Protocol.Vote;
 
 import static org.tron.protos.contract.Common.ResourceCode.BANDWIDTH;
 import static org.tron.protos.contract.Common.ResourceCode.ENERGY;
@@ -71,6 +74,9 @@ public class RuntimeSpiImpl implements Runtime {
       if (!executionResult.isSuccess()) {
         this.runtimeError = executionResult.getErrorMessage();
       }
+
+      // Capture pre-state snapshot for CSV reporting (before applying changes)
+      capturePreStateSnapshot(executionResult, context);
 
       // Apply state changes to local database for remote execution
       applyStateChangesToLocalDatabase(executionResult, context);
@@ -1217,10 +1223,111 @@ public class RuntimeSpiImpl implements Runtime {
                              latestConsumeTime, latestConsumeFreeTime, latestConsumeTimeForEnergy,
                              netWindowSize, energyWindowSize,
                              netWindowOptimized, energyWindowOptimized);
-      
+
     } catch (Exception e) {
       logger.warn("Failed to deserialize AccountInfo from {} bytes: {}", data.length, e.getMessage());
       return null;
+    }
+  }
+
+  /**
+   * Capture pre-state snapshot for CSV reporting in remote execution mode.
+   * This captures TRC-10 balances, votes, and global totals BEFORE applying changes,
+   * allowing the builder to compute absolute old/new values for domain triplets.
+   *
+   * <p>Gated by: -Dremote.exec.prestate.snapshot.enabled=true (default true).
+   */
+  private void capturePreStateSnapshot(ExecutionProgramResult result, TransactionContext context) {
+    // Check JVM gate: default true
+    boolean captureEnabled = Boolean.parseBoolean(
+        System.getProperty("remote.exec.prestate.snapshot.enabled", "true"));
+
+    if (!captureEnabled) {
+      logger.debug("Pre-state snapshot capture disabled by JVM property for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    try {
+      ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
+      org.tron.core.store.AccountStore accountStore = chainBaseManager.getAccountStore();
+      org.tron.core.store.DynamicPropertiesStore dynamicStore =
+          chainBaseManager.getDynamicPropertiesStore();
+
+      // Initialize snapshot for this transaction
+      PreStateSnapshotRegistry.initializeForCurrentTransaction();
+
+      // 1. Capture TRC-10 balances for addresses involved in transfers
+      if (result.getTrc10Changes() != null) {
+        for (ExecutionSPI.Trc10Change trc10Change : result.getTrc10Changes()) {
+          if (trc10Change.hasAssetTransferred()) {
+            ExecutionSPI.Trc10AssetTransferred transfer = trc10Change.getAssetTransferred();
+            String tokenId = transfer.getTokenId();
+
+            // Capture owner's pre-state balance
+            byte[] ownerAddress = transfer.getOwnerAddress();
+            AccountCapsule ownerAccount = accountStore.get(ownerAddress);
+            if (ownerAccount != null && tokenId != null) {
+              Map<String, Long> assetV2Map = ownerAccount.getAssetMapV2();
+              Long ownerBalance = assetV2Map.get(tokenId);
+              PreStateSnapshotRegistry.captureTrc10Balance(
+                  ownerAddress, tokenId, ownerBalance != null ? ownerBalance : 0L);
+            }
+
+            // Capture recipient's pre-state balance
+            byte[] toAddress = transfer.getToAddress();
+            AccountCapsule recipientAccount = accountStore.get(toAddress);
+            if (recipientAccount != null && tokenId != null) {
+              Map<String, Long> recipientAssetV2Map = recipientAccount.getAssetMapV2();
+              Long recipientBalance = recipientAssetV2Map.get(tokenId);
+              PreStateSnapshotRegistry.captureTrc10Balance(
+                  toAddress, tokenId, recipientBalance != null ? recipientBalance : 0L);
+            } else if (tokenId != null) {
+              // Recipient account doesn't exist yet, balance is 0
+              PreStateSnapshotRegistry.captureTrc10Balance(toAddress, tokenId, 0L);
+            }
+          }
+        }
+      }
+
+      // 2. Capture votes for voters involved in vote changes
+      if (result.getVoteChanges() != null) {
+        for (ExecutionSPI.VoteChange voteChange : result.getVoteChanges()) {
+          byte[] voterAddress = voteChange.getOwnerAddress();
+          AccountCapsule voterAccount = accountStore.get(voterAddress);
+          if (voterAccount != null) {
+            // Capture all existing votes for this voter
+            java.util.List<Vote> existingVotes = voterAccount.getVotesList();
+            PreStateSnapshotRegistry.captureVotes(voterAddress, existingVotes);
+          }
+        }
+      }
+
+      // 3. Capture global resource totals (for freeze/global resource changes)
+      boolean hasFreezeChanges = result.getFreezeChanges() != null
+          && !result.getFreezeChanges().isEmpty();
+      boolean hasGlobalChanges = result.getGlobalResourceChanges() != null
+          && !result.getGlobalResourceChanges().isEmpty();
+
+      if (hasFreezeChanges || hasGlobalChanges) {
+        long totalNetWeight = dynamicStore.getTotalNetWeight();
+        long totalNetLimit = dynamicStore.getTotalNetLimit();
+        long totalEnergyWeight = dynamicStore.getTotalEnergyWeight();
+        long totalEnergyLimit = dynamicStore.getTotalEnergyCurrentLimit();
+        long totalTronPowerWeight = dynamicStore.getTotalTronPowerWeight();
+
+        PreStateSnapshotRegistry.captureGlobalTotals(
+            totalNetWeight, totalNetLimit, totalEnergyWeight, totalEnergyLimit, totalTronPowerWeight);
+      }
+
+      logger.debug("Captured pre-state snapshot for transaction: {} - {}",
+          context.getTrxCap().getTransactionId(),
+          PreStateSnapshotRegistry.getCurrentSnapshotMetrics());
+
+    } catch (Exception e) {
+      logger.warn("Failed to capture pre-state snapshot for transaction: {}, error: {}",
+          context.getTrxCap().getTransactionId(), e.getMessage());
+      // Don't fail the transaction - snapshot is for reporting only
     }
   }
 }
