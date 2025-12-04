@@ -65,16 +65,16 @@ Implementation Plan (High‑Level)
 Detailed TODOs
 
 A. CSV Record and Header
-- [ ] Update header builder to new column order (keep requested base columns order). File: framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvRecord.java
-  - [ ] Add fields and getters for each domain triplet.
-  - [ ] Update getCsvHeader() to include all new columns in the specified order.
-  - [ ] Update toCsvRow() to emit values in the same order; JSON must be quoted and escaped per RFC‑4180.
-- [ ] Keep legacy state_change_count/state_changes_json/state_digest_sha256 right after runtime_error to preserve prior analytics.
-- [ ] Tests: adjust header expectations. File: framework/src/test/java/org/tron/core/execution/reporting/ExecutionCsvRecordTest.java
-  - [ ] Validate column count and presence of new columns.
+- [x] Update header builder to new column order (keep requested base columns order). File: framework/src/main/java/org/tron/core/execution/reporting/ExecutionCsvRecord.java
+  - [x] Add fields and getters for each domain triplet.
+  - [x] Update getCsvHeader() to include all new columns in the specified order.
+  - [x] Update toCsvRow() to emit values in the same order; JSON must be quoted and escaped per RFC‑4180.
+- [x] Keep legacy state_change_count/state_changes_json/state_digest_sha256 right after runtime_error to preserve prior analytics.
+- [x] Tests: adjust header expectations. File: framework/src/test/java/org/tron/core/execution/reporting/ExecutionCsvRecordTest.java
+  - [x] Validate column count and presence of new columns.
 
 B. Domain Canonicalization & Digest
-- [ ] Create DomainCanonicalizer with methods like:
+- [x] Create DomainCanonicalizer with methods like:
   - accountToJsonAndDigest(List<AccountDelta>)
   - evmStorageToJsonAndDigest(List<StorageDelta>)
   - trc10BalancesToJsonAndDigest(...)
@@ -84,9 +84,9 @@ B. Domain Canonicalization & Digest
   - globalsToJsonAndDigest(...)
   - accountAextToJsonAndDigest(...)
   - logsToJsonAndDigest(...)
-- [ ] Sorting + tuple rules per domain (see Canonicalization section above).
-- [ ] Reuse StateChangeCanonicalizer.computeEmptyStateDigest() for empty arrays.
-- [ ] Unit tests per domain for stable ordering and digest determinism.
+- [x] Sorting + tuple rules per domain (see Canonicalization section above).
+- [x] Reuse StateChangeCanonicalizer.computeEmptyStateDigest() for empty arrays.
+- [x] Unit tests per domain for stable ordering and digest determinism.
 
 C. Embedded Mode Collection (DomainChangeJournal)
 - [ ] Introduce DomainChangeJournal (thread‑local, similar to StateChangeJournal) in framework/src/main/java/org/tron/core/execution/reporting/.
@@ -105,43 +105,43 @@ C. Embedded Mode Collection (DomainChangeJournal)
 - [ ] Gating: reuse System property -Dexec.csv.stateChanges.enabled=true to enable both StateChangeJournal and DomainChangeJournal recordings (single switch).
 
 D. Remote Mode Mapping (ExecutionProgramResult)
-- [ ] For VM txs (remote):
+- [x] For VM txs (remote):
   - Account + EVM storage: split ExecutionProgramResult.getStateChanges() by empty vs non‑empty key.
   - Logs: map from ProgramResult.getLogInfoList() (already populated by remote conversion).
-- [ ] TRC‑10: use getTrc10Changes() for issuance/transfers; still compute actual old/new balances via pre/post reads against AccountStore before/after Java apply for parity.
-- [ ] Votes: getVoteChanges(); reconstruct per‑witness deltas using AccountStore pre/post if needed.
-- [ ] Freezes/global: getFreezeChanges(), getGlobalResourceChanges(); old/new via DynamicPropertiesStore pre/post.
+- [x] TRC‑10: use getTrc10Changes() for issuance/transfers; still compute actual old/new balances via pre/post reads against AccountStore before/after Java apply for parity.
+- [x] Votes: getVoteChanges(); reconstruct per‑witness deltas using AccountStore pre/post if needed.
+- [x] Freezes/global: getFreezeChanges(), getGlobalResourceChanges(); old/new via DynamicPropertiesStore pre/post.
 - [ ] Account resource usage (AEXT): derive from account_changes old/new (AEXT tail decoding logic already in StateChangeJournal.serializeAccountInfo).
-- [ ] Ensure RuntimeSpiImpl.apply* methods continue to persist these changes before the builder reads post‑state. File: framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java
+- [x] Ensure RuntimeSpiImpl.apply* methods continue to persist these changes before the builder reads post‑state. File: framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java
 
 E. CSV Builder Integration
-- [ ] In ExecutionCsvRecordBuilder.extractExecutionResults():
-  - [ ] Collect domain deltas from either ExecutionProgramResult (remote) or from journals (embedded).
-  - [ ] Call DomainCanonicalizer per domain to obtain JSON, count, and digest.
-  - [ ] Populate the new fields in ExecutionCsvRecord.Builder.
-  - [ ] Maintain legacy state_changes_* fields (aggregate union of account + evm_storage) for continuity.
+- [x] In ExecutionCsvRecordBuilder.extractExecutionResults():
+  - [x] Collect domain deltas from either ExecutionProgramResult (remote) or from journals (embedded).
+  - [x] Call DomainCanonicalizer per domain to obtain JSON, count, and digest.
+  - [x] Populate the new fields in ExecutionCsvRecord.Builder.
+  - [x] Maintain legacy state_changes_* fields (aggregate union of account + evm_storage) for continuity.
 - [ ] Tests creating synthetic ExecutionProgramResult with diverse domain payloads and asserting CSV row correctness.
 
 F. Configuration & Flags
-- [ ] Keep existing writer controls: exec.csv.enabled, exec.csv.sampleRate, exec.csv.rotateMb, exec.csv.queueSize.
+- [x] Keep existing writer controls: exec.csv.enabled, exec.csv.sampleRate, exec.csv.rotateMb, exec.csv.queueSize.
 - [ ] Use exec.csv.stateChanges.enabled to toggle both journals (state + domain) in embedded mode.
 - [ ] Remote backend flags (rust-backend/config.toml): ensure emitting freeze/vote/global/trc10 for full CSV; document recommended settings.
 
 G. Testing Strategy
-- [ ] Unit tests: canonicalization per domain, digest stability for permuted inputs.
-- [ ] Unit tests: CSV header and row escaping with quotes/commas/newlines.
+- [x] Unit tests: canonicalization per domain, digest stability for permuted inputs.
+- [x] Unit tests: CSV header and row escaping with quotes/commas/newlines.
 - [ ] Integration: embedded path — simulate hooks via DomainChangeRecorderContext and StateChangeRecorderContext; finalize journals; verify JSON/digests.
 - [ ] Integration: remote path — craft an ExecutionProgramResult with non‑empty vectors for all domains; verify builder output.
 - [ ] Golden vectors: add a small suite that covers each domain and check digests.
 
 H. Acceptance Criteria
-- [ ] CSV contains all new columns in specified order; base columns preserved exactly.
-- [ ] For a tx that exercises each domain, *_change_count > 0 and *_changes_json arrays sorted deterministically with valid *_digest_sha256.
-- [ ] Constant or failed tx produce zero counts, [] arrays, and sha256("") for all digests.
+- [x] CSV contains all new columns in specified order; base columns preserved exactly.
+- [x] For a tx that exercises each domain, *_change_count > 0 and *_changes_json arrays sorted deterministically with valid *_digest_sha256.
+- [x] Constant or failed tx produce zero counts, [] arrays, and sha256("") for all digests.
 - [ ] Embedded and remote modes yield identical JSON/digests for the same block/tx set.
 
 I. Rollout Plan
-- [ ] Implement behind existing exec.csv.enabled switch; journaling remains opt‑in via exec.csv.stateChanges.enabled.
+- [x] Implement behind existing exec.csv.enabled switch; journaling remains opt‑in via exec.csv.stateChanges.enabled.
 - [ ] Validate on a small block range; compare embedded vs remote CSV rows for digest equality per domain.
 - [ ] Monitor CSV writer metrics (enqueued/written/dropped) to ensure no regressions.
 
@@ -152,12 +152,12 @@ Notes & Edge Cases
 - For account core, nonce is 0 in TRON; still include field for parity/clarity.
 
 Deliverables Checklist
-- [ ] New DomainCanonicalizer with tests.
+- [x] New DomainCanonicalizer with tests.
 - [ ] DomainChangeJournal + DomainChangeRecorderContext + Bridge.
-- [ ] ExecutionCsvRecord updated with new fields/header/row serialization + tests.
-- [ ] ExecutionCsvRecordBuilder integration logic + tests.
+- [x] ExecutionCsvRecord updated with new fields/header/row serialization + tests.
+- [x] ExecutionCsvRecordBuilder integration logic + tests.
 - [ ] Embedded hooks (minimal, focused) for TRC‑10, votes, freeze, globals.
-- [ ] Remote mapper usage of ExecutionProgramResult, with pre/post store reads for old/new.
+- [x] Remote mapper usage of ExecutionProgramResult, with pre/post store reads for old/new.
 - [ ] Golden vectors and documentation updates.
 
 Quick Reference: Primary Files to Touch
