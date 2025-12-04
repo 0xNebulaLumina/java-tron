@@ -19,6 +19,7 @@ import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.Sha256Hash;
 import org.tron.core.capsule.BytesCapsule;
 import org.tron.core.config.Parameter.ChainConstant;
+import org.tron.core.db.DomainChangeRecorderContext;
 import org.tron.core.db.TronStoreWithRevoking;
 import org.tron.core.exception.BadItemException;
 import org.tron.core.exception.ItemNotFoundException;
@@ -1258,6 +1259,20 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
   }
 
   public void saveTotalNetWeight(long totalNetWeight) {
+    // Record global resource change for domain journal
+    if (DomainChangeRecorderContext.isEnabled()) {
+      try {
+        long oldValue = getTotalNetWeight();
+        if (oldValue != totalNetWeight) {
+          DomainChangeRecorderContext.recordGlobalResourceChange(
+              "total_net_weight", oldValue, totalNetWeight);
+        }
+      } catch (IllegalArgumentException e) {
+        // First-time initialization, record as create with old=0
+        DomainChangeRecorderContext.recordGlobalResourceChange(
+            "total_net_weight", 0, totalNetWeight);
+      }
+    }
     this.put(DynamicResourceProperties.TOTAL_NET_WEIGHT,
         new BytesCapsule(ByteArray.fromLong(totalNetWeight)));
   }
@@ -1271,6 +1286,20 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
   }
 
   public void saveTotalEnergyWeight(long totalEnergyWeight) {
+    // Record global resource change for domain journal
+    if (DomainChangeRecorderContext.isEnabled()) {
+      try {
+        long oldValue = getTotalEnergyWeight();
+        if (oldValue != totalEnergyWeight) {
+          DomainChangeRecorderContext.recordGlobalResourceChange(
+              "total_energy_weight", oldValue, totalEnergyWeight);
+        }
+      } catch (IllegalArgumentException e) {
+        // First-time initialization, record as create with old=0
+        DomainChangeRecorderContext.recordGlobalResourceChange(
+            "total_energy_weight", 0, totalEnergyWeight);
+      }
+    }
     this.put(DynamicResourceProperties.TOTAL_ENERGY_WEIGHT,
         new BytesCapsule(ByteArray.fromLong(totalEnergyWeight)));
   }
@@ -1283,9 +1312,23 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
             () -> new IllegalArgumentException("not found TOTAL_ENERGY_WEIGHT"));
   }
 
-  public void saveTotalTronPowerWeight(long totalEnergyWeight) {
+  public void saveTotalTronPowerWeight(long totalTronPowerWeight) {
+    // Record global resource change for domain journal
+    if (DomainChangeRecorderContext.isEnabled()) {
+      try {
+        long oldValue = getTotalTronPowerWeight();
+        if (oldValue != totalTronPowerWeight) {
+          DomainChangeRecorderContext.recordGlobalResourceChange(
+              "total_tron_power_weight", oldValue, totalTronPowerWeight);
+        }
+      } catch (IllegalArgumentException e) {
+        // First-time initialization, record as create with old=0
+        DomainChangeRecorderContext.recordGlobalResourceChange(
+            "total_tron_power_weight", 0, totalTronPowerWeight);
+      }
+    }
     this.put(DynamicResourceProperties.TOTAL_TRON_POWER_WEIGHT,
-        new BytesCapsule(ByteArray.fromLong(totalEnergyWeight)));
+        new BytesCapsule(ByteArray.fromLong(totalTronPowerWeight)));
   }
 
   public long getTotalTronPowerWeight() {
@@ -1297,6 +1340,20 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
   }
 
   public void saveTotalNetLimit(long totalNetLimit) {
+    // Record global resource change for domain journal
+    if (DomainChangeRecorderContext.isEnabled()) {
+      try {
+        long oldValue = getTotalNetLimit();
+        if (oldValue != totalNetLimit) {
+          DomainChangeRecorderContext.recordGlobalResourceChange(
+              "total_net_limit", oldValue, totalNetLimit);
+        }
+      } catch (IllegalArgumentException e) {
+        // First-time initialization, record as create with old=0
+        DomainChangeRecorderContext.recordGlobalResourceChange(
+            "total_net_limit", 0, totalNetLimit);
+      }
+    }
     this.put(DynamicResourceProperties.TOTAL_NET_LIMIT,
         new BytesCapsule(ByteArray.fromLong(totalNetLimit)));
   }
@@ -1319,6 +1376,20 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
   }
 
   public void saveTotalEnergyLimit2(long totalEnergyLimit) {
+    // Record global resource change for domain journal
+    if (DomainChangeRecorderContext.isEnabled()) {
+      try {
+        long oldValue = getTotalEnergyLimit();
+        if (oldValue != totalEnergyLimit) {
+          DomainChangeRecorderContext.recordGlobalResourceChange(
+              "total_energy_limit", oldValue, totalEnergyLimit);
+        }
+      } catch (IllegalArgumentException e) {
+        // First-time initialization, record as create with old=0
+        DomainChangeRecorderContext.recordGlobalResourceChange(
+            "total_energy_limit", 0, totalEnergyLimit);
+      }
+    }
     this.put(DynamicResourceProperties.TOTAL_ENERGY_LIMIT,
         new BytesCapsule(ByteArray.fromLong(totalEnergyLimit)));
 
@@ -2220,6 +2291,20 @@ public class DynamicPropertiesStore extends TronStoreWithRevoking<BytesCapsule> 
   }
 
   public void saveNextMaintenanceTime(long nextMaintenanceTime) {
+    // Record global resource change for domain journal
+    if (DomainChangeRecorderContext.isEnabled()) {
+      try {
+        long oldValue = getNextMaintenanceTime();
+        if (oldValue != nextMaintenanceTime) {
+          DomainChangeRecorderContext.recordGlobalResourceChange(
+              "next_maintenance_time", oldValue, nextMaintenanceTime);
+        }
+      } catch (IllegalArgumentException e) {
+        // First-time initialization, record as create with old=0
+        DomainChangeRecorderContext.recordGlobalResourceChange(
+            "next_maintenance_time", 0, nextMaintenanceTime);
+      }
+    }
     this.put(NEXT_MAINTENANCE_TIME,
         new BytesCapsule(ByteArray.fromLong(nextMaintenanceTime)));
   }

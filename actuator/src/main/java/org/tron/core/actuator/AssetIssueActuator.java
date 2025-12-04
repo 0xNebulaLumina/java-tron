@@ -24,10 +24,12 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.DecodeUtil;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
 import org.tron.core.capsule.TransactionResultCapsule;
+import org.tron.core.db.DomainChangeRecorderContext;
 import org.tron.core.exception.BalanceInsufficientException;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
@@ -117,6 +119,40 @@ public class AssetIssueActuator extends AbstractActuator {
           .addAllFrozenSupply(frozenList).build());
 
       accountStore.put(ownerAddress, accountCapsule);
+
+      // Record TRC-10 issuance metadata changes for domain journal
+      if (DomainChangeRecorderContext.isEnabled()) {
+        String tokenIdStr = Long.toString(tokenIdNum);
+        String ownerHex = ByteArray.toHexString(ownerAddress).toLowerCase();
+
+        // Record all issuance fields as "create" operations
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "name",
+            "", assetIssueContract.getName().toStringUtf8(), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "abbr",
+            "", assetIssueContract.getAbbr().toStringUtf8(), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "total_supply",
+            "", String.valueOf(assetIssueContract.getTotalSupply()), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "precision",
+            "", String.valueOf(assetIssueCapsuleV2.getPrecision()), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "trx_num",
+            "", String.valueOf(assetIssueContract.getTrxNum()), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "num",
+            "", String.valueOf(assetIssueContract.getNum()), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "start_time",
+            "", String.valueOf(assetIssueContract.getStartTime()), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "end_time",
+            "", String.valueOf(assetIssueContract.getEndTime()), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "description",
+            "", assetIssueContract.getDescription().toStringUtf8(), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "url",
+            "", assetIssueContract.getUrl().toStringUtf8(), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "owner_address",
+            "", ownerHex, "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "free_asset_net_limit",
+            "", String.valueOf(assetIssueContract.getFreeAssetNetLimit()), "create");
+        DomainChangeRecorderContext.recordTrc10IssuanceChange(tokenIdStr, "public_free_asset_net_limit",
+            "", String.valueOf(assetIssueContract.getPublicFreeAssetNetLimit()), "create");
+      }
 
       ret.setAssetIssueID(Long.toString(tokenIdNum));
       ret.setStatus(fee, code.SUCESS);

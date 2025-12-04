@@ -192,9 +192,12 @@ public class ExecutionCsvRecordBuilder {
         DomainCanonicalizer.globalsToJsonAndDigest(globalDeltas);
     builder.globalResourceDomain(globalResult);
 
-    // Domain: Account resource usage (AEXT) - derived from account changes
-    // For now, set empty; can be enhanced later to parse AEXT from account bytes
-    builder.accountResourceUsageDomain(DomainCanonicalizer.emptyDomainResult());
+    // Domain: Account resource usage (AEXT) - parsed from account state change bytes
+    List<DomainCanonicalizer.AccountResourceUsageDelta> aextDeltas =
+        DomainCanonicalizer.extractAccountResourceUsage(stateChanges);
+    DomainCanonicalizer.DomainResult aextResult =
+        DomainCanonicalizer.accountAextToJsonAndDigest(aextDeltas);
+    builder.accountResourceUsageDomain(aextResult);
 
     // Domain: Log entries
     List<DomainCanonicalizer.LogEntryDelta> logDeltas =
@@ -376,9 +379,12 @@ public class ExecutionCsvRecordBuilder {
         DomainCanonicalizer.globalsToJsonAndDigest(globalDeltas);
     builder.globalResourceDomain(globalResult);
 
-    // Domain: Account resource usage (AEXT) - derived from account changes
-    // For now, set empty; can be enhanced later to parse AEXT from account bytes
-    builder.accountResourceUsageDomain(DomainCanonicalizer.emptyDomainResult());
+    // Domain: Account resource usage (AEXT) - parsed from account state change bytes
+    List<DomainCanonicalizer.AccountResourceUsageDelta> aextDeltas =
+        DomainCanonicalizer.extractAccountResourceUsage(journaledChanges);
+    DomainCanonicalizer.DomainResult aextResult =
+        DomainCanonicalizer.accountAextToJsonAndDigest(aextDeltas);
+    builder.accountResourceUsageDomain(aextResult);
 
     // Domain: Log entries from ProgramResult
     List<DomainCanonicalizer.LogEntryDelta> logDeltas =

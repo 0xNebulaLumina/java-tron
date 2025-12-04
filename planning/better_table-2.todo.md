@@ -96,11 +96,11 @@ C. Embedded Mode Collection (DomainChangeJournal)
   - [x] initializeForCurrentTransaction() at tx start; clear at tx end.
 - [x] Hook points (pre/post reads with squash):
   - [x] TRC‑10 balances: AccountCapsule.addAssetAmountV2/reduceAssetAmountV2; also V1 methods if relevant. File: chainbase/src/main/java/org/tron/core/capsule/AccountCapsule.java
-  - [ ] TRC‑10 issuance: AssetIssueActuator.execute() to emit issuance metadata. File: actuator/src/main/java/org/tron/core/actuator/AssetIssueActuator.java
+  - [x] TRC‑10 issuance: AssetIssueActuator.execute() to emit issuance metadata. File: actuator/src/main/java/org/tron/core/actuator/AssetIssueActuator.java
   - [x] Votes: VoteWitnessActuator.execute() — diff Account.votes pre/post and also persist VotesStore parity. File: actuator/src/main/java/org/tron/core/actuator/VoteWitnessActuator.java
   - [x] Freezes: FreezeBalanceV2Actuator — capture absolute frozen amounts (V2). Files: actuator/src/main/java/org/tron/core/actuator/FreezeBalanceV2Actuator.java
-  - [ ] Global resource: DynamicPropertiesStore.saveTotal(Net|Energy)(Weight|Limit) and saveNextMaintenanceTime — record old/new at first touch per tx. File: chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java
-  - [ ] Account resource usage (AEXT): derive from account_changes old/new fields; no extra hooks required if AEXT tail is already serialized in StateChangeJournal.
+  - [x] Global resource: DynamicPropertiesStore.saveTotal(Net|Energy)(Weight|Limit) and saveNextMaintenanceTime — record old/new at first touch per tx. File: chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java
+  - [x] Account resource usage (AEXT): derive from account_changes old/new fields; no extra hooks required if AEXT tail is already serialized in StateChangeJournal.
   - [x] Logs: from ProgramResult.getLogInfoList() in builder; no journal needed.
 - [x] Gating: reuse System property -Dexec.csv.stateChanges.enabled=true to enable both StateChangeJournal and DomainChangeJournal recordings (single switch).
 
@@ -111,7 +111,7 @@ D. Remote Mode Mapping (ExecutionProgramResult)
 - [x] TRC‑10: use getTrc10Changes() for issuance/transfers; still compute actual old/new balances via pre/post reads against AccountStore before/after Java apply for parity.
 - [x] Votes: getVoteChanges(); reconstruct per‑witness deltas using AccountStore pre/post if needed.
 - [x] Freezes/global: getFreezeChanges(), getGlobalResourceChanges(); old/new via DynamicPropertiesStore pre/post.
-- [ ] Account resource usage (AEXT): derive from account_changes old/new (AEXT tail decoding logic already in StateChangeJournal.serializeAccountInfo).
+- [x] Account resource usage (AEXT): derive from account_changes old/new (AEXT tail decoding logic already in StateChangeJournal.serializeAccountInfo).
 - [x] Ensure RuntimeSpiImpl.apply* methods continue to persist these changes before the builder reads post‑state. File: framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java
 
 E. CSV Builder Integration

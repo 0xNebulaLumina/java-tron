@@ -1562,6 +1562,199 @@ public class DomainCanonicalizer {
     }
   }
 
+  /**
+   * Parsed AEXT (Account EXTension) data structure.
+   */
+  public static class ParsedAext {
+    public long netUsage;
+    public long freeNetUsage;
+    public long energyUsage;
+    public long latestConsumeTime;
+    public long latestConsumeFreeTime;
+    public long latestConsumeTimeForEnergy;
+    public long netWindowSize;
+    public long energyWindowSize;
+    public boolean netWindowOptimized;
+    public boolean energyWindowOptimized;
+
+    public boolean isEmpty() {
+      return netUsage == 0 && freeNetUsage == 0 && energyUsage == 0
+          && netWindowSize == 0 && energyWindowSize == 0;
+    }
+  }
+
+  /**
+   * Parse AEXT from account bytes if present.
+   * AEXT format: magic("AEXT") + version(2) + length(2) + payload(68)
+   * Returns null if no AEXT found or parsing fails.
+   */
+  public static ParsedAext parseAext(byte[] data) {
+    if (data == null) {
+      return null;
+    }
+
+    // Minimum account bytes: 76 (base) + 0 (code) = 76
+    // AEXT header starts after: 76 + codeLen
+    if (data.length < 76) {
+      return null;
+    }
+
+    try {
+      // Get code length from offset 72 (4 bytes big-endian)
+      int codeLen = 0;
+      for (int i = 0; i < 4; i++) {
+        codeLen = (codeLen << 8) | (data[72 + i] & 0xFF);
+      }
+
+      // Calculate AEXT start offset
+      int aextStart = 76 + codeLen;
+
+      // Need at least 8 bytes for AEXT header and 68 bytes for payload
+      if (data.length < aextStart + 8 + 68) {
+        return null;
+      }
+
+      // Check AEXT magic: "AEXT" (0x41 0x45 0x58 0x54)
+      if (data[aextStart] != 0x41 || data[aextStart + 1] != 0x45
+          || data[aextStart + 2] != 0x58 || data[aextStart + 3] != 0x54) {
+        return null;
+      }
+
+      // Check version (expecting 1)
+      int version = ((data[aextStart + 4] & 0xFF) << 8) | (data[aextStart + 5] & 0xFF);
+      if (version != 1) {
+        logger.warn("Unsupported AEXT version: {}", version);
+        return null;
+      }
+
+      // Check length (expecting 68)
+      int payloadLen = ((data[aextStart + 6] & 0xFF) << 8) | (data[aextStart + 7] & 0xFF);
+      if (payloadLen != 68) {
+        logger.warn("Unexpected AEXT payload length: {}", payloadLen);
+        return null;
+      }
+
+      // Parse payload (starting at aextStart + 8)
+      int offset = aextStart + 8;
+      ParsedAext aext = new ParsedAext();
+
+      aext.netUsage = readI64BigEndian(data, offset);
+      offset += 8;
+      aext.freeNetUsage = readI64BigEndian(data, offset);
+      offset += 8;
+      aext.energyUsage = readI64BigEndian(data, offset);
+      offset += 8;
+      aext.latestConsumeTime = readI64BigEndian(data, offset);
+      offset += 8;
+      aext.latestConsumeFreeTime = readI64BigEndian(data, offset);
+      offset += 8;
+      aext.latestConsumeTimeForEnergy = readI64BigEndian(data, offset);
+      offset += 8;
+      aext.netWindowSize = readI64BigEndian(data, offset);
+      offset += 8;
+      aext.energyWindowSize = readI64BigEndian(data, offset);
+      offset += 8;
+      aext.netWindowOptimized = data[offset++] != 0;
+      aext.energyWindowOptimized = data[offset] != 0;
+
+      return aext;
+    } catch (Exception e) {
+      logger.debug("Failed to parse AEXT: {}", e.getMessage());
+      return null;
+    }
+  }
+
+  /**
+   * Read i64 value in big-endian format from byte array.
+   */
+  private static long readI64BigEndian(byte[] data, int offset) {
+    long value = 0;
+    for (int i = 0; i < 8; i++) {
+      value = (value << 8) | (data[offset + i] & 0xFF);
+    }
+    return value;
+  }
+
+  /**
+   * Extract AccountResourceUsageDelta list from state changes.
+   * Parses AEXT from account bytes (empty key state changes).
+   */
+  public static List<AccountResourceUsageDelta> extractAccountResourceUsage(
+      List<StateChange> stateChanges) {
+
+    List<AccountResourceUsageDelta> deltas = new ArrayList<>();
+    if (stateChanges == null || stateChanges.isEmpty()) {
+      return deltas;
+    }
+
+    for (StateChange sc : stateChanges) {
+      // Only process account changes (empty key)
+      if (sc.getKey() != null && sc.getKey().length > 0) {
+        continue;
+      }
+
+      ParsedAext oldAext = parseAext(sc.getOldValue());
+      ParsedAext newAext = parseAext(sc.getNewValue());
+
+      // Skip if no AEXT data on either side
+      if (oldAext == null && newAext == null) {
+        continue;
+      }
+
+      // Create delta if there's any change
+      AccountResourceUsageDelta delta = new AccountResourceUsageDelta();
+      delta.setAddressHex(sc.getAddress() != null
+          ? ByteArray.toHexString(sc.getAddress()).toLowerCase() : "");
+      delta.setOp("update");
+
+      // Set old values (default to 0 if no old AEXT)
+      long oldNetUsage = oldAext != null ? oldAext.netUsage : 0;
+      long oldEnergyUsage = oldAext != null ? oldAext.energyUsage : 0;
+      long oldNetWindowSize = oldAext != null ? oldAext.netWindowSize : 0;
+      long oldEnergyWindowSize = oldAext != null ? oldAext.energyWindowSize : 0;
+
+      // Set new values (default to 0 if no new AEXT)
+      long newNetUsage = newAext != null ? newAext.netUsage : 0;
+      long newEnergyUsage = newAext != null ? newAext.energyUsage : 0;
+      long newNetWindowSize = newAext != null ? newAext.netWindowSize : 0;
+      long newEnergyWindowSize = newAext != null ? newAext.energyWindowSize : 0;
+
+      // Only include if something actually changed
+      boolean hasChange = oldNetUsage != newNetUsage
+          || oldEnergyUsage != newEnergyUsage
+          || oldNetWindowSize != newNetWindowSize
+          || oldEnergyWindowSize != newEnergyWindowSize;
+
+      if (!hasChange) {
+        continue;
+      }
+
+      // Set values only if they changed
+      if (oldNetUsage != newNetUsage || oldAext != null || newAext != null) {
+        delta.setOldNetUsage(oldNetUsage);
+        delta.setNewNetUsage(newNetUsage);
+      }
+      if (oldEnergyUsage != newEnergyUsage || oldAext != null || newAext != null) {
+        delta.setOldEnergyUsage(oldEnergyUsage);
+        delta.setNewEnergyUsage(newEnergyUsage);
+      }
+      // Using window size as approximate storage usage for now
+      if (oldNetWindowSize != newNetWindowSize || oldEnergyWindowSize != newEnergyWindowSize) {
+        delta.setOldStorageUsage(oldNetWindowSize);
+        delta.setNewStorageUsage(newNetWindowSize);
+      }
+      // Net/energy limits are not in AEXT; set null to omit from JSON
+      delta.setOldNetLimit(null);
+      delta.setNewNetLimit(null);
+      delta.setOldEnergyLimit(null);
+      delta.setNewEnergyLimit(null);
+
+      deltas.add(delta);
+    }
+
+    return deltas;
+  }
+
   // ================================
   // Helper Methods
   // ================================
