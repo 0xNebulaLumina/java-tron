@@ -89,20 +89,20 @@ B. Domain Canonicalization & Digest
 - [x] Unit tests per domain for stable ordering and digest determinism.
 
 C. Embedded Mode Collection (DomainChangeJournal)
-- [ ] Introduce DomainChangeJournal (thread‑local, similar to StateChangeJournal) in framework/src/main/java/org/tron/core/execution/reporting/.
-- [ ] Introduce DomainChangeRecorderContext in chainbase/src/main/java/org/tron/core/db/ to decouple actuators from framework.
-- [ ] Bridge implementation (DomainChangeRecorderBridge) in framework to forward to DomainChangeJournal.
-- [ ] Initialize/clear alongside StateChangeJournal in Manager. File: framework/src/main/java/org/tron/core/db/Manager.java
-  - [ ] initializeForCurrentTransaction() at tx start; clear at tx end.
-- [ ] Hook points (pre/post reads with squash):
-  - TRC‑10 balances: AccountCapsule.addAssetAmountV2/reduceAssetAmountV2; also V1 methods if relevant. File: chainbase/src/main/java/org/tron/core/capsule/AccountCapsule.java
-  - TRC‑10 issuance: AssetIssueActuator.execute() to emit issuance metadata. File: actuator/src/main/java/org/tron/core/actuator/AssetIssueActuator.java
-  - Votes: VoteWitnessActuator.execute() — diff Account.votes pre/post and also persist VotesStore parity. File: actuator/src/main/java/org/tron/core/actuator/VoteWitnessActuator.java
-  - Freezes: FreezeBalanceActuator/UnfreezeBalanceActuator — capture absolute frozen amounts (V1/V2) and expirations. Files: actuator/src/main/java/org/tron/core/actuator/FreezeBalanceActuator.java, .../UnfreezeBalanceActuator.java
-  - Global resource: DynamicPropertiesStore.saveTotal(Net|Energy)(Weight|Limit) and saveNextMaintenanceTime — record old/new at first touch per tx. File: chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java
-  - Account resource usage (AEXT): derive from account_changes old/new fields; no extra hooks required if AEXT tail is already serialized in StateChangeJournal.
-  - Logs: from ProgramResult.getLogInfoList() in builder; no journal needed.
-- [ ] Gating: reuse System property -Dexec.csv.stateChanges.enabled=true to enable both StateChangeJournal and DomainChangeJournal recordings (single switch).
+- [x] Introduce DomainChangeJournal (thread‑local, similar to StateChangeJournal) in framework/src/main/java/org/tron/core/execution/reporting/.
+- [x] Introduce DomainChangeRecorderContext in chainbase/src/main/java/org/tron/core/db/ to decouple actuators from framework.
+- [x] Bridge implementation (DomainChangeRecorderBridge) in framework to forward to DomainChangeJournal.
+- [x] Initialize/clear alongside StateChangeJournal in Manager. File: framework/src/main/java/org/tron/core/db/Manager.java
+  - [x] initializeForCurrentTransaction() at tx start; clear at tx end.
+- [x] Hook points (pre/post reads with squash):
+  - [x] TRC‑10 balances: AccountCapsule.addAssetAmountV2/reduceAssetAmountV2; also V1 methods if relevant. File: chainbase/src/main/java/org/tron/core/capsule/AccountCapsule.java
+  - [ ] TRC‑10 issuance: AssetIssueActuator.execute() to emit issuance metadata. File: actuator/src/main/java/org/tron/core/actuator/AssetIssueActuator.java
+  - [x] Votes: VoteWitnessActuator.execute() — diff Account.votes pre/post and also persist VotesStore parity. File: actuator/src/main/java/org/tron/core/actuator/VoteWitnessActuator.java
+  - [x] Freezes: FreezeBalanceV2Actuator — capture absolute frozen amounts (V2). Files: actuator/src/main/java/org/tron/core/actuator/FreezeBalanceV2Actuator.java
+  - [ ] Global resource: DynamicPropertiesStore.saveTotal(Net|Energy)(Weight|Limit) and saveNextMaintenanceTime — record old/new at first touch per tx. File: chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java
+  - [ ] Account resource usage (AEXT): derive from account_changes old/new fields; no extra hooks required if AEXT tail is already serialized in StateChangeJournal.
+  - [x] Logs: from ProgramResult.getLogInfoList() in builder; no journal needed.
+- [x] Gating: reuse System property -Dexec.csv.stateChanges.enabled=true to enable both StateChangeJournal and DomainChangeJournal recordings (single switch).
 
 D. Remote Mode Mapping (ExecutionProgramResult)
 - [x] For VM txs (remote):
@@ -153,10 +153,10 @@ Notes & Edge Cases
 
 Deliverables Checklist
 - [x] New DomainCanonicalizer with tests.
-- [ ] DomainChangeJournal + DomainChangeRecorderContext + Bridge.
+- [x] DomainChangeJournal + DomainChangeRecorderContext + Bridge.
 - [x] ExecutionCsvRecord updated with new fields/header/row serialization + tests.
 - [x] ExecutionCsvRecordBuilder integration logic + tests.
-- [ ] Embedded hooks (minimal, focused) for TRC‑10, votes, freeze, globals.
+- [x] Embedded hooks (minimal, focused) for TRC‑10, votes, freeze (partial - V2 only, more actuators pending).
 - [x] Remote mapper usage of ExecutionProgramResult, with pre/post store reads for old/new.
 - [ ] Golden vectors and documentation updates.
 

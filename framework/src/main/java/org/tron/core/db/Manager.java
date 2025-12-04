@@ -55,7 +55,10 @@ import org.tron.core.execution.reporting.ExecutionCsvRecordBuilder;
 import org.tron.core.execution.reporting.JournalPreseedUtil;
 import org.tron.core.execution.reporting.StateChangeJournalRegistry;
 import org.tron.core.execution.reporting.StateChangeRecorderBridge;
+import org.tron.core.execution.reporting.DomainChangeJournalRegistry;
+import org.tron.core.execution.reporting.DomainChangeRecorderBridge;
 import org.tron.core.db.StateChangeRecorderContext;
+import org.tron.core.db.DomainChangeRecorderContext;
 import org.tron.core.storage.sync.ResourceSyncContext;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.bloom.Bloom;
@@ -1566,6 +1569,8 @@ public class Manager {
     trace.init(blockCap, eventPluginLoaded);
     StateChangeJournalRegistry.initializeForCurrentTransaction();
     StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
+    DomainChangeJournalRegistry.initializeForCurrentTransaction();
+    DomainChangeRecorderContext.setRecorder(new DomainChangeRecorderBridge());
     // JournalPreseedUtil.tryPreseedAfterResource(trace);
     trace.checkIsConstant();
     trace.exec();
@@ -1577,6 +1582,9 @@ public class Manager {
         StateChangeJournalRegistry.clearForCurrentTransaction();
         StateChangeJournalRegistry.initializeForCurrentTransaction();
         StateChangeRecorderContext.setRecorder(new StateChangeRecorderBridge());
+        DomainChangeJournalRegistry.clearForCurrentTransaction();
+        DomainChangeJournalRegistry.initializeForCurrentTransaction();
+        DomainChangeRecorderContext.setRecorder(new DomainChangeRecorderBridge());
         // JournalPreseedUtil.tryPreseedAfterResource(trace);
         trace.checkIsConstant();
         trace.exec();
@@ -1616,9 +1624,11 @@ public class Manager {
     // Log execution details to CSV for remote vs embedded comparison
     logExecutionToCsv(trxCap, blockCap, trace);
     
-    // Clean up journal after CSV logging is complete
+    // Clean up journals after CSV logging is complete
     StateChangeJournalRegistry.clearForCurrentTransaction();
     StateChangeRecorderContext.clear();
+    DomainChangeJournalRegistry.clearForCurrentTransaction();
+    DomainChangeRecorderContext.clear();
 
     // Finish resource sync context
     ResourceSyncContext.finish();

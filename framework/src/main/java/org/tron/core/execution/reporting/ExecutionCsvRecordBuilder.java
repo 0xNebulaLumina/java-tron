@@ -13,6 +13,8 @@ import org.tron.core.execution.spi.ExecutionSPI.FreezeLedgerChange;
 import org.tron.core.execution.spi.ExecutionSPI.GlobalResourceTotalsChange;
 import org.tron.core.execution.spi.ExecutionSPI.LogEntry;
 import org.tron.core.execution.spi.ExecutionSPI.StateChange;
+import org.tron.core.execution.spi.ExecutionSPI.Trc10AssetIssued;
+import org.tron.core.execution.spi.ExecutionSPI.Trc10AssetTransferred;
 import org.tron.core.execution.spi.ExecutionSPI.Trc10Change;
 import org.tron.core.execution.spi.ExecutionSPI.VoteChange;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
@@ -215,7 +217,7 @@ public class ExecutionCsvRecordBuilder {
       for (Trc10Change change : trc10Changes) {
         if (change.hasAssetTransferred()) {
           // Balance change from transfer
-          var transfer = change.getAssetTransferred();
+          Trc10AssetTransferred transfer = change.getAssetTransferred();
           String tokenId = transfer.getTokenId() != null && !transfer.getTokenId().isEmpty()
               ? transfer.getTokenId()
               : org.tron.common.utils.ByteArray.toHexString(transfer.getAssetName());
@@ -245,7 +247,7 @@ public class ExecutionCsvRecordBuilder {
 
         if (change.hasAssetIssued()) {
           // Issuance creates new token metadata
-          var issued = change.getAssetIssued();
+          Trc10AssetIssued issued = change.getAssetIssued();
           String tokenId = issued.getTokenId() != null && !issued.getTokenId().isEmpty()
               ? issued.getTokenId()
               : org.tron.common.utils.ByteArray.toHexString(issued.getName());
@@ -311,8 +313,8 @@ public class ExecutionCsvRecordBuilder {
   private static void extractFromEmbeddedExecution(
       ExecutionCsvRecord.Builder builder, ProgramResult programResult) {
 
-    // Get state changes from journal
-    List<StateChange> journaledChanges = StateChangeJournalRegistry.finalizeForCurrentTransaction();
+    // Get state changes from journal (don't finalize here, just get current changes)
+    List<StateChange> journaledChanges = StateChangeJournalRegistry.getCurrentTransactionStateChanges();
 
     if (journaledChanges != null && !journaledChanges.isEmpty()) {
       builder.stateChangeCount(journaledChanges.size())
@@ -338,13 +340,44 @@ public class ExecutionCsvRecordBuilder {
         DomainCanonicalizer.evmStorageToJsonAndDigest(split.evmStorageChanges);
     builder.evmStorageDomain(evmStorageResult);
 
-    // Embedded mode: other domains are empty for now
-    // (can be enhanced when DomainChangeJournal is implemented)
-    builder.trc10BalanceDomain(DomainCanonicalizer.emptyDomainResult());
-    builder.trc10IssuanceDomain(DomainCanonicalizer.emptyDomainResult());
-    builder.voteDomain(DomainCanonicalizer.emptyDomainResult());
-    builder.freezeDomain(DomainCanonicalizer.emptyDomainResult());
-    builder.globalResourceDomain(DomainCanonicalizer.emptyDomainResult());
+    // Get domain changes from DomainChangeJournalRegistry
+    // Domain: TRC-10 balance changes
+    List<DomainCanonicalizer.Trc10BalanceDelta> trc10BalanceDeltas =
+        DomainChangeJournalRegistry.getTrc10BalanceChanges();
+    DomainCanonicalizer.DomainResult trc10BalanceResult =
+        DomainCanonicalizer.trc10BalancesToJsonAndDigest(trc10BalanceDeltas);
+    builder.trc10BalanceDomain(trc10BalanceResult);
+
+    // Domain: TRC-10 issuance changes
+    List<DomainCanonicalizer.Trc10IssuanceDelta> trc10IssuanceDeltas =
+        DomainChangeJournalRegistry.getTrc10IssuanceChanges();
+    DomainCanonicalizer.DomainResult trc10IssuanceResult =
+        DomainCanonicalizer.trc10IssuanceToJsonAndDigest(trc10IssuanceDeltas);
+    builder.trc10IssuanceDomain(trc10IssuanceResult);
+
+    // Domain: Vote changes
+    List<DomainCanonicalizer.VoteDelta> voteDeltas =
+        DomainChangeJournalRegistry.getVoteChanges();
+    DomainCanonicalizer.DomainResult voteResult =
+        DomainCanonicalizer.votesToJsonAndDigest(voteDeltas);
+    builder.voteDomain(voteResult);
+
+    // Domain: Freeze changes
+    List<DomainCanonicalizer.FreezeDelta> freezeDeltas =
+        DomainChangeJournalRegistry.getFreezeChanges();
+    DomainCanonicalizer.DomainResult freezeResult =
+        DomainCanonicalizer.freezesToJsonAndDigest(freezeDeltas);
+    builder.freezeDomain(freezeResult);
+
+    // Domain: Global resource changes
+    List<DomainCanonicalizer.GlobalResourceDelta> globalDeltas =
+        DomainChangeJournalRegistry.getGlobalResourceChanges();
+    DomainCanonicalizer.DomainResult globalResult =
+        DomainCanonicalizer.globalsToJsonAndDigest(globalDeltas);
+    builder.globalResourceDomain(globalResult);
+
+    // Domain: Account resource usage (AEXT) - derived from account changes
+    // For now, set empty; can be enhanced later to parse AEXT from account bytes
     builder.accountResourceUsageDomain(DomainCanonicalizer.emptyDomainResult());
 
     // Domain: Log entries from ProgramResult
