@@ -1820,11 +1820,14 @@ public class DomainCanonicalizer {
         delta.setOldStorageUsage(oldNetWindowSize);
         delta.setNewStorageUsage(newNetWindowSize);
       }
-      // Net/energy limits are not in AEXT; set null to omit from JSON
-      delta.setOldNetLimit(null);
-      delta.setNewNetLimit(null);
-      delta.setOldEnergyLimit(null);
-      delta.setNewEnergyLimit(null);
+
+      // Populate per-account limits from AEXT window sizes when available.
+      // Treat netWindowSize as net_limit and energyWindowSize as energy_limit.
+      // If one side is missing AEXT, default to 0 for that side.
+      delta.setOldNetLimit(oldAext != null ? oldNetWindowSize : 0L);
+      delta.setNewNetLimit(newAext != null ? newNetWindowSize : 0L);
+      delta.setOldEnergyLimit(oldAext != null ? oldEnergyWindowSize : 0L);
+      delta.setNewEnergyLimit(newAext != null ? newEnergyWindowSize : 0L);
 
       deltas.add(delta);
     }
