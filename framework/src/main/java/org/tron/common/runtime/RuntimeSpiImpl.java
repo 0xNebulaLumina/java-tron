@@ -1345,7 +1345,7 @@ public class RuntimeSpiImpl implements Runtime {
                   oldExpireTimeMs = 0L;
                 } else {
                   oldAmount = ownerAccount.getFrozenBalance();
-                  java.util.List<org.tron.protos.Protocol.Frozen> frozenList = ownerAccount.getFrozenList();
+                  java.util.List<org.tron.protos.Protocol.Account.Frozen> frozenList = ownerAccount.getFrozenList();
                   oldExpireTimeMs = (frozenList != null && !frozenList.isEmpty())
                       ? frozenList.get(0).getExpireTime() : 0L;
                 }
