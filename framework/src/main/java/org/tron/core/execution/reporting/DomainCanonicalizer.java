@@ -1483,33 +1483,41 @@ public class DomainCanonicalizer {
       long oldEnergyWeight = oldGlobals != null ? oldGlobals.getTotalEnergyWeight() : 0;
       long oldEnergyLimit = oldGlobals != null ? oldGlobals.getTotalEnergyLimit() : 0;
 
-      GlobalResourceDelta netWeight = new GlobalResourceDelta();
-      netWeight.setField("total_net_weight");
-      netWeight.setOp("update");
-      netWeight.setOldValue(String.valueOf(oldNetWeight));
-      netWeight.setNewValue(String.valueOf(gc.getTotalNetWeight()));
-      deltas.add(netWeight);
+      if (oldNetWeight != gc.getTotalNetWeight()) {
+        GlobalResourceDelta netWeight = new GlobalResourceDelta();
+        netWeight.setField("total_net_weight");
+        netWeight.setOp("update");
+        netWeight.setOldValue(String.valueOf(oldNetWeight));
+        netWeight.setNewValue(String.valueOf(gc.getTotalNetWeight()));
+        deltas.add(netWeight);
+      }
 
-      GlobalResourceDelta netLimit = new GlobalResourceDelta();
-      netLimit.setField("total_net_limit");
-      netLimit.setOp("update");
-      netLimit.setOldValue(String.valueOf(oldNetLimit));
-      netLimit.setNewValue(String.valueOf(gc.getTotalNetLimit()));
-      deltas.add(netLimit);
+      if (oldNetLimit != gc.getTotalNetLimit()) {
+        GlobalResourceDelta netLimit = new GlobalResourceDelta();
+        netLimit.setField("total_net_limit");
+        netLimit.setOp("update");
+        netLimit.setOldValue(String.valueOf(oldNetLimit));
+        netLimit.setNewValue(String.valueOf(gc.getTotalNetLimit()));
+        deltas.add(netLimit);
+      }
 
-      GlobalResourceDelta energyWeight = new GlobalResourceDelta();
-      energyWeight.setField("total_energy_weight");
-      energyWeight.setOp("update");
-      energyWeight.setOldValue(String.valueOf(oldEnergyWeight));
-      energyWeight.setNewValue(String.valueOf(gc.getTotalEnergyWeight()));
-      deltas.add(energyWeight);
+      if (oldEnergyWeight != gc.getTotalEnergyWeight()) {
+        GlobalResourceDelta energyWeight = new GlobalResourceDelta();
+        energyWeight.setField("total_energy_weight");
+        energyWeight.setOp("update");
+        energyWeight.setOldValue(String.valueOf(oldEnergyWeight));
+        energyWeight.setNewValue(String.valueOf(gc.getTotalEnergyWeight()));
+        deltas.add(energyWeight);
+      }
 
-      GlobalResourceDelta energyLimit = new GlobalResourceDelta();
-      energyLimit.setField("total_energy_limit");
-      energyLimit.setOp("update");
-      energyLimit.setOldValue(String.valueOf(oldEnergyLimit));
-      energyLimit.setNewValue(String.valueOf(gc.getTotalEnergyLimit()));
-      deltas.add(energyLimit);
+      if (oldEnergyLimit != gc.getTotalEnergyLimit()) {
+        GlobalResourceDelta energyLimit = new GlobalResourceDelta();
+        energyLimit.setField("total_energy_limit");
+        energyLimit.setOp("update");
+        energyLimit.setOldValue(String.valueOf(oldEnergyLimit));
+        energyLimit.setNewValue(String.valueOf(gc.getTotalEnergyLimit()));
+        deltas.add(energyLimit);
+      }
     }
     return deltas;
   }
