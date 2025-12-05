@@ -1367,14 +1367,19 @@ public class DomainCanonicalizer {
           long oldVotes = oldVotesL != null ? oldVotesL : 0L;
           long newVotes = ve.getVoteCount();
 
-          // Determine operation
+          // Determine operation (align with embedded journaling semantics)
+          // Use: set for 0->N, delete for N->0, increase/decrease for deltas, set for no-op
           String op;
           if (oldVotes == 0 && newVotes > 0) {
-            op = "create";
+            op = "set";
           } else if (oldVotes > 0 && newVotes == 0) {
             op = "delete";
+          } else if (newVotes > oldVotes) {
+            op = "increase";
+          } else if (newVotes < oldVotes) {
+            op = "decrease";
           } else {
-            op = "update";
+            op = "set";
           }
 
           VoteDelta delta = new VoteDelta();
