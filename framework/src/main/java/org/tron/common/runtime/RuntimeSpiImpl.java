@@ -1324,6 +1324,63 @@ public class RuntimeSpiImpl implements Runtime {
             totalNetWeight, totalNetLimit, totalEnergyWeight, totalEnergyLimit, totalTronPowerWeight);
       }
 
+      // 3b. Capture freeze snapshots (owner/resource old amount + expire) before applying changes
+      if (result.getFreezeChanges() != null) {
+        for (ExecutionSPI.FreezeLedgerChange freezeChange : result.getFreezeChanges()) {
+          byte[] ownerAddress = freezeChange.getOwnerAddress();
+          if (ownerAddress == null) {
+            continue;
+          }
+
+          AccountCapsule ownerAccount = accountStore.get(ownerAddress);
+          long oldAmount = 0L;
+          long oldExpireTimeMs = 0L;
+
+          if (ownerAccount != null) {
+            switch (freezeChange.getResource()) {
+              case BANDWIDTH:
+                if (freezeChange.isV2Model()) {
+                  // V2 has no expiration
+                  oldAmount = ownerAccount.getFrozenV2BalanceForBandwidth();
+                  oldExpireTimeMs = 0L;
+                } else {
+                  oldAmount = ownerAccount.getFrozenBalance();
+                  java.util.List<org.tron.protos.Protocol.Frozen> frozenList = ownerAccount.getFrozenList();
+                  oldExpireTimeMs = (frozenList != null && !frozenList.isEmpty())
+                      ? frozenList.get(0).getExpireTime() : 0L;
+                }
+                break;
+              case ENERGY:
+                if (freezeChange.isV2Model()) {
+                  oldAmount = ownerAccount.getFrozenV2BalanceForEnergy();
+                  oldExpireTimeMs = 0L;
+                } else {
+                  oldAmount = ownerAccount.getEnergyFrozenBalance();
+                  oldExpireTimeMs = ownerAccount.getAccountResource()
+                      .getFrozenBalanceForEnergy().getExpireTime();
+                }
+                break;
+              case TRON_POWER:
+                if (freezeChange.isV2Model()) {
+                  oldAmount = ownerAccount.getTronPowerFrozenV2Balance();
+                  oldExpireTimeMs = 0L;
+                } else {
+                  oldAmount = ownerAccount.getTronPowerFrozenBalance();
+                  oldExpireTimeMs = ownerAccount.getInstance().getTronPower().getExpireTime();
+                }
+                break;
+              default:
+                // Unknown resource type: leave zeros
+                break;
+            }
+          }
+
+          // Note: recipient is not provided by FreezeLedgerChange; use self-freeze (null recipient)
+          PreStateSnapshotRegistry.captureFreeze(
+              ownerAddress, freezeChange.getResource().name(), null, oldAmount, oldExpireTimeMs);
+        }
+      }
+
       // 4. Capture per-account frozen totals for limit computation
       // Build set of affected addresses from state changes (empty key = account changes)
       // and freeze changes owners
