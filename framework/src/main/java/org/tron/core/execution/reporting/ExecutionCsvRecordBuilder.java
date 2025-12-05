@@ -184,6 +184,42 @@ public class ExecutionCsvRecordBuilder {
     // Domain: Freeze changes
     List<DomainCanonicalizer.FreezeDelta> freezeDeltas =
         DomainCanonicalizer.convertFreezeChanges(execResult.getFreezeChanges());
+
+    // Align op semantics with embedded execution:
+    // - FreezeBalanceContract/FreezeBalanceV2Contract -> op "freeze"
+    // - UnfreezeBalanceContract/UnfreezeBalanceV2Contract -> op "unfreeze"
+    // Embedded actuators record "freeze" even when increasing an existing freeze,
+    // while remote conversion previously labeled such cases as "update" based on
+    // old/new values. For CSV parity, prefer the contract intent over the delta shape.
+    try {
+      if (trace != null && trace.getTransactionContext() != null
+          && trace.getTransactionContext().getTrxCap() != null) {
+        org.tron.protos.Protocol.Transaction.Contract contract =
+            trace.getTransactionContext().getTrxCap().getInstance().getRawData().getContract(0);
+        org.tron.protos.Protocol.Transaction.Contract.ContractType type = contract.getType();
+        String forcedOp = null;
+        switch (type) {
+          case FreezeBalanceContract:
+          case FreezeBalanceV2Contract:
+            forcedOp = "freeze";
+            break;
+          case UnfreezeBalanceContract:
+          case UnfreezeBalanceV2Contract:
+            forcedOp = "unfreeze";
+            break;
+          default:
+            // leave null: keep computed op for non-freeze contracts
+            break;
+        }
+        if (forcedOp != null && freezeDeltas != null) {
+          for (DomainCanonicalizer.FreezeDelta d : freezeDeltas) {
+            d.setOp(forcedOp);
+          }
+        }
+      }
+    } catch (Exception ignore) {
+      // Do not fail CSV building due to optional parity adjustment
+    }
     DomainCanonicalizer.DomainResult freezeResult =
         DomainCanonicalizer.freezesToJsonAndDigest(freezeDeltas);
     builder.freezeDomain(freezeResult);
