@@ -36,7 +36,7 @@ import org.tron.core.execution.spi.ExecutionSPI.VoteEntry;
  *   <li>JSON object keys are sorted lexicographically at all depths
  *   <li>Arrays are sorted by domain-specific keys
  *   <li>Digest is SHA-256 over UTF-8 bytes of canonical JSON array string
- *   <li>Empty arrays use empty string for digest
+ *   <li>Empty arrays use sha256("") for digest
  * </ul>
  */
 public class DomainCanonicalizer {
