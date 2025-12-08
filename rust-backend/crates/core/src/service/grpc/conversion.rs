@@ -412,6 +412,19 @@ impl BackendService {
                             }
                         ))
                     }
+                },
+                tron_backend_execution::Trc10Change::AssetTransferred(transferred) => {
+                    crate::backend::Trc10Change {
+                        kind: Some(crate::backend::trc10_change::Kind::AssetTransferred(
+                            crate::backend::Trc10AssetTransferred {
+                                owner_address: add_tron_address_prefix(&transferred.owner_address),
+                                to_address: add_tron_address_prefix(&transferred.to_address),
+                                asset_name: transferred.asset_name.clone(),
+                                token_id: transferred.token_id.clone().unwrap_or_default(),
+                                amount: transferred.amount,
+                            }
+                        ))
+                    }
                 }
             }
         }).collect();

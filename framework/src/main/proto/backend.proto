@@ -723,11 +723,23 @@ message Trc10AssetIssued {
   string token_id = 16;                 // Token ID (optional; if empty, Java computes via TOKEN_ID_NUM)
 }
 
+// TRC-10 Asset Transferred (Phase 2: TRC-10 transfer operation)
+// Describes a TRC-10 transfer for Java-side persistence of asset balance changes
+message Trc10AssetTransferred {
+  bytes owner_address = 1;              // 21-byte Tron address (sender)
+  bytes to_address = 2;                 // 21-byte Tron address (recipient)
+  bytes asset_name = 3;                 // V1 path: asset name bytes from TransferAssetContract
+  string token_id = 4;                  // V2 path: token ID if asset_name is ASCII digits
+  int64 amount = 5;                     // Transfer amount
+}
+
 // TRC-10 Change (union type for different TRC-10 operations)
-// Future: add Trc10Transferred, Trc10Participated, Trc10Updated variants
+// Phase 2: AssetIssued and AssetTransferred
+// Future: add Trc10Participated, Trc10Updated variants
 message Trc10Change {
   oneof kind {
     Trc10AssetIssued asset_issued = 1;
+    Trc10AssetTransferred asset_transferred = 2;
   }
 }
 
