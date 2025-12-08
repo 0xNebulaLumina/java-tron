@@ -322,6 +322,8 @@ public class ExecutionCsvRecordBuilder {
           String recipientOp;
           if (recipientOld == 0 && recipientNew > 0) {
             recipientOp = "increase"; // 0 -> N
+          } else if (recipientNew > recipientOld) {
+            recipientOp = "increase"; // N -> N + amount (match embedded journal semantics)
           } else if (recipientNew < recipientOld) {
             recipientOp = "decrease"; // Should not happen for recipient
           } else if (recipientNew == 0 && recipientOld > 0) {

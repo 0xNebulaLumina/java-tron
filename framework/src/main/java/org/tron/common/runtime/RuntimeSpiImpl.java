@@ -709,6 +709,25 @@ public class RuntimeSpiImpl implements Runtime {
       String tokenId = assetTransferred.getTokenId();
       long amount = assetTransferred.getAmount();
 
+      // If tokenId is missing (V1 path), derive it from AssetIssueStore using asset name.
+      if (tokenId == null || tokenId.isEmpty()) {
+        try {
+          org.tron.core.store.AssetIssueStore assetIssueStore =
+              chainBaseManager.getAssetIssueStore();
+          if (assetIssueStore != null && assetName != null) {
+            org.tron.core.capsule.AssetIssueCapsule assetIssue =
+                assetIssueStore.get(assetName);
+            if (assetIssue != null && assetIssue.getId() != null) {
+              tokenId = assetIssue.getId();
+              logger.debug("Derived TRC-10 tokenId '{}' from asset name for transfer application",
+                  tokenId);
+            }
+          }
+        } catch (Exception e) {
+          logger.warn("Failed to derive tokenId from AssetIssueStore: {}", e.getMessage());
+        }
+      }
+
       String ownerStr = org.tron.common.utils.StringUtil.encode58Check(ownerAddress);
       String toStr = org.tron.common.utils.StringUtil.encode58Check(toAddress);
 
@@ -766,27 +785,29 @@ public class RuntimeSpiImpl implements Runtime {
         recipientAccount = new org.tron.core.capsule.AccountCapsule(accountBuilder.build());
       }
 
-      // Get disableJavaLangMath flag from dynamic properties
-      boolean disableJavaLangMath = dynamicStore.disableJavaLangMath();
-
-      // 4. Update balances
+      // 4. Update balances using the same methods as TransferAssetActuator
+      // Both V1 and V2 should use reduceAssetAmountV2/addAssetAmountV2 which handle
+      // both modes internally and record TRC-10 balance changes for CSV journaling.
+      byte[] assetKeyBytes;
+      org.tron.core.store.AssetIssueStore assetIssueStore;
       if (useV2) {
-        // V2 mode: update assetV2 maps
-        ownerAccount.reduceAssetAmountV2(tokenId.getBytes(), amount,
-            dynamicStore, chainBaseManager.getAssetIssueV2Store());
-        recipientAccount.addAssetAmountV2(tokenId.getBytes(), amount,
-            dynamicStore, chainBaseManager.getAssetIssueV2Store());
-
-        logger.debug("Updated V2 asset balances: owner {} -= {}, recipient {} += {}",
-            ownerStr, amount, toStr, amount);
+        // V2 mode: use token ID as key
+        assetKeyBytes = tokenId.getBytes();
+        assetIssueStore = chainBaseManager.getAssetIssueV2Store();
       } else {
-        // V1 mode: update asset maps by name
-        ownerAccount.reduceAssetAmount(assetName, amount, disableJavaLangMath);
-        recipientAccount.addAsset(assetName, amount);
-
-        logger.debug("Updated V1 asset balances: owner {} -= {}, recipient {} += {}",
-            ownerStr, amount, toStr, amount);
+        // V1 mode: use asset name as key (same as TransferAssetActuator)
+        assetKeyBytes = assetName;
+        assetIssueStore = chainBaseManager.getAssetIssueStore();
       }
+
+      if (!ownerAccount.reduceAssetAmountV2(assetKeyBytes, amount, dynamicStore, assetIssueStore)) {
+        logger.error("reduceAssetAmountV2 failed for owner {}", ownerStr);
+        return;
+      }
+      recipientAccount.addAssetAmountV2(assetKeyBytes, amount, dynamicStore, assetIssueStore);
+
+      logger.debug("Updated asset balances (useV2={}): owner {} -= {}, recipient {} += {}",
+          useV2, ownerStr, amount, toStr, amount);
 
       // 5. Persist accounts
       accountStore.put(ownerAddress, ownerAccount);
