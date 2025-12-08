@@ -591,6 +591,25 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get TOTAL_ENERGY_CURRENT_LIMIT dynamic property (current global energy limit)
+    /// Default: 50_000_000_000 (parity with early mainnet defaults)
+    pub fn get_total_energy_limit(&self) -> Result<i64> {
+        let key = b"TOTAL_ENERGY_CURRENT_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(50_000_000_000) // Default (mainnet early default)
+                }
+            },
+            None => Ok(50_000_000_000), // Default
+        }
+    }
+
     /// Compute total NET weight from all freeze records
     /// Weight = sum(frozen_amount for resource=BANDWIDTH) / TRX_PRECISION
     /// TRX_PRECISION = 1_000_000 (matches Java ChainConstant.TRX_PRECISION)

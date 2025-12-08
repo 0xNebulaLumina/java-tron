@@ -71,3 +71,7 @@ data/
 
 gc.log
 start.log
+ 
+# execution logs (keep repo clean)
+/*.embedded-java.log
+/remote-*.log

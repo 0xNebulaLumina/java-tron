@@ -1,5 +1,9 @@
 package org.tron.common.runtime;
 
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import lombok.extern.slf4j.Slf4j;
 import org.tron.core.capsule.AccountCapsule;
@@ -7,12 +11,15 @@ import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.ChainBaseManager;
+import org.tron.core.execution.reporting.PreStateSnapshotRegistry;
 
 import org.tron.core.execution.spi.ExecutionProgramResult;
 import org.tron.core.execution.spi.ExecutionSPI;
+import org.tron.core.execution.spi.ExecutionSPI.StateChange;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.Protocol.Account;
+import org.tron.protos.Protocol.Vote;
 
 import static org.tron.protos.contract.Common.ResourceCode.BANDWIDTH;
 import static org.tron.protos.contract.Common.ResourceCode.ENERGY;
@@ -71,6 +78,9 @@ public class RuntimeSpiImpl implements Runtime {
       if (!executionResult.isSuccess()) {
         this.runtimeError = executionResult.getErrorMessage();
       }
+
+      // Capture pre-state snapshot for CSV reporting (before applying changes)
+      capturePreStateSnapshot(executionResult, context);
 
       // Apply state changes to local database for remote execution
       applyStateChangesToLocalDatabase(executionResult, context);
@@ -699,6 +709,25 @@ public class RuntimeSpiImpl implements Runtime {
       String tokenId = assetTransferred.getTokenId();
       long amount = assetTransferred.getAmount();
 
+      // If tokenId is missing (V1 path), derive it from AssetIssueStore using asset name.
+      if (tokenId == null || tokenId.isEmpty()) {
+        try {
+          org.tron.core.store.AssetIssueStore assetIssueStore =
+              chainBaseManager.getAssetIssueStore();
+          if (assetIssueStore != null && assetName != null) {
+            org.tron.core.capsule.AssetIssueCapsule assetIssue =
+                assetIssueStore.get(assetName);
+            if (assetIssue != null && assetIssue.getId() != null) {
+              tokenId = assetIssue.getId();
+              logger.debug("Derived TRC-10 tokenId '{}' from asset name for transfer application",
+                  tokenId);
+            }
+          }
+        } catch (Exception e) {
+          logger.warn("Failed to derive tokenId from AssetIssueStore: {}", e.getMessage());
+        }
+      }
+
       String ownerStr = org.tron.common.utils.StringUtil.encode58Check(ownerAddress);
       String toStr = org.tron.common.utils.StringUtil.encode58Check(toAddress);
 
@@ -756,27 +785,29 @@ public class RuntimeSpiImpl implements Runtime {
         recipientAccount = new org.tron.core.capsule.AccountCapsule(accountBuilder.build());
       }
 
-      // Get disableJavaLangMath flag from dynamic properties
-      boolean disableJavaLangMath = dynamicStore.disableJavaLangMath();
-
-      // 4. Update balances
+      // 4. Update balances using the same methods as TransferAssetActuator
+      // Both V1 and V2 should use reduceAssetAmountV2/addAssetAmountV2 which handle
+      // both modes internally and record TRC-10 balance changes for CSV journaling.
+      byte[] assetKeyBytes;
+      org.tron.core.store.AssetIssueStore assetIssueStore;
       if (useV2) {
-        // V2 mode: update assetV2 maps
-        ownerAccount.reduceAssetAmountV2(tokenId.getBytes(), amount,
-            dynamicStore, chainBaseManager.getAssetIssueV2Store());
-        recipientAccount.addAssetAmountV2(tokenId.getBytes(), amount,
-            dynamicStore, chainBaseManager.getAssetIssueV2Store());
-
-        logger.debug("Updated V2 asset balances: owner {} -= {}, recipient {} += {}",
-            ownerStr, amount, toStr, amount);
+        // V2 mode: use token ID as key
+        assetKeyBytes = tokenId.getBytes();
+        assetIssueStore = chainBaseManager.getAssetIssueV2Store();
       } else {
-        // V1 mode: update asset maps by name
-        ownerAccount.reduceAssetAmount(assetName, amount, disableJavaLangMath);
-        recipientAccount.addAsset(assetName, amount);
-
-        logger.debug("Updated V1 asset balances: owner {} -= {}, recipient {} += {}",
-            ownerStr, amount, toStr, amount);
+        // V1 mode: use asset name as key (same as TransferAssetActuator)
+        assetKeyBytes = assetName;
+        assetIssueStore = chainBaseManager.getAssetIssueStore();
       }
+
+      if (!ownerAccount.reduceAssetAmountV2(assetKeyBytes, amount, dynamicStore, assetIssueStore)) {
+        logger.error("reduceAssetAmountV2 failed for owner {}", ownerStr);
+        return;
+      }
+      recipientAccount.addAssetAmountV2(assetKeyBytes, amount, dynamicStore, assetIssueStore);
+
+      logger.debug("Updated asset balances (useV2={}): owner {} -= {}, recipient {} += {}",
+          useV2, ownerStr, amount, toStr, amount);
 
       // 5. Persist accounts
       accountStore.put(ownerAddress, ownerAccount);
@@ -1217,10 +1248,224 @@ public class RuntimeSpiImpl implements Runtime {
                              latestConsumeTime, latestConsumeFreeTime, latestConsumeTimeForEnergy,
                              netWindowSize, energyWindowSize,
                              netWindowOptimized, energyWindowOptimized);
-      
+
     } catch (Exception e) {
       logger.warn("Failed to deserialize AccountInfo from {} bytes: {}", data.length, e.getMessage());
       return null;
+    }
+  }
+
+  /**
+   * Capture pre-state snapshot for CSV reporting in remote execution mode.
+   * This captures TRC-10 balances, votes, and global totals BEFORE applying changes,
+   * allowing the builder to compute absolute old/new values for domain triplets.
+   *
+   * <p>Gated by: -Dremote.exec.prestate.snapshot.enabled=true (default true).
+   */
+  private void capturePreStateSnapshot(ExecutionProgramResult result, TransactionContext context) {
+    // Check JVM gate: default true
+    boolean captureEnabled = Boolean.parseBoolean(
+        System.getProperty("remote.exec.prestate.snapshot.enabled", "true"));
+
+    if (!captureEnabled) {
+      logger.debug("Pre-state snapshot capture disabled by JVM property for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    try {
+      ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
+      org.tron.core.store.AccountStore accountStore = chainBaseManager.getAccountStore();
+      org.tron.core.store.DynamicPropertiesStore dynamicStore =
+          chainBaseManager.getDynamicPropertiesStore();
+
+      // Initialize snapshot for this transaction
+      PreStateSnapshotRegistry.initializeForCurrentTransaction();
+
+      // 1. Capture TRC-10 balances for addresses involved in transfers
+      if (result.getTrc10Changes() != null) {
+        for (ExecutionSPI.Trc10Change trc10Change : result.getTrc10Changes()) {
+          if (trc10Change.hasAssetTransferred()) {
+            ExecutionSPI.Trc10AssetTransferred transfer = trc10Change.getAssetTransferred();
+            String tokenId = transfer.getTokenId();
+
+            // If tokenId is missing (V1 path), derive it from AssetIssueStore using asset name.
+            if (tokenId == null || tokenId.isEmpty()) {
+              try {
+                org.tron.core.store.AssetIssueStore assetIssueStore =
+                    chainBaseManager.getAssetIssueStore();
+                if (assetIssueStore != null && transfer.getAssetName() != null) {
+                  org.tron.core.capsule.AssetIssueCapsule assetIssue =
+                      assetIssueStore.get(transfer.getAssetName());
+                  if (assetIssue != null && assetIssue.getId() != null) {
+                    tokenId = assetIssue.getId();
+                    logger.debug("Derived TRC-10 tokenId '{}' from asset name for prestate snapshot",
+                        tokenId);
+                  }
+                }
+              } catch (Exception e) {
+                logger.warn("Failed to derive tokenId from AssetIssueStore: {}", e.getMessage());
+              }
+            }
+
+            // Capture owner's pre-state balance
+            byte[] ownerAddress = transfer.getOwnerAddress();
+            AccountCapsule ownerAccount = accountStore.get(ownerAddress);
+            if (ownerAccount != null && tokenId != null) {
+              Map<String, Long> assetV2Map = ownerAccount.getAssetMapV2();
+              Long ownerBalance = assetV2Map.get(tokenId);
+              PreStateSnapshotRegistry.captureTrc10Balance(
+                  ownerAddress, tokenId, ownerBalance != null ? ownerBalance : 0L);
+            }
+
+            // Capture recipient's pre-state balance
+            byte[] toAddress = transfer.getToAddress();
+            AccountCapsule recipientAccount = accountStore.get(toAddress);
+            if (recipientAccount != null && tokenId != null) {
+              Map<String, Long> recipientAssetV2Map = recipientAccount.getAssetMapV2();
+              Long recipientBalance = recipientAssetV2Map.get(tokenId);
+              PreStateSnapshotRegistry.captureTrc10Balance(
+                  toAddress, tokenId, recipientBalance != null ? recipientBalance : 0L);
+            } else if (tokenId != null) {
+              // Recipient account doesn't exist yet, balance is 0
+              PreStateSnapshotRegistry.captureTrc10Balance(toAddress, tokenId, 0L);
+            }
+          }
+        }
+      }
+
+      // 2. Capture votes for voters involved in vote changes
+      if (result.getVoteChanges() != null) {
+        for (ExecutionSPI.VoteChange voteChange : result.getVoteChanges()) {
+          byte[] voterAddress = voteChange.getOwnerAddress();
+          AccountCapsule voterAccount = accountStore.get(voterAddress);
+          if (voterAccount != null) {
+            // Capture all existing votes for this voter
+            java.util.List<Vote> existingVotes = voterAccount.getVotesList();
+            PreStateSnapshotRegistry.captureVotes(voterAddress, existingVotes);
+          }
+        }
+      }
+
+      // 3. Capture global resource totals (for freeze/global resource changes)
+      boolean hasFreezeChanges = result.getFreezeChanges() != null
+          && !result.getFreezeChanges().isEmpty();
+      boolean hasGlobalChanges = result.getGlobalResourceChanges() != null
+          && !result.getGlobalResourceChanges().isEmpty();
+
+      if (hasFreezeChanges || hasGlobalChanges) {
+        long totalNetWeight = dynamicStore.getTotalNetWeight();
+        long totalNetLimit = dynamicStore.getTotalNetLimit();
+        long totalEnergyWeight = dynamicStore.getTotalEnergyWeight();
+        long totalEnergyLimit = dynamicStore.getTotalEnergyCurrentLimit();
+        long totalTronPowerWeight = dynamicStore.getTotalTronPowerWeight();
+
+        PreStateSnapshotRegistry.captureGlobalTotals(
+            totalNetWeight, totalNetLimit, totalEnergyWeight, totalEnergyLimit, totalTronPowerWeight);
+      }
+
+      // 3b. Capture freeze snapshots (owner/resource old amount + expire) before applying changes
+      if (result.getFreezeChanges() != null) {
+        for (ExecutionSPI.FreezeLedgerChange freezeChange : result.getFreezeChanges()) {
+          byte[] ownerAddress = freezeChange.getOwnerAddress();
+          if (ownerAddress == null) {
+            continue;
+          }
+
+          AccountCapsule ownerAccount = accountStore.get(ownerAddress);
+          long oldAmount = 0L;
+          long oldExpireTimeMs = 0L;
+
+          if (ownerAccount != null) {
+            switch (freezeChange.getResource()) {
+              case BANDWIDTH:
+                if (freezeChange.isV2Model()) {
+                  // V2 has no expiration
+                  oldAmount = ownerAccount.getFrozenV2BalanceForBandwidth();
+                  oldExpireTimeMs = 0L;
+                } else {
+                  oldAmount = ownerAccount.getFrozenBalance();
+                  java.util.List<org.tron.protos.Protocol.Account.Frozen> frozenList = ownerAccount.getFrozenList();
+                  oldExpireTimeMs = (frozenList != null && !frozenList.isEmpty())
+                      ? frozenList.get(0).getExpireTime() : 0L;
+                }
+                break;
+              case ENERGY:
+                if (freezeChange.isV2Model()) {
+                  oldAmount = ownerAccount.getFrozenV2BalanceForEnergy();
+                  oldExpireTimeMs = 0L;
+                } else {
+                  oldAmount = ownerAccount.getEnergyFrozenBalance();
+                  oldExpireTimeMs = ownerAccount.getAccountResource()
+                      .getFrozenBalanceForEnergy().getExpireTime();
+                }
+                break;
+              case TRON_POWER:
+                if (freezeChange.isV2Model()) {
+                  oldAmount = ownerAccount.getTronPowerFrozenV2Balance();
+                  oldExpireTimeMs = 0L;
+                } else {
+                  oldAmount = ownerAccount.getTronPowerFrozenBalance();
+                  oldExpireTimeMs = ownerAccount.getInstance().getTronPower().getExpireTime();
+                }
+                break;
+              default:
+                // Unknown resource type: leave zeros
+                break;
+            }
+          }
+
+          // Note: recipient is not provided by FreezeLedgerChange; use self-freeze (null recipient)
+          PreStateSnapshotRegistry.captureFreeze(
+              ownerAddress, freezeChange.getResource().name(), null, oldAmount, oldExpireTimeMs);
+        }
+      }
+
+      // 4. Capture per-account frozen totals for limit computation
+      // Build set of affected addresses from state changes (empty key = account changes)
+      // and freeze changes owners
+      Set<String> affectedAddresses = new HashSet<>();
+      List<StateChange> stateChanges = result.getStateChanges();
+      if (stateChanges != null) {
+        for (StateChange sc : stateChanges) {
+          // Empty key means account state change
+          if (sc.getKey() == null || sc.getKey().length == 0) {
+            if (sc.getAddress() != null) {
+              affectedAddresses.add(org.tron.common.utils.ByteArray.toHexString(sc.getAddress()).toLowerCase());
+            }
+          }
+        }
+      }
+      // Also include freeze change owners
+      if (result.getFreezeChanges() != null) {
+        for (ExecutionSPI.FreezeLedgerChange freezeChange : result.getFreezeChanges()) {
+          if (freezeChange.getOwnerAddress() != null) {
+            affectedAddresses.add(
+                org.tron.common.utils.ByteArray.toHexString(freezeChange.getOwnerAddress()).toLowerCase());
+          }
+        }
+      }
+
+      // Capture frozen totals for each affected address
+      for (String addressHex : affectedAddresses) {
+        byte[] addressBytes = org.tron.common.utils.ByteArray.fromHexString(addressHex);
+        AccountCapsule account = accountStore.get(addressBytes);
+        if (account != null) {
+          long frozenForBandwidth = account.getAllFrozenBalanceForBandwidth();
+          long frozenForEnergy = account.getAllFrozenBalanceForEnergy();
+          PreStateSnapshotRegistry.captureAccountFrozenTotals(
+              addressBytes, frozenForBandwidth, frozenForEnergy);
+        }
+      }
+
+      logger.debug("Captured pre-state snapshot for transaction: {} - {}",
+          context.getTrxCap().getTransactionId(),
+          PreStateSnapshotRegistry.getCurrentSnapshotMetrics());
+
+    } catch (Exception e) {
+      logger.warn("Failed to capture pre-state snapshot for transaction: {}, error: {}",
+          context.getTrxCap().getTransactionId(), e.getMessage());
+      // Don't fail the transaction - snapshot is for reporting only
     }
   }
 }

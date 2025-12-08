@@ -22,6 +22,7 @@ import org.tron.core.capsule.TransactionResultCapsule;
 import org.tron.core.capsule.VotesCapsule;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
+import org.tron.core.db.DomainChangeRecorderContext;
 import org.tron.core.service.MortgageService;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.DelegatedResourceAccountIndexStore;
@@ -291,6 +292,32 @@ public class UnfreezeBalanceActuator extends AbstractActuator {
     }
 
     accountStore.put(ownerAddress, accountCapsule);
+
+    // Record V1 unfreeze to domain journal
+    if (DomainChangeRecorderContext.isEnabled() && unfreezeBalance > 0) {
+      String resourceType;
+      switch (unfreezeBalanceContract.getResource()) {
+        case BANDWIDTH:
+          resourceType = "BANDWIDTH";
+          break;
+        case ENERGY:
+          resourceType = "ENERGY";
+          break;
+        case TRON_POWER:
+          resourceType = "TRON_POWER";
+          break;
+        default:
+          resourceType = "UNKNOWN";
+      }
+      // For unfreeze: oldAmount is the unfreezeBalance, newAmount is 0 (or remaining)
+      // The "decrease" variable already calculated the weight change
+      DomainChangeRecorderContext.recordFreezeChange(
+          ownerAddress, resourceType,
+          ArrayUtils.isEmpty(receiverAddress) ? null : receiverAddress,
+          unfreezeBalance, 0L,  // old frozen amount -> 0 after unfreeze
+          0L, 0L,  // expireTime goes to 0
+          "unfreeze");
+    }
 
     ret.setUnfreezeAmount(unfreezeBalance);
     ret.setStatus(fee, code.SUCESS);

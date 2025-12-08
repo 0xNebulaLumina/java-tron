@@ -12,9 +12,12 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.Iterator;
 import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
+import java.util.HashMap;
+import java.util.Map;
 import org.tron.common.utils.ByteArray;
 import org.tron.common.utils.DecodeUtil;
 import org.tron.common.utils.StringUtil;
+import org.tron.core.db.DomainChangeRecorderContext;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.TransactionResultCapsule;
 import org.tron.core.capsule.VotesCapsule;
@@ -175,6 +178,14 @@ public class VoteWitnessActuator extends AbstractActuator {
       votesCapsule = votesStore.get(ownerAddress);
     }
 
+    // Capture old votes before clearing for domain change recording
+    Map<ByteString, Long> oldVotes = new HashMap<>();
+    if (DomainChangeRecorderContext.isEnabled()) {
+      for (org.tron.protos.Protocol.Vote vote : accountCapsule.getVotesList()) {
+        oldVotes.put(vote.getVoteAddress(), vote.getVoteCount());
+      }
+    }
+
     accountCapsule.clearVotes();
     votesCapsule.clearNewVotes();
 
@@ -184,7 +195,29 @@ public class VoteWitnessActuator extends AbstractActuator {
 
       votesCapsule.addNewVotes(vote.getVoteAddress(), vote.getVoteCount());
       accountCapsule.addVotes(vote.getVoteAddress(), vote.getVoteCount());
+
+      // Record vote change to domain journal
+      if (DomainChangeRecorderContext.isEnabled()) {
+        byte[] witnessAddr = vote.getVoteAddress().toByteArray();
+        long oldVoteCount = oldVotes.getOrDefault(vote.getVoteAddress(), 0L);
+        long newVoteCount = vote.getVoteCount();
+        DomainChangeRecorderContext.recordVoteChange(ownerAddress, witnessAddr,
+                                                      oldVoteCount, newVoteCount);
+      }
     });
+
+    // Record deleted votes (old votes that are no longer present)
+    if (DomainChangeRecorderContext.isEnabled()) {
+      for (Map.Entry<ByteString, Long> entry : oldVotes.entrySet()) {
+        boolean stillPresent = voteContract.getVotesList().stream()
+            .anyMatch(v -> v.getVoteAddress().equals(entry.getKey()));
+        if (!stillPresent) {
+          DomainChangeRecorderContext.recordVoteChange(ownerAddress,
+                                                        entry.getKey().toByteArray(),
+                                                        entry.getValue(), 0L);
+        }
+      }
+    }
 
     accountStore.put(accountCapsule.createDbKey(), accountCapsule);
     votesStore.put(ownerAddress, votesCapsule);

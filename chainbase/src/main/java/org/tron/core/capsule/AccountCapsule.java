@@ -36,6 +36,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.capsule.utils.AssetUtil;
+import org.tron.core.db.DomainChangeRecorderContext;
 import org.tron.core.store.AssetIssueStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol.Account;
@@ -744,10 +745,16 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
       if (currentAmount == null) {
         currentAmount = 0L;
       }
+      long newAmount = addExact(currentAmount, amount, disableJavaLangMath);
       this.account = this.account.toBuilder()
-          .putAsset(nameKey, addExact(currentAmount, amount, disableJavaLangMath))
-          .putAssetV2(tokenID, addExact(currentAmount, amount, disableJavaLangMath))
+          .putAsset(nameKey, newAmount)
+          .putAssetV2(tokenID, newAmount)
           .build();
+      // Record TRC-10 balance change
+      if (DomainChangeRecorderContext.isEnabled()) {
+        DomainChangeRecorderContext.recordTrc10BalanceChange(
+            this.getAddress().toByteArray(), tokenID, currentAmount, newAmount);
+      }
     }
     //key is token id
     if (dynamicPropertiesStore.getAllowSameTokenName() == 1) {
@@ -757,9 +764,15 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
       if (currentAmount == null) {
         currentAmount = 0L;
       }
+      long newAmount = addExact(currentAmount, amount, disableJavaLangMath);
       this.account = this.account.toBuilder()
-          .putAssetV2(tokenIDStr, addExact(currentAmount, amount, disableJavaLangMath))
+          .putAssetV2(tokenIDStr, newAmount)
           .build();
+      // Record TRC-10 balance change
+      if (DomainChangeRecorderContext.isEnabled()) {
+        DomainChangeRecorderContext.recordTrc10BalanceChange(
+            this.getAddress().toByteArray(), tokenIDStr, currentAmount, newAmount);
+      }
     }
     return true;
   }
@@ -789,10 +802,16 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
       String nameKey = ByteArray.toStr(key);
       Long currentAmount = assetMap.get(nameKey);
       if (amount > 0 && null != currentAmount && amount <= currentAmount) {
+        long newAmount = subtractExact(currentAmount, amount, disableJavaLangMath);
         this.account = this.account.toBuilder()
-                .putAsset(nameKey, subtractExact(currentAmount, amount, disableJavaLangMath))
-                .putAssetV2(tokenID, subtractExact(currentAmount, amount, disableJavaLangMath))
+                .putAsset(nameKey, newAmount)
+                .putAssetV2(tokenID, newAmount)
                 .build();
+        // Record TRC-10 balance change
+        if (DomainChangeRecorderContext.isEnabled()) {
+          DomainChangeRecorderContext.recordTrc10BalanceChange(
+              this.getAddress().toByteArray(), tokenID, currentAmount, newAmount);
+        }
         return true;
       }
     }
@@ -802,9 +821,15 @@ public class AccountCapsule implements ProtoCapsule<Account>, Comparable<Account
       Map<String, Long> assetMapV2 = this.account.getAssetV2Map();
       Long currentAmount = assetMapV2.get(tokenID);
       if (amount > 0 && null != currentAmount && amount <= currentAmount) {
+        long newAmount = subtractExact(currentAmount, amount, disableJavaLangMath);
         this.account = this.account.toBuilder()
-                .putAssetV2(tokenID, subtractExact(currentAmount, amount, disableJavaLangMath))
+                .putAssetV2(tokenID, newAmount)
                 .build();
+        // Record TRC-10 balance change
+        if (DomainChangeRecorderContext.isEnabled()) {
+          DomainChangeRecorderContext.recordTrc10BalanceChange(
+              this.getAddress().toByteArray(), tokenID, currentAmount, newAmount);
+        }
         return true;
       }
     }

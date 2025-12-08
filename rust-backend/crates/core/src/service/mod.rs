@@ -10,6 +10,7 @@ use tron_backend_common::{ModuleManager, HealthStatus, from_tron_address};
 use revm_primitives::hex;
 use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, EvmStateStore};
 use crate::backend::*;
+use revm_primitives::AccountInfo;
 
 // Module declarations
 pub mod grpc;
@@ -1605,13 +1606,33 @@ impl BackendService {
             });
         }
 
-        // 6. Sort state changes deterministically by address for CSV parity
+        // 6. Also include a no-op AccountChange for recipient to mirror embedded journaling
+        //    so that both sender and recipient appear in account_changes/state_changes.
+        //    This carries AEXT if present and stabilizes CSV parity.
+        if let Ok(Some(recipient_account)) = storage_adapter.get_account(&to_address) {
+            state_changes.push(TronStateChange::AccountChange {
+                address: to_address,
+                old_account: Some(recipient_account.clone()),
+                new_account: Some(recipient_account), // No-op (ledger updates are tracked separately)
+            });
+        } else {
+            // If recipient account does not exist yet, fabricate a minimal placeholder
+            // with zero fields so Java side still sees an account-level entry for CSV parity.
+            let placeholder = AccountInfo::default();
+            state_changes.push(TronStateChange::AccountChange {
+                address: to_address,
+                old_account: Some(placeholder.clone()),
+                new_account: Some(placeholder),
+            });
+        }
+
+        // 7. Sort state changes deterministically by address for CSV parity
         state_changes.sort_by_key(|change| match change {
             TronStateChange::AccountChange { address, .. } => *address,
             _ => Address::ZERO,
         });
 
-        // 7. Determine token_id if asset_id bytes are ASCII digits (V2 path)
+        // 8. Determine token_id if asset_id bytes are ASCII digits (V2 path)
         let token_id = if asset_id.iter().all(|&b| b.is_ascii_digit()) {
             match String::from_utf8(asset_id.clone()) {
                 Ok(id_str) => Some(id_str),
@@ -1621,7 +1642,7 @@ impl BackendService {
             None
         };
 
-        // 8. Build TRC-10 Asset Transferred change for Phase 2
+        // 9. Build TRC-10 Asset Transferred change for Phase 2
         let trc10_change = tron_backend_execution::Trc10Change::AssetTransferred(
             tron_backend_execution::Trc10AssetTransferred {
                 owner_address: owner,
