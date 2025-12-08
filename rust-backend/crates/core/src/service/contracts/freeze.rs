@@ -106,8 +106,12 @@ impl BackendService {
 
         // Phase 2: Persist freeze record
         // Calculate expiration timestamp (milliseconds since epoch)
+        // Embedded Java appears to base expiration off the previous block time (block - 3s).
+        // Adjust by one block interval (3000 ms) to align with embedded behavior.
         let duration_millis = params.frozen_duration as u64 * 86400 * 1000; // days to milliseconds
-        let expiration_timestamp = (context.block_timestamp + duration_millis) as i64;
+        const BLOCK_INTERVAL_MS: u64 = 3000; // Tron block interval (ms)
+        let base_ts = context.block_timestamp.saturating_sub(BLOCK_INTERVAL_MS);
+        let expiration_timestamp = (base_ts + duration_millis) as i64;
 
         debug!("Freeze record: amount={}, expiration={}, resource={:?}",
                freeze_amount, expiration_timestamp, params.resource);
@@ -189,7 +193,8 @@ impl BackendService {
                 .map_err(|e| format!("Failed to get total net limit: {}", e))?;
             let total_energy_weight = storage_adapter.compute_total_energy_weight()
                 .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
-            let total_energy_limit = 0i64; // TODO: Add getter when available
+            let total_energy_limit = storage_adapter.get_total_energy_limit()
+                .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
 
             let change = tron_backend_execution::GlobalResourceTotalsChange {
                 total_net_weight,

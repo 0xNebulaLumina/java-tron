@@ -5,6 +5,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
 import lombok.extern.slf4j.Slf4j;
 import org.tron.common.utils.DecodeUtil;
 import org.tron.common.utils.StringUtil;
+import org.tron.core.db.DomainChangeRecorderContext;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.TransactionResultCapsule;
 import org.tron.core.exception.ContractExeException;
@@ -57,6 +58,27 @@ public class FreezeBalanceV2Actuator extends AbstractActuator {
     long frozenBalance = freezeBalanceV2Contract.getFrozenBalance();
     long newBalance = accountCapsule.getBalance() - frozenBalance;
 
+    byte[] ownerAddress = freezeBalanceV2Contract.getOwnerAddress().toByteArray();
+    String resourceType = freezeBalanceV2Contract.getResource().name();
+
+    // Capture old frozen amount for domain change recording
+    long oldFrozenAmount = 0;
+    if (DomainChangeRecorderContext.isEnabled()) {
+      switch (freezeBalanceV2Contract.getResource()) {
+        case BANDWIDTH:
+          oldFrozenAmount = accountCapsule.getFrozenV2BalanceForBandwidth();
+          break;
+        case ENERGY:
+          oldFrozenAmount = accountCapsule.getFrozenV2BalanceForEnergy();
+          break;
+        case TRON_POWER:
+          oldFrozenAmount = accountCapsule.getTronPowerFrozenV2Balance();
+          break;
+        default:
+          break;
+      }
+    }
+
     switch (freezeBalanceV2Contract.getResource()) {
       case BANDWIDTH:
         long oldNetWeight = accountCapsule.getFrozenV2BalanceWithDelegated(BANDWIDTH) / TRX_PRECISION;
@@ -78,6 +100,17 @@ public class FreezeBalanceV2Actuator extends AbstractActuator {
         break;
       default:
         logger.debug("Resource Code Error.");
+    }
+
+    // Record freeze change to domain journal
+    if (DomainChangeRecorderContext.isEnabled()) {
+      long newFrozenAmount = oldFrozenAmount + frozenBalance;
+      // V2 freeze has no expiration (0 means no expiration)
+      DomainChangeRecorderContext.recordFreezeChange(ownerAddress, resourceType,
+          null, // no recipient for self-freeze
+          oldFrozenAmount, newFrozenAmount,
+          0L, 0L, // V2 has no expiration
+          "freeze");
     }
 
     accountCapsule.setBalance(newBalance);
