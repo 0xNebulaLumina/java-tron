@@ -172,7 +172,7 @@ public class ExecutionCsvRecordBuilder {
     builder.evmStorageDomain(evmStorageResult);
 
     // Domain: TRC-10 changes
-    extractTrc10Domains(builder, execResult.getTrc10Changes());
+    extractTrc10Domains(builder, execResult.getTrc10Changes(), trace);
 
     // Domain: Vote changes
     List<DomainCanonicalizer.VoteDelta> voteDeltas =
@@ -253,9 +253,11 @@ public class ExecutionCsvRecordBuilder {
   /**
    * Extract TRC-10 balance and issuance domains from Trc10Change list.
    * Uses PreStateSnapshotRegistry for absolute old/new values when available.
+   * For AssetIssued, reads token_id from DynamicPropertiesStore when not provided.
    */
   private static void extractTrc10Domains(
-      ExecutionCsvRecord.Builder builder, List<Trc10Change> trc10Changes) {
+      ExecutionCsvRecord.Builder builder, List<Trc10Change> trc10Changes,
+      TransactionTrace trace) {
 
     List<DomainCanonicalizer.Trc10BalanceDelta> balanceDeltas = new ArrayList<>();
     List<DomainCanonicalizer.Trc10IssuanceDelta> issuanceDeltas = new ArrayList<>();
@@ -313,35 +315,59 @@ public class ExecutionCsvRecordBuilder {
         if (change.hasAssetIssued()) {
           // Issuance creates new token metadata
           Trc10AssetIssued issued = change.getAssetIssued();
-          String tokenId = issued.getTokenId() != null && !issued.getTokenId().isEmpty()
-              ? issued.getTokenId()
-              : org.tron.common.utils.ByteArray.toHexString(issued.getName());
 
-          // Create issuance deltas for each field
+          // Get token_id: prefer provided value, else read from DynamicPropertiesStore
+          // (applyAssetIssuedChange has already computed and stored the token_id)
+          String tokenId = issued.getTokenId();
+          if (tokenId == null || tokenId.isEmpty()) {
+            // Read computed token_id from DynamicPropertiesStore
+            try {
+              if (trace != null && trace.getTransactionContext() != null
+                  && trace.getTransactionContext().getStoreFactory() != null) {
+                org.tron.core.store.DynamicPropertiesStore dynamicStore =
+                    trace.getTransactionContext().getStoreFactory()
+                        .getChainBaseManager().getDynamicPropertiesStore();
+                tokenId = String.valueOf(dynamicStore.getTokenIdNum());
+              }
+            } catch (Exception e) {
+              // Fallback to hex of name if store access fails
+              tokenId = org.tron.common.utils.ByteArray.toHexString(issued.getName());
+            }
+          }
+
+          // Get owner address hex for CSV parity with embedded
+          String ownerHex = issued.getOwnerAddress() != null
+              ? org.tron.common.utils.ByteArray.toHexString(issued.getOwnerAddress()).toLowerCase()
+              : "";
+
+          // Create issuance deltas for each field (use "" for oldValue to match embedded)
           addIssuanceDelta(issuanceDeltas, tokenId, "total_supply",
-              null, String.valueOf(issued.getTotalSupply()));
+              "", String.valueOf(issued.getTotalSupply()));
           addIssuanceDelta(issuanceDeltas, tokenId, "name",
-              null, new String(issued.getName()));
+              "", new String(issued.getName()));
           addIssuanceDelta(issuanceDeltas, tokenId, "abbr",
-              null, new String(issued.getAbbr()));
+              "", new String(issued.getAbbr()));
           addIssuanceDelta(issuanceDeltas, tokenId, "precision",
-              null, String.valueOf(issued.getPrecision()));
+              "", String.valueOf(issued.getPrecision()));
           addIssuanceDelta(issuanceDeltas, tokenId, "trx_num",
-              null, String.valueOf(issued.getTrxNum()));
+              "", String.valueOf(issued.getTrxNum()));
           addIssuanceDelta(issuanceDeltas, tokenId, "num",
-              null, String.valueOf(issued.getNum()));
+              "", String.valueOf(issued.getNum()));
           addIssuanceDelta(issuanceDeltas, tokenId, "start_time",
-              null, String.valueOf(issued.getStartTime()));
+              "", String.valueOf(issued.getStartTime()));
           addIssuanceDelta(issuanceDeltas, tokenId, "end_time",
-              null, String.valueOf(issued.getEndTime()));
+              "", String.valueOf(issued.getEndTime()));
           addIssuanceDelta(issuanceDeltas, tokenId, "description",
-              null, new String(issued.getDescription()));
+              "", new String(issued.getDescription()));
           addIssuanceDelta(issuanceDeltas, tokenId, "url",
-              null, new String(issued.getUrl()));
+              "", new String(issued.getUrl()));
+          // Add owner_address field (missing in remote, present in embedded)
+          addIssuanceDelta(issuanceDeltas, tokenId, "owner_address",
+              "", ownerHex);
           addIssuanceDelta(issuanceDeltas, tokenId, "free_asset_net_limit",
-              null, String.valueOf(issued.getFreeAssetNetLimit()));
+              "", String.valueOf(issued.getFreeAssetNetLimit()));
           addIssuanceDelta(issuanceDeltas, tokenId, "public_free_asset_net_limit",
-              null, String.valueOf(issued.getPublicFreeAssetNetLimit()));
+              "", String.valueOf(issued.getPublicFreeAssetNetLimit()));
         }
       }
     }
