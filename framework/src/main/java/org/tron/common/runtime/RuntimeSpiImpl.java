@@ -1268,6 +1268,25 @@ public class RuntimeSpiImpl implements Runtime {
             ExecutionSPI.Trc10AssetTransferred transfer = trc10Change.getAssetTransferred();
             String tokenId = transfer.getTokenId();
 
+            // If tokenId is missing (V1 path), derive it from AssetIssueStore using asset name.
+            if (tokenId == null || tokenId.isEmpty()) {
+              try {
+                org.tron.core.store.AssetIssueStore assetIssueStore =
+                    chainBaseManager.getAssetIssueStore();
+                if (assetIssueStore != null && transfer.getAssetName() != null) {
+                  org.tron.core.capsule.AssetIssueCapsule assetIssue =
+                      assetIssueStore.get(transfer.getAssetName());
+                  if (assetIssue != null && assetIssue.getId() != null) {
+                    tokenId = assetIssue.getId();
+                    logger.debug("Derived TRC-10 tokenId '{}' from asset name for prestate snapshot",
+                        tokenId);
+                  }
+                }
+              } catch (Exception e) {
+                logger.warn("Failed to derive tokenId from AssetIssueStore: {}", e.getMessage());
+              }
+            }
+
             // Capture owner's pre-state balance
             byte[] ownerAddress = transfer.getOwnerAddress();
             AccountCapsule ownerAccount = accountStore.get(ownerAddress);

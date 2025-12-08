@@ -267,9 +267,31 @@ public class ExecutionCsvRecordBuilder {
         if (change.hasAssetTransferred()) {
           // Balance change from transfer
           Trc10AssetTransferred transfer = change.getAssetTransferred();
-          String tokenId = transfer.getTokenId() != null && !transfer.getTokenId().isEmpty()
-              ? transfer.getTokenId()
-              : ByteArray.toHexString(transfer.getAssetName());
+          String tokenId = transfer.getTokenId();
+          if (tokenId == null || tokenId.isEmpty()) {
+            // Prefer deriving token_id via AssetIssueStore (V1 path) to match embedded
+            try {
+              if (trace != null && trace.getTransactionContext() != null
+                  && trace.getTransactionContext().getStoreFactory() != null) {
+                org.tron.core.store.AssetIssueStore assetIssueStore =
+                    trace.getTransactionContext().getStoreFactory()
+                        .getChainBaseManager().getAssetIssueStore();
+                if (assetIssueStore != null && transfer.getAssetName() != null) {
+                  org.tron.core.capsule.AssetIssueCapsule assetIssue =
+                      assetIssueStore.get(transfer.getAssetName());
+                  if (assetIssue != null && assetIssue.getId() != null) {
+                    tokenId = assetIssue.getId();
+                  }
+                }
+              }
+            } catch (Exception e) {
+              // Ignore and fall back
+            }
+          }
+          if (tokenId == null || tokenId.isEmpty()) {
+            // Fallback: hex of asset name (legacy), though not preferred for parity
+            tokenId = ByteArray.toHexString(transfer.getAssetName());
+          }
 
           byte[] senderAddr = transfer.getOwnerAddress();
           byte[] recipientAddr = transfer.getToAddress();
@@ -285,9 +307,28 @@ public class ExecutionCsvRecordBuilder {
           long senderNew = senderOld - amount;
           long recipientNew = recipientOld + amount;
 
-          // Determine op based on old/new values
-          String senderOp = (senderOld == 0) ? "delete" : (senderNew == 0) ? "delete" : "update";
-          String recipientOp = (recipientOld == 0) ? "create" : "update";
+          // Determine op based on old/new values (match embedded journal semantics)
+          String senderOp;
+          if (senderNew == 0 && senderOld > 0) {
+            senderOp = "delete"; // N -> 0
+          } else if (senderNew < senderOld) {
+            senderOp = "decrease"; // N -> N - amount
+          } else if (senderNew > senderOld) {
+            senderOp = "increase"; // Should not happen for sender, but keep consistent
+          } else {
+            senderOp = "set"; // no-op
+          }
+
+          String recipientOp;
+          if (recipientOld == 0 && recipientNew > 0) {
+            recipientOp = "increase"; // 0 -> N
+          } else if (recipientNew < recipientOld) {
+            recipientOp = "decrease"; // Should not happen for recipient
+          } else if (recipientNew == 0 && recipientOld > 0) {
+            recipientOp = "delete"; // N -> 0
+          } else {
+            recipientOp = "set"; // no-op
+          }
 
           // Sender decrease
           DomainCanonicalizer.Trc10BalanceDelta senderDelta =
