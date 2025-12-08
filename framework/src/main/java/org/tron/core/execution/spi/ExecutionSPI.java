@@ -497,15 +497,64 @@ public interface ExecutionSPI {
   }
 
   /**
+   * TRC-10 Asset Transferred (Phase 2: TRC-10 transfer operation).
+   * Describes a TRC-10 transfer for Java-side persistence of asset balance changes.
+   */
+  class Trc10AssetTransferred {
+    private final byte[] ownerAddress;  // Sender address
+    private final byte[] toAddress;     // Recipient address
+    private final byte[] assetName;     // V1 path: asset name bytes
+    private final String tokenId;       // V2 path: token ID if parsable from assetName
+    private final long amount;          // Transfer amount
+
+    public Trc10AssetTransferred(byte[] ownerAddress, byte[] toAddress, byte[] assetName,
+                                  String tokenId, long amount) {
+      this.ownerAddress = ownerAddress;
+      this.toAddress = toAddress;
+      this.assetName = assetName;
+      this.tokenId = tokenId;
+      this.amount = amount;
+    }
+
+    // Getters
+    public byte[] getOwnerAddress() {
+      return ownerAddress;
+    }
+
+    public byte[] getToAddress() {
+      return toAddress;
+    }
+
+    public byte[] getAssetName() {
+      return assetName;
+    }
+
+    public String getTokenId() {
+      return tokenId;
+    }
+
+    public long getAmount() {
+      return amount;
+    }
+  }
+
+  /**
    * TRC-10 Change (union type for different TRC-10 operations).
-   * Phase 2: Currently only supports AssetIssued.
-   * Future: add Trc10Transferred, Trc10Participated, Trc10Updated variants.
+   * Phase 2: Supports AssetIssued and AssetTransferred.
+   * Future: add Trc10Participated, Trc10Updated variants.
    */
   class Trc10Change {
     private final Trc10AssetIssued assetIssued;
+    private final Trc10AssetTransferred assetTransferred;
 
     public Trc10Change(Trc10AssetIssued assetIssued) {
       this.assetIssued = assetIssued;
+      this.assetTransferred = null;
+    }
+
+    public Trc10Change(Trc10AssetTransferred assetTransferred) {
+      this.assetIssued = null;
+      this.assetTransferred = assetTransferred;
     }
 
     public Trc10AssetIssued getAssetIssued() {
@@ -514,6 +563,14 @@ public interface ExecutionSPI {
 
     public boolean hasAssetIssued() {
       return assetIssued != null;
+    }
+
+    public Trc10AssetTransferred getAssetTransferred() {
+      return assetTransferred;
+    }
+
+    public boolean hasAssetTransferred() {
+      return assetTransferred != null;
     }
   }
 

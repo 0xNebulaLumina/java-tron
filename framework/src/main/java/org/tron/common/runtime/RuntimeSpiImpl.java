@@ -464,6 +464,8 @@ public class RuntimeSpiImpl implements Runtime {
       for (ExecutionSPI.Trc10Change trc10Change : result.getTrc10Changes()) {
         if (trc10Change.hasAssetIssued()) {
           applyAssetIssuedChange(trc10Change.getAssetIssued(), chainBaseManager, context);
+        } else if (trc10Change.hasAssetTransferred()) {
+          applyAssetTransferredChange(trc10Change.getAssetTransferred(), chainBaseManager, context);
         }
       }
 
@@ -679,6 +681,118 @@ public class RuntimeSpiImpl implements Runtime {
     } catch (Exception e) {
       logger.error("Failed to apply AssetIssued change for owner: {}, error: {}",
           org.tron.common.utils.StringUtil.encode58Check(assetIssued.getOwnerAddress()),
+          e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Apply a TRC-10 asset transfer change to update account asset balances.
+   * Handles both V1 (asset map by name) and V2 (assetV2 map by token_id) storage.
+   */
+  private void applyAssetTransferredChange(ExecutionSPI.Trc10AssetTransferred assetTransferred,
+                                           ChainBaseManager chainBaseManager,
+                                           TransactionContext context) {
+    try {
+      byte[] ownerAddress = assetTransferred.getOwnerAddress();
+      byte[] toAddress = assetTransferred.getToAddress();
+      byte[] assetName = assetTransferred.getAssetName();
+      String tokenId = assetTransferred.getTokenId();
+      long amount = assetTransferred.getAmount();
+
+      String ownerStr = org.tron.common.utils.StringUtil.encode58Check(ownerAddress);
+      String toStr = org.tron.common.utils.StringUtil.encode58Check(toAddress);
+
+      logger.info("Applying TRC-10 transfer: owner={}, to={}, amount={}, tokenId={}",
+          ownerStr, toStr, amount, tokenId);
+
+      // Get stores
+      org.tron.core.store.DynamicPropertiesStore dynamicStore =
+          chainBaseManager.getDynamicPropertiesStore();
+      org.tron.core.store.AccountStore accountStore =
+          chainBaseManager.getAccountStore();
+
+      // Determine V1 vs V2 mode
+      long allowSameTokenName = dynamicStore.getAllowSameTokenName();
+      boolean useV2 = (allowSameTokenName != 0) &&
+          (tokenId != null && !tokenId.isEmpty());
+
+      logger.debug("TRC-10 transfer mode: allowSameTokenName={}, tokenId={}, useV2={}",
+          allowSameTokenName, tokenId, useV2);
+
+      // 1. Load owner account
+      org.tron.core.capsule.AccountCapsule ownerAccount = accountStore.get(ownerAddress);
+      if (ownerAccount == null) {
+        logger.error("Owner account not found for TRC-10 transfer: {}", ownerStr);
+        return;
+      }
+
+      // 2. Validate owner has sufficient TRC-10 balance
+      String assetKey;
+      if (useV2) {
+        assetKey = tokenId;
+      } else {
+        assetKey = new String(assetName, java.nio.charset.StandardCharsets.UTF_8);
+      }
+
+      Long ownerBalanceObj = ownerAccount.getAsset(dynamicStore, assetKey);
+      long ownerBalance = (ownerBalanceObj != null) ? ownerBalanceObj : 0;
+
+      if (ownerBalance < amount) {
+        logger.error("Insufficient TRC-10 balance: owner has {}, needs {}", ownerBalance, amount);
+        return;
+      }
+
+      // 3. Load or create recipient account
+      org.tron.core.capsule.AccountCapsule recipientAccount = accountStore.get(toAddress);
+      if (recipientAccount == null) {
+        // Create recipient account (matches TransferAssetActuator behavior)
+        logger.debug("Creating recipient account for TRC-10 transfer: {}", toStr);
+        org.tron.protos.Protocol.Account.Builder accountBuilder =
+            org.tron.protos.Protocol.Account.newBuilder()
+            .setAddress(com.google.protobuf.ByteString.copyFrom(toAddress))
+            .setBalance(0)
+            .setCreateTime(System.currentTimeMillis())
+            .setType(org.tron.protos.Protocol.AccountType.Normal);
+        recipientAccount = new org.tron.core.capsule.AccountCapsule(accountBuilder.build());
+      }
+
+      // Get disableJavaLangMath flag from dynamic properties
+      boolean disableJavaLangMath = dynamicStore.disableJavaLangMath();
+
+      // 4. Update balances
+      if (useV2) {
+        // V2 mode: update assetV2 maps
+        ownerAccount.reduceAssetAmountV2(tokenId.getBytes(), amount,
+            dynamicStore, chainBaseManager.getAssetIssueV2Store());
+        recipientAccount.addAssetAmountV2(tokenId.getBytes(), amount,
+            dynamicStore, chainBaseManager.getAssetIssueV2Store());
+
+        logger.debug("Updated V2 asset balances: owner {} -= {}, recipient {} += {}",
+            ownerStr, amount, toStr, amount);
+      } else {
+        // V1 mode: update asset maps by name
+        ownerAccount.reduceAssetAmount(assetName, amount, disableJavaLangMath);
+        recipientAccount.addAsset(assetName, amount);
+
+        logger.debug("Updated V1 asset balances: owner {} -= {}, recipient {} += {}",
+            ownerStr, amount, toStr, amount);
+      }
+
+      // 5. Persist accounts
+      accountStore.put(ownerAddress, ownerAccount);
+      accountStore.put(toAddress, recipientAccount);
+
+      // Mark accounts as dirty for resource processor synchronization
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(ownerAddress);
+      org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(toAddress);
+
+      logger.info("Successfully applied TRC-10 transfer: owner={}, to={}, amount={}, tokenId={}, useV2={}",
+          ownerStr, toStr, amount, tokenId, useV2);
+
+    } catch (Exception e) {
+      logger.error("Failed to apply TRC-10 transfer change: owner={}, to={}, error: {}",
+          org.tron.common.utils.StringUtil.encode58Check(assetTransferred.getOwnerAddress()),
+          org.tron.common.utils.StringUtil.encode58Check(assetTransferred.getToAddress()),
           e.getMessage(), e);
     }
   }

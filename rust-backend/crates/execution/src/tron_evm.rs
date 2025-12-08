@@ -218,11 +218,24 @@ pub struct Trc10AssetIssued {
     pub token_id: Option<String>,  // Optional; if None, Java computes via TOKEN_ID_NUM
 }
 
+/// TRC-10 Asset Transferred (Phase 2: TRC-10 transfer operation)
+/// Describes a TRC-10 transfer for Java-side persistence of asset balance changes
+#[derive(Debug, Clone)]
+pub struct Trc10AssetTransferred {
+    pub owner_address: revm::primitives::Address,  // Sender address (20-byte EVM format)
+    pub to_address: revm::primitives::Address,     // Recipient address (20-byte EVM format)
+    pub asset_name: Vec<u8>,                       // V1 path: asset name bytes
+    pub token_id: Option<String>,                  // V2 path: token ID if parsable from asset_name
+    pub amount: i64,                               // Transfer amount
+}
+
 /// TRC-10 Change (union type for different TRC-10 operations)
-/// Future: add Trc10Transferred, Trc10Participated, Trc10Updated variants
+/// Phase 2: AssetIssued and AssetTransferred
+/// Future: add Trc10Participated, Trc10Updated variants
 #[derive(Debug, Clone)]
 pub enum Trc10Change {
     AssetIssued(Trc10AssetIssued),
+    AssetTransferred(Trc10AssetTransferred),
 }
 
 /// Vote entry for VoteChange - represents a single vote for a witness

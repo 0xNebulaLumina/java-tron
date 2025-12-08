@@ -903,6 +903,25 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             protoAssetIssued.getTotalSupply(),
             protoAssetIssued.getPrecision(),
             protoAssetIssued.getTokenId());
+      } else if (protoTrc10.hasAssetTransferred()) {
+        tron.backend.BackendOuterClass.Trc10AssetTransferred protoAssetTransferred =
+            protoTrc10.getAssetTransferred();
+
+        Trc10AssetTransferred assetTransferred = new Trc10AssetTransferred(
+            protoAssetTransferred.getOwnerAddress().toByteArray(),
+            protoAssetTransferred.getToAddress().toByteArray(),
+            protoAssetTransferred.getAssetName().toByteArray(),
+            protoAssetTransferred.getTokenId(),
+            protoAssetTransferred.getAmount());
+
+        trc10Changes.add(new Trc10Change(assetTransferred));
+
+        logger.debug("Parsed TRC-10 asset transferred: owner={}, to={}, assetNameLen={}, tokenId={}, amount={}",
+            org.tron.common.utils.ByteArray.toHexString(protoAssetTransferred.getOwnerAddress().toByteArray()),
+            org.tron.common.utils.ByteArray.toHexString(protoAssetTransferred.getToAddress().toByteArray()),
+            protoAssetTransferred.getAssetName().size(),
+            protoAssetTransferred.getTokenId(),
+            protoAssetTransferred.getAmount());
       }
     }
 
