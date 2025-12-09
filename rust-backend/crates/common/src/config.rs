@@ -117,6 +117,10 @@ pub struct RemoteExecutionConfig {
     /// When false: On first VoteWitness, old_votes is empty (legacy remote behavior)
     /// Default: true to match embedded semantics
     pub vote_witness_seed_old_from_account: bool,
+    /// Enable ACCOUNT_CREATE_CONTRACT execution
+    /// Creates new accounts with proper fee charging and blackhole handling
+    /// Default: false for safe rollout - falls back to Java embedded execution when disabled
+    pub account_create_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,6 +249,7 @@ impl Config {
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
         builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
         builder = builder.set_default("execution.remote.vote_witness_seed_old_from_account", true)?;
+        builder = builder.set_default("execution.remote.account_create_enabled", false)?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -269,6 +274,7 @@ impl Default for RemoteExecutionConfig {
             emit_storage_changes: false,
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
             vote_witness_seed_old_from_account: true, // Default true to match embedded semantics
+            account_create_enabled: false, // Default false for safe rollout
         }
     }
 } 

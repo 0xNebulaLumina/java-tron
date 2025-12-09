@@ -129,4 +129,9 @@ accountinfo_aext_mode = "hybrid"
 # When false: On first VoteWitness, old_votes is empty (legacy remote behavior)
 # This flag ensures maintenance vote delta computation is correct (new_votes - old_votes)
 # Default: true to match embedded semantics
-vote_witness_seed_old_from_account = true 
+vote_witness_seed_old_from_account = true
+
+# AccountCreateContract execution (creates new accounts with fee charging)
+# Set to true to enable remote execution of AccountCreateContract
+# Default: false for safe rollout - falls back to Java embedded execution when disabled
+account_create_enabled = true
