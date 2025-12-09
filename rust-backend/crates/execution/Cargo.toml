@@ -27,6 +27,7 @@ secp256k1 = "0.28"
 sha3 = "0.10"
 sha2 = "0.10"
 bs58 = "0.5"
+num-bigint = "0.4"
 
 # Storage adapter dependencies
 once_cell = "1.19"

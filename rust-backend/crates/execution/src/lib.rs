@@ -20,6 +20,7 @@ pub use storage_adapter::{EvmStateStore, InMemoryEvmStateStore, EngineBackedEvmS
 mod tron_evm;
 mod precompiles;
 mod storage_adapter;
+pub mod delegation;
 
 pub struct ExecutionModule {
     config: ExecutionConfig,

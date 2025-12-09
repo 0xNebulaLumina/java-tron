@@ -8,111 +8,112 @@ Implement complete `withdrawReward` logic in Rust, porting `MortgageService.with
 ## Phase 1: Data Structures and Types
 
 ### 1.1 Define Core Types
-- [ ] Create `rust-backend/crates/execution/src/delegation/mod.rs`
-- [ ] Define `Vote` struct
+- [x] Create `rust-backend/crates/execution/src/delegation/mod.rs`
+- [x] Define `Vote` struct (as `DelegationVote`)
   ```rust
-  pub struct Vote {
+  pub struct DelegationVote {
       pub vote_address: Address,  // 20-byte witness address
       pub vote_count: i64,
   }
   ```
-- [ ] Define `AccountVoteSnapshot` struct
+- [x] Define `AccountVoteSnapshot` struct
   ```rust
   pub struct AccountVoteSnapshot {
       pub address: Address,
-      pub votes: Vec<Vote>,
-      pub allowance: i64,
+      pub votes: Vec<DelegationVote>,
   }
   ```
-- [ ] Define constants
+- [x] Define constants
   ```rust
   pub const DELEGATION_STORE_REMARK: i64 = -1;
   pub const DECIMAL_OF_VI_REWARD: u128 = 1_000_000_000_000_000_000; // 10^18
+  pub const DEFAULT_BROKERAGE: i32 = 20;
   ```
-- [ ] Add `num-bigint` crate to `Cargo.toml` for BigInt support
-- [ ] Export module from `execution/src/lib.rs`
+- [x] Add `num-bigint` crate to `Cargo.toml` for BigInt support
+- [x] Export module from `execution/src/lib.rs`
 
 ### 1.2 Implement Protobuf Parsing for Votes
-- [ ] Add method to parse votes from Account protobuf
+- [x] Add method to parse votes from Account protobuf
   ```rust
   fn parse_account_votes(account_bytes: &[u8]) -> Result<Vec<Vote>, String>
   ```
-- [ ] Handle protobuf field 5 (repeated Vote votes) in Account message
-- [ ] Test vote parsing with sample account data
+- [x] Handle protobuf field 5 (repeated Vote votes) in Account message
+- [x] Test vote parsing with sample account data
 
 ---
 
 ## Phase 2: Storage Key Generation
 
 ### 2.1 Identify Java Key Formats
-- [ ] Read `DelegationStore.java` to understand key formats
-- [ ] Document key format for `begin_cycle`: prefix + address
-- [ ] Document key format for `end_cycle`: prefix + address
-- [ ] Document key format for `account_vote`: cycle (8 bytes BE) + address
-- [ ] Document key format for `reward`: cycle (8 bytes BE) + witness
-- [ ] Document key format for `witness_vote`: cycle (8 bytes BE) + witness
-- [ ] Document key format for `witness_vi`: cycle (8 bytes BE) + witness
-- [ ] Document key format for `brokerage`: cycle (8 bytes BE) + witness
+- [x] Read `DelegationStore.java` to understand key formats
+- [x] Document key format for `begin_cycle`: raw address bytes (21-byte Tron format)
+- [x] Document key format for `end_cycle`: `"end-{hex(address)}"`
+- [x] Document key format for `account_vote`: `"{cycle}-{hex(address)}-account-vote"`
+- [x] Document key format for `reward`: `"{cycle}-{hex(address)}-reward"`
+- [x] Document key format for `witness_vote`: `"{cycle}-{hex(address)}-vote"`
+- [x] Document key format for `witness_vi`: `"{cycle}-{hex(address)}-vi"`
+- [x] Document key format for `brokerage`: `"{cycle}-{hex(address)}-brokerage"`
 
 ### 2.2 Implement Key Generation in Rust
-- [ ] Create `rust-backend/crates/execution/src/delegation/keys.rs`
-- [ ] Implement `delegation_begin_cycle_key(address: &[u8]) -> Vec<u8>`
-- [ ] Implement `delegation_end_cycle_key(address: &[u8]) -> Vec<u8>`
-- [ ] Implement `delegation_account_vote_key(cycle: i64, address: &[u8]) -> Vec<u8>`
-- [ ] Implement `delegation_reward_key(cycle: i64, witness: &[u8]) -> Vec<u8>`
-- [ ] Implement `delegation_witness_vote_key(cycle: i64, witness: &[u8]) -> Vec<u8>`
-- [ ] Implement `delegation_witness_vi_key(cycle: i64, witness: &[u8]) -> Vec<u8>`
-- [ ] Implement `delegation_brokerage_key(cycle: i64, witness: &[u8]) -> Vec<u8>`
-- [ ] Add unit tests comparing generated keys with Java
+- [x] Create `rust-backend/crates/execution/src/delegation/keys.rs`
+- [x] Implement `delegation_begin_cycle_key(address: &[u8]) -> Vec<u8>`
+- [x] Implement `delegation_end_cycle_key(address: &[u8]) -> Vec<u8>`
+- [x] Implement `delegation_account_vote_key(cycle: i64, address: &[u8]) -> Vec<u8>`
+- [x] Implement `delegation_reward_key(cycle: i64, witness: &[u8]) -> Vec<u8>`
+- [x] Implement `delegation_witness_vote_key(cycle: i64, witness: &[u8]) -> Vec<u8>`
+- [x] Implement `delegation_witness_vi_key(cycle: i64, witness: &[u8]) -> Vec<u8>`
+- [x] Implement `delegation_brokerage_key(cycle: i64, witness: &[u8]) -> Vec<u8>`
+- [x] Add unit tests comparing generated keys with Java
 
 ---
 
 ## Phase 3: Storage Adapter - Read Methods
 
 ### 3.1 Dynamic Properties Access
-- [ ] Add `allow_change_delegation(&self) -> Result<bool, String>` to `EngineBackedEvmStateStore`
-  - [ ] Read key `ALLOW_CHANGE_DELEGATION` from dynamic properties
-  - [ ] Return false if not found (default)
-- [ ] Add `get_current_cycle_number(&self) -> Result<i64, String>`
-  - [ ] Read key `CURRENT_CYCLE_NUMBER` from dynamic properties
-  - [ ] Parse as i64 (big-endian or varint, check Java format)
-- [ ] Add `get_new_reward_algorithm_effective_cycle(&self) -> Result<i64, String>`
-  - [ ] Read key `NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE`
+- [x] Add `allow_change_delegation(&self) -> Result<bool, String>` to `EngineBackedEvmStateStore`
+  - [x] Read key `ALLOW_CHANGE_DELEGATION` from dynamic properties
+  - [x] Return false if not found (default)
+- [x] Add `get_current_cycle_number(&self) -> Result<i64, String>`
+  - [x] Read key `CURRENT_CYCLE_NUMBER` from dynamic properties
+  - [x] Parse as i64 (big-endian)
+- [x] Add `get_new_reward_algorithm_effective_cycle(&self) -> Result<i64, String>`
+  - [x] Read key `NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE`
+  - [x] Return i64::MAX if not found (old algorithm always)
 
 ### 3.2 Delegation Store Read Methods
-- [ ] Add `get_delegation_begin_cycle(&self, address: &Address) -> Result<i64, String>`
-  - [ ] Generate key using `delegation_begin_cycle_key`
-  - [ ] Read from delegation store database
-  - [ ] Parse as i64, default to 0 if not found
-- [ ] Add `get_delegation_end_cycle(&self, address: &Address) -> Result<i64, String>`
-  - [ ] Generate key using `delegation_end_cycle_key`
-  - [ ] Read from delegation store database
-  - [ ] Parse as i64, default to 0 if not found
-- [ ] Add `get_account_vote(&self, cycle: i64, address: &Address) -> Result<Option<AccountVoteSnapshot>, String>`
-  - [ ] Generate key using `delegation_account_vote_key`
-  - [ ] Read from delegation store database
-  - [ ] Parse Account protobuf, extract votes
-  - [ ] Return None if not found
-- [ ] Add `get_delegation_reward(&self, cycle: i64, witness: &Address) -> Result<i64, String>`
-  - [ ] Generate key using `delegation_reward_key`
-  - [ ] Read from delegation store database
-  - [ ] Parse as i64, default to 0
-- [ ] Add `get_witness_vote(&self, cycle: i64, witness: &Address) -> Result<i64, String>`
-  - [ ] Generate key using `delegation_witness_vote_key`
-  - [ ] Read from delegation store database
-  - [ ] Parse as i64, handle REMARK value (-1)
-- [ ] Add `get_witness_vi(&self, cycle: i64, witness: &Address) -> Result<BigInt, String>`
-  - [ ] Generate key using `delegation_witness_vi_key`
-  - [ ] Read from delegation store database
-  - [ ] Parse as BigInt (check Java serialization format)
-- [ ] Add `get_brokerage(&self, cycle: i64, witness: &Address) -> Result<i32, String>`
-  - [ ] Generate key using `delegation_brokerage_key`
-  - [ ] Read from delegation store database
-  - [ ] Parse as i32, default to 20 (20% default brokerage)
+- [x] Add `get_delegation_begin_cycle(&self, address: &Address) -> Result<i64, String>`
+  - [x] Generate key using `delegation_begin_cycle_key`
+  - [x] Read from delegation store database
+  - [x] Parse as i64, default to 0 if not found
+- [x] Add `get_delegation_end_cycle(&self, address: &Address) -> Result<i64, String>`
+  - [x] Generate key using `delegation_end_cycle_key`
+  - [x] Read from delegation store database
+  - [x] Parse as i64, default to REMARK (-1) if not found
+- [x] Add `get_delegation_account_vote(&self, cycle: i64, address: &Address) -> Result<Option<AccountVoteSnapshot>, String>`
+  - [x] Generate key using `delegation_account_vote_key`
+  - [x] Read from delegation store database
+  - [x] Parse Account protobuf, extract votes
+  - [x] Return None if not found
+- [x] Add `get_delegation_reward(&self, cycle: i64, witness: &Address) -> Result<i64, String>`
+  - [x] Generate key using `delegation_reward_key`
+  - [x] Read from delegation store database
+  - [x] Parse as i64, default to 0
+- [x] Add `get_delegation_witness_vote(&self, cycle: i64, witness: &Address) -> Result<i64, String>`
+  - [x] Generate key using `delegation_witness_vote_key`
+  - [x] Read from delegation store database
+  - [x] Parse as i64, handle REMARK value (-1)
+- [x] Add `get_delegation_witness_vi(&self, cycle: i64, witness: &Address) -> Result<BigInt, String>`
+  - [x] Generate key using `delegation_witness_vi_key`
+  - [x] Read from delegation store database
+  - [x] Parse as BigInt (Java's two's complement format)
+- [x] Add `get_delegation_brokerage(&self, cycle: i64, witness: &Address) -> Result<i32, String>`
+  - [x] Generate key using `delegation_brokerage_key`
+  - [x] Read from delegation store database
+  - [x] Parse as i32, default to 20 (20% default brokerage)
 
 ### 3.3 Database Routing
-- [ ] Identify delegation store database name in Rust storage service
-- [ ] Add delegation store to database routing in storage adapter
+- [x] Identify delegation store database name in Rust storage service: "delegation"
+- [x] Add delegation store to database routing in storage adapter
 - [ ] Ensure gRPC storage service can access delegation store
 - [ ] Test basic read operations against delegation store
 
@@ -121,21 +122,21 @@ Implement complete `withdrawReward` logic in Rust, porting `MortgageService.with
 ## Phase 4: Storage Adapter - Write Methods
 
 ### 4.1 Delegation Store Write Methods
-- [ ] Add `set_delegation_begin_cycle(&mut self, address: &Address, cycle: i64) -> Result<(), String>`
-  - [ ] Generate key using `delegation_begin_cycle_key`
-  - [ ] Serialize cycle as i64 (match Java format)
-  - [ ] Write to delegation store database
-- [ ] Add `set_delegation_end_cycle(&mut self, address: &Address, cycle: i64) -> Result<(), String>`
-  - [ ] Generate key using `delegation_end_cycle_key`
-  - [ ] Serialize cycle as i64
-  - [ ] Write to delegation store database
-- [ ] Add `set_account_vote(&mut self, cycle: i64, address: &Address, snapshot: &AccountVoteSnapshot) -> Result<(), String>`
-  - [ ] Generate key using `delegation_account_vote_key`
-  - [ ] Serialize account snapshot to protobuf
-  - [ ] Write to delegation store database
+- [x] Add `set_delegation_begin_cycle(&self, address: &Address, cycle: i64) -> Result<(), String>`
+  - [x] Generate key using `delegation_begin_cycle_key`
+  - [x] Serialize cycle as i64 big-endian (match Java format)
+  - [x] Write to delegation store database
+- [x] Add `set_delegation_end_cycle(&self, address: &Address, cycle: i64) -> Result<(), String>`
+  - [x] Generate key using `delegation_end_cycle_key`
+  - [x] Serialize cycle as i64 big-endian
+  - [x] Write to delegation store database
+- [x] Add `set_delegation_account_vote(&self, cycle: i64, address: &Address, snapshot: &AccountVoteSnapshot) -> Result<(), String>`
+  - [x] Generate key using `delegation_account_vote_key`
+  - [x] Serialize account snapshot to protobuf
+  - [x] Write to delegation store database
 
 ### 4.2 Track State Changes
-- [ ] Add delegation store changes to `TronStateChange` enum
+- [ ] Add delegation store changes to `TronStateChange` enum (deferred - delegation writes go directly to storage)
   ```rust
   enum TronStateChange {
       // ... existing variants ...
@@ -146,93 +147,93 @@ Implement complete `withdrawReward` logic in Rust, porting `MortgageService.with
       }
   }
   ```
-- [ ] Emit delegation changes for CSV parity (or gate behind config)
+- [ ] Emit delegation changes for CSV parity (or gate behind config) - deferred to Phase 2
 
 ---
 
 ## Phase 5: Reward Computation - Core Logic
 
 ### 5.1 Main withdrawReward Function
-- [ ] Create `rust-backend/crates/core/src/service/contracts/delegation.rs`
-- [ ] Implement `withdraw_reward(storage: &mut Store, address: &Address) -> Result<i64, String>`
-  - [ ] Check `allow_change_delegation()`, return 0 if false
-  - [ ] Get account, return 0 if not found
-  - [ ] Get `begin_cycle`, `end_cycle`, `current_cycle`
-  - [ ] Return 0 if `begin_cycle > current_cycle`
-  - [ ] Handle same-cycle check (begin == current)
-  - [ ] Handle latest cycle reward withdrawal
-  - [ ] Compute remaining cycle rewards
-  - [ ] Update delegation store state
-  - [ ] Return total computed reward
+- [x] Create `rust-backend/crates/core/src/service/contracts/delegation.rs`
+- [x] Implement `withdraw_reward(storage: &EngineBackedEvmStateStore, address: &Address) -> Result<i64, String>`
+  - [x] Check `allow_change_delegation()`, return 0 if false
+  - [x] Get account, return 0 if not found
+  - [x] Get `begin_cycle`, `end_cycle`, `current_cycle`
+  - [x] Return 0 if `begin_cycle > current_cycle`
+  - [x] Handle same-cycle check (begin == current)
+  - [x] Handle latest cycle reward withdrawal
+  - [x] Compute remaining cycle rewards
+  - [x] Update delegation store state
+  - [x] Return total computed reward
 
 ### 5.2 computeReward Function
-- [ ] Implement `compute_reward(storage: &Store, begin: i64, end: i64, account: &AccountVoteSnapshot) -> Result<i64, String>`
-  - [ ] Return 0 if `begin >= end`
-  - [ ] Get `new_algorithm_effective_cycle`
-  - [ ] Split computation at algorithm boundary
-  - [ ] Call `compute_old_reward` for cycles before boundary
-  - [ ] Call `compute_new_reward` for cycles after boundary
-  - [ ] Return sum of both
+- [x] Implement `compute_reward(storage: &EngineBackedEvmStateStore, begin: i64, end: i64, account: &AccountVoteSnapshot) -> Result<i64, String>`
+  - [x] Return 0 if `begin >= end`
+  - [x] Get `new_algorithm_effective_cycle`
+  - [x] Split computation at algorithm boundary
+  - [x] Call `compute_old_reward` for cycles before boundary
+  - [x] Call `compute_new_reward` for cycles after boundary
+  - [x] Return sum of both
 
 ### 5.3 Old Reward Algorithm
-- [ ] Implement `compute_old_reward(storage: &Store, begin: i64, end: i64, votes: &[Vote]) -> Result<i64, String>`
-  - [ ] Iterate through each cycle from begin to end
-  - [ ] For each vote:
-    - [ ] Get `delegation_reward(cycle, witness)`
-    - [ ] Skip if reward <= 0
-    - [ ] Get `witness_vote(cycle, witness)`
-    - [ ] Skip if vote == REMARK or vote == 0
-    - [ ] Calculate `user_vote / total_vote * reward`
-    - [ ] Accumulate to total
-  - [ ] Return total reward
+- [x] Implement `compute_old_reward(storage: &EngineBackedEvmStateStore, begin: i64, end: i64, votes: &[DelegationVote]) -> Result<i64, String>`
+  - [x] Iterate through each cycle from begin to end
+  - [x] For each vote:
+    - [x] Get `delegation_reward(cycle, witness)`
+    - [x] Skip if reward <= 0
+    - [x] Get `witness_vote(cycle, witness)`
+    - [x] Skip if vote == REMARK or vote == 0
+    - [x] Calculate `user_vote / total_vote * reward`
+    - [x] Accumulate to total
+  - [x] Return total reward
 
 ### 5.4 New Reward Algorithm (Vi-based)
-- [ ] Implement `compute_new_reward(storage: &Store, begin: i64, end: i64, votes: &[Vote]) -> Result<i64, String>`
-  - [ ] For each vote:
-    - [ ] Get `witness_vi(begin - 1, witness)` as BigInt
-    - [ ] Get `witness_vi(end - 1, witness)` as BigInt
-    - [ ] Calculate `delta_vi = end_vi - begin_vi`
-    - [ ] Skip if `delta_vi <= 0`
-    - [ ] Calculate `delta_vi * user_vote / DECIMAL_OF_VI_REWARD`
-    - [ ] Accumulate to total (convert BigInt to i64)
-  - [ ] Return total reward
+- [x] Implement `compute_new_reward(storage: &EngineBackedEvmStateStore, begin: i64, end: i64, votes: &[DelegationVote]) -> Result<i64, String>`
+  - [x] For each vote:
+    - [x] Get `witness_vi(begin - 1, witness)` as BigInt
+    - [x] Get `witness_vi(end - 1, witness)` as BigInt
+    - [x] Calculate `delta_vi = end_vi - begin_vi`
+    - [x] Skip if `delta_vi <= 0`
+    - [x] Calculate `delta_vi * user_vote / DECIMAL_OF_VI_REWARD`
+    - [x] Accumulate to total (convert BigInt to i64)
+  - [x] Return total reward
 
 ### 5.5 Helper Functions
-- [ ] Implement `get_account_votes(storage: &Store, address: &Address) -> Result<Vec<Vote>, String>`
-  - [ ] Read account from storage
-  - [ ] Parse votes from account protobuf
-  - [ ] Return empty vec if no votes
+- [x] Implement `get_delegation_votes_from_account(storage: &EngineBackedEvmStateStore, address: &Address) -> Result<Vec<DelegationVote>, String>`
+  - [x] Read account from storage using existing vote parsing
+  - [x] Convert to DelegationVote format
+  - [x] Return empty vec if no votes
 
 ---
 
 ## Phase 6: Integration with WithdrawBalance
 
 ### 6.1 Modify execute_withdraw_balance_contract
-- [ ] Open `rust-backend/crates/core/src/service/contracts/withdraw.rs`
-- [ ] Add import for delegation module
-- [ ] Before reading allowance, call `withdraw_reward()`
+- [x] Open `rust-backend/crates/core/src/service/contracts/withdraw.rs`
+- [x] Add import for delegation module
+- [x] Before reading allowance, call `withdraw_reward()` via `compute_delegation_reward_if_enabled()`
   ```rust
-  // Compute delegation reward and add to allowance
-  let delegation_reward = self.withdraw_reward(storage_adapter, &owner_address)?;
-  if delegation_reward > 0 {
-      let mut account = storage_adapter.get_account(&owner_address)?
-          .ok_or("Account not found")?;
-      account.allowance += delegation_reward;
-      storage_adapter.set_account(&owner_address, account)?;
-  }
+  // Check if delegation reward computation is enabled
+  // If enabled, compute delegation rewards and add to allowance
+  let delegation_reward = self.compute_delegation_reward_if_enabled(storage_adapter, &owner_address)?;
+
+  // Total allowance = base allowance + delegation reward
+  let allowance = base_allowance.checked_add(delegation_reward)
+      .ok_or("Overflow when adding delegation reward to allowance")?;
   ```
-- [ ] Update logging to show delegation reward
-- [ ] Ensure delegation store changes are committed
+- [x] Update logging to show delegation reward
+- [x] Delegation store changes are committed directly via storage_engine.put()
 
 ### 6.2 Configuration
-- [ ] Add config flag to `RemoteExecutionConfig`
+- [x] Add config flag to `RemoteExecutionConfig`
   ```rust
   pub delegation_reward_enabled: bool,  // default: false for Phase 1
   ```
-- [ ] Gate delegation logic behind config flag
-- [ ] Add to `config.toml`
+- [x] Gate delegation logic behind config flag
+- [x] Add default to `Config::load()` and `RemoteExecutionConfig::default()`
+- [x] Add to `config.toml`
   ```toml
-  [remote_execution]
+  [execution.remote]
   delegation_reward_enabled = false
   ```
 
@@ -241,39 +242,39 @@ Implement complete `withdrawReward` logic in Rust, porting `MortgageService.with
 ## Phase 7: gRPC Protocol (if needed)
 
 ### 7.1 Assess gRPC Requirements
-- [ ] Determine if delegation store is accessible via existing storage gRPC
-- [ ] If separate database, add new gRPC methods
+- [x] Determine if delegation store is accessible via existing storage gRPC
+  - **Result**: Yes, delegation store can be accessed via existing `Get`/`Put` gRPC methods with database name "delegation"
+- [x] If separate database, add new gRPC methods
+  - **Result**: Not needed - using existing gRPC methods with database routing
 
 ### 7.2 Add gRPC Methods (if needed)
-- [ ] Add to `proto/storage.proto`:
-  - [ ] `GetDelegationValue(key) -> value`
-  - [ ] `SetDelegationValue(key, value) -> success`
-- [ ] Implement gRPC handlers in storage service
-- [ ] Update storage adapter to use new gRPC methods
+- [x] Not needed - using existing `Get`/`Put` methods with database = "delegation"
+- [x] Storage adapter accesses delegation store via `storage_engine.get()/put()` with "delegation" database name
 
 ---
 
 ## Phase 8: Testing
 
 ### 8.1 Unit Tests
-- [ ] Test key generation matches Java format
-  - [ ] `test_delegation_begin_cycle_key`
-  - [ ] `test_delegation_end_cycle_key`
-  - [ ] `test_delegation_account_vote_key`
-  - [ ] `test_delegation_reward_key`
-  - [ ] `test_delegation_witness_vote_key`
-  - [ ] `test_delegation_witness_vi_key`
-- [ ] Test vote parsing from protobuf
-  - [ ] `test_parse_account_votes_empty`
-  - [ ] `test_parse_account_votes_single`
-  - [ ] `test_parse_account_votes_multiple`
-- [ ] Test reward computation
+- [x] Test key generation matches Java format (in `delegation/keys.rs`)
+  - [x] `test_begin_cycle_key`
+  - [x] `test_end_cycle_key`
+  - [x] `test_account_vote_key`
+  - [x] `test_reward_key`
+  - [x] `test_witness_vote_key`
+  - [x] `test_vi_key`
+  - [x] `test_brokerage_key`
+- [x] Test vote parsing from protobuf (in `delegation/types.rs`)
+  - [x] `test_delegation_vote_creation`
+  - [x] `test_account_vote_snapshot_serialization`
+  - [x] `test_constants`
+- [ ] Test reward computation (TODO - requires mock storage)
   - [ ] `test_compute_old_reward_single_cycle`
   - [ ] `test_compute_old_reward_multiple_cycles`
   - [ ] `test_compute_new_reward_single_cycle`
   - [ ] `test_compute_new_reward_multiple_cycles`
   - [ ] `test_compute_reward_algorithm_boundary`
-- [ ] Test edge cases
+- [ ] Test edge cases (TODO - requires mock storage)
   - [ ] `test_withdraw_reward_no_delegation_allowed`
   - [ ] `test_withdraw_reward_account_not_found`
   - [ ] `test_withdraw_reward_no_votes`
@@ -297,9 +298,9 @@ Implement complete `withdrawReward` logic in Rust, porting `MortgageService.with
 ## Phase 9: Documentation
 
 ### 9.1 Code Documentation
-- [ ] Document all public functions in delegation module
-- [ ] Document storage key formats
-- [ ] Document reward computation algorithms
+- [x] Document all public functions in delegation module (doc comments added)
+- [x] Document storage key formats (in `keys.rs` comments, referencing Java line numbers)
+- [x] Document reward computation algorithms (in `delegation.rs` comments)
 
 ### 9.2 Update CLAUDE.md
 - [ ] Add lesson about delegation store key formats
@@ -344,19 +345,21 @@ Implement complete `withdrawReward` logic in Rust, porting `MortgageService.with
 
 ## Files Changed Summary
 
-| File | Action |
-|------|--------|
-| `crates/execution/src/delegation/mod.rs` | Create |
-| `crates/execution/src/delegation/keys.rs` | Create |
-| `crates/execution/src/delegation/types.rs` | Create |
-| `crates/execution/src/lib.rs` | Modify (add module) |
-| `crates/execution/src/storage_adapter/engine.rs` | Modify (add 15+ methods) |
-| `crates/core/src/service/contracts/withdraw.rs` | Modify |
-| `crates/core/src/service/contracts/delegation.rs` | Create |
-| `crates/common/src/config.rs` | Modify |
-| `config.toml` | Modify |
-| `Cargo.toml` | Modify (add num-bigint) |
-| `proto/storage.proto` | Modify (if needed) |
+| File | Action | Status |
+|------|--------|--------|
+| `crates/execution/src/delegation/mod.rs` | Create | ✅ Done |
+| `crates/execution/src/delegation/keys.rs` | Create | ✅ Done |
+| `crates/execution/src/delegation/types.rs` | Create | ✅ Done |
+| `crates/execution/src/lib.rs` | Modify (add module) | ✅ Done |
+| `crates/execution/src/storage_adapter/engine.rs` | Modify (add 15+ methods) | ✅ Done |
+| `crates/execution/Cargo.toml` | Modify (add num-bigint) | ✅ Done |
+| `crates/core/src/service/contracts/mod.rs` | Modify (add delegation module) | ✅ Done |
+| `crates/core/src/service/contracts/withdraw.rs` | Modify | ✅ Done |
+| `crates/core/src/service/contracts/delegation.rs` | Create | ✅ Done |
+| `crates/core/Cargo.toml` | Modify (add num-bigint) | ✅ Done |
+| `crates/common/src/config.rs` | Modify | ✅ Done |
+| `config.toml` | Modify | ✅ Done |
+| `proto/storage.proto` | Modify (if needed) | ⏭️ Not needed |
 
 ---
 

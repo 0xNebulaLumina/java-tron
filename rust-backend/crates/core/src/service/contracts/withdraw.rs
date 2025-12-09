@@ -2,6 +2,7 @@
 // Handles WithdrawBalanceContract (type 13) for witness reward withdrawal
 
 use super::super::BackendService;
+use super::delegation;
 use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, WithdrawChange, EvmStateStore};
 use tracing::{debug, info, warn};
 
@@ -11,8 +12,14 @@ const FROZEN_PERIOD_MS: i64 = 86_400_000;
 impl BackendService {
     /// Execute a WITHDRAW_BALANCE_CONTRACT
     ///
-    /// Phase 1 Implementation:
+    /// Phase 1 Implementation (delegation_reward_enabled = false):
     /// - Uses Account.allowance only (skips delegation/mortgage queryReward)
+    ///
+    /// Phase 2 Implementation (delegation_reward_enabled = true):
+    /// - First computes delegation rewards via withdraw_reward()
+    /// - Adds computed rewards to allowance before reading
+    ///
+    /// Both phases:
     /// - Validates owner exists, is witness, cooldown satisfied, and has positive allowance
     /// - Updates balance by adding allowance
     /// - Emits WithdrawChange sidecar for Java to update allowance=0 and latestWithdrawTime
@@ -78,9 +85,24 @@ impl BackendService {
         debug!("Cooldown satisfied: {} ms since last withdraw (required: {} ms)",
                time_since_last_withdraw, cooldown_ms);
 
-        // Step 4: Read allowance and validate it's positive
-        let allowance = storage_adapter.get_account_allowance(&owner_address)
+        // Step 4: Check if delegation reward computation is enabled
+        // If enabled, compute delegation rewards and add to allowance
+        let delegation_reward = self.compute_delegation_reward_if_enabled(storage_adapter, &owner_address)?;
+
+        if delegation_reward > 0 {
+            info!(
+                "Delegation reward computed for {}: {} SUN",
+                owner_tron, delegation_reward
+            );
+        }
+
+        // Step 5: Read allowance and add delegation reward
+        let base_allowance = storage_adapter.get_account_allowance(&owner_address)
             .map_err(|e| format!("Failed to read allowance: {}", e))?;
+
+        // Total allowance = base allowance + delegation reward
+        let allowance = base_allowance.checked_add(delegation_reward)
+            .ok_or("Overflow when adding delegation reward to allowance")?;
 
         if allowance <= 0 {
             warn!("Account {} has no reward to withdraw (allowance={})", owner_tron, allowance);
@@ -152,5 +174,42 @@ impl BackendService {
             vote_changes: vec![], // Not applicable
             withdraw_changes, // WithdrawChange sidecar for Java apply
         })
+    }
+
+    /// Compute delegation reward if enabled in config.
+    ///
+    /// When `delegation_reward_enabled` is true, calls the full withdraw_reward()
+    /// computation which reads from DelegationStore and updates delegation state.
+    /// When false (Phase 1), returns 0 and skips delegation computation.
+    ///
+    /// # Arguments
+    /// * `storage_adapter` - Storage adapter
+    /// * `address` - Account address
+    ///
+    /// # Returns
+    /// * `Ok(reward)` - Delegation reward in SUN (0 if disabled)
+    fn compute_delegation_reward_if_enabled(
+        &self,
+        storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore,
+        address: &revm_primitives::Address,
+    ) -> Result<i64, String> {
+        // Check if delegation reward computation is enabled
+        let config = self.get_execution_config()?;
+
+        if !config.remote.delegation_reward_enabled {
+            debug!(
+                "Delegation reward computation disabled, skipping for {}",
+                tron_backend_common::to_tron_address(address)
+            );
+            return Ok(0);
+        }
+
+        debug!(
+            "Delegation reward computation enabled, computing for {}",
+            tron_backend_common::to_tron_address(address)
+        );
+
+        // Call the full delegation reward computation
+        delegation::withdraw_reward(storage_adapter, address)
     }
 }
