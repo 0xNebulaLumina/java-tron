@@ -434,6 +434,17 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               org.tron.common.utils.ByteArray.toHexString(accountUpdateContract.getOwnerAddress().toByteArray()), data.length);
           break;
 
+        case WithdrawBalanceContract:
+          // WithdrawBalanceContract has only owner_address field - no extra data needed
+          // The owner address is already extracted as fromAddress above
+          toAddress = new byte[0]; // System contract, no recipient
+          data = new byte[0]; // No extra data needed - owner is in fromAddress
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.WITHDRAW_BALANCE_CONTRACT;
+          logger.debug("Mapped WithdrawBalanceContract to remote request; owner={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress));
+          break;
+
         default:
           // Remove TRANSFER fallback - throw exception to fall back to embedded
           logger.error("Contract type {} not mapped to remote; falling back to embedded", contract.getType());
