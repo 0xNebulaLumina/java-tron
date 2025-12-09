@@ -615,6 +615,8 @@ message ExecutionResult {
   repeated Trc10Change trc10_changes = 12;
   // Phase 2: Vote changes (for Account.votes update after VoteWitness)
   repeated VoteChange vote_changes = 13;
+  // WithdrawBalanceContract: allowance/latestWithdrawTime sidecar changes
+  repeated WithdrawChange withdraw_changes = 14;
 }
 
 // Account information for account changes
@@ -755,6 +757,15 @@ message Vote {
 message VoteChange {
   bytes owner_address = 1;   // 21-byte Tron address of the voter
   repeated Vote votes = 2;   // New votes list (replaces Account.votes)
+}
+
+// WithdrawChange carries withdrawal info for applying allowance and latestWithdrawTime updates.
+// Used for WithdrawBalanceContract remote execution - Java applies this to Account fields.
+// Balance delta is already handled by AccountChange; this sidecar handles the allowance/time reset.
+message WithdrawChange {
+  bytes owner_address = 1;       // 21-byte Tron address of the witness withdrawing
+  int64 amount = 2;              // The withdrawn amount (= Account.allowance before operation)
+  int64 latest_withdraw_time = 3; // Timestamp to set as Account.latestWithdrawTime (block time)
 }
 
 message CallContractRequest {

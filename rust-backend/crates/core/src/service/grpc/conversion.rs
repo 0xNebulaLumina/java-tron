@@ -440,6 +440,15 @@ impl BackendService {
             }
         }).collect();
 
+        // Convert WithdrawChange from execution result to protobuf (WithdrawBalanceContract sidecar)
+        let withdraw_changes: Vec<crate::backend::WithdrawChange> = result.withdraw_changes.iter().map(|change| {
+            crate::backend::WithdrawChange {
+                owner_address: add_tron_address_prefix(&change.owner_address),
+                amount: change.amount,
+                latest_withdraw_time: change.latest_withdraw_time,
+            }
+        }).collect();
+
         let error_message = result.error.unwrap_or_default();
 
         ExecuteTransactionResponse {
@@ -457,6 +466,7 @@ impl BackendService {
                 global_resource_changes, // Converted from TronExecutionResult
                 trc10_changes, // Phase 2: Converted TRC-10 semantic changes
                 vote_changes, // Phase 2: VoteChange for Account.votes update
+                withdraw_changes, // WithdrawBalanceContract: allowance/latestWithdrawTime sidecar
             }),
             success: result.success,
             error_message,

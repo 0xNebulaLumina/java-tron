@@ -283,6 +283,13 @@ impl BackendService {
                 debug!("Executing UNFREEZE_BALANCE_V2_CONTRACT");
                 self.execute_unfreeze_balance_v2_contract(storage_adapter, transaction, context)
             },
+            Some(tron_backend_execution::TronContractType::WithdrawBalanceContract) => {
+                if !remote_config.withdraw_balance_enabled {
+                    return Err("WITHDRAW_BALANCE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing WITHDRAW_BALANCE_CONTRACT");
+                self.execute_withdraw_balance_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -536,6 +543,7 @@ impl BackendService {
             global_resource_changes: vec![], // Not applicable for value transfers
             trc10_changes: vec![], // Not applicable for value transfers
             vote_changes: vec![], // Not applicable for value transfers
+            withdraw_changes: vec![], // Not applicable for value transfers
         })
     }
 
@@ -750,6 +758,7 @@ impl BackendService {
             global_resource_changes: vec![], // Not applicable for witness creation
             trc10_changes: vec![], // Not applicable for witness creation
             vote_changes: vec![], // Not applicable for witness creation
+            withdraw_changes: vec![], // Not applicable for witness creation
         })
     }
 
@@ -884,6 +893,7 @@ impl BackendService {
             global_resource_changes: vec![],
             trc10_changes: vec![],
             vote_changes: vec![], // Not applicable for witness update
+            withdraw_changes: vec![], // Not applicable for witness update
         })
     }
 
@@ -1283,6 +1293,7 @@ impl BackendService {
             global_resource_changes: vec![], // Not applicable for vote witness
             trc10_changes: vec![], // Not applicable for vote witness
             vote_changes: vec![vote_change], // VoteChange for Account.votes update
+            withdraw_changes: vec![], // Not applicable for vote witness
         })
     }
 
@@ -1391,6 +1402,7 @@ impl BackendService {
             global_resource_changes: vec![], // Not applicable for account update
             trc10_changes: vec![], // Not applicable for account update
             vote_changes: vec![], // Not applicable for account update
+            withdraw_changes: vec![], // Not applicable for account update
         })
     }
 
@@ -1671,6 +1683,7 @@ impl BackendService {
             global_resource_changes: vec![], // Not applicable for TRC-10 transfers
             trc10_changes: vec![trc10_change], // Phase 2: emit TRC-10 semantic change
             vote_changes: vec![], // Not applicable for TRC-10 transfers
+            withdraw_changes: vec![], // Not applicable for TRC-10 transfers
         })
     }
 
@@ -1876,6 +1889,7 @@ impl BackendService {
             global_resource_changes: vec![], // Not applicable for asset issue
             trc10_changes: vec![trc10_change], // Phase 2: emit TRC-10 semantic change
             vote_changes: vec![], // Not applicable for asset issue
+            withdraw_changes: vec![], // Not applicable for asset issue
         })
     }
 

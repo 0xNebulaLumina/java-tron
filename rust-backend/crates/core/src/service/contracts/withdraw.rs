@@ -1,0 +1,156 @@
+// WithdrawBalance contract handler
+// Handles WithdrawBalanceContract (type 13) for witness reward withdrawal
+
+use super::super::BackendService;
+use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, WithdrawChange, EvmStateStore};
+use tracing::{debug, info, warn};
+
+/// FROZEN_PERIOD constant: 24 hours in milliseconds
+const FROZEN_PERIOD_MS: i64 = 86_400_000;
+
+impl BackendService {
+    /// Execute a WITHDRAW_BALANCE_CONTRACT
+    ///
+    /// Phase 1 Implementation:
+    /// - Uses Account.allowance only (skips delegation/mortgage queryReward)
+    /// - Validates owner exists, is witness, cooldown satisfied, and has positive allowance
+    /// - Updates balance by adding allowance
+    /// - Emits WithdrawChange sidecar for Java to update allowance=0 and latestWithdrawTime
+    ///
+    /// Validation rules (matching embedded):
+    /// - Owner account must exist
+    /// - Owner must be a witness
+    /// - Cooldown: now - latestWithdrawTime >= witnessAllowanceFrozenTime * FROZEN_PERIOD
+    /// - Allowance must be positive
+    /// - No overflow when adding allowance to balance
+    pub(crate) fn execute_withdraw_balance_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        let owner_address = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner_address);
+
+        info!("Executing WITHDRAW_BALANCE_CONTRACT: owner={}", owner_tron);
+
+        // Step 1: Validate owner account exists
+        let owner_account = storage_adapter.get_account(&owner_address)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or_else(|| format!("Account {} not found", owner_tron))?;
+
+        debug!("Owner account loaded: balance={}", owner_account.balance);
+
+        // Step 2: Validate owner is a witness
+        let is_witness = storage_adapter.is_witness(&owner_address)
+            .map_err(|e| format!("Failed to check witness status: {}", e))?;
+
+        if !is_witness {
+            warn!("Account {} is not a witness", owner_tron);
+            return Err(format!("account {} not exist as witness", owner_tron));
+        }
+
+        debug!("Owner {} is confirmed as witness", owner_tron);
+
+        // Step 3: Read dynamic properties for cooldown check
+        let now_ms = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to read block timestamp: {}", e))?;
+
+        let witness_allowance_frozen_time = storage_adapter.get_witness_allowance_frozen_time()
+            .map_err(|e| format!("Failed to read witness allowance frozen time: {}", e))?;
+
+        let latest_withdraw_time = storage_adapter.get_account_latest_withdraw_time(&owner_address)
+            .map_err(|e| format!("Failed to read latest withdraw time: {}", e))?;
+
+        debug!("Cooldown check: now_ms={}, latest_withdraw_time={}, frozen_time_days={}",
+               now_ms, latest_withdraw_time, witness_allowance_frozen_time);
+
+        // Calculate cooldown period in milliseconds
+        let cooldown_ms = witness_allowance_frozen_time * FROZEN_PERIOD_MS;
+        let time_since_last_withdraw = now_ms - latest_withdraw_time;
+
+        if time_since_last_withdraw < cooldown_ms {
+            warn!("Cooldown not satisfied: time_since_last_withdraw={} < cooldown_ms={}",
+                  time_since_last_withdraw, cooldown_ms);
+            return Err(format!("The last withdraw time is {}, less than 24 hours", latest_withdraw_time));
+        }
+
+        debug!("Cooldown satisfied: {} ms since last withdraw (required: {} ms)",
+               time_since_last_withdraw, cooldown_ms);
+
+        // Step 4: Read allowance and validate it's positive
+        let allowance = storage_adapter.get_account_allowance(&owner_address)
+            .map_err(|e| format!("Failed to read allowance: {}", e))?;
+
+        if allowance <= 0 {
+            warn!("Account {} has no reward to withdraw (allowance={})", owner_tron, allowance);
+            return Err("witnessAccount does not have any reward".to_string());
+        }
+
+        debug!("Account {} has allowance={} to withdraw", owner_tron, allowance);
+
+        // Step 5: Check for overflow when adding allowance to balance
+        let old_balance_u64: u64 = owner_account.balance.try_into().unwrap_or(u64::MAX);
+        let allowance_u64 = allowance as u64; // Safe since we checked allowance > 0
+
+        let new_balance_u64 = old_balance_u64.checked_add(allowance_u64)
+            .ok_or("Balance overflow when adding allowance")?;
+
+        debug!("Balance update: {} + {} = {}", old_balance_u64, allowance_u64, new_balance_u64);
+
+        // Step 6: Create new account with updated balance
+        let mut new_owner = owner_account.clone();
+        new_owner.balance = revm_primitives::U256::from(new_balance_u64);
+
+        // Persist new owner account
+        storage_adapter.set_account(owner_address, new_owner.clone())
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+        info!("WithdrawBalance: owner={} withdrew {} SUN, new_balance={}",
+              owner_tron, allowance, new_balance_u64);
+
+        // Step 7: Emit AccountChange for balance delta
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: owner_address,
+                old_account: Some(owner_account),
+                new_account: Some(new_owner),
+            }
+        ];
+
+        // Step 8: Emit WithdrawChange sidecar for Java to update allowance and latestWithdrawTime
+        // Java will set Account.allowance = 0 and Account.latestWithdrawTime = now_ms
+        let withdraw_changes = vec![
+            WithdrawChange {
+                owner_address,
+                amount: allowance,
+                latest_withdraw_time: now_ms,
+            }
+        ];
+
+        debug!("Emitting withdraw change: owner={}, amount={}, latest_withdraw_time={}",
+               owner_tron, allowance, now_ms);
+
+        // Step 9: Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("WithdrawBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, withdraw_changes=1",
+               bandwidth_used);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0, // System contract: zero energy
+            bandwidth_used,
+            state_changes,
+            logs: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![], // Not applicable
+            global_resource_changes: vec![], // Not applicable
+            trc10_changes: vec![], // Not applicable
+            vote_changes: vec![], // Not applicable
+            withdraw_changes, // WithdrawChange sidecar for Java apply
+        })
+    }
+}
