@@ -72,8 +72,14 @@ impl BackendService {
             tx.energy_limit as u64
         };
 
+        // Extract tx_kind first - needed to properly handle contract_type
+        let tx_kind = crate::backend::TxKind::try_from(tx.tx_kind).unwrap_or(crate::backend::TxKind::Vm);
+
         // Extract contract_type and asset_id from protobuf for TRON system contracts
-        let contract_type = if tx.contract_type != 0 {
+        // NOTE: AccountCreateContract has enum value 0, which is proto3's default.
+        // For NON_VM transactions, we must always try to parse contract_type since 0 is valid.
+        // For VM transactions, contract_type=0 genuinely means "unset" (not AccountCreateContract).
+        let contract_type = if tx_kind == crate::backend::TxKind::NonVm || tx.contract_type != 0 {
             match tron_backend_execution::TronContractType::try_from(tx.contract_type) {
                 Ok(ct) => {
                     debug!("Parsed contract type: {:?}", ct);
@@ -111,8 +117,6 @@ impl BackendService {
             metadata,
         };
 
-        // Extract tx_kind from protobuf, default to VM for backward compatibility
-        let tx_kind = crate::backend::TxKind::try_from(tx.tx_kind).unwrap_or(crate::backend::TxKind::Vm);
         debug!("Transaction kind: {:?}, contract_type: {:?}", tx_kind, transaction.metadata.contract_type);
 
         Ok((transaction, tx_kind))

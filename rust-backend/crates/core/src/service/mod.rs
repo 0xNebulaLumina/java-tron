@@ -1495,25 +1495,27 @@ impl BackendService {
         // 7. Prepare state changes
         let mut state_changes = Vec::new();
 
-        // 8. Update owner account - deduct fee
-        let new_owner_account = revm_primitives::AccountInfo {
-            balance: owner_account.balance - fee_u256,
-            nonce: owner_account.nonce,
-            code_hash: owner_account.code_hash,
-            code: owner_account.code.clone(),
-        };
+        // 8. Update owner account - deduct fee (only if fee > 0)
+        if fee > 0 {
+            let new_owner_account = revm_primitives::AccountInfo {
+                balance: owner_account.balance - fee_u256,
+                nonce: owner_account.nonce,
+                code_hash: owner_account.code_hash,
+                code: owner_account.code.clone(),
+            };
 
-        // Emit owner account change
-        state_changes.push(TronStateChange::AccountChange {
-            address: owner,
-            old_account: Some(owner_account),
-            new_account: Some(new_owner_account.clone()),
-        });
+            // Emit owner account change
+            state_changes.push(TronStateChange::AccountChange {
+                address: owner,
+                old_account: Some(owner_account),
+                new_account: Some(new_owner_account.clone()),
+            });
 
-        // Persist owner account update
-        storage_adapter
-            .set_account(owner, new_owner_account.clone())
-            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+            // Persist owner account update
+            storage_adapter
+                .set_account(owner, new_owner_account.clone())
+                .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+        }
 
         // 9. Create new target account with default values
         let new_target_account = revm_primitives::AccountInfo {
@@ -1535,9 +1537,12 @@ impl BackendService {
             .set_account(target_address, new_target_account)
             .map_err(|e| format!("Failed to persist new account: {}", e))?;
 
-        // 10. Handle fee burning/crediting
+        // 10. Handle fee burning/crediting (only if fee > 0)
         let fee_destination: String;
-        if support_blackhole {
+        if fee == 0 {
+            // No fee to process
+            fee_destination = String::from("none(fee=0)");
+        } else if support_blackhole {
             // Burn mode - no additional account change needed
             info!("Burning {} SUN (blackhole optimization)", fee);
             fee_destination = String::from("burn");
