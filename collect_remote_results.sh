@@ -2,12 +2,12 @@
 
 set -e
 
-# Configurable sleep duration (in seconds), default 600 (10 minutes)
-SLEEP_DURATION=${1:-600}
+# Configurable sleep duration (in seconds), default 1200 (20 minutes)
+SLEEP_DURATION=${1:-1200}
 # Configurable embedded Java log path
-EMBEDDED_JAVA_LOG=${2:-10.embedded-java.log}
+EMBEDDED_JAVA_LOG=${2:-11.embedded-java.log}
 # Configurable embedded-embedded CSV path
-EMBEDDED_CSV=${3:-output-directory/execution-csv/20251205-051247-58d61a82-embedded-embedded.csv}
+EMBEDDED_CSV=${3:-output-directory/execution-csv/20251209-072638-329120db-embedded-embedded.csv}
 
 echo "Starting remote execution + remote storage result collection..."
 echo "Sleep duration: ${SLEEP_DURATION} seconds ($(($SLEEP_DURATION / 60)) minutes)"
