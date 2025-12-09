@@ -324,6 +324,35 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get CreateNewAccountFeeInSystemContract dynamic property
+    /// Fee charged when creating a new account via system contract (AccountCreateContract)
+    /// Java reference: DynamicPropertiesStore.java getCreateNewAccountFeeInSystemContract()
+    /// Default value: 1_000_000 SUN (1 TRX)
+    pub fn get_create_new_account_fee_in_system_contract(&self) -> Result<u64> {
+        let key = b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let fee = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT from DB: {} SUN", fee);
+                    Ok(fee)
+                } else {
+                    // Use default value if data is too short
+                    tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT has invalid length, using default 1000000 SUN");
+                    Ok(1_000_000) // 1 TRX in SUN (default from TRON)
+                }
+            },
+            None => {
+                // Use default value if not found
+                tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT not found, using default 1000000 SUN");
+                Ok(1_000_000) // 1 TRX in SUN (default from TRON)
+            }
+        }
+    }
+
     /// Get AllowMultiSign dynamic property
     /// Default value: 1 (enabled)
     pub fn get_allow_multi_sign(&self) -> Result<bool> {
