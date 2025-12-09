@@ -3,3 +3,4 @@
 
 pub mod freeze;
 pub mod proto;
+pub mod withdraw;

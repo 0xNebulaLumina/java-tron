@@ -711,7 +711,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           new ArrayList<>(), // freezeChanges
           new ArrayList<>(), // globalResourceChanges
           new ArrayList<>(), // trc10Changes
-          new ArrayList<>()  // voteChanges
+          new ArrayList<>(), // voteChanges
+          new ArrayList<>()  // withdrawChanges
           );
     }
 
@@ -943,6 +944,20 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           votes.size());
     }
 
+    // Convert protobuf WithdrawChange (WithdrawBalanceContract: allowance/latestWithdrawTime sidecar)
+    List<WithdrawChange> withdrawChanges = new ArrayList<>();
+    for (tron.backend.BackendOuterClass.WithdrawChange protoWithdrawChange : protoResult.getWithdrawChangesList()) {
+      withdrawChanges.add(new WithdrawChange(
+          protoWithdrawChange.getOwnerAddress().toByteArray(),
+          protoWithdrawChange.getAmount(),
+          protoWithdrawChange.getLatestWithdrawTime()));
+
+      logger.debug("Parsed WithdrawChange: owner={}, amount={}, latestWithdrawTime={}",
+          org.tron.common.utils.ByteArray.toHexString(protoWithdrawChange.getOwnerAddress().toByteArray()),
+          protoWithdrawChange.getAmount(),
+          protoWithdrawChange.getLatestWithdrawTime());
+    }
+
     // Report metrics if callback is registered
     if (metricsCallback != null) {
       metricsCallback.onMetric("remote.energy_used", protoResult.getEnergyUsed());
@@ -967,7 +982,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         freezeChanges,
         globalResourceChanges,
         trc10Changes,
-        voteChanges);
+        voteChanges,
+        withdrawChanges);
   }
 
   /**

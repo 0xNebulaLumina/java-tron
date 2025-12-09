@@ -459,6 +459,142 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    // WithdrawBalanceContract: Dynamic Properties
+
+    /// Get LATEST_BLOCK_HEADER_TIMESTAMP dynamic property
+    /// This is the timestamp of the latest processed block (milliseconds since epoch)
+    /// Used for cooldown checks in WithdrawBalanceContract
+    /// Default: 0 (should always be present in a running chain)
+    pub fn get_latest_block_header_timestamp(&self) -> Result<i64> {
+        // Java stores this as lowercase key "latest_block_header_timestamp"
+        let key = b"latest_block_header_timestamp";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    tracing::warn!("LATEST_BLOCK_HEADER_TIMESTAMP has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            },
+            None => {
+                tracing::debug!("LATEST_BLOCK_HEADER_TIMESTAMP not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get WITNESS_ALLOWANCE_FROZEN_TIME dynamic property
+    /// Number of days for witness withdrawal cooldown (multiplied by FROZEN_PERIOD to get ms)
+    /// Default: 1 day if missing
+    /// FROZEN_PERIOD = 86,400,000 ms (24 hours in ms)
+    pub fn get_witness_allowance_frozen_time(&self) -> Result<i64> {
+        let key = b"WITNESS_ALLOWANCE_FROZEN_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let days = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    Ok(days)
+                } else if !data.is_empty() {
+                    // Try parsing as single byte
+                    Ok(data[0] as i64)
+                } else {
+                    Ok(1) // Default: 1 day
+                }
+            },
+            None => {
+                tracing::debug!("WITNESS_ALLOWANCE_FROZEN_TIME not found, returning default 1 day");
+                Ok(1) // Default: 1 day
+            }
+        }
+    }
+
+    /// Get Account.allowance field (field 11 in Account protobuf)
+    /// This is the accumulated witness reward available for withdrawal
+    /// Returns 0 if account doesn't exist or field not present
+    pub fn get_account_allowance(&self, address: &Address) -> Result<i64> {
+        let key = self.account_key(address);
+
+        match self.storage_engine.get(self.account_database(), &key)? {
+            Some(data) => {
+                match self.extract_i64_field_from_protobuf(&data, 11) {
+                    Ok(allowance) => {
+                        tracing::debug!("Account {} allowance: {}", to_tron_address(address), allowance);
+                        Ok(allowance)
+                    },
+                    Err(e) => {
+                        tracing::debug!("Failed to extract allowance from account: {}, returning 0", e);
+                        Ok(0)
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("Account not found for address {:?}, returning allowance 0", address);
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get Account.latest_withdraw_time field (field 12 in Account protobuf)
+    /// This is the timestamp of the last witness reward withdrawal
+    /// Returns 0 if account doesn't exist or field not present
+    pub fn get_account_latest_withdraw_time(&self, address: &Address) -> Result<i64> {
+        let key = self.account_key(address);
+
+        match self.storage_engine.get(self.account_database(), &key)? {
+            Some(data) => {
+                match self.extract_i64_field_from_protobuf(&data, 12) {
+                    Ok(latest_withdraw_time) => {
+                        tracing::debug!("Account {} latest_withdraw_time: {}", to_tron_address(address), latest_withdraw_time);
+                        Ok(latest_withdraw_time)
+                    },
+                    Err(e) => {
+                        tracing::debug!("Failed to extract latest_withdraw_time from account: {}, returning 0", e);
+                        Ok(0)
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("Account not found for address {:?}, returning latest_withdraw_time 0", address);
+                Ok(0)
+            }
+        }
+    }
+
+    /// Extract an i64 varint field from a protobuf message by field number
+    /// Used for Account fields like allowance (11) and latest_withdraw_time (12)
+    fn extract_i64_field_from_protobuf(&self, data: &[u8], target_field: u64) -> Result<i64> {
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read field header (varint)
+            let (field_header, new_pos) = self.read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            if field_number == target_field && wire_type == 0 {
+                // Found our target field (varint)
+                let (value, _) = self.read_varint(data, pos)?;
+                // Convert u64 to i64 (for proper signed handling)
+                return Ok(value as i64);
+            } else {
+                // Skip this field
+                pos = self.skip_field(data, pos, wire_type)?;
+            }
+        }
+
+        // Field not found - return 0 as default
+        Ok(0)
+    }
+
     // Bandwidth and Resource Dynamic Properties for AEXT tracking
 
     /// Get FREE_NET_LIMIT dynamic property (free bandwidth limit per account)

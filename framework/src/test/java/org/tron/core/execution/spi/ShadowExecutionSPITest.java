@@ -282,7 +282,8 @@ public class ShadowExecutionSPITest {
         new ArrayList<>(), // freezeChanges
         new ArrayList<>(), // globalResourceChanges
         new ArrayList<>(), // trc10Changes
-        new ArrayList<>() // voteChanges
+        new ArrayList<>(), // voteChanges
+        new ArrayList<>() // withdrawChanges
         );
   }
 
@@ -299,7 +300,8 @@ public class ShadowExecutionSPITest {
         new ArrayList<>(), // freezeChanges
         new ArrayList<>(), // globalResourceChanges
         new ArrayList<>(), // trc10Changes
-        new ArrayList<>() // voteChanges
+        new ArrayList<>(), // voteChanges
+        new ArrayList<>() // withdrawChanges
         );
   }
 }

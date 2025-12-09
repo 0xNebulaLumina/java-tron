@@ -94,6 +94,9 @@ public class RuntimeSpiImpl implements Runtime {
       // Apply Vote changes to local database (Phase 2)
       applyVoteChanges(executionResult, context);
 
+      // Apply Withdraw changes to local database (WithdrawBalanceContract)
+      applyWithdrawChanges(executionResult, context);
+
       // Since ExecutionProgramResult extends ProgramResult, we can use it directly
       context.setProgramResult(executionResult);
 
@@ -574,6 +577,78 @@ public class RuntimeSpiImpl implements Runtime {
 
     } catch (Exception e) {
       logger.error("Failed to apply VoteChanges for transaction: {}, error: {}",
+          context.getTrxCap().getTransactionId(), e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Apply WithdrawChanges to set Account.allowance=0 and Account.latestWithdrawTime.
+   * Balance delta is already applied by AccountChange; this handles the allowance/time reset.
+   * Toggle with -Dremote.exec.apply.withdraw=false to disable if needed.
+   */
+  private void applyWithdrawChanges(ExecutionProgramResult result, TransactionContext context) {
+    // JVM gate: default true
+    boolean applyEnabled = Boolean.parseBoolean(
+        System.getProperty("remote.exec.apply.withdraw", "true"));
+
+    if (!applyEnabled) {
+      logger.debug("Withdraw changes application disabled by JVM property (-Dremote.exec.apply.withdraw=false) for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    if (result.getWithdrawChanges() == null || result.getWithdrawChanges().isEmpty()) {
+      logger.debug("No WithdrawChanges to apply for transaction: {}",
+          context.getTrxCap().getTransactionId());
+      return;
+    }
+
+    try {
+      org.tron.core.ChainBaseManager chainBaseManager = context.getStoreFactory()
+          .getChainBaseManager();
+      org.tron.core.store.AccountStore accountStore = chainBaseManager.getAccountStore();
+
+      if (accountStore == null) {
+        logger.warn("AccountStore not available, cannot apply WithdrawChanges");
+        return;
+      }
+
+      for (org.tron.core.execution.spi.ExecutionSPI.WithdrawChange withdrawChange : result.getWithdrawChanges()) {
+        byte[] ownerAddress = withdrawChange.getOwnerAddress();
+        org.tron.core.capsule.AccountCapsule accountCapsule = accountStore.get(ownerAddress);
+
+        if (accountCapsule == null) {
+          logger.warn("Account not found for WithdrawChange: {}",
+              org.tron.common.utils.ByteArray.toHexString(ownerAddress));
+          continue;
+        }
+
+        // Get the withdrawn amount for logging
+        long withdrawnAmount = withdrawChange.getAmount();
+        long latestWithdrawTime = withdrawChange.getLatestWithdrawTime();
+
+        // Set allowance to 0 and update latestWithdrawTime
+        // Note: Balance delta is already applied by AccountChange from Rust
+        accountCapsule.setAllowance(0);
+        accountCapsule.setLatestWithdrawTime(latestWithdrawTime);
+
+        // Persist the updated account
+        accountStore.put(accountCapsule.createDbKey(), accountCapsule);
+
+        // Mark dirty for resource sync
+        org.tron.core.storage.sync.ResourceSyncContext.recordAccountDirty(ownerAddress);
+
+        logger.debug("Applied WithdrawChange: owner={}, amount={}, latestWithdrawTime={}, allowance set to 0",
+            org.tron.common.utils.ByteArray.toHexString(ownerAddress),
+            withdrawnAmount,
+            latestWithdrawTime);
+      }
+
+      logger.info("Successfully applied {} WithdrawChanges for transaction: {}",
+          result.getWithdrawChanges().size(), context.getTrxCap().getTransactionId());
+
+    } catch (Exception e) {
+      logger.error("Failed to apply WithdrawChanges for transaction: {}, error: {}",
           context.getTrxCap().getTransactionId(), e.getMessage(), e);
     }
   }

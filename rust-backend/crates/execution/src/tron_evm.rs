@@ -254,6 +254,16 @@ pub struct VoteChange {
     pub votes: Vec<VoteEntry>,  // New votes list (replaces Account.votes)
 }
 
+/// WithdrawChange carries withdrawal info for applying allowance and latestWithdrawTime updates.
+/// Used for WithdrawBalanceContract remote execution - Java applies this to Account fields.
+/// Balance delta is already handled by AccountChange; this sidecar handles the allowance/time reset.
+#[derive(Debug, Clone)]
+pub struct WithdrawChange {
+    pub owner_address: revm::primitives::Address,  // Witness address (20-byte EVM format)
+    pub amount: i64,                               // The withdrawn amount (= Account.allowance before operation)
+    pub latest_withdraw_time: i64,                 // Timestamp to set as Account.latestWithdrawTime (block time)
+}
+
 #[derive(Debug, Clone)]
 pub struct TronExecutionResult {
     pub success: bool,
@@ -281,6 +291,9 @@ pub struct TronExecutionResult {
     /// Rust emits the new votes list; Java applies it to Account.votes
     /// This ensures correct old_votes seeding for subsequent epochs
     pub vote_changes: Vec<VoteChange>,
+    /// Withdraw changes (WithdrawBalanceContract: allowance/latestWithdrawTime sidecar)
+    /// Rust emits the withdrawal info; Java applies allowance=0 and latestWithdrawTime update
+    pub withdraw_changes: Vec<WithdrawChange>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -410,6 +423,7 @@ where
                     global_resource_changes: vec![], // Will be populated by contract handlers
                     trc10_changes: vec![], // Will be populated by TRC-10 contract handlers
                     vote_changes: vec![], // Will be populated by vote contract handlers
+                    withdraw_changes: vec![], // Will be populated by withdraw contract handler
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -426,6 +440,7 @@ where
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
                     vote_changes: vec![],
+                    withdraw_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -442,6 +457,7 @@ where
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
                     vote_changes: vec![],
+                    withdraw_changes: vec![],
                 })
             }
         }
@@ -472,6 +488,7 @@ where
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
                     vote_changes: vec![],
+                    withdraw_changes: vec![],
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -488,6 +505,7 @@ where
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
                     vote_changes: vec![],
+                    withdraw_changes: vec![],
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -504,6 +522,7 @@ where
                     global_resource_changes: vec![],
                     trc10_changes: vec![],
                     vote_changes: vec![],
+                    withdraw_changes: vec![],
                 })
             }
         }

@@ -126,6 +126,7 @@ public interface ExecutionSPI {
     private final List<GlobalResourceTotalsChange> globalResourceChanges;
     private final List<Trc10Change> trc10Changes;
     private final List<VoteChange> voteChanges;
+    private final List<WithdrawChange> withdrawChanges;
 
     public ExecutionResult(
         boolean success,
@@ -139,7 +140,8 @@ public interface ExecutionSPI {
         List<FreezeLedgerChange> freezeChanges,
         List<GlobalResourceTotalsChange> globalResourceChanges,
         List<Trc10Change> trc10Changes,
-        List<VoteChange> voteChanges) {
+        List<VoteChange> voteChanges,
+        List<WithdrawChange> withdrawChanges) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -152,6 +154,7 @@ public interface ExecutionSPI {
       this.globalResourceChanges = globalResourceChanges;
       this.trc10Changes = trc10Changes;
       this.voteChanges = voteChanges;
+      this.withdrawChanges = withdrawChanges;
     }
 
     // Getters
@@ -201,6 +204,10 @@ public interface ExecutionSPI {
 
     public List<VoteChange> getVoteChanges() {
       return voteChanges;
+    }
+
+    public List<WithdrawChange> getWithdrawChanges() {
+      return withdrawChanges;
     }
   }
 
@@ -615,6 +622,35 @@ public interface ExecutionSPI {
 
     public java.util.List<VoteEntry> getVotes() {
       return votes;
+    }
+  }
+
+  /**
+   * WithdrawChange carries withdrawal info for applying allowance and latestWithdrawTime updates.
+   * Used for WithdrawBalanceContract remote execution - Java applies this to Account fields.
+   * Balance delta is already handled by AccountChange; this sidecar handles the allowance/time reset.
+   */
+  class WithdrawChange {
+    private final byte[] ownerAddress;       // 21-byte Tron address of the witness withdrawing
+    private final long amount;               // The withdrawn amount (= Account.allowance before operation)
+    private final long latestWithdrawTime;   // Timestamp to set as Account.latestWithdrawTime
+
+    public WithdrawChange(byte[] ownerAddress, long amount, long latestWithdrawTime) {
+      this.ownerAddress = ownerAddress;
+      this.amount = amount;
+      this.latestWithdrawTime = latestWithdrawTime;
+    }
+
+    public byte[] getOwnerAddress() {
+      return ownerAddress;
+    }
+
+    public long getAmount() {
+      return amount;
+    }
+
+    public long getLatestWithdrawTime() {
+      return latestWithdrawTime;
     }
   }
 
