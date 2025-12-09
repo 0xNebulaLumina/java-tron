@@ -61,10 +61,10 @@ Add a feature flag to gate rollout:
     - Log flag on startup alongside existing remote flags.
 
 TODOs — Config
-- [ ] common/config.rs: add `account_create_enabled: bool` to `RemoteExecutionConfig` with default false
-- [ ] config loader: set default key `execution.remote.account_create_enabled=false`
-- [ ] config.toml: add commented flag with description
-- [ ] main.rs: log flag at startup
+- [x] common/config.rs: add `account_create_enabled: bool` to `RemoteExecutionConfig` with default false
+- [x] config loader: set default key `execution.remote.account_create_enabled=false`
+- [x] config.toml: add commented flag with description
+- [x] main.rs: log flag at startup
 
 ---
 
@@ -78,7 +78,7 @@ Dynamic property access for fee:
 Optional improvement (follow-up): serializer currently sets `create_time` using `SystemTime::now()`; parity is better if we can set to `context.block_timestamp` for newly created accounts (requires passing context or altering serializer policy).
 
 TODOs — Storage
-- [ ] engine.rs: add `get_create_new_account_fee_in_system_contract() -> Result<u64>`
+- [x] engine.rs: add `get_create_new_account_fee_in_system_contract() -> Result<u64>`
 - [ ] (optional) consider a hook to set account `create_time` deterministically (separate RFC)
 
 ---
@@ -119,10 +119,10 @@ Handler: `execute_account_create_contract(...)` (new function)
   7. Return `TronExecutionResult { success=true, energy_used=0, bandwidth_used, state_changes, aext_map, logs=[], ... }`
 
 TODOs — Service
-- [ ] mod.rs: add match arm for `AccountCreateContract` honoring `account_create_enabled`
-- [ ] mod.rs: implement `execute_account_create_contract()` per steps above
-- [ ] mod.rs: helper to parse `AccountCreateContract` from `transaction.data`
-- [ ] contracts/proto.rs: optionally add tiny decoding helpers for this contract (reuse `read_varint`)
+- [x] mod.rs: add match arm for `AccountCreateContract` honoring `account_create_enabled`
+- [x] mod.rs: implement `execute_account_create_contract()` per steps above
+- [x] mod.rs: helper to parse `AccountCreateContract` from `transaction.data`
+- [x] contracts/proto.rs: optionally add tiny decoding helpers for this contract (reuse `read_varint`)
 
 ---
 
@@ -131,7 +131,7 @@ TODOs — Service
 - State change conversion already sets `is_creation` based on old==None and new!=None; our new-account state change should set `old_account=None`.
 
 TODOs — gRPC (Rust)
-- [ ] Validate no changes required; otherwise, adjust conversion to carry `is_creation` (currently computed via presence).
+- [x] Validate no changes required; otherwise, adjust conversion to carry `is_creation` (currently computed via presence).
 
 ---
 
@@ -150,8 +150,8 @@ Add support to send AccountCreateContract to Rust backend when remote system con
   - Keep feature flag gating on Java side if needed (consistent with others: system vs per-contract flags).
 
 TODOs — Java
-- [ ] RemoteExecutionSPI: add mapping for `AccountCreateContract` (and `CreateAccount2` wrapper)
-- [ ] Ensure pre-exec AEXT collection includes owner
+- [x] RemoteExecutionSPI: add mapping for `AccountCreateContract` (and `CreateAccount2` wrapper)
+- [x] Ensure pre-exec AEXT collection includes owner (already handled - owner is always included via fromAddress)
 - [ ] Optional: JVM property to quickly disable remote path and fallback to actuator
 
 ---
@@ -188,8 +188,8 @@ Java SPI tests (optional, if coverage exists):
 - Ensure blackhole balance before/after logging path in gRPC service (already present for other flows) can show deltas if feature is enabled
 
 TODOs — Observability
-- [ ] Add targeted info/debug logs in handler
-- [ ] Verify existing blackhole logging hooks capture this path
+- [x] Add targeted info/debug logs in handler
+- [x] Verify existing blackhole logging hooks capture this path
 
 ---
 
@@ -221,26 +221,26 @@ TODOs — Observability
 ## File-by-File TODO Checklist
 
 Rust — common/config
-- [ ] `crates/common/src/config.rs`: add `account_create_enabled: bool` to `RemoteExecutionConfig`
-- [ ] Defaults in `Config::load()`
-- [ ] `impl Default for RemoteExecutionConfig`
-- [ ] Log in `src/main.rs`
-- [ ] Document in `config.toml`
+- [x] `crates/common/src/config.rs`: add `account_create_enabled: bool` to `RemoteExecutionConfig`
+- [x] Defaults in `Config::load()`
+- [x] `impl Default for RemoteExecutionConfig`
+- [x] Log in `src/main.rs`
+- [x] Document in `config.toml`
 
 Rust — storage adapter
-- [ ] `crates/execution/src/storage_adapter/engine.rs`: add getter `get_create_new_account_fee_in_system_contract()` reading key `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`
+- [x] `crates/execution/src/storage_adapter/engine.rs`: add getter `get_create_new_account_fee_in_system_contract()` reading key `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`
 
 Rust — service core
-- [ ] `crates/core/src/service/mod.rs`: add dispatch arm under `execute_non_vm_contract`
-- [ ] `crates/core/src/service/mod.rs`: implement `execute_account_create_contract()`
-- [ ] `crates/core/src/service/contracts/proto.rs`: small helper to parse `AccountCreateContract` (optional)
+- [x] `crates/core/src/service/mod.rs`: add dispatch arm under `execute_non_vm_contract`
+- [x] `crates/core/src/service/mod.rs`: implement `execute_account_create_contract()`
+- [x] `crates/core/src/service/mod.rs`: helper to parse `AccountCreateContract` (inline method)
 
 Rust — gRPC conversion
-- [ ] Verify `conversion.rs` auto-computes `is_creation` correctly; no code changes expected
+- [x] Verify `conversion.rs` auto-computes `is_creation` correctly; no code changes expected
 
 Java — RemoteExecutionSPI
-- [ ] `buildExecuteTransactionRequest(...)`: add `case AccountCreateContract` (+ `CreateAccount2` wrapper path)
-- [ ] Ensure owner pre-exec AEXT snapshot included; target account omitted
+- [x] `buildExecuteTransactionRequest(...)`: add `case AccountCreateContract` (+ `CreateAccount2` wrapper path)
+- [x] Ensure owner pre-exec AEXT snapshot included; target account omitted
 
 Tests
 - [ ] Add core service tests for AccountCreateContract covering fee modes and errors

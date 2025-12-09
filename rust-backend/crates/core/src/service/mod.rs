@@ -290,6 +290,13 @@ impl BackendService {
                 debug!("Executing WITHDRAW_BALANCE_CONTRACT");
                 self.execute_withdraw_balance_contract(storage_adapter, transaction, context)
             },
+            Some(tron_backend_execution::TronContractType::AccountCreateContract) => {
+                if !remote_config.account_create_enabled {
+                    return Err("ACCOUNT_CREATE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing ACCOUNT_CREATE_CONTRACT");
+                self.execute_account_create_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -1404,6 +1411,322 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for account update
             withdraw_changes: vec![], // Not applicable for account update
         })
+    }
+
+    /// Execute an ACCOUNT_CREATE_CONTRACT
+    /// Creates a new account with proper fee charging and blackhole handling
+    /// Parity with Java CreateAccountActuator:
+    /// - Validates owner exists and has sufficient balance
+    /// - Validates target account does not exist
+    /// - Charges CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT
+    /// - Creates new account with default values
+    /// - Burns or credits blackhole based on dynamic property
+    fn execute_account_create_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::{TronExecutionResult, TronStateChange};
+        use crate::service::grpc::address::strip_tron_address_prefix;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        info!("AccountCreate owner={}", owner_tron);
+
+        // 1. Parse AccountCreateContract from transaction.data
+        // AccountCreateContract protobuf:
+        //   bytes owner_address = 1;   (ignored - use transaction.from)
+        //   bytes account_address = 2; (target account to create)
+        //   AccountType type = 3;      (ignored - always Normal)
+        let target_address = self.parse_account_create_contract(&transaction.data)?;
+        let target_tron = tron_backend_common::to_tron_address(&target_address);
+
+        info!(
+            "AccountCreate: owner={}, target={}",
+            owner_tron, target_tron
+        );
+
+        // 2. Validate owner account exists
+        let owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or_else(|| {
+                let msg = format!("Account {} does not exist", owner_tron);
+                warn!("{}", msg);
+                msg
+            })?;
+
+        // 3. Validate target account does NOT exist
+        let target_exists = storage_adapter.get_account(&target_address)
+            .map_err(|e| format!("Failed to check target account: {}", e))?
+            .is_some();
+
+        if target_exists {
+            warn!("Account has existed: {}", target_tron);
+            return Err("Account has existed".to_string());
+        }
+
+        // 4. Get fee from dynamic properties
+        let fee = storage_adapter.get_create_new_account_fee_in_system_contract()
+            .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: {}", e))?;
+
+        info!("AccountCreate fee: {} SUN", fee);
+
+        // 5. Validate sufficient balance
+        let fee_u256 = revm_primitives::U256::from(fee);
+        if owner_account.balance < fee_u256 {
+            warn!(
+                "Validate CreateAccountActuator error, insufficient fee. need={}, have={}",
+                fee, owner_account.balance
+            );
+            return Err("Validate CreateAccountActuator error, insufficient fee.".to_string());
+        }
+
+        // 6. Get blackhole optimization flag
+        let support_blackhole = storage_adapter.support_black_hole_optimization()
+            .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
+
+        info!(
+            "AccountCreate: fee={} SUN, support_blackhole={}",
+            fee, support_blackhole
+        );
+
+        // 7. Prepare state changes
+        let mut state_changes = Vec::new();
+
+        // 8. Update owner account - deduct fee
+        let new_owner_account = revm_primitives::AccountInfo {
+            balance: owner_account.balance - fee_u256,
+            nonce: owner_account.nonce,
+            code_hash: owner_account.code_hash,
+            code: owner_account.code.clone(),
+        };
+
+        // Emit owner account change
+        state_changes.push(TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(owner_account),
+            new_account: Some(new_owner_account.clone()),
+        });
+
+        // Persist owner account update
+        storage_adapter
+            .set_account(owner, new_owner_account.clone())
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+        // 9. Create new target account with default values
+        let new_target_account = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::ZERO,
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        // Emit target account change (is_creation = true since old_account is None)
+        state_changes.push(TronStateChange::AccountChange {
+            address: target_address,
+            old_account: None, // Account creation
+            new_account: Some(new_target_account.clone()),
+        });
+
+        // Persist new account
+        storage_adapter
+            .set_account(target_address, new_target_account)
+            .map_err(|e| format!("Failed to persist new account: {}", e))?;
+
+        // 10. Handle fee burning/crediting
+        let fee_destination: String;
+        if support_blackhole {
+            // Burn mode - no additional account change needed
+            info!("Burning {} SUN (blackhole optimization)", fee);
+            fee_destination = String::from("burn");
+        } else {
+            // Credit blackhole account
+            if let Some(blackhole_addr) = storage_adapter.get_blackhole_address()
+                .map_err(|e| format!("Failed to get blackhole address: {}", e))? {
+
+                let blackhole_account = storage_adapter.get_account(&blackhole_addr)
+                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
+                    .unwrap_or_default();
+
+                let new_blackhole_account = revm_primitives::AccountInfo {
+                    balance: blackhole_account.balance + fee_u256,
+                    nonce: blackhole_account.nonce,
+                    code_hash: blackhole_account.code_hash,
+                    code: blackhole_account.code.clone(),
+                };
+
+                // Emit account change for blackhole
+                state_changes.push(TronStateChange::AccountChange {
+                    address: blackhole_addr,
+                    old_account: Some(blackhole_account),
+                    new_account: Some(new_blackhole_account.clone()),
+                });
+
+                // Persist blackhole account update
+                storage_adapter
+                    .set_account(blackhole_addr, new_blackhole_account)
+                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
+
+                let bh_tron = tron_backend_common::to_tron_address(&blackhole_addr);
+                info!(
+                    "Credited {} SUN to blackhole address {}",
+                    fee, bh_tron
+                );
+                fee_destination = format!("blackhole:{}", bh_tron);
+            } else {
+                warn!("No blackhole address configured, burning {} SUN", fee);
+                fee_destination = String::from("burn(no_addr)");
+            }
+        }
+
+        // 11. Sort state changes deterministically for CSV parity
+        state_changes.sort_by(|a, b| {
+            match (a, b) {
+                (TronStateChange::AccountChange { address: addr_a, .. },
+                 TronStateChange::AccountChange { address: addr_b, .. }) => {
+                    addr_a.cmp(addr_b)
+                },
+                _ => std::cmp::Ordering::Equal,
+            }
+        });
+
+        // 12. Calculate bandwidth usage
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // 13. Track AEXT for bandwidth if in tracked mode
+        let execution_config = self.get_execution_config()?;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
+        let mut aext_map = std::collections::HashMap::new();
+
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for owner (or initialize with defaults)
+            let current_aext = storage_adapter.get_account_aext(&owner)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter.get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &owner,
+                bandwidth_used as i64,
+                context.block_number as i64,
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter.set_account_aext(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
+
+            debug!(
+                "AEXT tracked for account_create: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}",
+                owner, path, before_aext.net_usage, after_aext.net_usage
+            );
+        }
+
+        info!(
+            "AccountCreate completed: fee={} SUN, state_changes={}, owner={}, target={}, fee_dest={}",
+            fee, state_changes.len(), owner_tron, target_tron, fee_destination
+        );
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0, // System contracts use 0 energy
+            bandwidth_used,
+            logs: Vec::new(), // No logs for account creation
+            state_changes,
+            error: None,
+            aext_map,
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+        })
+    }
+
+    /// Parse AccountCreateContract from protobuf bytes
+    /// AccountCreateContract structure:
+    ///   bytes owner_address = 1;   (field 1, length-delimited) - ignored, use tx.from
+    ///   bytes account_address = 2; (field 2, length-delimited) - target account
+    ///   AccountType type = 3;      (field 3, varint) - ignored, always Normal
+    fn parse_account_create_contract(&self, data: &[u8]) -> Result<revm::primitives::Address, String> {
+        use crate::service::grpc::address::strip_tron_address_prefix;
+
+        let mut account_address: Option<revm::primitives::Address> = None;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            // Read field header
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => { // owner_address (length-delimited) - skip, use transaction.from
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                },
+                (2, 2) => { // account_address (length-delimited) - the target account to create
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read account_address length: {}", e))?;
+                    pos += bytes_read;
+
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid account_address length".to_string());
+                    }
+
+                    let addr_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    // Handle 21-byte Tron address (0x41 prefix) or 20-byte EVM address
+                    let evm_addr_bytes = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                        // Strip 0x41 prefix
+                        &addr_bytes[1..]
+                    } else if addr_bytes.len() == 20 {
+                        addr_bytes
+                    } else {
+                        return Err(format!("Invalid account_address length: {}", addr_bytes.len()));
+                    };
+
+                    if evm_addr_bytes.len() != 20 {
+                        return Err(format!("Invalid EVM address length: {}", evm_addr_bytes.len()));
+                    }
+
+                    let mut addr = [0u8; 20];
+                    addr.copy_from_slice(evm_addr_bytes);
+                    account_address = Some(revm::primitives::Address::from(addr));
+                },
+                (3, 0) => { // type (varint) - ignored, always use Normal
+                    let (_, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read type: {}", e))?;
+                    pos += bytes_read;
+                },
+                _ => {
+                    // Skip unknown field
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        account_address.ok_or_else(|| "Missing account_address in AccountCreateContract".to_string())
     }
 
     /// Execute an ASSET_ISSUE_CONTRACT (TRC-10 token issuance)

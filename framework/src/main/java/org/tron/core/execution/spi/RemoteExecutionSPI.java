@@ -29,6 +29,7 @@ import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
 import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
 import org.tron.protos.contract.WitnessContract.VoteWitnessContract;
+import org.tron.protos.contract.AccountContract.AccountCreateContract;
 import org.tron.protos.contract.AccountContract.AccountUpdateContract;
 import tron.backend.BackendOuterClass.*;
 
@@ -443,6 +444,19 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           contractType = tron.backend.BackendOuterClass.ContractType.WITHDRAW_BALANCE_CONTRACT;
           logger.debug("Mapped WithdrawBalanceContract to remote request; owner={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress));
+          break;
+
+        case AccountCreateContract:
+          // AccountCreateContract creates a new account with fee charging
+          AccountCreateContract accountCreateContract =
+              contractParameter.unpack(AccountCreateContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = accountCreateContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.ACCOUNT_CREATE_CONTRACT;
+          logger.debug("Mapped AccountCreateContract to remote request; owner={}, account_address={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(accountCreateContract.getAccountAddress().toByteArray()));
           break;
 
         default:
