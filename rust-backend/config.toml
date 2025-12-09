@@ -80,6 +80,13 @@ unfreeze_balance_enabled = true
 freeze_balance_v2_enabled = true
 unfreeze_balance_v2_enabled = true
 
+# WithdrawBalanceContract execution (Phase 1: uses Account.allowance only)
+# Set to true to enable remote execution of WithdrawBalanceContract
+# Phase 1 uses allowance only - skips delegation/mortgage reward computation
+# Balance delta applied by AccountChange; Java applies allowance=0 and latestWithdrawTime via sidecar
+# Default: false for safe rollout - falls back to Java embedded execution when disabled
+withdraw_balance_enabled = true
+
 # Emit freeze/resource ledger changes in ExecutionResult (Phase 2)
 # When true, emits FreezeLedgerChange messages describing freeze/unfreeze operations
 # These changes are applied to Java's local stores (AccountStore, DynamicPropertiesStore)

@@ -230,6 +230,7 @@ impl BackendService {
             global_resource_changes, // Populated when emit_global_resource_changes is true
             trc10_changes: vec![], // Not applicable for freeze contracts
             vote_changes: vec![], // Not applicable for freeze contracts
+            withdraw_changes: vec![], // Not applicable for freeze contracts
         })
     }
 
@@ -385,6 +386,7 @@ impl BackendService {
             global_resource_changes, // Populated when emit_global_resource_changes is true
             trc10_changes: vec![], // Not applicable for freeze contracts
             vote_changes: vec![], // Not applicable for freeze contracts
+            withdraw_changes: vec![], // Not applicable for freeze contracts
         })
     }
 
@@ -631,6 +633,7 @@ impl BackendService {
             global_resource_changes, // Populated when emit_global_resource_changes is true
             trc10_changes: vec![], // Not applicable for freeze contracts
             vote_changes: vec![], // Not applicable for freeze contracts
+            withdraw_changes: vec![], // Not applicable for freeze contracts
         })
     }
 
@@ -829,6 +832,7 @@ impl BackendService {
             global_resource_changes, // Populated when emit_global_resource_changes is true
             trc10_changes: vec![], // Not applicable for freeze contracts
             vote_changes: vec![], // Not applicable for freeze contracts
+            withdraw_changes: vec![], // Not applicable for freeze contracts
         })
     }
 

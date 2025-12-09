@@ -996,6 +996,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                         global_resource_changes: vec![],
                         trc10_changes: vec![],
                         vote_changes: vec![],
+                        withdraw_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Transaction conversion error: {}", e),
@@ -1026,13 +1027,14 @@ impl crate::backend::backend_server::Backend for BackendService {
                         global_resource_changes: vec![],
                         trc10_changes: vec![],
                         vote_changes: vec![],
+                        withdraw_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Context conversion error: {}", e),
                 }));
             }
         };
-        
+
         // Get the storage engine and create a unified storage adapter
         let storage_engine = self.get_storage_engine()?;
         let mut storage_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
@@ -1181,6 +1183,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                         global_resource_changes: vec![],
                         trc10_changes: vec![],
                         vote_changes: vec![],
+                        withdraw_changes: vec![],
                     }),
                     success: false,
                     error_message: format!("Execution error: {}", e),

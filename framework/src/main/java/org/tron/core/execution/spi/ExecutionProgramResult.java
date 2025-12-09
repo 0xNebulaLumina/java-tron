@@ -34,6 +34,8 @@ public class ExecutionProgramResult extends ProgramResult {
   @Getter @Setter private List<ExecutionSPI.Trc10Change> trc10Changes;
   // Phase 2: Vote changes for Account.votes update after VoteWitness
   @Getter @Setter private List<ExecutionSPI.VoteChange> voteChanges;
+  // WithdrawBalanceContract: allowance/latestWithdrawTime sidecar changes
+  @Getter @Setter private List<ExecutionSPI.WithdrawChange> withdrawChanges;
 
   /** Default constructor creates an empty result. */
   public ExecutionProgramResult() {
@@ -44,6 +46,7 @@ public class ExecutionProgramResult extends ProgramResult {
     this.globalResourceChanges = new ArrayList<>();
     this.trc10Changes = new ArrayList<>();
     this.voteChanges = new ArrayList<>();
+    this.withdrawChanges = new ArrayList<>();
   }
 
   /**
@@ -146,6 +149,9 @@ public class ExecutionProgramResult extends ProgramResult {
     result.voteChanges = executionResult.getVoteChanges() != null
         ? new ArrayList<>(executionResult.getVoteChanges())
         : new ArrayList<>();
+    result.withdrawChanges = executionResult.getWithdrawChanges() != null
+        ? new ArrayList<>(executionResult.getWithdrawChanges())
+        : new ArrayList<>();
 
     return result;
   }
@@ -187,7 +193,8 @@ public class ExecutionProgramResult extends ProgramResult {
         freezeChanges != null ? new ArrayList<>(freezeChanges) : new ArrayList<>(),
         globalResourceChanges != null ? new ArrayList<>(globalResourceChanges) : new ArrayList<>(),
         new ArrayList<>(), // trc10Changes - not applicable for VM execution
-        new ArrayList<>()  // voteChanges - not applicable for VM execution
+        new ArrayList<>(), // voteChanges - not applicable for VM execution
+        new ArrayList<>()  // withdrawChanges - not applicable for VM execution
     );
   }
 
