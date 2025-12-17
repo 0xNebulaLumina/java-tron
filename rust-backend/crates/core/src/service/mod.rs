@@ -551,6 +551,7 @@ impl BackendService {
             trc10_changes: vec![], // Not applicable for value transfers
             vote_changes: vec![], // Not applicable for value transfers
             withdraw_changes: vec![], // Not applicable for value transfers
+            tron_transaction_result: None,
         })
     }
 
@@ -766,6 +767,7 @@ impl BackendService {
             trc10_changes: vec![], // Not applicable for witness creation
             vote_changes: vec![], // Not applicable for witness creation
             withdraw_changes: vec![], // Not applicable for witness creation
+            tron_transaction_result: None,
         })
     }
 
@@ -901,6 +903,7 @@ impl BackendService {
             trc10_changes: vec![],
             vote_changes: vec![], // Not applicable for witness update
             withdraw_changes: vec![], // Not applicable for witness update
+            tron_transaction_result: None,
         })
     }
 
@@ -1301,6 +1304,7 @@ impl BackendService {
             trc10_changes: vec![], // Not applicable for vote witness
             vote_changes: vec![vote_change], // VoteChange for Account.votes update
             withdraw_changes: vec![], // Not applicable for vote witness
+            tron_transaction_result: None,
         })
     }
 
@@ -1410,6 +1414,7 @@ impl BackendService {
             trc10_changes: vec![], // Not applicable for account update
             vote_changes: vec![], // Not applicable for account update
             withdraw_changes: vec![], // Not applicable for account update
+            tron_transaction_result: None,
         })
     }
 
@@ -1658,6 +1663,7 @@ impl BackendService {
             trc10_changes: vec![],
             vote_changes: vec![],
             withdraw_changes: vec![],
+            tron_transaction_result: None,
         })
     }
 
@@ -2012,6 +2018,7 @@ impl BackendService {
             trc10_changes: vec![trc10_change], // Phase 2: emit TRC-10 semantic change
             vote_changes: vec![], // Not applicable for TRC-10 transfers
             withdraw_changes: vec![], // Not applicable for TRC-10 transfers
+            tron_transaction_result: None,
         })
     }
 
@@ -2218,6 +2225,7 @@ impl BackendService {
             trc10_changes: vec![trc10_change], // Phase 2: emit TRC-10 semantic change
             vote_changes: vec![], // Not applicable for asset issue
             withdraw_changes: vec![], // Not applicable for asset issue
+            tron_transaction_result: None,
         })
     }
 

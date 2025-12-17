@@ -142,3 +142,23 @@ account_create_enabled = true
 # When false: Uses only Account.allowance (Phase 1 behavior)
 # Default: false for safe rollout - set true to enable full delegation reward computation
 delegation_reward_enabled = true
+
+# === Phase 0.3: Write Consistency Model ===
+# This flag controls whether Rust persists state changes directly to storage during commit.
+#
+# The system has two potential write paths:
+# 1. Rust handler directly writes to RocksDB via storage_adapter.set_*
+# 2. Java RuntimeSpiImpl applies state_changes/sidecars to local database
+#
+# To ensure idempotent semantics and avoid double-writes:
+# - When false (default/recommended): Rust only computes and returns changes via gRPC
+#   Java's RuntimeSpiImpl handles all persistence. This is Option A from the planning doc.
+# - When true: Rust writes to storage AND returns changes (legacy mode, risk of double-write)
+#   Only enable for testing or when Java apply is disabled.
+#
+# Benefits of false (Option A):
+# - Single authoritative write path (Java)
+# - Works consistently for both EMBEDDED and REMOTE storage modes
+# - Avoids non-idempotent double-writes (e.g., TRC-10 delta semantics)
+# - Easier transaction rollback on validation failure
+rust_persist_enabled = false

@@ -126,6 +126,32 @@ pub struct RemoteExecutionConfig {
     /// When false: Uses only Account.allowance (Phase 1 behavior)
     /// Default: false for safe rollout
     pub delegation_reward_enabled: bool,
+
+    // === Phase 0.3: Write Consistency Model ===
+    //
+    // The system has two potential write paths:
+    // 1. Rust handler directly writes to RocksDB via storage_adapter.set_*
+    // 2. Java RuntimeSpiImpl applies state_changes/sidecars to local database
+    //
+    // To ensure idempotent semantics and avoid double-writes, we adopt:
+    // **Option A (Recommended)**: Rust computes + returns changes (no persistence),
+    //                            Java apply handles persistence.
+    //
+    // This flag controls whether Rust persists state changes directly.
+    // When false (default), Rust only computes and returns changes via gRPC,
+    // and Java's RuntimeSpiImpl is responsible for all persistence.
+    //
+    // Benefits of Option A:
+    // - Single authoritative write path (Java)
+    // - Works consistently for both EMBEDDED and REMOTE storage modes
+    // - Avoids non-idempotent double-writes (e.g., TRC-10 delta semantics)
+    // - Easier transaction rollback on validation failure
+    //
+    // Set to true only for specific testing scenarios or when Java apply is disabled.
+    /// Whether Rust handlers should persist state changes directly to storage.
+    /// Default: false (Rust only computes, Java apply handles persistence)
+    /// When true: Rust writes to storage AND returns changes (legacy behavior, risk of double-write)
+    pub rust_persist_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,6 +282,8 @@ impl Config {
         builder = builder.set_default("execution.remote.vote_witness_seed_old_from_account", true)?;
         builder = builder.set_default("execution.remote.account_create_enabled", false)?;
         builder = builder.set_default("execution.remote.delegation_reward_enabled", false)?;
+        // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
+        builder = builder.set_default("execution.remote.rust_persist_enabled", false)?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -282,6 +310,8 @@ impl Default for RemoteExecutionConfig {
             vote_witness_seed_old_from_account: true, // Default true to match embedded semantics
             account_create_enabled: false, // Default false for safe rollout
             delegation_reward_enabled: false, // Default false for safe rollout
+            // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
+            rust_persist_enabled: false,
         }
     }
 } 

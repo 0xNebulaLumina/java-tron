@@ -161,6 +161,7 @@ impl BackendService {
             trc10_changes: vec![], // Not applicable
             vote_changes: vec![], // Not applicable
             withdraw_changes, // WithdrawChange sidecar for Java apply
+            tron_transaction_result: None, // Phase 0.4: Receipt passthrough
         })
     }
 

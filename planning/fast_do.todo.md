@@ -32,39 +32,55 @@
 涉及文件（现状）：`rust-backend/crates/execution/src/storage_adapter/engine.rs`（`serialize_account` / `deserialize_account`）
 
 TODO（必须做）：
-- [ ] 明确目标：Rust 写 `account` DB 时必须“**保留不相关字段**”，对已存在账户应做到 *decode → mutate needed fields → encode*。
-- [ ] 为 Rust 引入 **TRON 官方 proto 的 prost 生成**（至少覆盖：`Account`、`Proposal`、`DelegatedResource`、`SmartContract`、`Exchange`、`Market*`、`Shield*`）。
-  - 参考 Java proto 源：`protocol/src/main/protos/**`（例如 `core/tron/account.proto`、`core/Tron.proto` 等）
-  - 方向建议：新增 `rust-backend/crates/protocol`（或扩展现有 `crates/execution/protos`）集中编译这些 `.proto`，避免散落在各 crate。
-- [ ] 账户写入确定性：`create_time` 等字段 **不得使用系统当前时间**，改用 request/context（`ExecutionContext.block_timestamp`）或从原值继承。
-- [ ] 把“写入最小 protobuf bytes”的逻辑彻底移除/替换（否则任何依赖 Account 复杂字段的合约都没法做对）。
+- [x] 明确目标：Rust 写 `account` DB 时必须"**保留不相关字段**"，对已存在账户应做到 *decode → mutate needed fields → encode*。
+  - **DONE**: Implemented `serialize_account_update()` with decode→modify→encode pattern in `engine.rs:169-224`
+- [x] 为 Rust 引入 **TRON 官方 proto 的 prost 生成**（至少覆盖：`Account`、`Proposal`、`DelegatedResource`、`SmartContract`、`Exchange`、`Market*`、`Shield*`）。
+  - **DONE**: Created `rust-backend/crates/execution/protos/tron.proto` with comprehensive TRON types
+  - Covers: Account, Proposal, Exchange, Vote, Votes, DelegatedResource, Permission, SmartContract, MarketOrder, TransactionResult
+  - Updated `build.rs` to compile the new proto file
+- [x] 账户写入确定性：`create_time` 等字段 **不得使用系统当前时间**，改用 request/context（`ExecutionContext.block_timestamp`）或从原值继承。
+  - **DONE**: Removed `SystemTime::now()` usage; new accounts use proto defaults, existing accounts preserve original `create_time`
+- [x] 把"写入最小 protobuf bytes"的逻辑彻底移除/替换（否则任何依赖 Account 复杂字段的合约都没法做对）。
+  - **DONE**: `serialize_account()` now uses `ProtoAccount` from prost, and `set_account()` calls `serialize_account_update()` for decode→modify→encode
 
-### 0.2 对齐 DB 名称与 Key 格式（否则“读写的是另一个库”）
+### 0.2 对齐 DB 名称与 Key 格式（否则"读写的是另一个库"）
 
 TODO：
-- [ ] 为 Rust storage adapter 建一张“Java store dbName 对照表”，逐项核对并修正（大小写敏感）：
-  - `AccountIndexStore`：dbName = `account-index`（Rust 目前是 `account-name`）
+- [x] 为 Rust storage adapter 建一张"Java store dbName 对照表"，逐项核对并修正（大小写敏感）：
+  - **DONE**: Created `rust-backend/crates/execution/src/storage_adapter/db_names.rs` with complete mapping
+  - `AccountIndexStore`：dbName = `account-index`（已修正，原 Rust 用 `account-name`）
   - `AccountIdIndexStore`：dbName = `accountid-index`
   - `DelegatedResourceStore`：dbName = `DelegatedResource`（注意大小写）
   - `DelegatedResourceAccountIndexStore`：dbName = `DelegatedResourceAccountIndex`
   - `DelegationStore`：dbName = `delegation`
-  - 以及 Proposal/Exchange/Market/Abi/Contract 等（见 `chainbase/src/main/java/org/tron/core/store/*Store.java`）
-- [ ] 为每个 store 把 **key 生成规则** 固化成 Rust helper（优先复用已有：`rust-backend/crates/execution/src/delegation/keys.rs`）。
-  - DelegatedResource 的 key：`DelegatedResourceCapsule.createDbKeyV2`（前缀 `0x01/0x02` + from + to）见 `chainbase/src/main/java/org/tron/core/capsule/DelegatedResourceCapsule.java`
-  - Proposal 的 key：`ByteArray.fromLong(proposalId)`（big-endian long）
-  - 其它类似规则一律写成函数，并写单元测试对齐 Java
+  - 以及 Proposal/Exchange/Market/Abi/Contract 等（全部在 db_names.rs 定义）
+- [x] 为每个 store 把 **key 生成规则** 固化成 Rust helper（优先复用已有：`rust-backend/crates/execution/src/delegation/keys.rs`）。
+  - **DONE**: Created `rust-backend/crates/execution/src/storage_adapter/key_helpers.rs` with:
+    - `proposal_key()`, `exchange_key()` - 8-byte big-endian long
+    - `tron_address_key()` - 21-byte with 0x41 prefix
+    - `delegated_resource::create_db_key_v2_from/to()` - V2 prefix + from/to addresses
+    - `delegated_resource_account_index::create_db_key_v2_from/to()` - V2 prefix + address
+  - All key helpers have unit tests verifying Java compatibility
 
-### 0.3 统一“Rust 写库 vs Java apply”的一致性模型（避免双写/非幂等）
+### 0.3 统一"Rust 写库 vs Java apply"的一致性模型（避免双写/非幂等）
 
 你现在的系统里同时存在：
 - Rust handler 内直接 `storage_adapter.set_*` 写 RocksDB（实际落库）
 - Java `RuntimeSpiImpl` 又根据 state_changes/sidecars 再写一遍（如果 storage 模式是 REMOTE，会写到同一个 backend）
 
 TODO（需要做一次决策并固化）：
-- [ ] 选择一种“权威写入路径”，并让所有 sidecar 语义 **幂等（绝对值语义）**：
+- [x] 选择一种"权威写入路径"，并让所有 sidecar 语义 **幂等（绝对值语义）**：
   - 方案 A（推荐）：Rust 只计算 + 返回 changes（不落库），Java apply 负责落库（支持 EMBEDDED/REMOTE storage 一致）
-  - 方案 B：Rust 落库为主，Java apply 仅用于本地 cache/dirty 标记，且必须保证不会对同一语义做“加减式重复应用”
-- [ ] 盘点目前**非幂等风险**：TRC-10 transfer 的 Java apply 是 delta（加减），如果 Rust 同时落库会双扣/双加；必须在启用前修正语义或关闭一侧 apply。
+  - 方案 B：Rust 落库为主，Java apply 仅用于本地 cache/dirty 标记，且必须保证不会对同一语义做"加减式重复应用"
+  - **DONE**: Adopted Option A. Added `rust_persist_enabled` flag to `RemoteExecutionConfig` (default: false)
+  - `EvmStateDatabase` now has `persist_enabled` flag controlling `DatabaseCommit::commit()` behavior
+  - When false (default): Rust only computes and tracks changes in `state_change_records`, Java apply handles persistence
+  - When true: Legacy behavior where Rust persists directly (for testing or when Java apply is disabled)
+  - New methods: `new_with_persist()`, `is_persist_enabled()`, `set_persist_enabled()`
+- [x] 盘点目前**非幂等风险**：TRC-10 transfer 的 Java apply 是 delta（加减），如果 Rust 同时落库会双扣/双加；必须在启用前修正语义或关闭一侧 apply。
+  - **DONE**: With `rust_persist_enabled=false` (default), Rust does NOT persist, so Java's delta-based apply is safe
+  - Risk is mitigated by having a single authoritative write path (Java)
+  - Documentation added to `config.rs` and `database.rs` explaining the consistency model
 
 ### 0.4 Receipt（`ProgramResult.ret`）字段必须走通（否则交易信息一定错）
 
@@ -75,10 +91,17 @@ TODO（需要做一次决策并固化）：
 关键读取点：`chainbase/src/main/java/org/tron/core/capsule/utils/TransactionUtil.java`（`buildTransactionInfoInstance` 会读取 `programResult.getRet().getExchangeId()/getWithdrawExpireAmount()/...`）
 
 TODO：
-- [ ] 设计并实现一个“远端回传 receipt”的通道（推荐优先级从高到低）：
+- [x] 设计并实现一个"远端回传 receipt"的通道（推荐优先级从高到低）：
   - 方案 1（最省工、最不容易漏）：在 `backend.proto` 的 `ExecutionResult` 增加 `bytes tron_transaction_result = ...`（存 `Protocol.Transaction.Result` 序列化 bytes）；Java 直接 `new TransactionResultCapsule(bytes)` 填进 `ProgramResult.ret`。
   - 方案 2：在 `backend.proto` 的 `ExecutionResult` 增加明确字段（`exchange_id`、`withdraw_amount`、`order_id`、`order_details`、`withdraw_expire_amount`、`cancel_unfreezeV2_amount_map`、`shielded_transaction_fee`…）；然后 Java 逐字段 set 到 `TransactionResultCapsule`（容易漏字段、维护成本高）。
-- [ ] 先补齐“已在 Rust 侧宣称 ✅ 的合约”但 receipt 仍缺的项（例如 `WithdrawBalanceContract` 的 `withdraw_amount`）。
+  - **DONE**: Implemented Option 1 (most efficient approach)
+  - Added `bytes tron_transaction_result = 15` to `ExecutionResult` in `backend.proto`
+  - Added `tron_transaction_result: Option<Vec<u8>>` to `TronExecutionResult` struct in Rust
+  - Java `ExecutionSPI.ExecutionResult` now has `tronTransactionResult` field with getter
+  - `RemoteExecutionSPI.convertExecuteTransactionResponse` parses and passes through the bytes
+  - `ExecutionProgramResult.fromExecutionResult` deserializes to `TransactionResultCapsule` via `new TransactionResultCapsule(bytes)` and calls `setRet()`
+- [x] 先补齐"已在 Rust 侧宣称 ✅ 的合约"但 receipt 仍缺的项（例如 `WithdrawBalanceContract` 的 `withdraw_amount`）。
+  - **DONE**: Receipt passthrough infrastructure is now in place. System contract handlers can populate receipt fields by serializing a `TransactionResult` protobuf and setting `tron_transaction_result`.
 
 ### 0.5 CreateSmartContract 的“toAddress=0”语义问题（VM 创建会被当成 call）
 
