@@ -235,13 +235,13 @@ impl EngineBackedEvmStateStore {
         let proto_account = ProtoAccount::decode(data)
             .map_err(|e| anyhow::anyhow!("Failed to decode Account proto: {}", e))?;
 
-        // Convert balance from i64 to U256 (handle negative as 0, shouldn't happen)
-        let balance = if proto_account.balance >= 0 {
-            U256::from(proto_account.balance as u64)
-        } else {
-            tracing::warn!("Account has negative balance {}, treating as 0", proto_account.balance);
-            U256::ZERO
-        };
+        // Convert balance from i64 to U256, preserving the bit pattern.
+        // Java uses i64 for balance in proto, but some addresses (like blackhole) can have
+        // balances that appear negative when interpreted as signed. We preserve the bits
+        // by casting i64 to u64, which keeps the two's complement representation intact.
+        // When Java receives the 32-byte balance in AccountInfo, it extracts the low 8 bytes
+        // and interprets them as i64, recovering the original signed value.
+        let balance = U256::from(proto_account.balance as u64);
 
         // Extract code_hash if present (field 30)
         let code_hash = if proto_account.code_hash.len() == 32 {
@@ -303,12 +303,8 @@ impl EngineBackedEvmStateStore {
         let proto_account = ProtoAccount::decode(data)
             .map_err(|e| anyhow::anyhow!("Failed to decode Account proto: {}", e))?;
 
-        // Convert i64 to u64, treating negative as 0
-        Ok(if proto_account.balance >= 0 {
-            proto_account.balance as u64
-        } else {
-            0
-        })
+        // Convert i64 to u64, preserving bit pattern (see deserialize_account for explanation)
+        Ok(proto_account.balance as u64)
     }
 
     /// Read a varint from protobuf data
