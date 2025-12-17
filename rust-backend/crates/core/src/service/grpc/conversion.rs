@@ -471,6 +471,8 @@ impl BackendService {
                 trc10_changes, // Phase 2: Converted TRC-10 semantic changes
                 vote_changes, // Phase 2: VoteChange for Account.votes update
                 withdraw_changes, // WithdrawBalanceContract: allowance/latestWithdrawTime sidecar
+                // Phase 0.4: Receipt passthrough - serialized Protocol.Transaction.Result bytes
+                tron_transaction_result: result.tron_transaction_result.clone().unwrap_or_default(),
             }),
             success: result.success,
             error_message,
