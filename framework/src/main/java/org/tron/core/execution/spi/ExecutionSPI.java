@@ -127,6 +127,9 @@ public interface ExecutionSPI {
     private final List<Trc10Change> trc10Changes;
     private final List<VoteChange> voteChanges;
     private final List<WithdrawChange> withdrawChanges;
+    // Phase 0.4: Receipt passthrough - serialized Protocol.Transaction.Result bytes
+    // Contains system contract-specific fields like exchange_id, withdraw_amount, etc.
+    private final byte[] tronTransactionResult;
 
     public ExecutionResult(
         boolean success,
@@ -142,6 +145,27 @@ public interface ExecutionSPI {
         List<Trc10Change> trc10Changes,
         List<VoteChange> voteChanges,
         List<WithdrawChange> withdrawChanges) {
+      this(success, returnData, energyUsed, energyRefunded, stateChanges, logs,
+           errorMessage, bandwidthUsed, freezeChanges, globalResourceChanges,
+           trc10Changes, voteChanges, withdrawChanges, null);
+    }
+
+    // New constructor with tronTransactionResult
+    public ExecutionResult(
+        boolean success,
+        byte[] returnData,
+        long energyUsed,
+        long energyRefunded,
+        List<StateChange> stateChanges,
+        List<LogEntry> logs,
+        String errorMessage,
+        long bandwidthUsed,
+        List<FreezeLedgerChange> freezeChanges,
+        List<GlobalResourceTotalsChange> globalResourceChanges,
+        List<Trc10Change> trc10Changes,
+        List<VoteChange> voteChanges,
+        List<WithdrawChange> withdrawChanges,
+        byte[] tronTransactionResult) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -155,6 +179,7 @@ public interface ExecutionSPI {
       this.trc10Changes = trc10Changes;
       this.voteChanges = voteChanges;
       this.withdrawChanges = withdrawChanges;
+      this.tronTransactionResult = tronTransactionResult;
     }
 
     // Getters
@@ -208,6 +233,17 @@ public interface ExecutionSPI {
 
     public List<WithdrawChange> getWithdrawChanges() {
       return withdrawChanges;
+    }
+
+    /**
+     * Get the serialized Protocol.Transaction.Result bytes from Rust execution.
+     * Phase 0.4: Receipt passthrough - contains system contract-specific fields like
+     * exchange_id, withdraw_amount, withdraw_expire_amount, cancel_unfreezeV2_amount, etc.
+     *
+     * @return Serialized Transaction.Result bytes, or null if not provided
+     */
+    public byte[] getTronTransactionResult() {
+      return tronTransactionResult;
     }
   }
 

@@ -294,6 +294,11 @@ pub struct TronExecutionResult {
     /// Withdraw changes (WithdrawBalanceContract: allowance/latestWithdrawTime sidecar)
     /// Rust emits the withdrawal info; Java applies allowance=0 and latestWithdrawTime update
     pub withdraw_changes: Vec<WithdrawChange>,
+    /// Phase 0.4: Receipt passthrough - serialized Protocol.Transaction.Result bytes
+    /// Contains system contract-specific fields like exchange_id, withdraw_amount,
+    /// withdraw_expire_amount, cancel_unfreezeV2_amount, orderId, orderDetails, etc.
+    /// Java deserializes this to TransactionResultCapsule and sets on ProgramResult.ret
+    pub tron_transaction_result: Option<Vec<u8>>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -424,6 +429,7 @@ where
                     trc10_changes: vec![], // Will be populated by TRC-10 contract handlers
                     vote_changes: vec![], // Will be populated by vote contract handlers
                     withdraw_changes: vec![], // Will be populated by withdraw contract handler
+                    tron_transaction_result: None, // Phase 0.4: Populated by system contract handlers when needed
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -441,6 +447,7 @@ where
                     trc10_changes: vec![],
                     vote_changes: vec![],
                     withdraw_changes: vec![],
+                    tron_transaction_result: None,
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -458,6 +465,7 @@ where
                     trc10_changes: vec![],
                     vote_changes: vec![],
                     withdraw_changes: vec![],
+                    tron_transaction_result: None,
                 })
             }
         }
@@ -489,6 +497,7 @@ where
                     trc10_changes: vec![],
                     vote_changes: vec![],
                     withdraw_changes: vec![],
+                    tron_transaction_result: None,
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -506,6 +515,7 @@ where
                     trc10_changes: vec![],
                     vote_changes: vec![],
                     withdraw_changes: vec![],
+                    tron_transaction_result: None,
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -523,6 +533,7 @@ where
                     trc10_changes: vec![],
                     vote_changes: vec![],
                     withdraw_changes: vec![],
+                    tron_transaction_result: None,
                 })
             }
         }

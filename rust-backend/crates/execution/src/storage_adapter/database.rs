@@ -9,6 +9,18 @@ pub type SnapshotHook = Box<dyn Fn(&HashSet<Address>) + Send + Sync>;
 
 /// REVM Database wrapper over an EVM state store.
 /// Provides caching and state tracking for transaction execution.
+///
+/// ## Phase 0.3: Write Consistency Model
+///
+/// The `persist_enabled` flag controls whether this database persists state changes
+/// directly to the underlying storage during `commit()`.
+///
+/// - When `false` (default): Changes are only tracked in memory and returned via
+///   `get_state_change_records()`. Java's RuntimeSpiImpl handles actual persistence.
+///   This is the recommended mode for avoiding double-writes.
+///
+/// - When `true`: Changes are persisted directly to storage during `commit()`.
+///   Use this only when Java apply is disabled or for specific testing scenarios.
 pub struct EvmStateDatabase<S: EvmStateStore> {
     storage: S,
     // Cache for performance
@@ -26,9 +38,14 @@ pub struct EvmStateDatabase<S: EvmStateStore> {
     modified_accounts: HashSet<Address>,
     // Snapshot hooks for state comparison
     snapshot_hooks: Vec<SnapshotHook>,
+    // Phase 0.3: Whether to persist changes directly to storage during commit
+    // Default: false (Rust computes only, Java apply handles persistence)
+    persist_enabled: bool,
 }
 
 impl<S: EvmStateStore> EvmStateDatabase<S> {
+    /// Create a new database with persistence disabled by default.
+    /// This follows Phase 0.3 Option A: Rust computes only, Java apply handles persistence.
     pub fn new(storage: S) -> Self {
         Self {
             storage,
@@ -41,7 +58,51 @@ impl<S: EvmStateStore> EvmStateDatabase<S> {
             snapshots: Vec::new(),
             modified_accounts: HashSet::new(),
             snapshot_hooks: Vec::new(),
+            persist_enabled: false, // Phase 0.3: Default to compute-only mode
         }
+    }
+
+    /// Create a new database with explicit persistence control.
+    ///
+    /// ## Arguments
+    /// - `storage`: The underlying storage implementation
+    /// - `persist_enabled`: Whether to persist changes directly during commit
+    ///   - `false`: Compute only, Java apply handles persistence (recommended)
+    ///   - `true`: Persist directly to storage (legacy mode, risk of double-write)
+    pub fn new_with_persist(storage: S, persist_enabled: bool) -> Self {
+        Self {
+            storage,
+            account_cache: HashMap::new(),
+            code_cache: HashMap::new(),
+            storage_cache: HashMap::new(),
+            account_snapshots: HashMap::new(),
+            storage_snapshots: HashMap::new(),
+            state_change_records: Vec::new(),
+            snapshots: Vec::new(),
+            modified_accounts: HashSet::new(),
+            snapshot_hooks: Vec::new(),
+            persist_enabled,
+        }
+    }
+
+    /// Check if persistence is enabled for this database.
+    pub fn is_persist_enabled(&self) -> bool {
+        self.persist_enabled
+    }
+
+    /// Enable or disable persistence.
+    ///
+    /// Note: Changing this after commits have been made may lead to inconsistent state.
+    /// Prefer setting this at construction time via `new_with_persist()`.
+    pub fn set_persist_enabled(&mut self, enabled: bool) {
+        if enabled != self.persist_enabled {
+            tracing::info!(
+                "EvmStateDatabase persist_enabled changed from {} to {}",
+                self.persist_enabled,
+                enabled
+            );
+        }
+        self.persist_enabled = enabled;
     }
     
     pub fn snapshot(&mut self) -> U256 {
@@ -111,7 +172,7 @@ impl<S: EvmStateStore> EvmStateDatabase<S> {
     }
 
     /// Mark an account as modified and trigger hooks if needed
-    fn mark_account_modified(&mut self, address: Address) {
+    pub(crate) fn mark_account_modified(&mut self, address: Address) {
         let was_new = self.modified_accounts.insert(address);
         if was_new {
             // Trigger hooks when a new account is modified
@@ -290,8 +351,10 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
                 });
             }
 
-            // **CRITICAL FIX: Persist account changes to underlying storage**
-            if account_changed || force_track_creation {
+            // Phase 0.3: Only persist account changes if persist_enabled is true
+            // When false (default), changes are tracked in state_change_records and
+            // Java's RuntimeSpiImpl handles persistence via applyStateChangesToLocalDatabase
+            if self.persist_enabled && (account_changed || force_track_creation) {
                 if let Err(e) = self.storage.set_account(address, new_account_info.clone()) {
                     tracing::error!("Failed to persist account changes for {:?}: {}", address, e);
                 } else {
@@ -304,14 +367,22 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
                                        address, address_tron, new_account_info.balance);
                     }
                 }
+            } else if !self.persist_enabled && (account_changed || force_track_creation) {
+                let address_tron = to_tron_address(&address);
+                tracing::debug!(
+                    "Skipping Rust persistence for {:?} (tron: {}) - persist_enabled=false, Java apply will handle",
+                    address, address_tron
+                );
             }
 
-            // **CRITICAL FIX: Persist code changes if present**
-            if let Some(code) = &account.info.code {
-                if let Err(e) = self.storage.set_code(address, code.clone()) {
-                    tracing::error!("Failed to persist code for {:?}: {}", address, e);
-                } else {
-                    tracing::debug!("Successfully persisted code for {:?}", address);
+            // Phase 0.3: Only persist code changes if persist_enabled is true
+            if self.persist_enabled {
+                if let Some(code) = &account.info.code {
+                    if let Err(e) = self.storage.set_code(address, code.clone()) {
+                        tracing::error!("Failed to persist code for {:?}: {}", address, e);
+                    } else {
+                        tracing::debug!("Successfully persisted code for {:?}", address);
+                    }
                 }
             }
 
@@ -329,11 +400,13 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
                     });
                 }
 
-                // **CRITICAL FIX: Persist account deletion to underlying storage**
-                if let Err(e) = self.storage.remove_account(&address) {
-                    tracing::error!("Failed to remove account {:?}: {}", address, e);
-                } else {
-                    tracing::debug!("Successfully removed account {:?}", address);
+                // Phase 0.3: Only persist account deletion if persist_enabled is true
+                if self.persist_enabled {
+                    if let Err(e) = self.storage.remove_account(&address) {
+                        tracing::error!("Failed to remove account {:?}: {}", address, e);
+                    } else {
+                        tracing::debug!("Successfully removed account {:?}", address);
+                    }
                 }
 
                 self.account_snapshots.insert(address, None);
@@ -360,7 +433,7 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
                             })
                     });
 
-                // Only record and persist the change if the value actually changed
+                // Only record the change if the value actually changed
                 if old_value != new_value {
                     self.state_change_records.push(StateChangeRecord::StorageChange {
                         address,
@@ -369,12 +442,14 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
                         new_value,
                     });
 
-                    // **CRITICAL FIX: Persist storage changes to underlying storage**
-                    if let Err(e) = self.storage.set_storage(address, key, new_value) {
-                        tracing::error!("Failed to persist storage change for {:?}[{:?}]: {}", address, key, e);
-                    } else {
-                        tracing::debug!("Successfully persisted storage change for {:?}[{:?}] = {:?}",
-                                       address, key, new_value);
+                    // Phase 0.3: Only persist storage changes if persist_enabled is true
+                    if self.persist_enabled {
+                        if let Err(e) = self.storage.set_storage(address, key, new_value) {
+                            tracing::error!("Failed to persist storage change for {:?}[{:?}]: {}", address, key, e);
+                        } else {
+                            tracing::debug!("Successfully persisted storage change for {:?}[{:?}] = {:?}",
+                                           address, key, new_value);
+                        }
                     }
                 }
 

@@ -995,6 +995,13 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       metricsCallback.onMetric("remote.vote_changes_count", voteChanges.size());
     }
 
+    // Phase 0.4: Extract tron_transaction_result bytes for receipt passthrough
+    byte[] tronTransactionResult = null;
+    if (!protoResult.getTronTransactionResult().isEmpty()) {
+      tronTransactionResult = protoResult.getTronTransactionResult().toByteArray();
+      logger.debug("Parsed tron_transaction_result: {} bytes", tronTransactionResult.length);
+    }
+
     return new ExecutionResult(
         protoResult.getStatus() == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS,
         protoResult.getReturnData().toByteArray(),
@@ -1008,7 +1015,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         globalResourceChanges,
         trc10Changes,
         voteChanges,
-        withdrawChanges);
+        withdrawChanges,
+        tronTransactionResult);
   }
 
   /**
