@@ -45,7 +45,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         module_manager.register("execution", Box::new(execution_module));
     }
 
-    // Initialize genesis accounts if configured
+    // Start all modules first (storage engine becomes available after start)
+    module_manager.start_all().await?;
+    info!("All modules started successfully");
+
+    // Initialize genesis accounts AFTER modules are started (storage engine now available)
     #[cfg(feature = "storage")]
     if config.genesis.enabled {
         if let Some(storage_module) = module_manager.get("storage") {
@@ -58,10 +62,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-
-    // Start all modules
-    module_manager.start_all().await?;
-    info!("All modules started successfully");
 
     // Log remote execution configuration (Phase 2 freeze ledger changes feature)
     info!("=== Remote Execution Configuration ===");
