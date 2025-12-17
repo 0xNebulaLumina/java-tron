@@ -103,13 +103,20 @@ TODO：
 - [x] 先补齐"已在 Rust 侧宣称 ✅ 的合约"但 receipt 仍缺的项（例如 `WithdrawBalanceContract` 的 `withdraw_amount`）。
   - **DONE**: Receipt passthrough infrastructure is now in place. System contract handlers can populate receipt fields by serializing a `TransactionResult` protobuf and setting `tron_transaction_result`.
 
-### 0.5 CreateSmartContract 的“toAddress=0”语义问题（VM 创建会被当成 call）
+### 0.5 CreateSmartContract 的"toAddress=0"语义问题（VM 创建会被当成 call）
 
-现状：`RemoteExecutionSPI` 在 CreateSmartContract 映射里把 `toAddress` 设成 20-byte 全 0；Rust 侧如果将其解析成 `Some(Address::ZERO)`，会把“创建”误当“调用地址 0”。
+现状：`RemoteExecutionSPI` 在 CreateSmartContract 映射里把 `toAddress` 设成 20-byte 全 0；Rust 侧如果将其解析成 `Some(Address::ZERO)`，会把"创建"误当"调用地址 0"。
 
 TODO：
-- [ ] 修正协议语义：CreateSmartContract 时 `to` 应为空（len=0）或在 Rust 解析时把全 0 视为 None（仅在 `tx_kind=VM && contract_type=CREATE_SMART_CONTRACT` 时）。
-- [ ] 为该语义添加 Java 单测 + Rust 单测（确保不会回归）。
+- [x] 修正协议语义：CreateSmartContract 时 `to` 应为空（len=0）或在 Rust 解析时把全 0 视为 None（仅在 `tx_kind=VM && contract_type=CREATE_SMART_CONTRACT` 时）。
+  - **DONE**: Fixed in `rust-backend/crates/core/src/service/grpc/conversion.rs`
+  - In `convert_protobuf_transaction()`, when `tx_kind=VM && contract_type=30 (CreateSmartContract)`, all-zero addresses are now treated as `None` (contract creation) instead of `Some(Address::ZERO)`
+  - Added debug logging to track when this conversion happens
+- [x] 为该语义添加 Java 单测 + Rust 单测（确保不会回归）。
+  - **DONE**: Added Rust tests in `rust-backend/crates/core/src/tests.rs`:
+    - `test_create_smart_contract_zero_address_treated_as_none` - verifies creation semantics
+    - `test_trigger_smart_contract_zero_address_preserved` - negative test ensuring TriggerSmartContract preserves zero address
+    - `test_create_smart_contract_type_value` - verifies enum value is 30
 
 ---
 
