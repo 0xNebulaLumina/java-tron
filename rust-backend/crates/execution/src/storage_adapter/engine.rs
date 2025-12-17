@@ -158,7 +158,8 @@ impl EngineBackedEvmStateStore {
         let proto_account = ProtoAccount {
             address: tron_address,
             r#type: ProtoAccountType::Normal as i32,
-            balance: account.balance.to::<i64>(),
+            // Take low 64 bits and reinterpret as i64 (consistent with serialize_account_update)
+            balance: account.balance.as_limbs()[0] as i64,
             // All other fields default to their proto defaults (empty/0/false)
             // This is correct for NEW accounts only.
             // For EXISTING accounts, use serialize_account_update() instead.
@@ -195,7 +196,9 @@ impl EngineBackedEvmStateStore {
                 match ProtoAccount::decode(data) {
                     Ok(mut proto_account) => {
                         // Only update the balance field; all other fields are preserved
-                        proto_account.balance = account.balance.to::<i64>();
+                        // Take low 64 bits and reinterpret as i64 (preserves bit pattern for
+                        // values that exceed i64::MAX when treated as unsigned, like blackhole balance)
+                        proto_account.balance = account.balance.as_limbs()[0] as i64;
 
                         tracing::debug!(
                             "Account update (decode→modify→encode): address={}, old_balance={}, new_balance={}",
