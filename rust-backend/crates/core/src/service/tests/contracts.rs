@@ -1157,6 +1157,7 @@ fn test_asset_issue_contract_trc10_change_emission() {
             assert_eq!(asset_issued.url, url.to_vec(), "URL should match");
             assert_eq!(asset_issued.token_id, None, "Token ID should be None (computed by Java)");
         }
+        _ => panic!("Expected AssetIssued change"),
     }
 }
 
@@ -1328,6 +1329,7 @@ fn test_asset_issue_contract_phase2_fields() {
             assert_eq!(asset_issued.public_free_asset_net_usage, 100, "public_free_asset_net_usage should match");
             assert_eq!(asset_issued.public_latest_free_net_time, 999000, "public_latest_free_net_time should match");
         }
+        _ => panic!("Expected AssetIssued change"),
     }
 }
 
