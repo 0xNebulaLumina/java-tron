@@ -22,11 +22,27 @@ impl BackendService {
         let from_bytes = strip_tron_address_prefix(&tx.from)?;
         let from = revm_primitives::Address::from_slice(from_bytes);
 
+        // Phase 0.5: Fix CreateSmartContract toAddress semantics
+        // When tx_kind=VM and contract_type=CREATE_SMART_CONTRACT (30), Java sends a 20-byte
+        // zero array for toAddress. Rust must treat this as None (contract creation), not
+        // Some(Address::ZERO) which would be interpreted as a call to address 0.
         let to = if tx.to.is_empty() {
-            None // Contract creation
+            None // Contract creation (empty to field)
         } else {
             let to_bytes = strip_tron_address_prefix(&tx.to)?;
-            Some(revm_primitives::Address::from_slice(to_bytes))
+            let to_address = revm_primitives::Address::from_slice(to_bytes);
+
+            // For VM contract creation, treat all-zero address as None
+            // This is needed because Java sends new byte[20] (all zeros) for CreateSmartContract
+            let is_vm_create = tx.tx_kind == crate::backend::TxKind::Vm as i32
+                && tx.contract_type == 30; // CREATE_SMART_CONTRACT = 30
+
+            if is_vm_create && to_address == revm_primitives::Address::ZERO {
+                debug!("CreateSmartContract detected: treating zero address as contract creation (to=None)");
+                None
+            } else {
+                Some(to_address)
+            }
         };
 
         // Convert bytes to U256 (32 bytes max)
