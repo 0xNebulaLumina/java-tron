@@ -6,6 +6,8 @@ import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.runtime.vm.LogInfo;
@@ -27,6 +29,9 @@ import org.tron.protos.Protocol.Transaction.Result.contractResult;
  */
 @Slf4j(topic = "ExecutionProgramResult")
 public class ExecutionProgramResult extends ProgramResult {
+
+  // Explicit logger declaration (Lombok @Slf4j not working in this context)
+  private static final Logger log = LoggerFactory.getLogger("ExecutionProgramResult");
 
   // Additional ExecutionSPI-specific fields
   @Getter @Setter private List<StateChange> stateChanges;
