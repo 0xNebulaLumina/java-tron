@@ -696,4 +696,20 @@ mod tests {
         assert_eq!(aext.net_window_optimized, false);
         assert_eq!(aext.energy_window_optimized, false);
     }
+
+    #[test]
+    fn test_allow_change_delegation_reads_change_delegation_key() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
+            .expect("Failed to create storage engine");
+
+        storage_engine
+            .put("properties", b"CHANGE_DELEGATION", &1i64.to_be_bytes())
+            .expect("Failed to set CHANGE_DELEGATION");
+
+        let adapter = EngineBackedEvmStateStore::new(storage_engine);
+        assert!(adapter
+            .allow_change_delegation()
+            .expect("allow_change_delegation should succeed"));
+    }
 }

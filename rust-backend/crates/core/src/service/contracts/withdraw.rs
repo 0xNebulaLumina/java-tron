@@ -20,13 +20,12 @@ impl BackendService {
     /// - Adds computed rewards to allowance before reading
     ///
     /// Both phases:
-    /// - Validates owner exists, is witness, cooldown satisfied, and has positive allowance
+    /// - Validates owner exists, cooldown satisfied, and has positive allowance
     /// - Updates balance by adding allowance
     /// - Emits WithdrawChange sidecar for Java to update allowance=0 and latestWithdrawTime
     ///
     /// Validation rules (matching embedded):
     /// - Owner account must exist
-    /// - Owner must be a witness
     /// - Cooldown: now - latestWithdrawTime >= witnessAllowanceFrozenTime * FROZEN_PERIOD
     /// - Allowance must be positive
     /// - No overflow when adding allowance to balance
@@ -48,18 +47,7 @@ impl BackendService {
 
         debug!("Owner account loaded: balance={}", owner_account.balance);
 
-        // Step 2: Validate owner is a witness
-        let is_witness = storage_adapter.is_witness(&owner_address)
-            .map_err(|e| format!("Failed to check witness status: {}", e))?;
-
-        if !is_witness {
-            warn!("Account {} is not a witness", owner_tron);
-            return Err(format!("account {} not exist as witness", owner_tron));
-        }
-
-        debug!("Owner {} is confirmed as witness", owner_tron);
-
-        // Step 3: Read dynamic properties for cooldown check
+        // Step 2: Read dynamic properties for cooldown check
         let now_ms = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to read block timestamp: {}", e))?;
 

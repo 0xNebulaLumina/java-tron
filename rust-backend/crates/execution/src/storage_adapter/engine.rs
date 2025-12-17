@@ -1344,9 +1344,10 @@ impl EngineBackedEvmStateStore {
 
     /// Check if delegation changes are allowed.
     /// Java reference: DynamicPropertiesStore.allowChangeDelegation()
-    /// Returns true if ALLOW_CHANGE_DELEGATION > 0
+    /// Returns true if CHANGE_DELEGATION == 1
     pub fn allow_change_delegation(&self) -> Result<bool> {
-        let key = b"ALLOW_CHANGE_DELEGATION";
+        // java-tron stores this flag under the "CHANGE_DELEGATION" dynamic property key.
+        let key = b"CHANGE_DELEGATION";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
@@ -1354,15 +1355,15 @@ impl EngineBackedEvmStateStore {
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7],
                     ]);
-                    Ok(val > 0)
+                    Ok(val == 1)
                 } else if !data.is_empty() {
-                    Ok(data[0] != 0)
+                    Ok(data[0] == 1)
                 } else {
                     Ok(false)
                 }
             }
             None => {
-                tracing::debug!("ALLOW_CHANGE_DELEGATION not found, returning false");
+                tracing::debug!("CHANGE_DELEGATION not found, returning false");
                 Ok(false)
             }
         }
