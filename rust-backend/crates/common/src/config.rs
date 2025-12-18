@@ -7,6 +7,33 @@ pub struct Config {
     pub storage: StorageConfig,
     pub execution: ExecutionConfig,
     pub modules: HashMap<String, ModuleConfig>,
+    /// Genesis account initialization configuration
+    #[serde(default)]
+    pub genesis: GenesisConfig,
+}
+
+/// Genesis account initialization configuration.
+/// Allows pre-populating accounts with balances at startup for testing/parity.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GenesisConfig {
+    /// Whether to initialize genesis accounts at startup
+    #[serde(default)]
+    pub enabled: bool,
+    /// List of accounts to initialize with their balances
+    #[serde(default)]
+    pub accounts: Vec<GenesisAccount>,
+}
+
+/// A single genesis account entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenesisAccount {
+    /// Base58-encoded TRON address (e.g., "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy")
+    pub address: String,
+    /// Initial balance in SUN (1 TRX = 1,000,000 SUN)
+    pub balance_sun: i64,
+    /// Optional comment/description for documentation
+    #[serde(default)]
+    pub comment: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +194,7 @@ impl Default for Config {
             storage: StorageConfig::default(),
             execution: ExecutionConfig::default(),
             modules: HashMap::new(),
+            genesis: GenesisConfig::default(),
         }
     }
 }
