@@ -6,8 +6,9 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
-import lombok.extern.slf4j.Slf4j;
 import org.junit.Before;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.junit.Test;
 import org.tron.common.BaseTest;
 import org.tron.common.utils.ByteArray;
@@ -31,9 +32,9 @@ import org.tron.protos.contract.ProposalContract.ProposalDeleteContract;
  *
  * <p>Run with: ./gradlew :framework:test --tests "ProposalFixtureGeneratorTest" -Dconformance.output=conformance/fixtures
  */
-@Slf4j
 public class ProposalFixtureGeneratorTest extends BaseTest {
 
+  private static final Logger log = LoggerFactory.getLogger(ProposalFixtureGeneratorTest.class);
   private static final String OWNER_ADDRESS;
   private static final String WITNESS_URL = "https://tron.network";
   private static final long INITIAL_BALANCE = 300_000_000L;
