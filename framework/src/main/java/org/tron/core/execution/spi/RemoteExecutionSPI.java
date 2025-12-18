@@ -527,6 +527,48 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               permissionUpdateContract.getActivesCount());
           break;
 
+        // Phase 2.C: Contract Metadata Contracts (33/45/48)
+        case UpdateSettingContract:
+          // UpdateSettingContract updates consume_user_resource_percent of a smart contract
+          org.tron.protos.contract.SmartContractOuterClass.UpdateSettingContract updateSettingContract =
+              contractParameter.unpack(org.tron.protos.contract.SmartContractOuterClass.UpdateSettingContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = updateSettingContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_SETTING_CONTRACT;
+          logger.debug("Mapped UpdateSettingContract to remote request; owner={}, contract={}, percent={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(updateSettingContract.getContractAddress().toByteArray()),
+              updateSettingContract.getConsumeUserResourcePercent());
+          break;
+
+        case UpdateEnergyLimitContract:
+          // UpdateEnergyLimitContract updates origin_energy_limit of a smart contract
+          org.tron.protos.contract.SmartContractOuterClass.UpdateEnergyLimitContract updateEnergyLimitContract =
+              contractParameter.unpack(org.tron.protos.contract.SmartContractOuterClass.UpdateEnergyLimitContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = updateEnergyLimitContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_ENERGY_LIMIT_CONTRACT;
+          logger.debug("Mapped UpdateEnergyLimitContract to remote request; owner={}, contract={}, limit={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(updateEnergyLimitContract.getContractAddress().toByteArray()),
+              updateEnergyLimitContract.getOriginEnergyLimit());
+          break;
+
+        case ClearABIContract:
+          // ClearABIContract clears the ABI of a smart contract
+          org.tron.protos.contract.SmartContractOuterClass.ClearABIContract clearAbiContract =
+              contractParameter.unpack(org.tron.protos.contract.SmartContractOuterClass.ClearABIContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = clearAbiContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.CLEAR_ABI_CONTRACT;
+          logger.debug("Mapped ClearABIContract to remote request; owner={}, contract={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(clearAbiContract.getContractAddress().toByteArray()));
+          break;
+
         default:
           // Remove TRANSFER fallback - throw exception to fall back to embedded
           logger.error("Contract type {} not mapped to remote; falling back to embedded", contract.getType());

@@ -301,11 +301,27 @@ Java oracle：
 - gate：`DynamicPropertiesStore.getAllowTvmConstantinople()`、`ReceiptCapsule.checkForEnergyLimit(...)`
 
 TODO：
-- [ ] Rust：实现 33/45：读取 SmartContract → 修改字段 → 写回（并处理 Repository LRU cache 的等价行为：通常可忽略/由 Java cache 层解决）
-- [ ] Rust：实现 48：写 AbiStore 为默认 ABI（并满足 owner 校验）
-- [ ] Rust：补齐 ContractStore/AbiStore adapter + proto decode（SmartContract proto 在 `protocol/src/main/protos/core/contract/smart_contract.proto`）
-- [ ] Java：RemoteExecutionSPI 增加 33/45/48 映射
+- [x] Rust：实现 33/45：读取 SmartContract → 修改字段 → 写回（并处理 Repository LRU cache 的等价行为：通常可忽略/由 Java cache 层解决）
+  - **DONE**: Implemented `execute_update_setting_contract()` and `execute_update_energy_limit_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - UpdateSetting (33): Validates owner, contract exists, owner == origin_address, new_percent in [0,100], then updates `consume_user_resource_percent`
+  - UpdateEnergyLimit (45): Gates on `checkForEnergyLimit()`, validates owner, validates origin_energy_limit > 0, then updates field
+- [x] Rust：实现 48：写 AbiStore 为默认 ABI（并满足 owner 校验）
+  - **DONE**: Implemented `execute_clear_abi_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Gates on `getAllowTvmConstantinople() != 0`, validates owner == origin_address, writes default empty ABI
+- [x] Rust：补齐 ContractStore/AbiStore adapter + proto decode（SmartContract proto 在 `protocol/src/main/protos/core/contract/smart_contract.proto`）
+  - **DONE**: Added to `rust-backend/crates/execution/src/storage_adapter/engine.rs`:
+    - `get_smart_contract()`, `put_smart_contract()`, `has_smart_contract()` - ContractStore operations
+    - `get_abi()`, `put_abi()`, `clear_abi()` - AbiStore operations
+    - `get_allow_tvm_constantinople()`, `get_latest_block_header_number()`, `check_for_energy_limit()` - dynamic properties
+  - SmartContract proto already defined in `rust-backend/crates/execution/protos/tron.proto`
+- [x] Rust：添加 config flags for gradual rollout
+  - **DONE**: Added `update_setting_enabled`, `update_energy_limit_enabled`, `clear_abi_enabled` to `RemoteExecutionConfig` in `common/src/config.rs`
+  - Default: false for safe rollout
+- [x] Java：RemoteExecutionSPI 增加 33/45/48 映射
+  - **DONE**: Added `UpdateSettingContract`, `UpdateEnergyLimitContract`, `ClearABIContract` cases in `RemoteExecutionSPI.java`
+  - All use `txKind = TxKind.NON_VM`, send full proto bytes as `data`
 - [ ] Proto/sidecar：需要能表达 ContractStore/AbiStore 的写入（推荐 DbKvChange）
+  - NOTE: Rust persists directly to ContractStore/AbiStore, no sidecar needed
 - [ ] Fixture：owner 不是 originAddress；contract 不存在；Constantinople 未开启；originEnergyLimit<=0
 
 ### 2.C2（小而关键）：UpdateBrokerage 49
