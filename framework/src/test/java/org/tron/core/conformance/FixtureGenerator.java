@@ -248,6 +248,7 @@ public class FixtureGenerator {
 
   /**
    * Convert a store iterator to a simple key-value iterator.
+   * Handles capsule objects by extracting their serialized data.
    */
   @SuppressWarnings("unchecked")
   private Iterator<Map.Entry<byte[], byte[]>> convertIterator(Iterator<?> storeIterator) {
@@ -255,8 +256,24 @@ public class FixtureGenerator {
     while (storeIterator.hasNext()) {
       Object entry = storeIterator.next();
       if (entry instanceof Map.Entry) {
-        Map.Entry<byte[], byte[]> mapEntry = (Map.Entry<byte[], byte[]>) entry;
-        entries.add(mapEntry);
+        Map.Entry<?, ?> mapEntry = (Map.Entry<?, ?>) entry;
+        byte[] key = (byte[]) mapEntry.getKey();
+        Object value = mapEntry.getValue();
+
+        // Convert value to bytes - handle capsule objects
+        byte[] valueBytes;
+        if (value instanceof byte[]) {
+          valueBytes = (byte[]) value;
+        } else if (value instanceof org.tron.core.capsule.ProtoCapsule) {
+          valueBytes = ((org.tron.core.capsule.ProtoCapsule<?>) value).getData();
+        } else if (value != null) {
+          logger.warn("Unknown value type in store iterator: {}", value.getClass().getName());
+          continue;
+        } else {
+          valueBytes = new byte[0];
+        }
+
+        entries.add(new java.util.AbstractMap.SimpleEntry<>(key, valueBytes));
       }
     }
     return entries.iterator();
