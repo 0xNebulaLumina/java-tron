@@ -162,3 +162,21 @@ delegation_reward_enabled = true
 # - Avoids non-idempotent double-writes (e.g., TRC-10 delta semantics)
 # - Easier transaction rollback on validation failure
 rust_persist_enabled = false
+
+# Genesis Account Initialization
+# Pre-populate accounts with initial balances at startup for testing/parity.
+# This ensures the Rust storage has the same initial state as mainnet at a given starting block.
+[genesis]
+enabled = true
+
+# Genesis accounts to initialize
+# Each account needs: address (Base58), balance_sun (i64), optional comment
+[[genesis.accounts]]
+address = "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"
+# This is the blackhole address. Set balance_sun to match the accumulated fees
+# from block 0 up to your test's starting block.
+# For early mainnet blocks, this should be the accumulated fees from previous transactions.
+# Value from embedded test at block 1785: -9223372036854075808 (raw bytes: 0x80000000000aae60)
+# IMPORTANT: Adjust this value based on your specific test scenario and starting block.
+balance_sun = -9223372036854075808
+comment = "Blackhole address - receives system fees when support_black_hole_optimization=false"
