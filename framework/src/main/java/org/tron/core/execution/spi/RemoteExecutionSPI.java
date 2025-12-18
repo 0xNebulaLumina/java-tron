@@ -459,6 +459,47 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               org.tron.common.utils.ByteArray.toHexString(accountCreateContract.getAccountAddress().toByteArray()));
           break;
 
+        // Phase 2.A: Proposal Contracts (16/17/18)
+        case ProposalCreateContract:
+          // ProposalCreateContract creates a new governance proposal
+          org.tron.protos.contract.ProposalContract.ProposalCreateContract proposalCreateContract =
+              contractParameter.unpack(org.tron.protos.contract.ProposalContract.ProposalCreateContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = proposalCreateContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.PROPOSAL_CREATE_CONTRACT;
+          logger.debug("Mapped ProposalCreateContract to remote request; owner={}, params={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              proposalCreateContract.getParametersCount());
+          break;
+
+        case ProposalApproveContract:
+          // ProposalApproveContract adds/removes approval from a proposal
+          org.tron.protos.contract.ProposalContract.ProposalApproveContract proposalApproveContract =
+              contractParameter.unpack(org.tron.protos.contract.ProposalContract.ProposalApproveContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = proposalApproveContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.PROPOSAL_APPROVE_CONTRACT;
+          logger.debug("Mapped ProposalApproveContract to remote request; owner={}, proposal_id={}, is_add={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              proposalApproveContract.getProposalId(),
+              proposalApproveContract.getIsAddApproval());
+          break;
+
+        case ProposalDeleteContract:
+          // ProposalDeleteContract cancels a proposal (only by proposer)
+          org.tron.protos.contract.ProposalContract.ProposalDeleteContract proposalDeleteContract =
+              contractParameter.unpack(org.tron.protos.contract.ProposalContract.ProposalDeleteContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = proposalDeleteContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.PROPOSAL_DELETE_CONTRACT;
+          logger.debug("Mapped ProposalDeleteContract to remote request; owner={}, proposal_id={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              proposalDeleteContract.getProposalId());
+          break;
+
         default:
           // Remove TRANSFER fallback - throw exception to fall back to embedded
           logger.error("Contract type {} not mapped to remote; falling back to embedded", contract.getType());

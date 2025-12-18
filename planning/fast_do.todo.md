@@ -207,14 +207,32 @@ Java oracle：
 - validate 还依赖 `AccountStore`、`WitnessStore`
 
 TODO：
-- [ ] Rust：实现 `PROPOSAL_*` handler（validate + execute）
-- [ ] Rust：新增/对齐 ProposalStore adapter（key=`ByteArray.fromLong(id)`；value=Proposal proto bytes）
-- [ ] Rust：解决 `proposal_expire_time` 的来源（Java 用 `CommonParameter.getProposalExpireTime()`）：决定是硬编码、读 config、还是从 Java request 透传
+- [x] Rust：实现 `PROPOSAL_*` handler（validate + execute）
+  - **DONE**: Implemented `execute_proposal_create_contract`, `execute_proposal_approve_contract`, `execute_proposal_delete_contract` in `rust-backend/crates/core/src/service/mod.rs:1765-2240`
+  - Create: Validates witness status, parses parameters from protobuf, assigns new proposal ID, calculates expiration, creates Proposal proto, persists to ProposalStore, updates LATEST_PROPOSAL_NUM
+  - Approve: Validates witness status, parses proposal_id and is_add_approval, adds/removes approval from proposal.approvals, persists updated proposal
+  - Delete: Validates owner is proposer, sets state to CANCELED (3), persists updated proposal
+- [x] Rust：新增/对齐 ProposalStore adapter（key=`ByteArray.fromLong(id)`；value=Proposal proto bytes）
+  - **DONE**: Added `get_proposal()`, `put_proposal()`, `has_proposal()` methods to `EngineBackedEvmStateStore` in `rust-backend/crates/execution/src/storage_adapter/engine.rs:1781-1858`
+  - Uses 8-byte big-endian key format via `key_helpers::proposal_key()` matching Java's `ProposalCapsule.createDbKey()`
+  - Proposal proto decoding/encoding via prost
+- [x] Rust：解决 `proposal_expire_time` 的来源（Java 用 `CommonParameter.getProposalExpireTime()`）：决定是硬编码、读 config、还是从 Java request 透传
+  - **DONE**: Added `proposal_expire_time_ms` config field to `RemoteExecutionConfig` in `rust-backend/crates/common/src/config.rs`
+  - Default: 259200000 (3 days in milliseconds) matching Java's default
+  - Configurable via `config.toml` or default values
+- [x] Rust：添加动态属性访问器 `LATEST_PROPOSAL_NUM`, `NEXT_MAINTENANCE_TIME`, `MAINTENANCE_TIME_INTERVAL`
+  - **DONE**: Added `get_latest_proposal_num()`, `set_latest_proposal_num()`, `get_next_maintenance_time()`, `get_maintenance_time_interval()` in `engine.rs:1860-1947`
+- [x] Rust：添加 config flags for gradual rollout
+  - **DONE**: Added `proposal_create_enabled`, `proposal_approve_enabled`, `proposal_delete_enabled` flags to `RemoteExecutionConfig`
+  - Default: false for safe rollout, gated in dispatch switch in `service/mod.rs:300-321`
 - [ ] Proto/sidecar：为 Proposal 写入引入一种返回通道：
-  - [ ] 选项 1：通用 `DbKvChange`（dbName+key+value），Proposal/DynamicProperty 都能覆盖
-  - [ ] 选项 2：专用 `ProposalChange`（create/approve/delete）
-- [ ] Java：`RemoteExecutionSPI` 增加 16/17/18 映射（建议 `data = full contract bytes`）
+  - 选择：Rust 直接落库（不返回 sidecar），因为 Proposal 操作简单且不需要 Java 二次处理
+  - Java apply 不需要实现，因为 Rust 在执行时直接持久化到 ProposalStore
+- [x] Java：`RemoteExecutionSPI` 增加 16/17/18 映射（建议 `data = full contract bytes`）
+  - **DONE**: Added `ProposalCreateContract`, `ProposalApproveContract`, `ProposalDeleteContract` cases in `framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java:462-501`
+  - Each case extracts full proto bytes and sends as `data` field
 - [ ] Java：`RuntimeSpiImpl` 增加 `applyProposalChanges`（带 JVM toggle：`-Dremote.exec.apply.proposal=false`）
+  - **NOT NEEDED**: Rust persists directly to ProposalStore, no sidecar/apply needed
 - [ ] Fixture：create/approve/delete 的 happy + expired + canceled + repeat approve/unapprove
 
 ### 2.B（检验 Account codec 的组）：SetAccountId 19 + AccountPermissionUpdate 46
