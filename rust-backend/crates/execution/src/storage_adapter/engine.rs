@@ -1945,6 +1945,172 @@ impl EngineBackedEvmStateStore {
             }
         }
     }
+
+    // ==========================================================================
+    // Phase 2.B: AccountIdIndex Store Methods
+    // ==========================================================================
+    //
+    // AccountIdIndex maps lowercase account IDs to account addresses.
+    // Used by SetAccountIdContract (type 19).
+    // Java reference: AccountIdIndexStore.java
+
+    /// Get the database name for account id index
+    fn account_id_index_database(&self) -> &str {
+        db_names::account::ACCOUNT_ID_INDEX
+    }
+
+    /// Convert account ID to lowercase key format
+    /// Java: AccountIdIndexStore.getLowerCaseAccountId() converts to lowercase UTF-8
+    fn account_id_key(&self, account_id: &[u8]) -> Vec<u8> {
+        // Convert bytes to UTF-8 string, lowercase, then back to bytes
+        if let Ok(s) = std::str::from_utf8(account_id) {
+            s.to_lowercase().into_bytes()
+        } else {
+            // If not valid UTF-8, just use the raw bytes
+            account_id.to_vec()
+        }
+    }
+
+    /// Check if an account ID already exists in the index
+    /// Returns true if the account ID is already taken
+    pub fn has_account_id(&self, account_id: &[u8]) -> Result<bool> {
+        let key = self.account_id_key(account_id);
+        tracing::debug!("Checking if account_id exists: {:?} -> key: {}",
+                       String::from_utf8_lossy(account_id), hex::encode(&key));
+
+        match self.storage_engine.get(self.account_id_index_database(), &key)? {
+            Some(_) => {
+                tracing::debug!("Account ID {} already exists", String::from_utf8_lossy(account_id));
+                Ok(true)
+            }
+            None => {
+                tracing::debug!("Account ID {} does not exist", String::from_utf8_lossy(account_id));
+                Ok(false)
+            }
+        }
+    }
+
+    /// Get the address associated with an account ID
+    /// Returns the 21-byte TRON address (with 0x41 prefix)
+    pub fn get_address_by_account_id(&self, account_id: &[u8]) -> Result<Option<Vec<u8>>> {
+        let key = self.account_id_key(account_id);
+        tracing::debug!("Getting address for account_id: {:?} -> key: {}",
+                       String::from_utf8_lossy(account_id), hex::encode(&key));
+
+        match self.storage_engine.get(self.account_id_index_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found address for account_id {}: {}",
+                               String::from_utf8_lossy(account_id), hex::encode(&data));
+                Ok(Some(data))
+            }
+            None => Ok(None)
+        }
+    }
+
+    /// Store an account ID -> address mapping
+    /// address should be the 21-byte TRON address (with 0x41 prefix)
+    pub fn put_account_id_index(&self, account_id: &[u8], address: &[u8]) -> Result<()> {
+        let key = self.account_id_key(account_id);
+        tracing::debug!("Storing account_id index: {:?} -> {} (key: {})",
+                       String::from_utf8_lossy(account_id), hex::encode(address), hex::encode(&key));
+
+        self.storage_engine.put(self.account_id_index_database(), &key, address)?;
+        Ok(())
+    }
+
+    // ==========================================================================
+    // Phase 2.B: Account Permission and Dynamic Properties (Additional)
+    // ==========================================================================
+    //
+    // Note: get_allow_multi_sign() and support_black_hole_optimization()
+    // already exist above in this file (lines ~438 and ~459).
+
+    /// Get TOTAL_SIGN_NUM dynamic property
+    /// Maximum number of keys allowed in a permission
+    /// Default: 5
+    pub fn get_total_sign_num(&self) -> Result<i64> {
+        let key = b"TOTAL_SIGN_NUM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let value = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("TOTAL_SIGN_NUM: {}", value);
+                    Ok(value)
+                } else {
+                    tracing::warn!("TOTAL_SIGN_NUM has invalid length: {}", data.len());
+                    Ok(5) // Default
+                }
+            }
+            None => {
+                tracing::debug!("TOTAL_SIGN_NUM not found, returning default 5");
+                Ok(5)
+            }
+        }
+    }
+
+    /// Get UPDATE_ACCOUNT_PERMISSION_FEE dynamic property
+    /// Fee in SUN for updating account permissions
+    /// Default: 100_000_000 (100 TRX)
+    pub fn get_update_account_permission_fee(&self) -> Result<i64> {
+        let key = b"UPDATE_ACCOUNT_PERMISSION_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let value = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE: {}", value);
+                    Ok(value)
+                } else {
+                    tracing::warn!("UPDATE_ACCOUNT_PERMISSION_FEE has invalid length: {}", data.len());
+                    Ok(100_000_000) // 100 TRX in SUN
+                }
+            }
+            None => {
+                tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE not found, returning default 100_000_000");
+                Ok(100_000_000) // 100 TRX in SUN
+            }
+        }
+    }
+
+    /// Get AVAILABLE_CONTRACT_TYPE dynamic property
+    /// Bitmap of allowed contract types (32 bytes)
+    /// Returns None if not found (all contracts allowed)
+    pub fn get_available_contract_type(&self) -> Result<Option<Vec<u8>>> {
+        let key = b"AVAILABLE_CONTRACT_TYPE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                tracing::debug!("AVAILABLE_CONTRACT_TYPE: {} bytes", data.len());
+                Ok(Some(data))
+            }
+            None => {
+                tracing::debug!("AVAILABLE_CONTRACT_TYPE not found");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Get the blackhole address as 21-byte TRON format (0x41 prefix + 20 bytes)
+    /// Java: AccountStore.getBlackhole() returns BURN_ADDRESS or HOLE_ADDRESS
+    pub fn get_blackhole_address_tron(&self) -> [u8; 21] {
+        // TRON blackhole address: TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy (mainnet default)
+        // Base58 decoded to hex: 4174b2c93cba4fb9d734c4c3fc2c0df8ff9d36d50c
+        [
+            0x41,
+            0x74, 0xb2, 0xc9, 0x3c, 0xba, 0x4f, 0xb9, 0xd7,
+            0x34, 0xc4, 0xc3, 0xfc, 0x2c, 0x0d, 0xf8, 0xff,
+            0x9d, 0x36, 0xd5, 0x0c,
+        ]
+    }
+
+    /// Get the blackhole address as an EVM Address (20 bytes, no 0x41 prefix)
+    pub fn get_blackhole_address_evm(&self) -> Address {
+        Self::default_blackhole_address().unwrap_or(Address::ZERO)
+    }
 }
 
 impl EvmStateStore for EngineBackedEvmStateStore {

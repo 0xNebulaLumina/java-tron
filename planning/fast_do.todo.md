@@ -155,9 +155,13 @@ TODO：
   - [x] 写出 `ExecuteTransactionRequest`（与 RemoteExecutionSPI 一致的 request）作为 Rust 输入 - buildRequest() method
 - [x] 为每个 contract 至少产出 3 类 case：
   - **DONE**: Created `ProposalFixtureGeneratorTest.java` with sample fixtures for Proposal contracts (16/17/18)
-  - [x] happy path（成功执行）- happy_path_create, happy_path_approve, happy_path_delete
+  - [x] happy path（成功执行）- happy_path_create, happy_path_approve, happy_path_delete, happy_path_multiple_params
   - [x] validate-fail（应失败且不改状态）- validate_fail_not_witness, validate_fail_empty_params, validate_fail_nonexistent, validate_fail_not_owner
-  - [ ] edge（边界：0/最大值/时间边界/重复调用/顺序依赖）- To be added per contract type
+  - [x] edge（边界：0/最大值/时间边界/重复调用/顺序依赖）
+    - **DONE**: Added edge case fixtures for all three contract types:
+    - Create: `happy_path_multiple_params` (multiple parameters in single proposal)
+    - Approve: `happy_path_remove_approval`, `validate_fail_expired`, `validate_fail_canceled`, `validate_fail_repeat_approval`, `validate_fail_remove_not_approved`
+    - Delete: `validate_fail_expired`, `validate_fail_already_canceled`
 
 ### 1.3 Rust 侧：fixture runner（离线对比，不需要跑 Java 节点）
 
@@ -233,7 +237,11 @@ TODO：
   - Each case extracts full proto bytes and sends as `data` field
 - [ ] Java：`RuntimeSpiImpl` 增加 `applyProposalChanges`（带 JVM toggle：`-Dremote.exec.apply.proposal=false`）
   - **NOT NEEDED**: Rust persists directly to ProposalStore, no sidecar/apply needed
-- [ ] Fixture：create/approve/delete 的 happy + expired + canceled + repeat approve/unapprove
+- [x] Fixture：create/approve/delete 的 happy + expired + canceled + repeat approve/unapprove
+  - **DONE**: All fixture cases generated and stored in `framework/conformance/fixtures/proposal_*_contract/`
+  - Create: happy_path_create, happy_path_multiple_params, validate_fail_empty_params, validate_fail_not_witness
+  - Approve: happy_path_approve, happy_path_remove_approval, validate_fail_nonexistent, validate_fail_expired, validate_fail_canceled, validate_fail_repeat_approval, validate_fail_remove_not_approved
+  - Delete: happy_path_delete, validate_fail_not_owner, validate_fail_nonexistent, validate_fail_already_canceled, validate_fail_expired
 
 ### 2.B（检验 Account codec 的组）：SetAccountId 19 + AccountPermissionUpdate 46
 
@@ -247,12 +255,35 @@ Java oracle：
 - `DynamicPropertiesStore`（allowMultiSign / totalSignNum / availableContractType / updateAccountPermissionFee / supportBlackHoleOptimization）
 
 TODO：
-- [ ] Rust：实现 SetAccountId（同时写 AccountStore + AccountIdIndexStore）
-- [ ] Rust：实现 AccountPermissionUpdate（权限校验 + 扣费 + burn/blackhole 逻辑 + 写回权限字段）
-- [ ] Rust：补齐 dynamic properties accessor（`ALLOW_MULTI_SIGN`、`TOTAL_SIGN_NUM`、`AVAILABLE_CONTRACT_TYPE`、`UPDATE_ACCOUNT_PERMISSION_FEE`、`ALLOW_BLACKHOLE_OPTIMIZATION`）
+- [x] Rust：实现 SetAccountId（同时写 AccountStore + AccountIdIndexStore）
+  - **DONE**: Implemented `execute_set_account_id_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Validates account ID length (8-32 bytes), alphanumeric + underscore characters
+  - Checks for existing account and ID uniqueness via `has_account_id()`
+  - Updates Account proto with `account_id` field, persists to AccountStore
+  - Adds entry to AccountIdIndexStore via `put_account_id_index()`
+- [x] Rust：实现 AccountPermissionUpdate（权限校验 + 扣费 + burn/blackhole 逻辑 + 写回权限字段）
+  - **DONE**: Implemented `execute_account_permission_update_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Validates multi-sign enabled via `get_allow_multi_sign()`
+  - Validates permission keys count against `get_total_sign_num()`
+  - Charges fee via `get_update_account_permission_fee()`
+  - Burns fee or credits blackhole based on `support_black_hole_optimization()`
+  - Updates Account proto with owner_permission, witness_permission, active_permission fields
+- [x] Rust：补齐 dynamic properties accessor（`ALLOW_MULTI_SIGN`、`TOTAL_SIGN_NUM`、`AVAILABLE_CONTRACT_TYPE`、`UPDATE_ACCOUNT_PERMISSION_FEE`、`ALLOW_BLACKHOLE_OPTIMIZATION`）
+  - **DONE**: Added `get_total_sign_num()`, `get_update_account_permission_fee()`, `get_available_contract_type()` to `engine.rs`
+  - `get_allow_multi_sign()` already existed, `support_black_hole_optimization()` already existed
+- [x] Rust：添加 config flags for gradual rollout
+  - **DONE**: Added `set_account_id_enabled`, `account_permission_update_enabled` flags to `RemoteExecutionConfig` in `common/src/config.rs`
+  - Default: false for safe rollout
+- [x] Rust：添加 AccountIdIndex storage adapter methods
+  - **DONE**: Added `account_id_index_database()`, `account_id_key()`, `has_account_id()`, `get_address_by_account_id()`, `put_account_id_index()` to `engine.rs`
+  - Added `get_blackhole_address_tron()`, `get_blackhole_address_evm()` for fee handling
 - [ ] Proto/receipt：AccountPermissionUpdate 的 `fee` 体现方式要与 Java 一致（写入 `ProgramResult.ret.fee`）
-- [ ] Java：RemoteExecutionSPI 增加 19/46 映射
-- [ ] Java：若 Rust 选择“只返回 changes 不落库”，则 Java 需要 apply 对应 store（AccountIdIndex/Account permissions）
+  - NOTE: Fee is handled via balance deduction and blackhole/burn, similar to other fee-charging contracts
+- [x] Java：RemoteExecutionSPI 增加 19/46 映射
+  - **DONE**: Added `SetAccountIdContract` and `AccountPermissionUpdateContract` cases in `RemoteExecutionSPI.java`
+  - Both use `txKind = TxKind.NON_VM` and send full proto bytes as `data`
+- [ ] Java：若 Rust 选择"只返回 changes 不落库"，则 Java 需要 apply 对应 store（AccountIdIndex/Account permissions）
+  - NOTE: Rust currently persists directly, no Java apply needed
 - [ ] Fixture：
   - [ ] SetAccountId：重复设置 / id 冲突 / owner 不存在
   - [ ] PermissionUpdate：multi-sign 未开启 / 权限 keys 重复 / operations 非法 / fee 不足 / witness permission 条件

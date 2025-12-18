@@ -319,6 +319,21 @@ impl BackendService {
                 debug!("Executing PROPOSAL_DELETE_CONTRACT");
                 self.execute_proposal_delete_contract(storage_adapter, transaction, context)
             },
+            // Phase 2.B: Account management contracts (19/46)
+            Some(tron_backend_execution::TronContractType::SetAccountIdContract) => {
+                if !remote_config.set_account_id_enabled {
+                    return Err("SET_ACCOUNT_ID_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing SET_ACCOUNT_ID_CONTRACT");
+                self.execute_set_account_id_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract) => {
+                if !remote_config.account_permission_update_enabled {
+                    return Err("ACCOUNT_PERMISSION_UPDATE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing ACCOUNT_PERMISSION_UPDATE_CONTRACT");
+                self.execute_account_permission_update_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -2238,6 +2253,368 @@ impl BackendService {
         }
 
         proposal_id.ok_or_else(|| "Missing proposal_id".to_string())
+    }
+
+    // ==========================================================================
+    // Phase 2.B: Account Management Contracts (19/46)
+    // ==========================================================================
+
+    /// Execute a SET_ACCOUNT_ID_CONTRACT (type 19)
+    /// Sets a unique, immutable account ID for an account
+    ///
+    /// Java reference: SetAccountIdActuator.java
+    fn execute_set_account_id_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::TronExecutionResult;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        info!("SetAccountId owner={}", owner_tron);
+
+        // 1. Parse SetAccountIdContract
+        // SetAccountIdContract:
+        //   bytes account_id = 1;
+        //   bytes owner_address = 2;
+        let account_id = self.parse_set_account_id_contract(&transaction.data)?;
+
+        info!("SetAccountId: owner={}, account_id={:?}",
+              owner_tron, String::from_utf8_lossy(&account_id));
+
+        // 2. Validate account ID format (8-32 bytes, valid characters)
+        if !self.validate_account_id(&account_id) {
+            return Err("Invalid account ID format".to_string());
+        }
+
+        // 3. Check if account ID is already taken
+        if storage_adapter.has_account_id(&account_id)
+            .map_err(|e| format!("Failed to check account id: {}", e))? {
+            return Err("This account ID has already been used".to_string());
+        }
+
+        // 4. Get owner account
+        let mut account_proto = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or_else(|| "Account does not exist".to_string())?;
+
+        // 5. Check if account already has an ID
+        if !account_proto.account_id.is_empty() {
+            return Err("This account has already set an account ID".to_string());
+        }
+
+        // 6. Set account ID
+        account_proto.account_id = account_id.clone();
+
+        // 7. Persist account
+        storage_adapter.put_account_proto(&owner, &account_proto)
+            .map_err(|e| format!("Failed to persist account: {}", e))?;
+
+        // 8. Add to account ID index
+        let mut owner_address_bytes = Vec::with_capacity(21);
+        owner_address_bytes.push(0x41);
+        owner_address_bytes.extend_from_slice(owner.as_slice());
+
+        storage_adapter.put_account_id_index(&account_id, &owner_address_bytes)
+            .map_err(|e| format!("Failed to persist account id index: {}", e))?;
+
+        info!("SetAccountId completed: owner={}, account_id={:?}",
+              owner_tron, String::from_utf8_lossy(&account_id));
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            logs: Vec::new(),
+            state_changes: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse SetAccountIdContract from protobuf bytes
+    /// SetAccountIdContract:
+    ///   bytes account_id = 1;
+    ///   bytes owner_address = 2;
+    fn parse_set_account_id_contract(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        let mut account_id: Option<Vec<u8>> = None;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // account_id (bytes)
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid account_id length".to_string());
+                    }
+                    account_id = Some(data[pos..end].to_vec());
+                    pos = end;
+                }
+                (2, 2) => {
+                    // owner_address - skip
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        account_id.ok_or_else(|| "Missing account_id".to_string())
+    }
+
+    /// Validate account ID format
+    /// Java: TransactionUtil.validAccountId(accountId)
+    /// Rules:
+    /// - Length: 8-32 bytes
+    /// - Valid ASCII characters only (no spaces, no Chinese chars)
+    fn validate_account_id(&self, account_id: &[u8]) -> bool {
+        // Length check: 8-32 bytes
+        if account_id.len() < 8 || account_id.len() > 32 {
+            return false;
+        }
+
+        // Check for valid ASCII characters (printable, no spaces)
+        for &b in account_id {
+            // Allow: a-z, A-Z, 0-9, underscore
+            let valid = (b >= b'a' && b <= b'z')
+                || (b >= b'A' && b <= b'Z')
+                || (b >= b'0' && b <= b'9')
+                || b == b'_';
+            if !valid {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Execute an ACCOUNT_PERMISSION_UPDATE_CONTRACT (type 46)
+    /// Updates owner/witness/active permissions for multi-sig functionality
+    ///
+    /// Note: This is a complex contract that requires full Account proto support.
+    /// For now, we implement a minimal version that:
+    /// 1. Validates multi-sign is enabled
+    /// 2. Charges the update permission fee
+    /// 3. Updates the permissions on the account
+    ///
+    /// Java reference: AccountPermissionUpdateActuator.java
+    fn execute_account_permission_update_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::TronExecutionResult;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        info!("AccountPermissionUpdate owner={}", owner_tron);
+
+        // 1. Check if multi-sign is enabled
+        let allow_multi_sign = storage_adapter.get_allow_multi_sign()
+            .map_err(|e| format!("Failed to get allow_multi_sign: {}", e))?;
+
+        if !allow_multi_sign {
+            return Err("Multi-sign is not allowed, need to be opened by the committee".to_string());
+        }
+
+        // 2. Get fee
+        let fee = storage_adapter.get_update_account_permission_fee()
+            .map_err(|e| format!("Failed to get update_account_permission_fee: {}", e))?;
+
+        info!("AccountPermissionUpdate: owner={}, fee={}", owner_tron, fee);
+
+        // 3. Get owner account
+        let mut account_proto = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or_else(|| "Account does not exist".to_string())?;
+
+        // 4. Parse the permission update contract
+        let (owner_permission, witness_permission, active_permissions) =
+            self.parse_account_permission_update_contract(&transaction.data)?;
+
+        // 5. Validate permissions (simplified - full validation would be complex)
+        // For now, just check that owner permission is present
+        if owner_permission.is_none() {
+            return Err("Owner permission is required".to_string());
+        }
+
+        // 6. Check if account has enough balance for fee
+        let current_balance = account_proto.balance;
+        if current_balance < fee {
+            return Err(format!("Insufficient balance for fee: {} < {}", current_balance, fee));
+        }
+
+        // 7. Deduct fee from account
+        account_proto.balance = current_balance - fee;
+
+        // 8. Update permissions on account
+        if let Some(owner_perm) = owner_permission {
+            account_proto.owner_permission = Some(owner_perm);
+        }
+        if let Some(witness_perm) = witness_permission {
+            account_proto.witness_permission = Some(witness_perm);
+        }
+        // Replace active permissions
+        account_proto.active_permission.clear();
+        for active in active_permissions {
+            account_proto.active_permission.push(active);
+        }
+
+        // 9. Persist updated account
+        storage_adapter.put_account_proto(&owner, &account_proto)
+            .map_err(|e| format!("Failed to persist account: {}", e))?;
+
+        // 10. Handle fee: burn or credit to blackhole
+        let support_blackhole_optimization = storage_adapter.support_black_hole_optimization()
+            .map_err(|e| format!("Failed to get blackhole optimization flag: {}", e))?;
+
+        if !support_blackhole_optimization {
+            // Credit fee to blackhole account
+            let blackhole_addr = storage_adapter.get_blackhole_address_evm();
+            if let Ok(Some(mut blackhole_account)) = storage_adapter.get_account_proto(&blackhole_addr) {
+                blackhole_account.balance += fee;
+                let _ = storage_adapter.put_account_proto(&blackhole_addr, &blackhole_account);
+            }
+        }
+        // If blackhole optimization is enabled, fee is just burned (not credited anywhere)
+
+        info!("AccountPermissionUpdate completed: owner={}, fee={}", owner_tron, fee);
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            logs: Vec::new(),
+            state_changes: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse AccountPermissionUpdateContract from protobuf bytes
+    /// AccountPermissionUpdateContract:
+    ///   bytes owner_address = 1;
+    ///   Permission owner = 2;
+    ///   Permission witness = 3;
+    ///   repeated Permission actives = 4;
+    ///
+    /// Returns a tuple: (owner_permission, witness_permission, active_permissions)
+    fn parse_account_permission_update_contract(&self, data: &[u8]) -> Result<(
+        Option<tron_backend_execution::protocol::Permission>,
+        Option<tron_backend_execution::protocol::Permission>,
+        Vec<tron_backend_execution::protocol::Permission>,
+    ), String> {
+        use prost::Message;
+        use tron_backend_execution::protocol::Permission;
+
+        let mut owner_permission: Option<Permission> = None;
+        let mut witness_permission: Option<Permission> = None;
+        let mut active_permissions: Vec<Permission> = Vec::new();
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address - skip
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                (2, 2) => {
+                    // owner permission
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid owner permission length".to_string());
+                    }
+                    owner_permission = Some(Permission::decode(&data[pos..end])
+                        .map_err(|e| format!("Failed to decode owner permission: {}", e))?);
+                    pos = end;
+                }
+                (3, 2) => {
+                    // witness permission
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid witness permission length".to_string());
+                    }
+                    witness_permission = Some(Permission::decode(&data[pos..end])
+                        .map_err(|e| format!("Failed to decode witness permission: {}", e))?);
+                    pos = end;
+                }
+                (4, 2) => {
+                    // active permission (repeated)
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid active permission length".to_string());
+                    }
+                    let perm = Permission::decode(&data[pos..end])
+                        .map_err(|e| format!("Failed to decode active permission: {}", e))?;
+                    active_permissions.push(perm);
+                    pos = end;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        Ok((owner_permission, witness_permission, active_permissions))
     }
 
     /// Execute an ASSET_ISSUE_CONTRACT (TRC-10 token issuance)

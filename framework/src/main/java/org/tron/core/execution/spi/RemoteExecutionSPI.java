@@ -500,6 +500,33 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               proposalDeleteContract.getProposalId());
           break;
 
+        // Phase 2.B: Account Management Contracts (19/46)
+        case SetAccountIdContract:
+          // SetAccountIdContract sets a unique, immutable account ID
+          org.tron.protos.contract.AccountContract.SetAccountIdContract setAccountIdContract =
+              contractParameter.unpack(org.tron.protos.contract.AccountContract.SetAccountIdContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = setAccountIdContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.SET_ACCOUNT_ID_CONTRACT;
+          logger.debug("Mapped SetAccountIdContract to remote request; owner={}, account_id={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              new String(setAccountIdContract.getAccountId().toByteArray()));
+          break;
+
+        case AccountPermissionUpdateContract:
+          // AccountPermissionUpdateContract updates account permissions for multi-sig
+          org.tron.protos.contract.AccountContract.AccountPermissionUpdateContract permissionUpdateContract =
+              contractParameter.unpack(org.tron.protos.contract.AccountContract.AccountPermissionUpdateContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = permissionUpdateContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.ACCOUNT_PERMISSION_UPDATE_CONTRACT;
+          logger.debug("Mapped AccountPermissionUpdateContract to remote request; owner={}, active_count={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              permissionUpdateContract.getActivesCount());
+          break;
+
         default:
           // Remove TRANSFER fallback - throw exception to fall back to embedded
           logger.error("Contract type {} not mapped to remote; falling back to embedded", contract.getType());

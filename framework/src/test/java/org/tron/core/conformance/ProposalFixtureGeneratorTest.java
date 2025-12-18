@@ -586,6 +586,76 @@ public class ProposalFixtureGeneratorTest extends BaseTest {
     log.info("ProposalDelete nonexistent: validationError={}", result.getValidationError());
   }
 
+  @Test
+  public void generateProposalDelete_expiredProposal() throws Exception {
+    // Create an expired proposal
+    createExpiredProposal(16);
+
+    // Try to delete expired proposal
+    ProposalDeleteContract contract = ProposalDeleteContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setProposalId(16)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalDeleteContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_DELETE_CONTRACT", 18)
+        .caseName("validate_fail_expired")
+        .caseCategory("validate_fail")
+        .description("Fail when trying to delete an expired proposal")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("expired")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalDelete expired: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_multipleParameters() throws Exception {
+    // Build proposal with multiple parameters
+    Map<Long, Long> params = new HashMap<>();
+    params.put(0L, 1000000L);  // MAINTENANCE_TIME_INTERVAL
+    params.put(1L, 3L);        // ACCOUNT_UPGRADE_COST
+    params.put(2L, 200L);      // CREATE_ACCOUNT_FEE
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("happy_path_multiple_params")
+        .caseCategory("happy")
+        .description("Create a proposal with multiple parameters")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("MAINTENANCE_TIME_INTERVAL", 1000000L)
+        .dynamicProperty("ACCOUNT_UPGRADE_COST", 3L)
+        .dynamicProperty("CREATE_ACCOUNT_FEE", 200L)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate multiple params: success={}", result.isSuccess());
+  }
+
   // ==========================================================================
   // Helper Methods
   // ==========================================================================
