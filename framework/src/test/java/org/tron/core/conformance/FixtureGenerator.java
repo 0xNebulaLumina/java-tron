@@ -18,7 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.ChainBaseManager;
-import org.tron.core.actuator.AbstractActuator;
+import org.tron.core.actuator.Actuator;
 import org.tron.core.actuator.ActuatorFactory;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
@@ -322,11 +322,12 @@ public class FixtureGenerator {
       Transaction.Contract contract = trxCap.getInstance().getRawData().getContract(0);
 
       // Create actuator
-      AbstractActuator actuator = ActuatorFactory.createActuator(contract, chainBaseManager);
-      if (actuator == null) {
+      List<Actuator> actuatorList = ActuatorFactory.createActuator(trxCap, chainBaseManager);
+      if (actuatorList == null || actuatorList.isEmpty()) {
         result.setValidationError("No actuator found for contract type: " + contract.getType());
         return result;
       }
+      Actuator actuator = actuatorList.get(0);
 
       // Validate
       try {
