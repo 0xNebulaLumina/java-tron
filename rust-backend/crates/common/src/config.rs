@@ -221,6 +221,31 @@ pub struct RemoteExecutionConfig {
     /// Requires: AccountStore (permissions fields), DynamicPropertiesStore (ALLOW_MULTI_SIGN, UPDATE_ACCOUNT_PERMISSION_FEE, etc.)
     /// Default: false for safe rollout
     pub account_permission_update_enabled: bool,
+
+    // === Phase 2.C: Contract Metadata Contracts (33/45/48) ===
+    //
+    // These contracts modify smart contract metadata fields (consume_user_resource_percent,
+    // origin_energy_limit, ABI). They require ContractStore and AbiStore access.
+
+    /// Enable UPDATE_SETTING_CONTRACT (type 33) execution
+    /// Updates consume_user_resource_percent field of a smart contract
+    /// Requires: ContractStore (SmartContract proto read/write), AccountStore (owner validation)
+    /// Default: false for safe rollout
+    pub update_setting_enabled: bool,
+
+    /// Enable UPDATE_ENERGY_LIMIT_CONTRACT (type 45) execution
+    /// Updates origin_energy_limit field of a smart contract
+    /// Requires: ContractStore (SmartContract proto read/write), AccountStore (owner validation)
+    /// Gate: checkForEnergyLimit() - block_num >= BLOCK_NUM_FOR_ENERGY_LIMIT
+    /// Default: false for safe rollout
+    pub update_energy_limit_enabled: bool,
+
+    /// Enable CLEAR_ABI_CONTRACT (type 48) execution
+    /// Clears ABI of a smart contract by writing default ABI to AbiStore
+    /// Requires: AbiStore (ABI write), ContractStore (owner validation), AccountStore
+    /// Gate: getAllowTvmConstantinople() != 0
+    /// Default: false for safe rollout
+    pub clear_abi_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,6 +390,11 @@ impl Config {
         builder = builder.set_default("execution.remote.set_account_id_enabled", false)?;
         builder = builder.set_default("execution.remote.account_permission_update_enabled", false)?;
 
+        // Phase 2.C: Contract metadata contracts (33/45/48)
+        builder = builder.set_default("execution.remote.update_setting_enabled", false)?;
+        builder = builder.set_default("execution.remote.update_energy_limit_enabled", false)?;
+        builder = builder.set_default("execution.remote.clear_abi_enabled", false)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -400,6 +430,10 @@ impl Default for RemoteExecutionConfig {
             // Phase 2.B: Account management contracts (19/46)
             set_account_id_enabled: false,  // Default false for safe rollout
             account_permission_update_enabled: false, // Default false for safe rollout
+            // Phase 2.C: Contract metadata contracts (33/45/48)
+            update_setting_enabled: false, // Default false for safe rollout
+            update_energy_limit_enabled: false, // Default false for safe rollout
+            clear_abi_enabled: false, // Default false for safe rollout
         }
     }
 } 

@@ -334,6 +334,28 @@ impl BackendService {
                 debug!("Executing ACCOUNT_PERMISSION_UPDATE_CONTRACT");
                 self.execute_account_permission_update_contract(storage_adapter, transaction, context)
             },
+            // Phase 2.C: Contract metadata contracts (33/45/48)
+            Some(tron_backend_execution::TronContractType::UpdateSettingContract) => {
+                if !remote_config.update_setting_enabled {
+                    return Err("UPDATE_SETTING_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing UPDATE_SETTING_CONTRACT");
+                self.execute_update_setting_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::UpdateEnergyLimitContract) => {
+                if !remote_config.update_energy_limit_enabled {
+                    return Err("UPDATE_ENERGY_LIMIT_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing UPDATE_ENERGY_LIMIT_CONTRACT");
+                self.execute_update_energy_limit_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::ClearAbiContract) => {
+                if !remote_config.clear_abi_enabled {
+                    return Err("CLEAR_ABI_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing CLEAR_ABI_CONTRACT");
+                self.execute_clear_abi_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -3286,6 +3308,460 @@ impl BackendService {
             public_free_asset_net_usage,
             public_latest_free_net_time,
         })
+    }
+
+    // ==========================================================================
+    // Phase 2.C: Contract Metadata Contracts (33/45/48)
+    // ==========================================================================
+    //
+    // These contracts modify smart contract metadata:
+    // - UpdateSettingContract (33): Updates consume_user_resource_percent
+    // - UpdateEnergyLimitContract (45): Updates origin_energy_limit
+    // - ClearABIContract (48): Clears the contract's ABI
+
+    /// Execute an UPDATE_SETTING_CONTRACT (type 33)
+    /// Updates the consume_user_resource_percent field of a smart contract
+    ///
+    /// Validation:
+    /// - Owner must exist
+    /// - Contract must exist
+    /// - Owner must be the contract's origin_address
+    /// - New percent must be in [0, 100]
+    ///
+    /// Execute:
+    /// - Read SmartContract from ContractStore
+    /// - Update consume_user_resource_percent field
+    /// - Write back to ContractStore
+    fn execute_update_setting_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::TronExecutionResult;
+        use contracts::proto::read_varint;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        debug!("Executing UPDATE_SETTING_CONTRACT for owner {}", owner_tron);
+
+        // 1. Parse the contract data
+        let (contract_address, new_percent) = self.parse_update_setting_contract(&transaction.data)?;
+
+        debug!("Parsed UpdateSettingContract: contract_address={}, new_percent={}",
+               hex::encode(&contract_address), new_percent);
+
+        // 2. Validate owner exists
+        // Build owner key as 21-byte TRON address (0x41 prefix + 20-byte EVM address)
+        let mut owner_key = Vec::with_capacity(21);
+        owner_key.push(0x41);
+        owner_key.extend_from_slice(owner.as_slice());
+
+        let _owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| format!("Owner account {} does not exist", owner_tron))?;
+
+        // 3. Validate new_percent is in [0, 100]
+        if new_percent < 0 || new_percent > 100 {
+            return Err(format!("percent not in [0, 100]: {}", new_percent));
+        }
+
+        // 4. Get the smart contract
+        let mut smart_contract = storage_adapter.get_smart_contract(&contract_address)
+            .map_err(|e| format!("Failed to get contract: {}", e))?
+            .ok_or_else(|| "Contract does not exist".to_string())?;
+
+        // 5. Validate owner is the contract's origin_address
+        if smart_contract.origin_address != owner_key {
+            return Err(format!("Account {} is not the owner of the contract", owner_tron));
+        }
+
+        // 6. Update the consume_user_resource_percent field
+        let old_percent = smart_contract.consume_user_resource_percent;
+        smart_contract.consume_user_resource_percent = new_percent;
+
+        debug!("Updating consume_user_resource_percent: {} -> {}", old_percent, new_percent);
+
+        // 7. Write back to ContractStore
+        storage_adapter.put_smart_contract(&smart_contract)
+            .map_err(|e| format!("Failed to update contract: {}", e))?;
+
+        // 8. Build result - no state changes for account balances, fee = 0
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes: vec![], // No account balance changes
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse UpdateSettingContract from protobuf bytes
+    /// UpdateSettingContract:
+    ///   bytes owner_address = 1;
+    ///   bytes contract_address = 2;
+    ///   int64 consume_user_resource_percent = 3;
+    fn parse_update_setting_contract(&self, data: &[u8]) -> Result<(Vec<u8>, i64), String> {
+        use contracts::proto::read_varint;
+
+        let mut contract_address: Vec<u8> = vec![];
+        let mut consume_user_resource_percent: i64 = 0;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address - skip
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                (2, 2) => {
+                    // contract_address
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid contract_address length".to_string());
+                    }
+                    contract_address = data[pos..end].to_vec();
+                    pos = end;
+                }
+                (3, 0) => {
+                    // consume_user_resource_percent (varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read percent: {}", e))?;
+                    pos += bytes_read;
+                    consume_user_resource_percent = value as i64;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        if contract_address.is_empty() {
+            return Err("contract_address is required".to_string());
+        }
+
+        Ok((contract_address, consume_user_resource_percent))
+    }
+
+    /// Execute an UPDATE_ENERGY_LIMIT_CONTRACT (type 45)
+    /// Updates the origin_energy_limit field of a smart contract
+    ///
+    /// Validation:
+    /// - Energy limit feature must be enabled (block_num >= BLOCK_NUM_FOR_ENERGY_LIMIT)
+    /// - Owner must exist
+    /// - Contract must exist
+    /// - Owner must be the contract's origin_address
+    /// - New origin_energy_limit must be > 0
+    ///
+    /// Execute:
+    /// - Read SmartContract from ContractStore
+    /// - Update origin_energy_limit field
+    /// - Write back to ContractStore
+    fn execute_update_energy_limit_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::TronExecutionResult;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        debug!("Executing UPDATE_ENERGY_LIMIT_CONTRACT for owner {}", owner_tron);
+
+        // 1. Check if energy limit feature is enabled
+        // This is equivalent to ReceiptCapsule.checkForEnergyLimit()
+        let energy_limit_enabled = storage_adapter.check_for_energy_limit()
+            .map_err(|e| format!("Failed to check energy limit: {}", e))?;
+
+        if !energy_limit_enabled {
+            return Err("contract type error, unexpected type [UpdateEnergyLimitContract]".to_string());
+        }
+
+        // 2. Parse the contract data
+        let (contract_address, new_origin_energy_limit) = self.parse_update_energy_limit_contract(&transaction.data)?;
+
+        debug!("Parsed UpdateEnergyLimitContract: contract_address={}, new_origin_energy_limit={}",
+               hex::encode(&contract_address), new_origin_energy_limit);
+
+        // 3. Validate owner exists
+        // Build owner key as 21-byte TRON address (0x41 prefix + 20-byte EVM address)
+        let mut owner_key = Vec::with_capacity(21);
+        owner_key.push(0x41);
+        owner_key.extend_from_slice(owner.as_slice());
+
+        let _owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| format!("Owner account {} does not exist", owner_tron))?;
+
+        // 4. Validate new_origin_energy_limit > 0
+        if new_origin_energy_limit <= 0 {
+            return Err("origin energy limit must be > 0".to_string());
+        }
+
+        // 5. Get the smart contract
+        let mut smart_contract = storage_adapter.get_smart_contract(&contract_address)
+            .map_err(|e| format!("Failed to get contract: {}", e))?
+            .ok_or_else(|| "Contract does not exist".to_string())?;
+
+        // 6. Validate owner is the contract's origin_address
+        if smart_contract.origin_address != owner_key {
+            return Err(format!("Account {} is not the owner of the contract", owner_tron));
+        }
+
+        // 7. Update the origin_energy_limit field
+        let old_limit = smart_contract.origin_energy_limit;
+        smart_contract.origin_energy_limit = new_origin_energy_limit;
+
+        debug!("Updating origin_energy_limit: {} -> {}", old_limit, new_origin_energy_limit);
+
+        // 8. Write back to ContractStore
+        storage_adapter.put_smart_contract(&smart_contract)
+            .map_err(|e| format!("Failed to update contract: {}", e))?;
+
+        // 9. Build result - no state changes for account balances, fee = 0
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes: vec![], // No account balance changes
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse UpdateEnergyLimitContract from protobuf bytes
+    /// UpdateEnergyLimitContract:
+    ///   bytes owner_address = 1;
+    ///   bytes contract_address = 2;
+    ///   int64 origin_energy_limit = 3;
+    fn parse_update_energy_limit_contract(&self, data: &[u8]) -> Result<(Vec<u8>, i64), String> {
+        use contracts::proto::read_varint;
+
+        let mut contract_address: Vec<u8> = vec![];
+        let mut origin_energy_limit: i64 = 0;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address - skip
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                (2, 2) => {
+                    // contract_address
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid contract_address length".to_string());
+                    }
+                    contract_address = data[pos..end].to_vec();
+                    pos = end;
+                }
+                (3, 0) => {
+                    // origin_energy_limit (varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read origin_energy_limit: {}", e))?;
+                    pos += bytes_read;
+                    origin_energy_limit = value as i64;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        if contract_address.is_empty() {
+            return Err("contract_address is required".to_string());
+        }
+
+        Ok((contract_address, origin_energy_limit))
+    }
+
+    /// Execute a CLEAR_ABI_CONTRACT (type 48)
+    /// Clears the ABI of a smart contract by writing an empty ABI
+    ///
+    /// Validation:
+    /// - Constantinople fork must be enabled (getAllowTvmConstantinople() != 0)
+    /// - Owner must exist
+    /// - Contract must exist
+    /// - Owner must be the contract's origin_address
+    ///
+    /// Execute:
+    /// - Write default (empty) ABI to AbiStore
+    fn execute_clear_abi_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::TronExecutionResult;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        debug!("Executing CLEAR_ABI_CONTRACT for owner {}", owner_tron);
+
+        // 1. Check if Constantinople is enabled
+        let allow_constantinople = storage_adapter.get_allow_tvm_constantinople()
+            .map_err(|e| format!("Failed to get Constantinople status: {}", e))?;
+
+        if allow_constantinople == 0 {
+            return Err("contract type error,unexpected type [ClearABIContract]".to_string());
+        }
+
+        // 2. Parse the contract data
+        let contract_address = self.parse_clear_abi_contract(&transaction.data)?;
+
+        debug!("Parsed ClearABIContract: contract_address={}", hex::encode(&contract_address));
+
+        // 3. Validate owner exists
+        // Build owner key as 21-byte TRON address (0x41 prefix + 20-byte EVM address)
+        let mut owner_key = Vec::with_capacity(21);
+        owner_key.push(0x41);
+        owner_key.extend_from_slice(owner.as_slice());
+
+        let _owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| format!("Owner account {} does not exist", owner_tron))?;
+
+        // 4. Get the smart contract (to validate ownership)
+        let smart_contract = storage_adapter.get_smart_contract(&contract_address)
+            .map_err(|e| format!("Failed to get contract: {}", e))?
+            .ok_or_else(|| "Contract not exists".to_string())?;
+
+        // 5. Validate owner is the contract's origin_address
+        if smart_contract.origin_address != owner_key {
+            return Err(format!("Account {} is not the owner of the contract", owner_tron));
+        }
+
+        // 6. Clear ABI by writing default empty ABI to AbiStore
+        storage_adapter.clear_abi(&contract_address)
+            .map_err(|e| format!("Failed to clear ABI: {}", e))?;
+
+        debug!("ABI cleared for contract {}", hex::encode(&contract_address));
+
+        // 7. Build result - no state changes for account balances, fee = 0
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes: vec![], // No account balance changes
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse ClearABIContract from protobuf bytes
+    /// ClearABIContract:
+    ///   bytes owner_address = 1;
+    ///   bytes contract_address = 2;
+    fn parse_clear_abi_contract(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        use contracts::proto::read_varint;
+
+        let mut contract_address: Vec<u8> = vec![];
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address - skip
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                (2, 2) => {
+                    // contract_address
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid contract_address length".to_string());
+                    }
+                    contract_address = data[pos..end].to_vec();
+                    pos = end;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        if contract_address.is_empty() {
+            return Err("contract_address is required".to_string());
+        }
+
+        Ok(contract_address)
     }
 }
 

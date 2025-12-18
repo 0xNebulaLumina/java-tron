@@ -2111,6 +2111,203 @@ impl EngineBackedEvmStateStore {
     pub fn get_blackhole_address_evm(&self) -> Address {
         Self::default_blackhole_address().unwrap_or(Address::ZERO)
     }
+
+    // ==========================================================================
+    // Phase 2.C: ContractStore and AbiStore Methods
+    // ==========================================================================
+    //
+    // ContractStore: Stores SmartContract metadata (origin_address, consume_user_resource_percent, etc.)
+    // AbiStore: Stores contract ABI (Application Binary Interface)
+    // Java reference: ContractStore.java, AbiStore.java, ContractCapsule.java, AbiCapsule.java
+    //
+    // Note: contract_database() already exists at line ~58
+
+    /// Get the database name for ABI store
+    fn abi_database(&self) -> &str {
+        db_names::contract::ABI
+    }
+
+    /// Get a smart contract by its address
+    /// Returns the SmartContract protobuf if found
+    /// Key: 21-byte TRON address (0x41 prefix + 20 bytes)
+    pub fn get_smart_contract(&self, contract_address: &[u8]) -> Result<Option<crate::protocol::SmartContract>> {
+        tracing::debug!("Getting smart contract for address: {}", hex::encode(contract_address));
+
+        match self.storage_engine.get(self.contract_database(), contract_address)? {
+            Some(data) => {
+                tracing::debug!("Found contract data, length: {}", data.len());
+                // Deserialize using prost
+                match crate::protocol::SmartContract::decode(&data[..]) {
+                    Ok(contract) => {
+                        tracing::debug!("Successfully deserialized SmartContract - origin_address: {}, consume_percent: {}",
+                                       hex::encode(&contract.origin_address), contract.consume_user_resource_percent);
+                        Ok(Some(contract))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to decode SmartContract: {}", e);
+                        Err(anyhow::anyhow!("Failed to decode SmartContract: {}", e))
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("Smart contract not found for address: {}", hex::encode(contract_address));
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store a smart contract
+    /// Key: contract address (21-byte TRON address)
+    pub fn put_smart_contract(&self, contract: &crate::protocol::SmartContract) -> Result<()> {
+        let key = &contract.contract_address;
+        tracing::debug!("Storing smart contract at address: {}, consume_percent: {}, origin_energy_limit: {}",
+                       hex::encode(key), contract.consume_user_resource_percent, contract.origin_energy_limit);
+
+        // Serialize using prost
+        let mut buf = Vec::new();
+        contract.encode(&mut buf).map_err(|e| anyhow::anyhow!("Failed to encode SmartContract: {}", e))?;
+
+        self.storage_engine.put(self.contract_database(), key, &buf)?;
+        Ok(())
+    }
+
+    /// Check if a smart contract exists
+    pub fn has_smart_contract(&self, contract_address: &[u8]) -> Result<bool> {
+        match self.storage_engine.get(self.contract_database(), contract_address)? {
+            Some(_) => Ok(true),
+            None => Ok(false),
+        }
+    }
+
+    /// Get ABI for a contract
+    /// Returns the SmartContract.ABI protobuf if found
+    /// Key: contract address (21-byte TRON address)
+    pub fn get_abi(&self, contract_address: &[u8]) -> Result<Option<crate::protocol::smart_contract::Abi>> {
+        tracing::debug!("Getting ABI for contract: {}", hex::encode(contract_address));
+
+        match self.storage_engine.get(self.abi_database(), contract_address)? {
+            Some(data) => {
+                tracing::debug!("Found ABI data, length: {}", data.len());
+                // Deserialize using prost
+                match crate::protocol::smart_contract::Abi::decode(&data[..]) {
+                    Ok(abi) => {
+                        tracing::debug!("Successfully deserialized ABI - entries: {}", abi.entrys.len());
+                        Ok(Some(abi))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to decode ABI: {}", e);
+                        Err(anyhow::anyhow!("Failed to decode ABI: {}", e))
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("ABI not found for contract: {}", hex::encode(contract_address));
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store ABI for a contract
+    /// Key: contract address (21-byte TRON address)
+    pub fn put_abi(&self, contract_address: &[u8], abi: &crate::protocol::smart_contract::Abi) -> Result<()> {
+        tracing::debug!("Storing ABI for contract: {}, entries: {}",
+                       hex::encode(contract_address), abi.entrys.len());
+
+        // Serialize using prost
+        let mut buf = Vec::new();
+        abi.encode(&mut buf).map_err(|e| anyhow::anyhow!("Failed to encode ABI: {}", e))?;
+
+        self.storage_engine.put(self.abi_database(), contract_address, &buf)?;
+        Ok(())
+    }
+
+    /// Clear ABI for a contract (write default empty ABI)
+    /// This is used by ClearABIContract (type 48)
+    pub fn clear_abi(&self, contract_address: &[u8]) -> Result<()> {
+        tracing::debug!("Clearing ABI for contract: {}", hex::encode(contract_address));
+
+        // Create default empty ABI
+        let default_abi = crate::protocol::smart_contract::Abi::default();
+        self.put_abi(contract_address, &default_abi)
+    }
+
+    // ==========================================================================
+    // Phase 2.C: Dynamic Properties for Contract Metadata
+    // ==========================================================================
+
+    /// Get ALLOW_TVM_CONSTANTINOPLE dynamic property
+    /// Returns 0 if Constantinople is not enabled, non-zero if enabled
+    /// Default: 0 (not enabled)
+    pub fn get_allow_tvm_constantinople(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_CONSTANTINOPLE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let value = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("ALLOW_TVM_CONSTANTINOPLE: {}", value);
+                    Ok(value)
+                } else {
+                    tracing::warn!("ALLOW_TVM_CONSTANTINOPLE has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("ALLOW_TVM_CONSTANTINOPLE not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get LATEST_BLOCK_HEADER_NUMBER dynamic property
+    /// Returns the latest block number
+    /// Default: 0
+    pub fn get_latest_block_header_number(&self) -> Result<i64> {
+        let key = b"LATEST_BLOCK_HEADER_NUMBER";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let value = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("LATEST_BLOCK_HEADER_NUMBER: {}", value);
+                    Ok(value)
+                } else {
+                    tracing::warn!("LATEST_BLOCK_HEADER_NUMBER has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("LATEST_BLOCK_HEADER_NUMBER not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get BLOCK_NUM_FOR_ENERGY_LIMIT configuration
+    /// This is typically a configuration constant, not a dynamic property
+    /// For checkForEnergyLimit(): block_num >= BLOCK_NUM_FOR_ENERGY_LIMIT
+    /// Default: 4727890 (mainnet value from CommonParameter)
+    pub fn get_block_num_for_energy_limit(&self) -> i64 {
+        // This is a constant from CommonParameter, not stored in DB
+        // Mainnet value: 4727890
+        // Testnet value might differ
+        4727890
+    }
+
+    /// Check if energy limit feature is enabled based on current block number
+    /// Equivalent to ReceiptCapsule.checkForEnergyLimit()
+    pub fn check_for_energy_limit(&self) -> Result<bool> {
+        let block_num = self.get_latest_block_header_number()?;
+        let threshold = self.get_block_num_for_energy_limit();
+        let enabled = block_num >= threshold;
+        tracing::debug!("checkForEnergyLimit: block_num={}, threshold={}, enabled={}",
+                       block_num, threshold, enabled);
+        Ok(enabled)
+    }
 }
 
 impl EvmStateStore for EngineBackedEvmStateStore {
