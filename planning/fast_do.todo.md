@@ -101,7 +101,12 @@ TODO：
   - `RemoteExecutionSPI.convertExecuteTransactionResponse` parses and passes through the bytes
   - `ExecutionProgramResult.fromExecutionResult` deserializes to `TransactionResultCapsule` via `new TransactionResultCapsule(bytes)` and calls `setRet()`
 - [x] 先补齐"已在 Rust 侧宣称 ✅ 的合约"但 receipt 仍缺的项（例如 `WithdrawBalanceContract` 的 `withdraw_amount`）。
-  - **DONE**: Receipt passthrough infrastructure is now in place. System contract handlers can populate receipt fields by serializing a `TransactionResult` protobuf and setting `tron_transaction_result`.
+  - **DONE**: Receipt passthrough is now fully implemented with actual data population:
+  - Added `TransactionResultBuilder` in `rust-backend/crates/core/src/service/contracts/proto.rs` for serializing `Protocol.Transaction.Result` protobuf
+  - `WithdrawBalanceContract` now sets `withdraw_amount` via `TransactionResultBuilder::new().with_withdraw_amount(allowance).build()` in `withdraw.rs:149-151`
+  - `UnfreezeBalanceContract` now sets `unfreeze_amount` via `TransactionResultBuilder::new().with_unfreeze_amount(amount).build()` in `freeze.rs:374-377`
+  - `UnfreezeBalanceV2Contract` now sets `unfreeze_amount` via `TransactionResultBuilder::new().with_unfreeze_amount(amount).build()` in `freeze.rs:827-830`
+  - Builder supports additional fields for future contracts: `exchange_id`, `exchange_*_amount`, `withdraw_expire_amount`, `shielded_transaction_fee`
 
 ### 0.5 CreateSmartContract 的"toAddress=0"语义问题（VM 创建会被当成 call）
 
