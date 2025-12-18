@@ -204,6 +204,23 @@ pub struct RemoteExecutionConfig {
     /// Proposal expiration time in milliseconds (matches CommonParameter.getProposalExpireTime())
     /// Default: 3 days = 259200000 ms
     pub proposal_expire_time_ms: u64,
+
+    // === Phase 2.B: Account Management Contracts (19/46) ===
+    //
+    // These contracts test the Account codec implementation by modifying
+    // account fields like account_id and permissions.
+
+    /// Enable SET_ACCOUNT_ID_CONTRACT (type 19) execution
+    /// Sets a unique, immutable account ID for an account
+    /// Requires: AccountStore (full Account proto read/write), AccountIdIndexStore
+    /// Default: false for safe rollout
+    pub set_account_id_enabled: bool,
+
+    /// Enable ACCOUNT_PERMISSION_UPDATE_CONTRACT (type 46) execution
+    /// Updates owner/witness/active permissions for multi-sig functionality
+    /// Requires: AccountStore (permissions fields), DynamicPropertiesStore (ALLOW_MULTI_SIGN, UPDATE_ACCOUNT_PERMISSION_FEE, etc.)
+    /// Default: false for safe rollout
+    pub account_permission_update_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,6 +361,10 @@ impl Config {
         builder = builder.set_default("execution.remote.proposal_delete_enabled", false)?;
         builder = builder.set_default("execution.remote.proposal_expire_time_ms", 259200000u64)?; // 3 days
 
+        // Phase 2.B: Account management contracts (19/46)
+        builder = builder.set_default("execution.remote.set_account_id_enabled", false)?;
+        builder = builder.set_default("execution.remote.account_permission_update_enabled", false)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -376,6 +397,9 @@ impl Default for RemoteExecutionConfig {
             proposal_approve_enabled: false, // Default false for safe rollout
             proposal_delete_enabled: false,  // Default false for safe rollout
             proposal_expire_time_ms: 259200000, // 3 days in milliseconds
+            // Phase 2.B: Account management contracts (19/46)
+            set_account_id_enabled: false,  // Default false for safe rollout
+            account_permission_update_enabled: false, // Default false for safe rollout
         }
     }
 } 
