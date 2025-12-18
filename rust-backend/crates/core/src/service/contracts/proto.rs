@@ -30,8 +30,6 @@ pub(crate) fn read_varint(data: &[u8]) -> Result<(u64, usize), String> {
 }
 
 /// Write a protobuf varint to a byte vector
-/// Used for test utilities to construct protobuf messages
-#[cfg(test)]
 pub(crate) fn write_varint(buf: &mut Vec<u8>, mut value: u64) {
     loop {
         let mut byte = (value & 0x7F) as u8;
@@ -43,5 +41,215 @@ pub(crate) fn write_varint(buf: &mut Vec<u8>, mut value: u64) {
         if value == 0 {
             break;
         }
+    }
+}
+
+/// Write a signed int64 as zigzag-encoded varint (for sint64 fields)
+#[allow(dead_code)]
+pub(crate) fn write_sint64(buf: &mut Vec<u8>, value: i64) {
+    // ZigZag encoding: (n << 1) ^ (n >> 63)
+    let encoded = ((value << 1) ^ (value >> 63)) as u64;
+    write_varint(buf, encoded);
+}
+
+/// Write a protobuf field tag (field_number << 3 | wire_type)
+pub(crate) fn write_tag(buf: &mut Vec<u8>, field_number: u32, wire_type: u8) {
+    let tag = ((field_number as u64) << 3) | (wire_type as u64);
+    write_varint(buf, tag);
+}
+
+/// Transaction.Result protobuf builder
+/// Matches Protocol.Transaction.Result message structure
+///
+/// Field numbers from Tron.proto Transaction.Result:
+/// - int64 fee = 1;
+/// - code ret = 2;
+/// - contractResult contractRet = 3;
+/// - string assetIssueID = 14;
+/// - int64 withdraw_amount = 15;
+/// - int64 unfreeze_amount = 16;
+/// - int64 exchange_received_amount = 18;
+/// - int64 exchange_inject_another_amount = 19;
+/// - int64 exchange_withdraw_another_amount = 20;
+/// - int64 exchange_id = 21;
+/// - int64 shielded_transaction_fee = 22;
+/// - bytes orderId = 25;
+/// - repeated MarketOrderDetail orderDetails = 26;
+/// - int64 withdraw_expire_amount = 27;
+/// - map<string, int64> cancel_unfreezeV2_amount = 28;
+#[derive(Default)]
+pub struct TransactionResultBuilder {
+    pub withdraw_amount: Option<i64>,
+    pub unfreeze_amount: Option<i64>,
+    pub withdraw_expire_amount: Option<i64>,
+    pub exchange_id: Option<i64>,
+    pub exchange_received_amount: Option<i64>,
+    pub exchange_inject_another_amount: Option<i64>,
+    pub exchange_withdraw_another_amount: Option<i64>,
+    pub shielded_transaction_fee: Option<i64>,
+}
+
+impl TransactionResultBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_withdraw_amount(mut self, amount: i64) -> Self {
+        self.withdraw_amount = Some(amount);
+        self
+    }
+
+    pub fn with_unfreeze_amount(mut self, amount: i64) -> Self {
+        self.unfreeze_amount = Some(amount);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_withdraw_expire_amount(mut self, amount: i64) -> Self {
+        self.withdraw_expire_amount = Some(amount);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_exchange_id(mut self, id: i64) -> Self {
+        self.exchange_id = Some(id);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_exchange_received_amount(mut self, amount: i64) -> Self {
+        self.exchange_received_amount = Some(amount);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_exchange_inject_another_amount(mut self, amount: i64) -> Self {
+        self.exchange_inject_another_amount = Some(amount);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_exchange_withdraw_another_amount(mut self, amount: i64) -> Self {
+        self.exchange_withdraw_another_amount = Some(amount);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_shielded_transaction_fee(mut self, fee: i64) -> Self {
+        self.shielded_transaction_fee = Some(fee);
+        self
+    }
+
+    /// Build the Transaction.Result protobuf bytes
+    pub fn build(self) -> Vec<u8> {
+        let mut buf = Vec::new();
+
+        // Wire type 0 = varint for int64 fields
+        const WIRE_TYPE_VARINT: u8 = 0;
+
+        // Field 15: withdraw_amount
+        if let Some(amount) = self.withdraw_amount {
+            write_tag(&mut buf, 15, WIRE_TYPE_VARINT);
+            write_varint(&mut buf, amount as u64);
+        }
+
+        // Field 16: unfreeze_amount
+        if let Some(amount) = self.unfreeze_amount {
+            write_tag(&mut buf, 16, WIRE_TYPE_VARINT);
+            write_varint(&mut buf, amount as u64);
+        }
+
+        // Field 18: exchange_received_amount
+        if let Some(amount) = self.exchange_received_amount {
+            write_tag(&mut buf, 18, WIRE_TYPE_VARINT);
+            write_varint(&mut buf, amount as u64);
+        }
+
+        // Field 19: exchange_inject_another_amount
+        if let Some(amount) = self.exchange_inject_another_amount {
+            write_tag(&mut buf, 19, WIRE_TYPE_VARINT);
+            write_varint(&mut buf, amount as u64);
+        }
+
+        // Field 20: exchange_withdraw_another_amount
+        if let Some(amount) = self.exchange_withdraw_another_amount {
+            write_tag(&mut buf, 20, WIRE_TYPE_VARINT);
+            write_varint(&mut buf, amount as u64);
+        }
+
+        // Field 21: exchange_id
+        if let Some(id) = self.exchange_id {
+            write_tag(&mut buf, 21, WIRE_TYPE_VARINT);
+            write_varint(&mut buf, id as u64);
+        }
+
+        // Field 22: shielded_transaction_fee
+        if let Some(fee) = self.shielded_transaction_fee {
+            write_tag(&mut buf, 22, WIRE_TYPE_VARINT);
+            write_varint(&mut buf, fee as u64);
+        }
+
+        // Field 27: withdraw_expire_amount
+        if let Some(amount) = self.withdraw_expire_amount {
+            write_tag(&mut buf, 27, WIRE_TYPE_VARINT);
+            write_varint(&mut buf, amount as u64);
+        }
+
+        buf
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_write_varint() {
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 150);
+        assert_eq!(buf, vec![0x96, 0x01]);
+
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 1);
+        assert_eq!(buf, vec![0x01]);
+
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 300);
+        assert_eq!(buf, vec![0xac, 0x02]);
+    }
+
+    #[test]
+    fn test_transaction_result_builder_withdraw_amount() {
+        let result = TransactionResultBuilder::new()
+            .with_withdraw_amount(1000000)
+            .build();
+
+        // Field 15, wire type 0: tag = (15 << 3) | 0 = 120 = 0x78
+        // Value 1000000 = 0xF4240 encoded as varint
+        assert!(!result.is_empty());
+        assert_eq!(result[0], 0x78); // tag for field 15, wire type 0
+    }
+
+    #[test]
+    fn test_transaction_result_builder_unfreeze_amount() {
+        let result = TransactionResultBuilder::new()
+            .with_unfreeze_amount(5000000)
+            .build();
+
+        // Field 16, wire type 0: tag = (16 << 3) | 0 = 128 = 0x80 0x01
+        assert!(!result.is_empty());
+        assert_eq!(result[0], 0x80); // first byte of tag
+        assert_eq!(result[1], 0x01); // second byte of tag (varint continuation)
+    }
+
+    #[test]
+    fn test_transaction_result_builder_multiple_fields() {
+        let result = TransactionResultBuilder::new()
+            .with_withdraw_amount(1000)
+            .with_unfreeze_amount(2000)
+            .build();
+
+        // Should contain both fields
+        assert!(result.len() > 4);
     }
 }
