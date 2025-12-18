@@ -132,35 +132,47 @@ TODO：
 ### 1.1 Fixture 形态（建议一次定型）
 
 TODO：
-- [ ] 定义 fixture schema（建议用目录 + 二进制 pb，避免 JSON 编码 bytes 的坑）：
-  - `fixtures/<contract>/<case>/pre_db/<db_name>.sst|kv.json`（或简单 `kv.bin`）
-  - `fixtures/<contract>/<case>/request.pb`（`ExecuteTransactionRequest` bytes）
-  - `fixtures/<contract>/<case>/expected/post_db/...`
-  - `fixtures/<contract>/<case>/expected/execution_result.pb`（至少包含 receipt 与关键 sidecars）
-- [ ] 规定 DB dump 的排序与编码（保证跨平台稳定）：key/value 都用 bytes，排序用 `lexicographic(key)`。
+- [x] 定义 fixture schema（建议用目录 + 二进制 pb，避免 JSON 编码 bytes 的坑）：
+  - **DONE**: Created `conformance/README.md` with full schema documentation
+  - **DONE**: Created `conformance/schema/kv_format.md` - binary KV file format spec
+  - **DONE**: Created `conformance/schema/metadata_schema.json` - JSON schema for metadata
+  - Directory structure: `fixtures/<contract>/<case>/pre_db/<db_name>.kv`, `request.pb`, `expected/post_db/...`, `expected/result.pb`
+- [x] 规定 DB dump 的排序与编码（保证跨平台稳定）：key/value 都用 bytes，排序用 `lexicographic(key)`。
+  - **DONE**: KV format uses 4-byte magic "KVDB" + 4-byte version + entries sorted by key lexicographically
 
 ### 1.2 Java 侧：fixture 生成器（以 embedded actuator 为 oracle）
 
 TODO：
-- [ ] 新增一个 `framework` 测试/工具：对每个 contract case：
-  - [ ] 初始化最小状态（临时目录 RocksDB 或 test store）
-  - [ ] 构造 `TransactionCapsule + BlockCapsule + TransactionContext`
-  - [ ] 走 embedded 执行（保持现有行为），得到 post-state 与 `ProgramResult.ret`/receipt
-  - [ ] dump 相关 DB（按 contract 依赖挑 DB；小状态下也可全量 dump）
-  - [ ] 写出 `ExecuteTransactionRequest`（与 RemoteExecutionSPI 一致的 request）作为 Rust 输入
-- [ ] 为每个 contract 至少产出 3 类 case：
-  - [ ] happy path（成功执行）
-  - [ ] validate-fail（应失败且不改状态）
-  - [ ] edge（边界：0/最大值/时间边界/重复调用/顺序依赖）
+- [x] 新增一个 `framework` 测试/工具：对每个 contract case：
+  - **DONE**: Created `framework/src/test/java/org/tron/core/conformance/` package with:
+    - `KvFileFormat.java` - Binary KV file reader/writer with lexicographic ordering
+    - `FixtureMetadata.java` - Metadata JSON serialization with builder pattern
+    - `FixtureGenerator.java` - Main generator class that captures pre/post DB state
+  - [x] 初始化最小状态（临时目录 RocksDB 或 test store）- Uses Spring BaseTest infrastructure
+  - [x] 构造 `TransactionCapsule + BlockCapsule + TransactionContext` - Helper methods in generators
+  - [x] 走 embedded 执行（保持现有行为），得到 post-state 与 `ProgramResult.ret`/receipt - executeEmbedded() method
+  - [x] dump 相关 DB（按 contract 依赖挑 DB；小状态下也可全量 dump） - captureDbState() with store iterators
+  - [x] 写出 `ExecuteTransactionRequest`（与 RemoteExecutionSPI 一致的 request）作为 Rust 输入 - buildRequest() method
+- [x] 为每个 contract 至少产出 3 类 case：
+  - **DONE**: Created `ProposalFixtureGeneratorTest.java` with sample fixtures for Proposal contracts (16/17/18)
+  - [x] happy path（成功执行）- happy_path_create, happy_path_approve, happy_path_delete
+  - [x] validate-fail（应失败且不改状态）- validate_fail_not_witness, validate_fail_empty_params, validate_fail_nonexistent, validate_fail_not_owner
+  - [ ] edge（边界：0/最大值/时间边界/重复调用/顺序依赖）- To be added per contract type
 
 ### 1.3 Rust 侧：fixture runner（离线对比，不需要跑 Java 节点）
 
 TODO：
-- [ ] 写一个 Rust test harness：读取 pre_db dump → 写入 StorageEngine → 调用执行入口 → dump post_db → 与 expected 逐字节比对
-- [ ] 对比维度（建议从严到松）：
-  - [ ] 必选：DB bytes 完全一致（至少覆盖该合约触达的 store）
-  - [ ] 必选：receipt（`ProgramResult.ret` 对应字段）一致
-  - [ ] 可选：state_changes digest 一致（复用 `StateChangeCanonicalizer` 的规则）
+- [x] 写一个 Rust test harness：读取 pre_db dump → 写入 StorageEngine → 调用执行入口 → dump post_db → 与 expected 逐字节比对
+  - **DONE**: Created `rust-backend/crates/core/src/conformance/` module with:
+    - `kv_format.rs` - KV file reader/writer matching Java format (9 tests passing)
+    - `metadata.rs` - Metadata JSON parser with serde (2 tests passing)
+    - `runner.rs` - ConformanceRunner with fixture discovery, validation, state comparison
+    - `mod.rs` - Public exports
+  - Added dependencies: serde, serde_json, hex
+- [x] 对比维度（建议从严到松）：
+  - [x] 必选：DB bytes 完全一致（至少覆盖该合约触达的 store）- compare_kv_data() with KvDiff
+  - [ ] 必选：receipt（`ProgramResult.ret` 对应字段）一致 - To be added in execution integration
+  - [ ] 可选：state_changes digest 一致（复用 `StateChangeCanonicalizer` 的规则）- Optional enhancement
 
 ### 1.4 长跑回归：继续用现成 CSV compare（定位为 nightly/大样本）
 
@@ -170,7 +182,11 @@ TODO：
 
 TODO：
 - [ ] 把 fixture conformance 定位为 PR 门禁（快）
+  - Recommended CI integration:
+    - Java: `./gradlew :framework:test --tests "ProposalFixtureGeneratorTest*" -Dconformance.output=conformance/fixtures`
+    - Rust: `cargo test --package tron-backend-core conformance_tests`
 - [ ] 把 CSV replay/diff 定位为 nightly（慢，但覆盖真实区块）
+  - Continue using existing `collect_remote_results.sh` + `scripts/compare_exec_csv.py` for full chain replay
 
 ---
 
