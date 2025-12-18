@@ -297,6 +297,28 @@ impl BackendService {
                 debug!("Executing ACCOUNT_CREATE_CONTRACT");
                 self.execute_account_create_contract(storage_adapter, transaction, context)
             },
+            // Phase 2.A: Proposal contracts (16/17/18)
+            Some(tron_backend_execution::TronContractType::ProposalCreateContract) => {
+                if !remote_config.proposal_create_enabled {
+                    return Err("PROPOSAL_CREATE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing PROPOSAL_CREATE_CONTRACT");
+                self.execute_proposal_create_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::ProposalApproveContract) => {
+                if !remote_config.proposal_approve_enabled {
+                    return Err("PROPOSAL_APPROVE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing PROPOSAL_APPROVE_CONTRACT");
+                self.execute_proposal_approve_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::ProposalDeleteContract) => {
+                if !remote_config.proposal_delete_enabled {
+                    return Err("PROPOSAL_DELETE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing PROPOSAL_DELETE_CONTRACT");
+                self.execute_proposal_delete_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -1738,6 +1760,484 @@ impl BackendService {
         }
 
         account_address.ok_or_else(|| "Missing account_address in AccountCreateContract".to_string())
+    }
+
+    // =========================================================================
+    // Phase 2.A: Proposal Contracts (16/17/18)
+    // =========================================================================
+    // These contracts handle TRON governance proposals (parameter changes).
+    // Java reference: ProposalCreateActuator, ProposalApproveActuator, ProposalDeleteActuator
+
+    /// Execute a PROPOSAL_CREATE_CONTRACT
+    /// Creates a new proposal with specified parameters
+    ///
+    /// Java reference: ProposalCreateActuator.java
+    fn execute_proposal_create_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::TronExecutionResult;
+        use tron_backend_execution::protocol::Proposal;
+        use prost::Message;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        info!("ProposalCreate owner={}", owner_tron);
+
+        // 1. Validate owner is a witness
+        let is_witness = storage_adapter.is_witness(&owner)
+            .map_err(|e| format!("Failed to check witness status: {}", e))?;
+
+        if !is_witness {
+            warn!("Account {} is not a witness", owner_tron);
+            return Err("Account is not a witness".to_string());
+        }
+
+        // 2. Parse ProposalCreateContract from transaction.data
+        // ProposalCreateContract:
+        //   bytes owner_address = 1;
+        //   map<int64, int64> parameters = 2;
+        let parameters = self.parse_proposal_create_contract(&transaction.data)?;
+
+        if parameters.is_empty() {
+            warn!("ProposalCreate: empty parameters");
+            return Err("This proposal has no parameter.".to_string());
+        }
+
+        info!("ProposalCreate: {} parameters", parameters.len());
+
+        // 3. Get next proposal ID
+        let latest_proposal_num = storage_adapter.get_latest_proposal_num()
+            .map_err(|e| format!("Failed to get LATEST_PROPOSAL_NUM: {}", e))?;
+        let new_proposal_id = latest_proposal_num + 1;
+
+        // 4. Calculate expiration time
+        // Java: now + CommonParameter.getInstance().getProposalExpireTime()
+        let execution_config = self.get_execution_config()?;
+        let expire_time_ms = execution_config.remote.proposal_expire_time_ms;
+
+        let now = context.block_timestamp as i64;
+        let expiration_time = now + (expire_time_ms as i64);
+
+        // 5. Build owner address in 21-byte format
+        let mut owner_address_bytes = Vec::with_capacity(21);
+        owner_address_bytes.push(0x41);
+        owner_address_bytes.extend_from_slice(owner.as_slice());
+
+        // 6. Create new Proposal
+        let proposal = Proposal {
+            proposal_id: new_proposal_id,
+            proposer_address: owner_address_bytes,
+            parameters,
+            expiration_time,
+            create_time: now,
+            approvals: Vec::new(),
+            state: 0, // PENDING
+        };
+
+        // 7. Persist proposal
+        storage_adapter.put_proposal(&proposal)
+            .map_err(|e| format!("Failed to persist proposal: {}", e))?;
+
+        // 8. Update LATEST_PROPOSAL_NUM
+        storage_adapter.set_latest_proposal_num(new_proposal_id)
+            .map_err(|e| format!("Failed to update LATEST_PROPOSAL_NUM: {}", e))?;
+
+        info!(
+            "ProposalCreate completed: id={}, expiration={}, params={}",
+            new_proposal_id, expiration_time, proposal.parameters.len()
+        );
+
+        // Calculate bandwidth
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            logs: Vec::new(),
+            state_changes: Vec::new(), // Proposal changes are persisted directly
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse ProposalCreateContract from protobuf bytes
+    /// ProposalCreateContract:
+    ///   bytes owner_address = 1;
+    ///   map<int64, int64> parameters = 2;
+    fn parse_proposal_create_contract(&self, data: &[u8]) -> Result<std::collections::HashMap<i64, i64>, String> {
+        let mut parameters = std::collections::HashMap::new();
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address (bytes) - skip, use transaction.from
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                (2, 2) => {
+                    // parameters (map<int64, int64>) - each entry is length-delimited
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read map entry length: {}", e))?;
+                    pos += bytes_read;
+
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid map entry length".to_string());
+                    }
+
+                    // Parse map entry (key=1, value=2)
+                    let entry_data = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    let (key, value) = self.parse_map_entry_i64_i64(entry_data)?;
+                    parameters.insert(key, value);
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        Ok(parameters)
+    }
+
+    /// Parse a map entry with int64 key and int64 value
+    fn parse_map_entry_i64_i64(&self, data: &[u8]) -> Result<(i64, i64), String> {
+        let mut key: Option<i64> = None;
+        let mut value: Option<i64> = None;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read map entry field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 0) => {
+                    // key (int64, varint)
+                    let (v, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read map key: {}", e))?;
+                    pos += bytes_read;
+                    key = Some(v as i64);
+                }
+                (2, 0) => {
+                    // value (int64, varint)
+                    let (v, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read map value: {}", e))?;
+                    pos += bytes_read;
+                    value = Some(v as i64);
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip map entry field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        let k = key.ok_or("Missing map key")?;
+        let v = value.ok_or("Missing map value")?;
+        Ok((k, v))
+    }
+
+    /// Execute a PROPOSAL_APPROVE_CONTRACT
+    /// Adds or removes approval from a proposal
+    ///
+    /// Java reference: ProposalApproveActuator.java
+    fn execute_proposal_approve_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::TronExecutionResult;
+        use prost::Message;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        info!("ProposalApprove owner={}", owner_tron);
+
+        // 1. Validate owner is a witness
+        let is_witness = storage_adapter.is_witness(&owner)
+            .map_err(|e| format!("Failed to check witness status: {}", e))?;
+
+        if !is_witness {
+            warn!("Account {} is not a witness", owner_tron);
+            return Err("Account is not a witness".to_string());
+        }
+
+        // 2. Parse ProposalApproveContract
+        // ProposalApproveContract:
+        //   bytes owner_address = 1;
+        //   int64 proposal_id = 2;
+        //   bool is_add_approval = 3;
+        let (proposal_id, is_add_approval) = self.parse_proposal_approve_contract(&transaction.data)?;
+
+        info!(
+            "ProposalApprove: id={}, is_add={}",
+            proposal_id, is_add_approval
+        );
+
+        // 3. Get proposal
+        let mut proposal = storage_adapter.get_proposal(proposal_id)
+            .map_err(|e| format!("Failed to get proposal: {}", e))?
+            .ok_or_else(|| format!("Proposal {} does not exist", proposal_id))?;
+
+        // 4. Validate proposal state is PENDING (0)
+        if proposal.state != 0 {
+            warn!("Proposal {} has already been processed, state={}", proposal_id, proposal.state);
+            return Err("Proposal has already been processed".to_string());
+        }
+
+        // 5. Build owner address in 21-byte format for comparison
+        let mut owner_address_bytes = Vec::with_capacity(21);
+        owner_address_bytes.push(0x41);
+        owner_address_bytes.extend_from_slice(owner.as_slice());
+
+        // 6. Add or remove approval
+        if is_add_approval {
+            // Check if already approved
+            if proposal.approvals.iter().any(|a| a == &owner_address_bytes) {
+                warn!("Witness {} has already approved proposal {}", owner_tron, proposal_id);
+                return Err("Witness has already approved".to_string());
+            }
+            proposal.approvals.push(owner_address_bytes);
+            info!("Added approval from {} to proposal {}", owner_tron, proposal_id);
+        } else {
+            // Remove approval
+            let original_len = proposal.approvals.len();
+            proposal.approvals.retain(|a| a != &owner_address_bytes);
+            if proposal.approvals.len() == original_len {
+                warn!("Witness {} has not approved proposal {}", owner_tron, proposal_id);
+                return Err("Witness has not approved".to_string());
+            }
+            info!("Removed approval from {} to proposal {}", owner_tron, proposal_id);
+        }
+
+        // 7. Persist updated proposal
+        storage_adapter.put_proposal(&proposal)
+            .map_err(|e| format!("Failed to persist proposal: {}", e))?;
+
+        info!(
+            "ProposalApprove completed: id={}, approvals={}",
+            proposal_id, proposal.approvals.len()
+        );
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            logs: Vec::new(),
+            state_changes: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse ProposalApproveContract from protobuf bytes
+    /// ProposalApproveContract:
+    ///   bytes owner_address = 1;
+    ///   int64 proposal_id = 2;
+    ///   bool is_add_approval = 3;
+    fn parse_proposal_approve_contract(&self, data: &[u8]) -> Result<(i64, bool), String> {
+        let mut proposal_id: Option<i64> = None;
+        let mut is_add_approval = true; // Default to true
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address - skip
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                (2, 0) => {
+                    // proposal_id (int64, varint)
+                    let (v, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read proposal_id: {}", e))?;
+                    pos += bytes_read;
+                    proposal_id = Some(v as i64);
+                }
+                (3, 0) => {
+                    // is_add_approval (bool, varint)
+                    let (v, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read is_add_approval: {}", e))?;
+                    pos += bytes_read;
+                    is_add_approval = v != 0;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        let id = proposal_id.ok_or("Missing proposal_id")?;
+        Ok((id, is_add_approval))
+    }
+
+    /// Execute a PROPOSAL_DELETE_CONTRACT
+    /// Cancels a proposal (only by the proposer)
+    ///
+    /// Java reference: ProposalDeleteActuator.java
+    fn execute_proposal_delete_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::TronExecutionResult;
+        use prost::Message;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        info!("ProposalDelete owner={}", owner_tron);
+
+        // 1. Parse ProposalDeleteContract
+        // ProposalDeleteContract:
+        //   bytes owner_address = 1;
+        //   int64 proposal_id = 2;
+        let proposal_id = self.parse_proposal_delete_contract(&transaction.data)?;
+
+        info!("ProposalDelete: id={}", proposal_id);
+
+        // 2. Get proposal
+        let mut proposal = storage_adapter.get_proposal(proposal_id)
+            .map_err(|e| format!("Failed to get proposal: {}", e))?
+            .ok_or_else(|| format!("Proposal {} does not exist", proposal_id))?;
+
+        // 3. Validate owner is the proposer
+        let mut owner_address_bytes = Vec::with_capacity(21);
+        owner_address_bytes.push(0x41);
+        owner_address_bytes.extend_from_slice(owner.as_slice());
+
+        if proposal.proposer_address != owner_address_bytes {
+            warn!(
+                "Account {} is not the proposer of proposal {}",
+                owner_tron, proposal_id
+            );
+            return Err("Only the proposer can delete the proposal".to_string());
+        }
+
+        // 4. Validate proposal state is PENDING (0)
+        if proposal.state != 0 {
+            warn!("Proposal {} has already been processed, state={}", proposal_id, proposal.state);
+            return Err("Proposal has already been processed".to_string());
+        }
+
+        // 5. Set state to CANCELED (3)
+        proposal.state = 3;
+
+        // 6. Persist updated proposal
+        storage_adapter.put_proposal(&proposal)
+            .map_err(|e| format!("Failed to persist proposal: {}", e))?;
+
+        info!("ProposalDelete completed: id={}, state=CANCELED", proposal_id);
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            logs: Vec::new(),
+            state_changes: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse ProposalDeleteContract from protobuf bytes
+    /// ProposalDeleteContract:
+    ///   bytes owner_address = 1;
+    ///   int64 proposal_id = 2;
+    fn parse_proposal_delete_contract(&self, data: &[u8]) -> Result<i64, String> {
+        let mut proposal_id: Option<i64> = None;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address - skip
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                (2, 0) => {
+                    // proposal_id (int64, varint)
+                    let (v, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read proposal_id: {}", e))?;
+                    pos += bytes_read;
+                    proposal_id = Some(v as i64);
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        proposal_id.ok_or_else(|| "Missing proposal_id".to_string())
     }
 
     /// Execute an ASSET_ISSUE_CONTRACT (TRC-10 token issuance)

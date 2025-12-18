@@ -179,6 +179,31 @@ pub struct RemoteExecutionConfig {
     /// Default: false (Rust only computes, Java apply handles persistence)
     /// When true: Rust writes to storage AND returns changes (legacy behavior, risk of double-write)
     pub rust_persist_enabled: bool,
+
+    // === Phase 2.A: Proposal Contracts (16/17/18) ===
+    //
+    // Proposal contracts are governance operations for network parameter changes.
+    // They have minimal dependencies (ProposalStore, WitnessStore, DynamicPropertiesStore)
+    // and don't require complex Account field mutations, making them ideal first candidates.
+
+    /// Enable PROPOSAL_CREATE_CONTRACT (type 16) execution
+    /// Creates new proposals with parameters, expiration time, and initial state
+    /// Default: false for safe rollout
+    pub proposal_create_enabled: bool,
+
+    /// Enable PROPOSAL_APPROVE_CONTRACT (type 17) execution
+    /// Allows witnesses to add/remove their approval from proposals
+    /// Default: false for safe rollout
+    pub proposal_approve_enabled: bool,
+
+    /// Enable PROPOSAL_DELETE_CONTRACT (type 18) execution
+    /// Allows proposal creator to cancel their proposal before expiration
+    /// Default: false for safe rollout
+    pub proposal_delete_enabled: bool,
+
+    /// Proposal expiration time in milliseconds (matches CommonParameter.getProposalExpireTime())
+    /// Default: 3 days = 259200000 ms
+    pub proposal_expire_time_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,6 +338,12 @@ impl Config {
         // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
         builder = builder.set_default("execution.remote.rust_persist_enabled", false)?;
 
+        // Phase 2.A: Proposal contracts (16/17/18)
+        builder = builder.set_default("execution.remote.proposal_create_enabled", false)?;
+        builder = builder.set_default("execution.remote.proposal_approve_enabled", false)?;
+        builder = builder.set_default("execution.remote.proposal_delete_enabled", false)?;
+        builder = builder.set_default("execution.remote.proposal_expire_time_ms", 259200000u64)?; // 3 days
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -340,6 +371,11 @@ impl Default for RemoteExecutionConfig {
             delegation_reward_enabled: false, // Default false for safe rollout
             // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
             rust_persist_enabled: false,
+            // Phase 2.A: Proposal contracts (16/17/18)
+            proposal_create_enabled: false,  // Default false for safe rollout
+            proposal_approve_enabled: false, // Default false for safe rollout
+            proposal_delete_enabled: false,  // Default false for safe rollout
+            proposal_expire_time_ms: 259200000, // 3 days in milliseconds
         }
     }
 } 

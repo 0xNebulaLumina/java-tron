@@ -1777,6 +1777,174 @@ impl EngineBackedEvmStateStore {
         );
         Ok(votes)
     }
+
+    // =========================================================================
+    // Proposal Store Access Methods (Phase 2.A)
+    // =========================================================================
+    // These methods provide access to the proposal store for governance operations.
+    // Java reference: ProposalStore.java, ProposalCapsule.java
+
+    /// Get the database name for proposal store
+    fn proposal_database(&self) -> &str {
+        db_names::governance::PROPOSAL
+    }
+
+    /// Generate key for proposal store: 8-byte big-endian proposal ID
+    /// Java reference: ProposalCapsule.createDbKey() -> ByteArray.fromLong(proposalId)
+    fn proposal_key(&self, proposal_id: i64) -> Vec<u8> {
+        use super::key_helpers::proposal_key;
+        proposal_key(proposal_id)
+    }
+
+    /// Get proposal by ID
+    /// Returns the raw Proposal protobuf bytes
+    pub fn get_proposal(&self, proposal_id: i64) -> Result<Option<crate::protocol::Proposal>> {
+        use crate::protocol::Proposal;
+        let key = self.proposal_key(proposal_id);
+        tracing::debug!("Getting proposal {}, key: {}", proposal_id, hex::encode(&key));
+
+        match self.storage_engine.get(self.proposal_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found proposal data, length: {}", data.len());
+                match Proposal::decode(data.as_slice()) {
+                    Ok(proposal) => {
+                        tracing::debug!(
+                            "Decoded proposal {} - proposer: {}, state: {:?}, approvals: {}",
+                            proposal.proposal_id,
+                            hex::encode(&proposal.proposer_address),
+                            proposal.state,
+                            proposal.approvals.len()
+                        );
+                        Ok(Some(proposal))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to decode proposal {}: {}", proposal_id, e);
+                        Err(anyhow::anyhow!("Failed to decode proposal: {}", e))
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("Proposal {} not found", proposal_id);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store proposal
+    pub fn put_proposal(&self, proposal: &crate::protocol::Proposal) -> Result<()> {
+        let key = self.proposal_key(proposal.proposal_id);
+        let data = proposal.encode_to_vec();
+
+        tracing::debug!(
+            "Storing proposal {} - proposer: {}, state: {:?}, approvals: {}, key: {}",
+            proposal.proposal_id,
+            hex::encode(&proposal.proposer_address),
+            proposal.state,
+            proposal.approvals.len(),
+            hex::encode(&key)
+        );
+
+        self.storage_engine.put(self.proposal_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Check if proposal exists
+    pub fn has_proposal(&self, proposal_id: i64) -> Result<bool> {
+        let key = self.proposal_key(proposal_id);
+        match self.storage_engine.get(self.proposal_database(), &key)? {
+            Some(_) => Ok(true),
+            None => Ok(false),
+        }
+    }
+
+    // --- Dynamic Properties for Proposals ---
+
+    /// Get LATEST_PROPOSAL_NUM dynamic property
+    /// Returns the highest proposal ID that has been created
+    /// Default: 0 if not found
+    pub fn get_latest_proposal_num(&self) -> Result<i64> {
+        let key = b"LATEST_PROPOSAL_NUM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let num = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("LATEST_PROPOSAL_NUM: {}", num);
+                    Ok(num)
+                } else {
+                    tracing::warn!("LATEST_PROPOSAL_NUM has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("LATEST_PROPOSAL_NUM not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Set LATEST_PROPOSAL_NUM dynamic property
+    pub fn set_latest_proposal_num(&self, num: i64) -> Result<()> {
+        let key = b"LATEST_PROPOSAL_NUM";
+        let data = num.to_be_bytes();
+        tracing::debug!("Setting LATEST_PROPOSAL_NUM to {}", num);
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Get NEXT_MAINTENANCE_TIME dynamic property
+    /// Returns the timestamp (milliseconds) of the next maintenance period
+    /// Default: 0 if not found
+    pub fn get_next_maintenance_time(&self) -> Result<i64> {
+        let key = b"NEXT_MAINTENANCE_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let time = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("NEXT_MAINTENANCE_TIME: {}", time);
+                    Ok(time)
+                } else {
+                    tracing::warn!("NEXT_MAINTENANCE_TIME has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("NEXT_MAINTENANCE_TIME not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get MAINTENANCE_TIME_INTERVAL dynamic property
+    /// Returns the interval (milliseconds) between maintenance periods
+    /// Default: 21600000 (6 hours) if not found
+    pub fn get_maintenance_time_interval(&self) -> Result<i64> {
+        let key = b"MAINTENANCE_TIME_INTERVAL";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let interval = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("MAINTENANCE_TIME_INTERVAL: {}", interval);
+                    Ok(interval)
+                } else {
+                    tracing::warn!("MAINTENANCE_TIME_INTERVAL has invalid length: {}", data.len());
+                    Ok(21600000) // 6 hours in milliseconds
+                }
+            }
+            None => {
+                tracing::debug!("MAINTENANCE_TIME_INTERVAL not found, returning default 21600000");
+                Ok(21600000) // 6 hours in milliseconds
+            }
+        }
+    }
 }
 
 impl EvmStateStore for EngineBackedEvmStateStore {
