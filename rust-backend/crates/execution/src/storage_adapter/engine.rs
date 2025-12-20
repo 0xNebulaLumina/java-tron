@@ -836,6 +836,126 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Add to TOTAL_NET_WEIGHT dynamic property
+    /// Used when canceling unfreezeV2 to re-freeze bandwidth
+    pub fn add_total_net_weight(&self, delta: i64) -> Result<()> {
+        let current = self.get_total_net_weight()?;
+        let new_value = current.checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_net_weight"))?;
+        let key = b"TOTAL_NET_WEIGHT";
+        let data = new_value.to_be_bytes();
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Get TOTAL_ENERGY_WEIGHT dynamic property
+    /// Default: 0
+    pub fn get_total_energy_weight(&self) -> Result<i64> {
+        let key = b"TOTAL_ENERGY_WEIGHT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Add to TOTAL_ENERGY_WEIGHT dynamic property
+    /// Used when canceling unfreezeV2 to re-freeze energy
+    pub fn add_total_energy_weight(&self, delta: i64) -> Result<()> {
+        let current = self.get_total_energy_weight()?;
+        let new_value = current.checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_energy_weight"))?;
+        let key = b"TOTAL_ENERGY_WEIGHT";
+        let data = new_value.to_be_bytes();
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Get TOTAL_TRON_POWER_WEIGHT dynamic property
+    /// Default: 0
+    pub fn get_total_tron_power_weight(&self) -> Result<i64> {
+        let key = b"TOTAL_TRON_POWER_WEIGHT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Add to TOTAL_TRON_POWER_WEIGHT dynamic property
+    /// Used when canceling unfreezeV2 to re-freeze tron power
+    pub fn add_total_tron_power_weight(&self, delta: i64) -> Result<()> {
+        let current = self.get_total_tron_power_weight()?;
+        let new_value = current.checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_tron_power_weight"))?;
+        let key = b"TOTAL_TRON_POWER_WEIGHT";
+        let data = new_value.to_be_bytes();
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Check ALLOW_CANCEL_ALL_UNFREEZE_V2 dynamic property
+    /// Returns true if CancelAllUnfreezeV2 is enabled
+    /// Default: false
+    pub fn support_allow_cancel_all_unfreeze_v2(&self) -> Result<bool> {
+        let key = b"ALLOW_CANCEL_ALL_UNFREEZE_V2";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val > 0)
+                } else if !data.is_empty() {
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(false)
+                }
+            },
+            None => Ok(false) // Default disabled
+        }
+    }
+
+    /// Check SUPPORT_DR dynamic property (delegate resource)
+    /// Returns true if resource delegation is enabled
+    /// Default: false
+    pub fn support_dr(&self) -> Result<bool> {
+        let key = b"ALLOW_DELEGATE_RESOURCE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val > 0)
+                } else if !data.is_empty() {
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(false)
+                }
+            },
+            None => Ok(false) // Default disabled
+        }
+    }
+
     /// Get TOTAL_ENERGY_CURRENT_LIMIT dynamic property (current global energy limit)
     /// Default: 50_000_000_000 (parity with early mainnet defaults)
     pub fn get_total_energy_limit(&self) -> Result<i64> {
@@ -2247,6 +2367,239 @@ impl EngineBackedEvmStateStore {
         // Create default empty ABI
         let default_abi = crate::protocol::smart_contract::Abi::default();
         self.put_abi(contract_address, &default_abi)
+    }
+
+    // ==========================================================================
+    // Phase 2.D: DelegatedResource and DelegatedResourceAccountIndex Methods
+    // ==========================================================================
+    //
+    // DelegatedResourceStore: Stores delegation records between accounts
+    // DelegatedResourceAccountIndexStore: Stores index of delegation relationships
+    // Java reference: DelegatedResourceStore.java, DelegatedResourceAccountIndexStore.java
+    //
+    // Key format for DelegatedResourceStore (V2):
+    //   DELEGATED_RESOURCE_V2_KEY_PREFIX (0x01) + from_address (21 bytes) + to_address (21 bytes) = 43 bytes
+    //
+    // Key format for DelegatedResourceAccountIndexStore (V2):
+    //   FROM_PREFIX (0x03) or TO_PREFIX (0x04) + address (21 bytes) = 22 bytes
+
+    /// Get the database name for DelegatedResource store
+    fn delegated_resource_database(&self) -> &str {
+        db_names::delegation::DELEGATED_RESOURCE
+    }
+
+    /// Get the database name for DelegatedResourceAccountIndex store
+    fn delegated_resource_account_index_database(&self) -> &str {
+        db_names::delegation::DELEGATED_RESOURCE_ACCOUNT_INDEX
+    }
+
+    /// Create V2 key for DelegatedResource store (from -> to)
+    fn delegated_resource_key_v2(&self, from: &Address, to: &Address) -> Vec<u8> {
+        use super::key_helpers::delegated_resource;
+        let from_tron = self.to_tron_address_21(from);
+        let to_tron = self.to_tron_address_21(to);
+        delegated_resource::create_db_key_v2_from(&from_tron, &to_tron)
+    }
+
+    /// Convert 20-byte EVM address to 21-byte TRON address
+    fn to_tron_address_21(&self, address: &Address) -> [u8; 21] {
+        let mut tron_addr = [0u8; 21];
+        tron_addr[0] = 0x41;
+        tron_addr[1..].copy_from_slice(address.as_slice());
+        tron_addr
+    }
+
+    /// Delegate resource from owner to receiver
+    /// Updates DelegatedResourceStore with the delegation record
+    pub fn delegate_resource(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        is_bandwidth: bool,
+        balance: i64,
+        lock: bool,
+        expire_time: i64,
+    ) -> Result<()> {
+        let key = self.delegated_resource_key_v2(owner, receiver);
+        tracing::debug!("Delegating resource: from={}, to={}, is_bw={}, balance={}, lock={}, expire={}",
+                       hex::encode(owner), hex::encode(receiver), is_bandwidth, balance, lock, expire_time);
+
+        // Get or create DelegatedResource
+        let mut dr = match self.storage_engine.get(self.delegated_resource_database(), &key)? {
+            Some(data) => {
+                crate::protocol::DelegatedResource::decode(&data[..])
+                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?
+            }
+            None => {
+                // Create new record
+                crate::protocol::DelegatedResource {
+                    from: self.to_tron_address_21(owner).to_vec(),
+                    to: self.to_tron_address_21(receiver).to_vec(),
+                    frozen_balance_for_bandwidth: 0,
+                    frozen_balance_for_energy: 0,
+                    expire_time_for_bandwidth: 0,
+                    expire_time_for_energy: 0,
+                }
+            }
+        };
+
+        // Update based on resource type
+        if is_bandwidth {
+            dr.frozen_balance_for_bandwidth += balance;
+            if lock && expire_time > dr.expire_time_for_bandwidth {
+                dr.expire_time_for_bandwidth = expire_time;
+            }
+        } else {
+            dr.frozen_balance_for_energy += balance;
+            if lock && expire_time > dr.expire_time_for_energy {
+                dr.expire_time_for_energy = expire_time;
+            }
+        }
+
+        // Persist
+        let data = dr.encode_to_vec();
+        self.storage_engine.put(self.delegated_resource_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Undelegate resource (reclaim from receiver back to owner)
+    pub fn undelegate_resource(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        is_bandwidth: bool,
+        balance: i64,
+        _now: i64,
+    ) -> Result<()> {
+        let key = self.delegated_resource_key_v2(owner, receiver);
+        tracing::debug!("Undelegating resource: from={}, to={}, is_bw={}, balance={}",
+                       hex::encode(owner), hex::encode(receiver), is_bandwidth, balance);
+
+        // Get existing DelegatedResource
+        let data = self.storage_engine.get(self.delegated_resource_database(), &key)?
+            .ok_or_else(|| anyhow::anyhow!("DelegatedResource not found"))?;
+
+        let mut dr = crate::protocol::DelegatedResource::decode(&data[..])
+            .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+
+        // Reduce balance
+        if is_bandwidth {
+            dr.frozen_balance_for_bandwidth = (dr.frozen_balance_for_bandwidth - balance).max(0);
+        } else {
+            dr.frozen_balance_for_energy = (dr.frozen_balance_for_energy - balance).max(0);
+        }
+
+        // If both balances are 0, delete the record; otherwise, persist
+        if dr.frozen_balance_for_bandwidth == 0 && dr.frozen_balance_for_energy == 0 {
+            self.storage_engine.delete(self.delegated_resource_database(), &key)?;
+        } else {
+            let data = dr.encode_to_vec();
+            self.storage_engine.put(self.delegated_resource_database(), &key, &data)?;
+        }
+
+        Ok(())
+    }
+
+    /// Get available (unlocked) delegate balance for undelegation
+    /// Returns the balance that can be undelegated (considering lock expiration)
+    pub fn get_available_delegate_balance(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        is_bandwidth: bool,
+        now: i64,
+    ) -> Result<i64> {
+        let key = self.delegated_resource_key_v2(owner, receiver);
+
+        match self.storage_engine.get(self.delegated_resource_database(), &key)? {
+            Some(data) => {
+                let dr = crate::protocol::DelegatedResource::decode(&data[..])
+                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+
+                if is_bandwidth {
+                    // Check if lock has expired
+                    if dr.expire_time_for_bandwidth > now {
+                        Ok(0) // Still locked
+                    } else {
+                        Ok(dr.frozen_balance_for_bandwidth)
+                    }
+                } else {
+                    if dr.expire_time_for_energy > now {
+                        Ok(0) // Still locked
+                    } else {
+                        Ok(dr.frozen_balance_for_energy)
+                    }
+                }
+            }
+            None => Ok(0) // No delegation exists
+        }
+    }
+
+    /// Update DelegatedResourceAccountIndex for a delegation
+    /// Adds receiver to owner's "to" list and owner to receiver's "from" list
+    pub fn delegate_resource_account_index(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        timestamp: i64,
+    ) -> Result<()> {
+        let owner_tron = self.to_tron_address_21(owner);
+        let receiver_tron = self.to_tron_address_21(receiver);
+
+        // Update owner's "to" list
+        self.add_to_delegated_index(&owner_tron, &receiver_tron, false, timestamp)?;
+
+        // Update receiver's "from" list
+        self.add_to_delegated_index(&receiver_tron, &owner_tron, true, timestamp)?;
+
+        Ok(())
+    }
+
+    /// Add an address to a delegated resource account index
+    /// is_from: true means adding to "from" list (0x03 prefix), false means "to" list (0x04 prefix)
+    fn add_to_delegated_index(
+        &self,
+        account: &[u8; 21],
+        related: &[u8; 21],
+        is_from: bool,
+        timestamp: i64,
+    ) -> Result<()> {
+        use super::key_helpers::delegated_resource_account_index;
+
+        let key = if is_from {
+            delegated_resource_account_index::create_db_key_v2_from(account)
+        } else {
+            delegated_resource_account_index::create_db_key_v2_to(account)
+        };
+
+        // Get or create index
+        let mut index = match self.storage_engine.get(self.delegated_resource_account_index_database(), &key)? {
+            Some(data) => {
+                crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
+                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?
+            }
+            None => {
+                crate::protocol::DelegatedResourceAccountIndex {
+                    account: account.to_vec(),
+                    from_accounts: Vec::new(),
+                    to_accounts: Vec::new(),
+                    timestamp: 0,
+                }
+            }
+        };
+
+        // Add to appropriate list if not already present
+        let list = if is_from { &mut index.from_accounts } else { &mut index.to_accounts };
+        if !list.iter().any(|a| a == related) {
+            list.push(related.to_vec());
+        }
+        index.timestamp = timestamp;
+
+        // Persist
+        let data = index.encode_to_vec();
+        self.storage_engine.put(self.delegated_resource_account_index_database(), &key, &data)?;
+
+        Ok(())
     }
 
     // ==========================================================================

@@ -364,6 +364,35 @@ impl BackendService {
                 debug!("Executing UPDATE_BROKERAGE_CONTRACT");
                 self.execute_update_brokerage_contract(storage_adapter, transaction, context)
             },
+            // Phase 2.D: Resource/Freeze/Delegation contracts (56/57/58/59)
+            Some(tron_backend_execution::TronContractType::WithdrawExpireUnfreezeContract) => {
+                if !remote_config.withdraw_expire_unfreeze_enabled {
+                    return Err("WITHDRAW_EXPIRE_UNFREEZE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing WITHDRAW_EXPIRE_UNFREEZE_CONTRACT");
+                self.execute_withdraw_expire_unfreeze_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::DelegateResourceContract) => {
+                if !remote_config.delegate_resource_enabled {
+                    return Err("DELEGATE_RESOURCE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing DELEGATE_RESOURCE_CONTRACT");
+                self.execute_delegate_resource_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::UndelegateResourceContract) => {
+                if !remote_config.undelegate_resource_enabled {
+                    return Err("UNDELEGATE_RESOURCE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing UNDELEGATE_RESOURCE_CONTRACT");
+                self.execute_undelegate_resource_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::CancelAllUnfreezeV2Contract) => {
+                if !remote_config.cancel_all_unfreeze_v2_enabled {
+                    return Err("CANCEL_ALL_UNFREEZE_V2_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing CANCEL_ALL_UNFREEZE_V2_CONTRACT");
+                self.execute_cancel_all_unfreeze_v2_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -3903,6 +3932,1036 @@ impl BackendService {
 
         Ok(contract_address)
     }
+
+    // ========================================================================
+    // Phase 2.D: Resource/Freeze/Delegation Contracts (56/57/58/59)
+    // ========================================================================
+
+    /// Execute WITHDRAW_EXPIRE_UNFREEZE_CONTRACT (type 56)
+    /// Withdraws TRX from expired unfrozenV2 entries
+    ///
+    /// Java oracle: WithdrawExpireUnfreezeActuator.java
+    /// Receipt: withdraw_expire_amount
+    fn execute_withdraw_expire_unfreeze_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use contracts::proto::TransactionResultBuilder;
+
+        let owner = transaction.from;
+        let owner_tron = add_tron_address_prefix(&owner);
+
+        debug!("WithdrawExpireUnfreeze: owner={}", hex::encode(&owner_tron));
+
+        // 1. Gate check: supportUnfreezeDelay() must be true
+        let support_unfreeze_delay = storage_adapter.support_unfreeze_delay()
+            .map_err(|e| format!("Failed to check supportUnfreezeDelay: {}", e))?;
+        if !support_unfreeze_delay {
+            return Err("Not support WithdrawExpireUnfreeze transaction, need to be opened by the committee".to_string());
+        }
+
+        // 2. Validate owner account exists
+        let account_proto = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&owner_tron)))?;
+
+        // 3. Get latest block timestamp
+        let now = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
+
+        // 4. Calculate total withdrawable amount from expired unfrozenV2 entries
+        let unfrozen_v2_list = &account_proto.unfrozen_v2;
+        let mut total_withdraw: i64 = 0;
+        let mut remaining_unfrozen: Vec<tron_backend_execution::protocol::account::UnFreezeV2> = Vec::new();
+
+        for entry in unfrozen_v2_list.iter() {
+            if entry.unfreeze_expire_time <= now as i64 {
+                // Expired - add to withdraw amount
+                total_withdraw = total_withdraw.checked_add(entry.unfreeze_amount)
+                    .ok_or("Overflow calculating withdraw amount")?;
+            } else {
+                // Not expired - keep in list
+                remaining_unfrozen.push(entry.clone());
+            }
+        }
+
+        // 5. Validate there's something to withdraw
+        if total_withdraw <= 0 {
+            return Err("no unFreeze balance to withdraw".to_string());
+        }
+
+        // 6. Check for overflow
+        let new_balance = account_proto.balance.checked_add(total_withdraw)
+            .ok_or("Balance overflow")?;
+
+        // 7. Update account: balance += total_withdraw, clear and replace unfrozenV2 list
+        let mut updated_account = account_proto.clone();
+        updated_account.balance = new_balance;
+        updated_account.unfrozen_v2.clear();
+        for entry in remaining_unfrozen {
+            updated_account.unfrozen_v2.push(entry);
+        }
+
+        // 8. Persist updated account
+        storage_adapter.put_account_proto(&owner, &updated_account)
+            .map_err(|e| format!("Failed to persist account: {}", e))?;
+
+        // 9. Build state change for CSV parity
+        let old_account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(account_proto.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+        let new_account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(new_balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(old_account_info),
+            new_account: Some(new_account_info),
+        }];
+
+        // 10. Build receipt with withdraw_expire_amount
+        let receipt_bytes = TransactionResultBuilder::new()
+            .with_withdraw_expire_amount(total_withdraw)
+            .build();
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("WithdrawExpireUnfreeze: withdrew {} SUN, remaining entries: {}",
+               total_withdraw, updated_account.unfrozen_v2.len());
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: Some(receipt_bytes),
+        })
+    }
+
+    /// Execute CANCEL_ALL_UNFREEZE_V2_CONTRACT (type 59)
+    /// Cancels all pending unfreezeV2 entries, re-freezing unexpired and withdrawing expired
+    ///
+    /// Java oracle: CancelAllUnfreezeV2Actuator.java
+    /// Receipt: withdraw_expire_amount + cancel_unfreezeV2_amount map
+    fn execute_cancel_all_unfreeze_v2_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use contracts::proto::TransactionResultBuilder;
+
+        let owner = transaction.from;
+        let owner_tron = add_tron_address_prefix(&owner);
+
+        debug!("CancelAllUnfreezeV2: owner={}", hex::encode(&owner_tron));
+
+        // 1. Gate check: supportAllowCancelAllUnfreezeV2() must be true
+        let allow_cancel = storage_adapter.support_allow_cancel_all_unfreeze_v2()
+            .map_err(|e| format!("Failed to check supportAllowCancelAllUnfreezeV2: {}", e))?;
+        if !allow_cancel {
+            return Err("Not support CancelAllUnfreezeV2 transaction, need to be opened by the committee".to_string());
+        }
+
+        // 2. Validate owner account exists
+        let account_proto = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&owner_tron)))?;
+
+        // 3. Get latest block timestamp
+        let now = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
+
+        // 4. Validate there are unfrozenV2 entries to process
+        let unfrozen_v2_list = &account_proto.unfrozen_v2;
+        if unfrozen_v2_list.is_empty() {
+            return Err("No unfreezeV2 list to cancel".to_string());
+        }
+
+        // 5. Process each unfrozenV2 entry:
+        //    - Expired (expire_time <= now): add to withdraw_expire_amount
+        //    - Unexpired: re-freeze and add to cancel map
+        let mut withdraw_expire_amount: i64 = 0;
+        let mut cancel_bandwidth: i64 = 0;
+        let mut cancel_energy: i64 = 0;
+        let mut cancel_tron_power: i64 = 0;
+
+        // Track delta for total weights
+        let mut net_weight_delta: i64 = 0;
+        let mut energy_weight_delta: i64 = 0;
+        let mut tp_weight_delta: i64 = 0;
+
+        let mut updated_account = account_proto.clone();
+
+        for entry in unfrozen_v2_list.iter() {
+            if entry.unfreeze_expire_time <= now as i64 {
+                // Expired - add to withdraw amount
+                withdraw_expire_amount = withdraw_expire_amount.checked_add(entry.unfreeze_amount)
+                    .ok_or("Overflow calculating withdraw amount")?;
+            } else {
+                // Unexpired - re-freeze
+                let resource_type = entry.r#type; // 0=BANDWIDTH, 1=ENERGY, 2=TRON_POWER
+                let amount = entry.unfreeze_amount;
+
+                match resource_type {
+                    0 => {
+                        // BANDWIDTH
+                        cancel_bandwidth += amount;
+                        // Re-freeze: add to frozenV2 bandwidth
+                        Self::add_frozen_v2_bandwidth(&mut updated_account, amount);
+                        // Update weight delta (amount / TRX_PRECISION)
+                        let weight_before = Self::get_frozen_v2_balance_with_delegated_bandwidth(&account_proto) / TRX_PRECISION as i64;
+                        let weight_after = Self::get_frozen_v2_balance_with_delegated_bandwidth(&updated_account) / TRX_PRECISION as i64;
+                        net_weight_delta += weight_after - weight_before;
+                    }
+                    1 => {
+                        // ENERGY
+                        cancel_energy += amount;
+                        Self::add_frozen_v2_energy(&mut updated_account, amount);
+                        let weight_before = Self::get_frozen_v2_balance_with_delegated_energy(&account_proto) / TRX_PRECISION as i64;
+                        let weight_after = Self::get_frozen_v2_balance_with_delegated_energy(&updated_account) / TRX_PRECISION as i64;
+                        energy_weight_delta += weight_after - weight_before;
+                    }
+                    2 => {
+                        // TRON_POWER
+                        cancel_tron_power += amount;
+                        Self::add_frozen_v2_tron_power(&mut updated_account, amount);
+                        let weight_before = Self::get_tron_power_frozen_v2_balance(&account_proto) / TRX_PRECISION as i64;
+                        let weight_after = Self::get_tron_power_frozen_v2_balance(&updated_account) / TRX_PRECISION as i64;
+                        tp_weight_delta += weight_after - weight_before;
+                    }
+                    _ => {
+                        warn!("Unknown resource type {} in unfrozenV2", resource_type);
+                    }
+                }
+            }
+        }
+
+        // 6. Clear unfrozenV2 list
+        updated_account.unfrozen_v2.clear();
+
+        // 7. Add expired amount to balance
+        if withdraw_expire_amount > 0 {
+            updated_account.balance = updated_account.balance.checked_add(withdraw_expire_amount)
+                .ok_or("Balance overflow")?;
+        }
+
+        // 8. Update total resource weights in DynamicPropertiesStore
+        if net_weight_delta != 0 {
+            storage_adapter.add_total_net_weight(net_weight_delta)
+                .map_err(|e| format!("Failed to update total net weight: {}", e))?;
+        }
+        if energy_weight_delta != 0 {
+            storage_adapter.add_total_energy_weight(energy_weight_delta)
+                .map_err(|e| format!("Failed to update total energy weight: {}", e))?;
+        }
+        if tp_weight_delta != 0 {
+            storage_adapter.add_total_tron_power_weight(tp_weight_delta)
+                .map_err(|e| format!("Failed to update total tron power weight: {}", e))?;
+        }
+
+        // 9. Persist updated account
+        storage_adapter.put_account_proto(&owner, &updated_account)
+            .map_err(|e| format!("Failed to persist account: {}", e))?;
+
+        // 10. Build state change for CSV parity
+        let old_account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(account_proto.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+        let new_account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(updated_account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(old_account_info),
+            new_account: Some(new_account_info),
+        }];
+
+        // 11. Build receipt with withdraw_expire_amount and cancel_unfreezeV2_amount map
+        let receipt_bytes = TransactionResultBuilder::new()
+            .with_withdraw_expire_amount(withdraw_expire_amount)
+            .with_cancel_unfreeze_v2_amounts(cancel_bandwidth, cancel_energy, cancel_tron_power)
+            .build();
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("CancelAllUnfreezeV2: withdrew={}, cancel_bw={}, cancel_energy={}, cancel_tp={}",
+               withdraw_expire_amount, cancel_bandwidth, cancel_energy, cancel_tron_power);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: Some(receipt_bytes),
+        })
+    }
+
+    /// Execute DELEGATE_RESOURCE_CONTRACT (type 57)
+    /// Delegates frozen resources (bandwidth/energy) to another account
+    ///
+    /// Java oracle: DelegateResourceActuator.java
+    fn execute_delegate_resource_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        let owner = transaction.from;
+        let owner_tron = add_tron_address_prefix(&owner);
+
+        // Parse contract data
+        let delegate_info = self.parse_delegate_resource_contract(&transaction.data)?;
+
+        let receiver_address = if delegate_info.receiver_address.len() == 21 {
+            revm_primitives::Address::from_slice(&delegate_info.receiver_address[1..])
+        } else if delegate_info.receiver_address.len() == 20 {
+            revm_primitives::Address::from_slice(&delegate_info.receiver_address)
+        } else {
+            return Err("Invalid receiver address length".to_string());
+        };
+        let receiver_tron = add_tron_address_prefix(&receiver_address);
+
+        debug!("DelegateResource: owner={}, receiver={}, balance={}, resource={}, lock={}, lock_period={}",
+               hex::encode(&owner_tron), hex::encode(&receiver_tron),
+               delegate_info.balance, delegate_info.resource, delegate_info.lock, delegate_info.lock_period);
+
+        // 1. Gate check: supportDR() must be true
+        let support_dr = storage_adapter.support_dr()
+            .map_err(|e| format!("Failed to check supportDR: {}", e))?;
+        if !support_dr {
+            return Err("No support for resource delegate".to_string());
+        }
+
+        // 2. Gate check: supportUnfreezeDelay() must be true
+        let support_unfreeze_delay = storage_adapter.support_unfreeze_delay()
+            .map_err(|e| format!("Failed to check supportUnfreezeDelay: {}", e))?;
+        if !support_unfreeze_delay {
+            return Err("Not support Delegate resource transaction, need to be opened by the committee".to_string());
+        }
+
+        // 3. Validate owner account exists
+        let owner_account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&owner_tron)))?;
+
+        // 4. Validate delegate balance >= 1 TRX
+        if delegate_info.balance < TRX_PRECISION as i64 {
+            return Err("delegateBalance must be greater than or equal to 1 TRX".to_string());
+        }
+
+        // 5. Validate receiver is different from owner
+        if owner == receiver_address {
+            return Err("receiverAddress must not be the same as ownerAddress".to_string());
+        }
+
+        // 6. Validate receiver exists
+        let receiver_account = storage_adapter.get_account_proto(&receiver_address)
+            .map_err(|e| format!("Failed to get receiver account: {}", e))?
+            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&receiver_tron)))?;
+
+        // 7. Validate receiver is not a contract
+        if receiver_account.r#type == 2 { // Contract type
+            return Err("Do not allow delegate resources to contract addresses".to_string());
+        }
+
+        // 8. Validate sufficient frozen balance for the resource type
+        match delegate_info.resource {
+            0 => { // BANDWIDTH
+                let frozen_v2_bandwidth = Self::get_frozen_v2_balance_for_bandwidth(&owner_account);
+                if frozen_v2_bandwidth < delegate_info.balance {
+                    return Err("delegateBalance must be less than or equal to available FreezeBandwidthV2 balance".to_string());
+                }
+            }
+            1 => { // ENERGY
+                let frozen_v2_energy = Self::get_frozen_v2_balance_for_energy(&owner_account);
+                if frozen_v2_energy < delegate_info.balance {
+                    return Err("delegateBalance must be less than or equal to available FreezeEnergyV2 balance".to_string());
+                }
+            }
+            _ => {
+                return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
+            }
+        }
+
+        // 9. Get timestamp and calculate expiration
+        let now = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
+
+        let lock_period = if delegate_info.lock {
+            if delegate_info.lock_period == 0 {
+                // Default lock period: DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL
+                // DELEGATE_PERIOD = 3 days in ms, BLOCK_PRODUCED_INTERVAL = 3000 ms
+                86400 // 3 days worth of blocks
+            } else {
+                delegate_info.lock_period
+            }
+        } else {
+            0
+        };
+        let expire_time = if delegate_info.lock {
+            now as i64 + lock_period * 3000 // BLOCK_PRODUCED_INTERVAL = 3000ms
+        } else {
+            0
+        };
+
+        // 10. Update owner account
+        let mut updated_owner = owner_account.clone();
+        match delegate_info.resource {
+            0 => { // BANDWIDTH
+                Self::add_delegated_frozen_v2_balance_for_bandwidth(&mut updated_owner, delegate_info.balance);
+                Self::add_frozen_v2_bandwidth(&mut updated_owner, -delegate_info.balance);
+            }
+            1 => { // ENERGY
+                Self::add_delegated_frozen_v2_balance_for_energy(&mut updated_owner, delegate_info.balance);
+                Self::add_frozen_v2_energy(&mut updated_owner, -delegate_info.balance);
+            }
+            _ => {}
+        }
+
+        // 11. Update receiver account
+        let mut updated_receiver = receiver_account.clone();
+        match delegate_info.resource {
+            0 => { // BANDWIDTH
+                Self::add_acquired_delegated_frozen_v2_balance_for_bandwidth(&mut updated_receiver, delegate_info.balance);
+            }
+            1 => { // ENERGY
+                Self::add_acquired_delegated_frozen_v2_balance_for_energy(&mut updated_receiver, delegate_info.balance);
+            }
+            _ => {}
+        }
+
+        // 12. Update/Create DelegatedResource record
+        storage_adapter.delegate_resource(
+            &owner,
+            &receiver_address,
+            delegate_info.resource == 0, // isBandwidth
+            delegate_info.balance,
+            delegate_info.lock,
+            expire_time,
+        ).map_err(|e| format!("Failed to update DelegatedResource: {}", e))?;
+
+        // 13. Update DelegatedResourceAccountIndex
+        storage_adapter.delegate_resource_account_index(
+            &owner,
+            &receiver_address,
+            now as i64,
+        ).map_err(|e| format!("Failed to update DelegatedResourceAccountIndex: {}", e))?;
+
+        // 14. Persist accounts
+        storage_adapter.put_account_proto(&owner, &updated_owner)
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+        storage_adapter.put_account_proto(&receiver_address, &updated_receiver)
+            .map_err(|e| format!("Failed to persist receiver account: {}", e))?;
+
+        // 15. Build state changes - track balance changes (even though TRX balance doesn't change)
+        let state_changes = vec![
+            TronStateChange::AccountChange {
+                address: owner,
+                old_account: Some(revm_primitives::AccountInfo {
+                    balance: revm_primitives::U256::from(owner_account.balance as u64),
+                    nonce: 0,
+                    code_hash: revm_primitives::B256::ZERO,
+                    code: None,
+                }),
+                new_account: Some(revm_primitives::AccountInfo {
+                    balance: revm_primitives::U256::from(updated_owner.balance as u64),
+                    nonce: 0,
+                    code_hash: revm_primitives::B256::ZERO,
+                    code: None,
+                }),
+            },
+            TronStateChange::AccountChange {
+                address: receiver_address,
+                old_account: Some(revm_primitives::AccountInfo {
+                    balance: revm_primitives::U256::from(receiver_account.balance as u64),
+                    nonce: 0,
+                    code_hash: revm_primitives::B256::ZERO,
+                    code: None,
+                }),
+                new_account: Some(revm_primitives::AccountInfo {
+                    balance: revm_primitives::U256::from(updated_receiver.balance as u64),
+                    nonce: 0,
+                    code_hash: revm_primitives::B256::ZERO,
+                    code: None,
+                }),
+            },
+        ];
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("DelegateResource: delegated {} SUN of resource {} from {} to {}",
+               delegate_info.balance, delegate_info.resource,
+               hex::encode(&owner_tron), hex::encode(&receiver_tron));
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Execute UNDELEGATE_RESOURCE_CONTRACT (type 58)
+    /// Reclaims delegated resources from a receiver
+    ///
+    /// Java oracle: UnDelegateResourceActuator.java
+    fn execute_undelegate_resource_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        let owner = transaction.from;
+        let owner_tron = add_tron_address_prefix(&owner);
+
+        // Parse contract data
+        let undelegate_info = self.parse_undelegate_resource_contract(&transaction.data)?;
+
+        let receiver_address = if undelegate_info.receiver_address.len() == 21 {
+            revm_primitives::Address::from_slice(&undelegate_info.receiver_address[1..])
+        } else if undelegate_info.receiver_address.len() == 20 {
+            revm_primitives::Address::from_slice(&undelegate_info.receiver_address)
+        } else {
+            return Err("Invalid receiver address length".to_string());
+        };
+        let receiver_tron = add_tron_address_prefix(&receiver_address);
+
+        debug!("UnDelegateResource: owner={}, receiver={}, balance={}, resource={}",
+               hex::encode(&owner_tron), hex::encode(&receiver_tron),
+               undelegate_info.balance, undelegate_info.resource);
+
+        // 1. Gate checks
+        let support_dr = storage_adapter.support_dr()
+            .map_err(|e| format!("Failed to check supportDR: {}", e))?;
+        if !support_dr {
+            return Err("No support for resource delegate".to_string());
+        }
+
+        let support_unfreeze_delay = storage_adapter.support_unfreeze_delay()
+            .map_err(|e| format!("Failed to check supportUnfreezeDelay: {}", e))?;
+        if !support_unfreeze_delay {
+            return Err("Not support unDelegate resource transaction, need to be opened by the committee".to_string());
+        }
+
+        // 2. Validate owner exists
+        let owner_account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&owner_tron)))?;
+
+        // 3. Validate balance > 0
+        if undelegate_info.balance <= 0 {
+            return Err("unDelegateBalance must be more than 0 TRX".to_string());
+        }
+
+        // 4. Validate receiver different from owner
+        if owner == receiver_address {
+            return Err("receiverAddress must not be the same as ownerAddress".to_string());
+        }
+
+        // 5. Get timestamp
+        let now = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
+
+        // 6. Check DelegatedResource exists and has sufficient balance
+        let delegate_balance = storage_adapter.get_available_delegate_balance(
+            &owner,
+            &receiver_address,
+            undelegate_info.resource == 0,
+            now as i64,
+        ).map_err(|e| format!("Failed to get delegated balance: {}", e))?;
+
+        if delegate_balance < undelegate_info.balance {
+            let resource_name = if undelegate_info.resource == 0 { "BANDWIDTH" } else { "Energy" };
+            return Err(format!("insufficient delegatedFrozenBalance({}), request={}, unlock_balance={}",
+                               resource_name, undelegate_info.balance, delegate_balance));
+        }
+
+        // 7. Get receiver account (might not exist if contract was destroyed)
+        let receiver_account_opt = storage_adapter.get_account_proto(&receiver_address)
+            .map_err(|e| format!("Failed to get receiver account: {}", e))?;
+
+        // 8. Update receiver if exists (reduce acquired balance)
+        let mut updated_receiver_opt = None;
+        if let Some(receiver_account) = receiver_account_opt.as_ref() {
+            let mut updated_receiver = receiver_account.clone();
+            match undelegate_info.resource {
+                0 => { // BANDWIDTH
+                    let current = Self::get_acquired_delegated_frozen_v2_balance_for_bandwidth(&updated_receiver);
+                    if current < undelegate_info.balance {
+                        // Edge case: contract suicide/re-create
+                        Self::set_acquired_delegated_frozen_v2_balance_for_bandwidth(&mut updated_receiver, 0);
+                    } else {
+                        Self::add_acquired_delegated_frozen_v2_balance_for_bandwidth(&mut updated_receiver, -undelegate_info.balance);
+                    }
+                }
+                1 => { // ENERGY
+                    let current = Self::get_acquired_delegated_frozen_v2_balance_for_energy(&updated_receiver);
+                    if current < undelegate_info.balance {
+                        Self::set_acquired_delegated_frozen_v2_balance_for_energy(&mut updated_receiver, 0);
+                    } else {
+                        Self::add_acquired_delegated_frozen_v2_balance_for_energy(&mut updated_receiver, -undelegate_info.balance);
+                    }
+                }
+                _ => {}
+            }
+            updated_receiver_opt = Some(updated_receiver);
+        }
+
+        // 9. Update DelegatedResourceStore
+        storage_adapter.undelegate_resource(
+            &owner,
+            &receiver_address,
+            undelegate_info.resource == 0,
+            undelegate_info.balance,
+            now as i64,
+        ).map_err(|e| format!("Failed to update DelegatedResource: {}", e))?;
+
+        // 10. Update owner account (add back to frozen, reduce delegated)
+        let mut updated_owner = owner_account.clone();
+        match undelegate_info.resource {
+            0 => { // BANDWIDTH
+                Self::add_delegated_frozen_v2_balance_for_bandwidth(&mut updated_owner, -undelegate_info.balance);
+                Self::add_frozen_v2_bandwidth(&mut updated_owner, undelegate_info.balance);
+            }
+            1 => { // ENERGY
+                Self::add_delegated_frozen_v2_balance_for_energy(&mut updated_owner, -undelegate_info.balance);
+                Self::add_frozen_v2_energy(&mut updated_owner, undelegate_info.balance);
+            }
+            _ => {}
+        }
+
+        // 11. Persist accounts
+        storage_adapter.put_account_proto(&owner, &updated_owner)
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+        if let Some(updated_receiver) = updated_receiver_opt.as_ref() {
+            storage_adapter.put_account_proto(&receiver_address, updated_receiver)
+                .map_err(|e| format!("Failed to persist receiver account: {}", e))?;
+        }
+
+        // 12. Build state changes
+        let mut state_changes = vec![
+            TronStateChange::AccountChange {
+                address: owner,
+                old_account: Some(revm_primitives::AccountInfo {
+                    balance: revm_primitives::U256::from(owner_account.balance as u64),
+                    nonce: 0,
+                    code_hash: revm_primitives::B256::ZERO,
+                    code: None,
+                }),
+                new_account: Some(revm_primitives::AccountInfo {
+                    balance: revm_primitives::U256::from(updated_owner.balance as u64),
+                    nonce: 0,
+                    code_hash: revm_primitives::B256::ZERO,
+                    code: None,
+                }),
+            },
+        ];
+
+        if let (Some(receiver_account), Some(updated_receiver)) = (receiver_account_opt.as_ref(), updated_receiver_opt.as_ref()) {
+            state_changes.push(TronStateChange::AccountChange {
+                address: receiver_address,
+                old_account: Some(revm_primitives::AccountInfo {
+                    balance: revm_primitives::U256::from(receiver_account.balance as u64),
+                    nonce: 0,
+                    code_hash: revm_primitives::B256::ZERO,
+                    code: None,
+                }),
+                new_account: Some(revm_primitives::AccountInfo {
+                    balance: revm_primitives::U256::from(updated_receiver.balance as u64),
+                    nonce: 0,
+                    code_hash: revm_primitives::B256::ZERO,
+                    code: None,
+                }),
+            });
+        }
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("UnDelegateResource: undelegated {} SUN of resource {} from {} back to {}",
+               undelegate_info.balance, undelegate_info.resource,
+               hex::encode(&receiver_tron), hex::encode(&owner_tron));
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse DelegateResourceContract from protobuf bytes
+    /// DelegateResourceContract:
+    ///   bytes owner_address = 1;
+    ///   ResourceCode resource = 2;
+    ///   int64 balance = 3;
+    ///   bytes receiver_address = 4;
+    ///   bool lock = 5;
+    ///   int64 lock_period = 6;
+    fn parse_delegate_resource_contract(&self, data: &[u8]) -> Result<DelegateResourceInfo, String> {
+        use contracts::proto::read_varint;
+
+        let mut receiver_address: Vec<u8> = vec![];
+        let mut balance: i64 = 0;
+        let mut resource: i32 = 0;
+        let mut lock: bool = false;
+        let mut lock_period: i64 = 0;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address - skip
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                (2, 0) => {
+                    // resource (ResourceCode enum, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read resource: {}", e))?;
+                    pos += bytes_read;
+                    resource = value as i32;
+                }
+                (3, 0) => {
+                    // balance (int64, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read balance: {}", e))?;
+                    pos += bytes_read;
+                    balance = value as i64;
+                }
+                (4, 2) => {
+                    // receiver_address
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid receiver_address length".to_string());
+                    }
+                    receiver_address = data[pos..end].to_vec();
+                    pos = end;
+                }
+                (5, 0) => {
+                    // lock (bool, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read lock: {}", e))?;
+                    pos += bytes_read;
+                    lock = value != 0;
+                }
+                (6, 0) => {
+                    // lock_period (int64, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read lock_period: {}", e))?;
+                    pos += bytes_read;
+                    lock_period = value as i64;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        if receiver_address.is_empty() {
+            return Err("receiver_address is required".to_string());
+        }
+
+        Ok(DelegateResourceInfo {
+            receiver_address,
+            balance,
+            resource,
+            lock,
+            lock_period,
+        })
+    }
+
+    /// Parse UnDelegateResourceContract from protobuf bytes
+    /// UnDelegateResourceContract:
+    ///   bytes owner_address = 1;
+    ///   ResourceCode resource = 2;
+    ///   int64 balance = 3;
+    ///   bytes receiver_address = 4;
+    fn parse_undelegate_resource_contract(&self, data: &[u8]) -> Result<UnDelegateResourceInfo, String> {
+        use contracts::proto::read_varint;
+
+        let mut receiver_address: Vec<u8> = vec![];
+        let mut balance: i64 = 0;
+        let mut resource: i32 = 0;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address - skip
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                (2, 0) => {
+                    // resource (ResourceCode enum, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read resource: {}", e))?;
+                    pos += bytes_read;
+                    resource = value as i32;
+                }
+                (3, 0) => {
+                    // balance (int64, varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read balance: {}", e))?;
+                    pos += bytes_read;
+                    balance = value as i64;
+                }
+                (4, 2) => {
+                    // receiver_address
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid receiver_address length".to_string());
+                    }
+                    receiver_address = data[pos..end].to_vec();
+                    pos = end;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        if receiver_address.is_empty() {
+            return Err("receiver_address is required".to_string());
+        }
+
+        Ok(UnDelegateResourceInfo {
+            receiver_address,
+            balance,
+            resource,
+        })
+    }
+
+    // ========================================================================
+    // Helper methods for Account frozen/delegated balance manipulation
+    // ========================================================================
+
+    /// Get frozenV2 balance for bandwidth
+    fn get_frozen_v2_balance_for_bandwidth(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.frozen_v2.iter()
+            .filter(|f| f.r#type == 0) // BANDWIDTH
+            .map(|f| f.amount)
+            .sum()
+    }
+
+    /// Get frozenV2 balance for energy
+    fn get_frozen_v2_balance_for_energy(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.frozen_v2.iter()
+            .filter(|f| f.r#type == 1) // ENERGY
+            .map(|f| f.amount)
+            .sum()
+    }
+
+    /// Get frozenV2 balance with delegated for bandwidth
+    fn get_frozen_v2_balance_with_delegated_bandwidth(account: &tron_backend_execution::protocol::Account) -> i64 {
+        Self::get_frozen_v2_balance_for_bandwidth(account) + account.delegated_frozen_v2_balance_for_bandwidth
+    }
+
+    /// Get frozenV2 balance with delegated for energy
+    fn get_frozen_v2_balance_with_delegated_energy(account: &tron_backend_execution::protocol::Account) -> i64 {
+        Self::get_frozen_v2_balance_for_energy(account) +
+            account.account_resource.as_ref().map(|r| r.delegated_frozen_v2_balance_for_energy).unwrap_or(0)
+    }
+
+    /// Get tron power frozenV2 balance
+    fn get_tron_power_frozen_v2_balance(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.frozen_v2.iter()
+            .filter(|f| f.r#type == 2) // TRON_POWER
+            .map(|f| f.amount)
+            .sum()
+    }
+
+    /// Get acquired delegated frozenV2 balance for bandwidth
+    fn get_acquired_delegated_frozen_v2_balance_for_bandwidth(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.acquired_delegated_frozen_v2_balance_for_bandwidth
+    }
+
+    /// Get acquired delegated frozenV2 balance for energy
+    fn get_acquired_delegated_frozen_v2_balance_for_energy(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.account_resource.as_ref()
+            .map(|r| r.acquired_delegated_frozen_v2_balance_for_energy)
+            .unwrap_or(0)
+    }
+
+    /// Add to frozenV2 bandwidth amount
+    fn add_frozen_v2_bandwidth(account: &mut tron_backend_execution::protocol::Account, amount: i64) {
+        let mut found = false;
+        for f in account.frozen_v2.iter_mut() {
+            if f.r#type == 0 { // BANDWIDTH
+                f.amount += amount;
+                found = true;
+                break;
+            }
+        }
+        if !found && amount > 0 {
+            account.frozen_v2.push(tron_backend_execution::protocol::account::FreezeV2 {
+                r#type: 0,
+                amount,
+            });
+        }
+    }
+
+    /// Add to frozenV2 energy amount
+    fn add_frozen_v2_energy(account: &mut tron_backend_execution::protocol::Account, amount: i64) {
+        let mut found = false;
+        for f in account.frozen_v2.iter_mut() {
+            if f.r#type == 1 { // ENERGY
+                f.amount += amount;
+                found = true;
+                break;
+            }
+        }
+        if !found && amount > 0 {
+            account.frozen_v2.push(tron_backend_execution::protocol::account::FreezeV2 {
+                r#type: 1,
+                amount,
+            });
+        }
+    }
+
+    /// Add to frozenV2 tron power amount
+    fn add_frozen_v2_tron_power(account: &mut tron_backend_execution::protocol::Account, amount: i64) {
+        let mut found = false;
+        for f in account.frozen_v2.iter_mut() {
+            if f.r#type == 2 { // TRON_POWER
+                f.amount += amount;
+                found = true;
+                break;
+            }
+        }
+        if !found && amount > 0 {
+            account.frozen_v2.push(tron_backend_execution::protocol::account::FreezeV2 {
+                r#type: 2,
+                amount,
+            });
+        }
+    }
+
+    /// Add to delegated frozenV2 balance for bandwidth
+    fn add_delegated_frozen_v2_balance_for_bandwidth(account: &mut tron_backend_execution::protocol::Account, amount: i64) {
+        account.delegated_frozen_v2_balance_for_bandwidth += amount;
+    }
+
+    /// Add to delegated frozenV2 balance for energy
+    fn add_delegated_frozen_v2_balance_for_energy(account: &mut tron_backend_execution::protocol::Account, amount: i64) {
+        if account.account_resource.is_none() {
+            account.account_resource = Some(tron_backend_execution::protocol::account::AccountResource::default());
+        }
+        if let Some(ref mut res) = account.account_resource {
+            res.delegated_frozen_v2_balance_for_energy += amount;
+        }
+    }
+
+    /// Add to acquired delegated frozenV2 balance for bandwidth
+    fn add_acquired_delegated_frozen_v2_balance_for_bandwidth(account: &mut tron_backend_execution::protocol::Account, amount: i64) {
+        account.acquired_delegated_frozen_v2_balance_for_bandwidth += amount;
+    }
+
+    /// Add to acquired delegated frozenV2 balance for energy
+    fn add_acquired_delegated_frozen_v2_balance_for_energy(account: &mut tron_backend_execution::protocol::Account, amount: i64) {
+        if account.account_resource.is_none() {
+            account.account_resource = Some(tron_backend_execution::protocol::account::AccountResource::default());
+        }
+        if let Some(ref mut res) = account.account_resource {
+            res.acquired_delegated_frozen_v2_balance_for_energy += amount;
+        }
+    }
+
+    /// Set acquired delegated frozenV2 balance for bandwidth
+    fn set_acquired_delegated_frozen_v2_balance_for_bandwidth(account: &mut tron_backend_execution::protocol::Account, amount: i64) {
+        account.acquired_delegated_frozen_v2_balance_for_bandwidth = amount;
+    }
+
+    /// Set acquired delegated frozenV2 balance for energy
+    fn set_acquired_delegated_frozen_v2_balance_for_energy(account: &mut tron_backend_execution::protocol::Account, amount: i64) {
+        if account.account_resource.is_none() {
+            account.account_resource = Some(tron_backend_execution::protocol::account::AccountResource::default());
+        }
+        if let Some(ref mut res) = account.account_resource {
+            res.acquired_delegated_frozen_v2_balance_for_energy = amount;
+        }
+    }
 }
 
 /// Parsed AssetIssueContract information (Phase 1 + Phase 2)
@@ -3923,6 +4982,24 @@ struct AssetIssueInfo {
     public_free_asset_net_limit: i64,
     public_free_asset_net_usage: i64,
     public_latest_free_net_time: i64,
+}
+
+/// Parsed DelegateResourceContract information
+#[derive(Debug, Clone)]
+struct DelegateResourceInfo {
+    receiver_address: Vec<u8>,
+    balance: i64,
+    resource: i32, // 0 = BANDWIDTH, 1 = ENERGY
+    lock: bool,
+    lock_period: i64,
+}
+
+/// Parsed UnDelegateResourceContract information
+#[derive(Debug, Clone)]
+struct UnDelegateResourceInfo {
+    receiver_address: Vec<u8>,
+    balance: i64,
+    resource: i32, // 0 = BANDWIDTH, 1 = ENERGY
 }
 
 #[cfg(test)]

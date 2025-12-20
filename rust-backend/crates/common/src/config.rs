@@ -258,6 +258,44 @@ pub struct RemoteExecutionConfig {
     /// Gate: allowChangeDelegation() must be true
     /// Default: false for safe rollout
     pub update_brokerage_enabled: bool,
+
+    // === Phase 2.D: Resource/Freeze/Delegation Contracts (56/57/58/59) ===
+    //
+    // These contracts handle the UnfreezeV2/Delegation lifecycle:
+    // - WithdrawExpireUnfreeze (56): Withdraw TRX from expired unfrozenV2 entries
+    // - DelegateResource (57): Delegate frozen resources to another account
+    // - UnDelegateResource (58): Reclaim delegated resources
+    // - CancelAllUnfreezeV2 (59): Cancel pending unfreezes and optionally withdraw expired
+
+    /// Enable WITHDRAW_EXPIRE_UNFREEZE_CONTRACT (type 56) execution
+    /// Withdraws TRX from unfrozenV2 entries whose expiration has passed
+    /// Requires: AccountStore (unfrozenV2 list access), DynamicPropertiesStore (timestamp)
+    /// Gate: supportUnfreezeDelay() must be true
+    /// Receipt: withdraw_expire_amount
+    /// Default: false for safe rollout
+    pub withdraw_expire_unfreeze_enabled: bool,
+
+    /// Enable DELEGATE_RESOURCE_CONTRACT (type 57) execution
+    /// Delegates frozen resources (bandwidth/energy) to another account
+    /// Requires: AccountStore, DelegatedResourceStore, DelegatedResourceAccountIndexStore
+    /// Gate: supportDR() and supportUnfreezeDelay() must be true
+    /// Default: false for safe rollout
+    pub delegate_resource_enabled: bool,
+
+    /// Enable UNDELEGATE_RESOURCE_CONTRACT (type 58) execution
+    /// Reclaims delegated resources from a receiver
+    /// Requires: AccountStore, DelegatedResourceStore, DelegatedResourceAccountIndexStore
+    /// Gate: supportDR() and supportUnfreezeDelay() must be true
+    /// Default: false for safe rollout
+    pub undelegate_resource_enabled: bool,
+
+    /// Enable CANCEL_ALL_UNFREEZE_V2_CONTRACT (type 59) execution
+    /// Cancels all pending unfreezeV2 entries, re-freezing unexpired and withdrawing expired
+    /// Requires: AccountStore, DynamicPropertiesStore (for weights and timestamp)
+    /// Gate: supportAllowCancelAllUnfreezeV2() must be true
+    /// Receipt: withdraw_expire_amount + cancel_unfreezeV2_amount map
+    /// Default: false for safe rollout
+    pub cancel_all_unfreeze_v2_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -410,6 +448,12 @@ impl Config {
         // Phase 2.C2: UpdateBrokerage contract (49)
         builder = builder.set_default("execution.remote.update_brokerage_enabled", false)?;
 
+        // Phase 2.D: Resource/Freeze/Delegation contracts (56/57/58/59)
+        builder = builder.set_default("execution.remote.withdraw_expire_unfreeze_enabled", false)?;
+        builder = builder.set_default("execution.remote.delegate_resource_enabled", false)?;
+        builder = builder.set_default("execution.remote.undelegate_resource_enabled", false)?;
+        builder = builder.set_default("execution.remote.cancel_all_unfreeze_v2_enabled", false)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -451,6 +495,11 @@ impl Default for RemoteExecutionConfig {
             clear_abi_enabled: false, // Default false for safe rollout
             // Phase 2.C2: UpdateBrokerage contract (49)
             update_brokerage_enabled: false, // Default false for safe rollout
+            // Phase 2.D: Resource/Freeze/Delegation contracts (56/57/58/59)
+            withdraw_expire_unfreeze_enabled: false, // Default false for safe rollout
+            delegate_resource_enabled: false, // Default false for safe rollout
+            undelegate_resource_enabled: false, // Default false for safe rollout
+            cancel_all_unfreeze_v2_enabled: false, // Default false for safe rollout
         }
     }
 } 
