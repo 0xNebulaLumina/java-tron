@@ -1,0 +1,21 @@
+{
+  "contractType": "DELEGATE_RESOURCE_CONTRACT",
+  "contractTypeNum": 57,
+  "caseName": "happy_path_bandwidth",
+  "caseCategory": "happy",
+  "description": "Delegate BANDWIDTH resource to another account",
+  "generatedAt": "2025-12-20T12:35:48.197Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1766234151196,
+  "databasesTouched": [
+    "account",
+    "DelegatedResource",
+    "DelegatedResourceAccountIndex",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

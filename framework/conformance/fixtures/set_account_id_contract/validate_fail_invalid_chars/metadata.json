@@ -1,0 +1,21 @@
+{
+  "contractType": "SET_ACCOUNT_ID_CONTRACT",
+  "contractTypeNum": 19,
+  "caseName": "validate_fail_invalid_chars",
+  "caseCategory": "validate_fail",
+  "description": "Fail when account ID contains invalid characters (only alphanumeric and underscore allowed)",
+  "generatedAt": "2025-12-20T12:35:41.247Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "accountid-index",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "expectedErrorMessage": "character",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}
