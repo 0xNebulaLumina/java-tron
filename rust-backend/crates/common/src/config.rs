@@ -246,6 +246,18 @@ pub struct RemoteExecutionConfig {
     /// Gate: getAllowTvmConstantinople() != 0
     /// Default: false for safe rollout
     pub clear_abi_enabled: bool,
+
+    // === Phase 2.C2: UpdateBrokerage Contract (49) ===
+    //
+    // UpdateBrokerage allows witnesses to set their commission rate for delegation rewards.
+    // The brokerage percentage (0-100) is stored in DelegationStore.
+
+    /// Enable UPDATE_BROKERAGE_CONTRACT (type 49) execution
+    /// Updates the brokerage (commission rate) for a witness in DelegationStore
+    /// Requires: WitnessStore (witness validation), AccountStore (account validation)
+    /// Gate: allowChangeDelegation() must be true
+    /// Default: false for safe rollout
+    pub update_brokerage_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -395,6 +407,9 @@ impl Config {
         builder = builder.set_default("execution.remote.update_energy_limit_enabled", false)?;
         builder = builder.set_default("execution.remote.clear_abi_enabled", false)?;
 
+        // Phase 2.C2: UpdateBrokerage contract (49)
+        builder = builder.set_default("execution.remote.update_brokerage_enabled", false)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -434,6 +449,8 @@ impl Default for RemoteExecutionConfig {
             update_setting_enabled: false, // Default false for safe rollout
             update_energy_limit_enabled: false, // Default false for safe rollout
             clear_abi_enabled: false, // Default false for safe rollout
+            // Phase 2.C2: UpdateBrokerage contract (49)
+            update_brokerage_enabled: false, // Default false for safe rollout
         }
     }
 } 

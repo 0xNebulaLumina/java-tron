@@ -333,10 +333,22 @@ Java oracle：`actuator/src/main/java/org/tron/core/actuator/UpdateBrokerageActu
 - validate 依赖：`DynamicPropertiesStore.allowChangeDelegation()`、`WitnessStore`、`AccountStore`
 
 TODO：
-- [ ] Rust：实现 49（validate：开关/地址/范围/必须是 witness；execute：`DelegationStore.setBrokerage(-1, owner, brokerage)`）
+- [x] Rust：实现 49（validate：开关/地址/范围/必须是 witness；execute：`DelegationStore.setBrokerage(-1, owner, brokerage)`）
+  - **DONE**: Implemented `execute_update_brokerage_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Validates allowChangeDelegation, brokerage range (0-100), account existence, and witness status
+  - Uses `set_delegation_brokerage(-1, address, brokerage)` for storage
   - Rust 侧 key 生成可复用：`rust-backend/crates/execution/src/delegation/keys.rs`（`delegation_brokerage_key(-1, owner)`）
+- [x] Rust：添加 `set_delegation_brokerage()` 方法
+  - **DONE**: Added to `rust-backend/crates/execution/src/storage_adapter/engine.rs`
+  - Stores brokerage as 4-byte big-endian integer using `delegation_brokerage_key(cycle, address)`
+- [x] Rust：添加 config flag for gradual rollout
+  - **DONE**: Added `update_brokerage_enabled` to `RemoteExecutionConfig` in `common/src/config.rs`
+  - Default: false for safe rollout
 - [ ] Proto/sidecar：表达对 `delegation` DB 的写入（推荐 DbKvChange）
-- [ ] Java：RemoteExecutionSPI 增加 49 映射（建议 `data = full UpdateBrokerageContract bytes`）
+  - **NOTE**: Rust currently persists directly to DelegationStore, no sidecar needed
+- [x] Java：RemoteExecutionSPI 增加 49 映射（建议 `data = full UpdateBrokerageContract bytes`）
+  - **DONE**: Added `UpdateBrokerageContract` case in `RemoteExecutionSPI.java`
+  - Uses `txKind = TxKind.NON_VM`, sends full proto bytes as `data`
 - [ ] Fixture：brokerage 边界（0/100/负数/超 100）、owner 非 witness、allowChangeDelegation=false
 
 ### 2.D（资源/冻结/委托）：WithdrawExpireUnfreeze 56 / DelegateResource 57 / UnDelegateResource 58 / CancelAllUnfreezeV2 59

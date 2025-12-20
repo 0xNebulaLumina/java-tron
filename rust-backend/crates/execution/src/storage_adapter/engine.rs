@@ -1778,6 +1778,24 @@ impl EngineBackedEvmStateStore {
         Ok(votes)
     }
 
+    /// Set brokerage for a witness address.
+    /// Java reference: DelegationStore.setBrokerage(cycle, address, brokerage)
+    /// The brokerage is stored as a 4-byte big-endian integer.
+    /// For UpdateBrokerageContract, cycle is always -1 (REMARK).
+    pub fn set_delegation_brokerage(&self, cycle: i64, address: &Address, brokerage: i32) -> Result<()> {
+        use crate::delegation::delegation_brokerage_key;
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_brokerage_key(cycle, &tron_addr);
+        let data = brokerage.to_be_bytes();
+
+        tracing::debug!(
+            "Setting delegation brokerage for {:?} cycle {}: {}%",
+            address, cycle, brokerage
+        );
+        self.storage_engine.put(self.delegation_database(), &key, &data)?;
+        Ok(())
+    }
+
     // =========================================================================
     // Proposal Store Access Methods (Phase 2.A)
     // =========================================================================
