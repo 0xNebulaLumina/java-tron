@@ -284,9 +284,12 @@ TODO：
   - Both use `txKind = TxKind.NON_VM` and send full proto bytes as `data`
 - [ ] Java：若 Rust 选择"只返回 changes 不落库"，则 Java 需要 apply 对应 store（AccountIdIndex/Account permissions）
   - NOTE: Rust currently persists directly, no Java apply needed
-- [ ] Fixture：
-  - [ ] SetAccountId：重复设置 / id 冲突 / owner 不存在
-  - [ ] PermissionUpdate：multi-sign 未开启 / 权限 keys 重复 / operations 非法 / fee 不足 / witness permission 条件
+- [x] Fixture：
+  - **DONE**: Created `AccountFixtureGeneratorTest.java` in `framework/src/test/java/org/tron/core/conformance/`
+  - [x] SetAccountId：重复设置 / id 冲突 / owner 不存在
+    - Fixtures: happy_path, validate_fail_too_short, validate_fail_too_long, validate_fail_invalid_chars, validate_fail_duplicate, validate_fail_already_has_id, validate_fail_owner_not_exist
+  - [x] PermissionUpdate：multi-sign 未开启 / 权限 keys 重复 / operations 非法 / fee 不足 / witness permission 条件
+    - Fixtures: happy_path, happy_path_multisig, happy_path_witness, validate_fail_multisign_disabled, validate_fail_insufficient_balance, validate_fail_too_many_keys, validate_fail_duplicate_keys, validate_fail_threshold_too_high, validate_fail_witness_not_sr
 
 ### 2.C（合约元数据）：UpdateSetting 33 / UpdateEnergyLimit 45 / ClearABI 48
 
@@ -322,7 +325,11 @@ TODO：
   - All use `txKind = TxKind.NON_VM`, send full proto bytes as `data`
 - [ ] Proto/sidecar：需要能表达 ContractStore/AbiStore 的写入（推荐 DbKvChange）
   - NOTE: Rust persists directly to ContractStore/AbiStore, no sidecar needed
-- [ ] Fixture：owner 不是 originAddress；contract 不存在；Constantinople 未开启；originEnergyLimit<=0
+- [x] Fixture：owner 不是 originAddress；contract 不存在；Constantinople 未开启；originEnergyLimit<=0
+  - **DONE**: Created `ContractMetadataFixtureGeneratorTest.java` in `framework/src/test/java/org/tron/core/conformance/`
+  - UpdateSetting (33): happy_path, happy_path_zero, happy_path_100, validate_fail_not_owner, validate_fail_contract_not_exist, validate_fail_invalid_percent
+  - UpdateEnergyLimit (45): happy_path, validate_fail_not_owner, validate_fail_contract_not_exist, validate_fail_zero_limit, validate_fail_negative_limit
+  - ClearABI (48): happy_path, happy_path_no_abi, validate_fail_not_owner, validate_fail_contract_not_exist, validate_fail_constantinople_disabled
 
 ### 2.C2（小而关键）：UpdateBrokerage 49
 
@@ -349,7 +356,9 @@ TODO：
 - [x] Java：RemoteExecutionSPI 增加 49 映射（建议 `data = full UpdateBrokerageContract bytes`）
   - **DONE**: Added `UpdateBrokerageContract` case in `RemoteExecutionSPI.java`
   - Uses `txKind = TxKind.NON_VM`, sends full proto bytes as `data`
-- [ ] Fixture：brokerage 边界（0/100/负数/超 100）、owner 非 witness、allowChangeDelegation=false
+- [x] Fixture：brokerage 边界（0/100/负数/超 100）、owner 非 witness、allowChangeDelegation=false
+  - **DONE**: Created `BrokerageFixtureGeneratorTest.java` in `framework/src/test/java/org/tron/core/conformance/`
+  - Fixtures: happy_path, happy_path_zero, happy_path_100, validate_fail_not_witness, validate_fail_negative, validate_fail_over_100, validate_fail_disabled, validate_fail_account_not_exist
 
 ### 2.D（资源/冻结/委托）：WithdrawExpireUnfreeze 56 / DelegateResource 57 / UnDelegateResource 58 / CancelAllUnfreezeV2 59
 
@@ -409,10 +418,15 @@ TODO（这组的前置条件很多）：
   - Uses key helpers from `key_helpers.rs` for V2 prefix encoding
 - [x] Rust：添加 DynamicPropertiesStore accessor methods for resource/delegation
   - **DONE**: Added `add_total_net_weight()`, `get_total_energy_weight()`, `add_total_energy_weight()`, `get_total_tron_power_weight()`, `add_total_tron_power_weight()`, `support_allow_cancel_all_unfreeze_v2()`, `support_dr()` to `engine.rs`
-- [ ] Fixture：
-  - [ ] 56：无可提取/恰好到期/溢出边界
-  - [ ] 59：三资源类型混合；部分到期部分未到期；验证 total weights 变化
-  - [ ] 57/58：lock/非 lock；lockPeriod 边界；receiver 为合约地址；重复 delegate/unDelegate 顺序依赖
+- [x] Fixture：
+  - **DONE**: Created `ResourceDelegationFixtureGeneratorTest.java` in `framework/src/test/java/org/tron/core/conformance/`
+  - [x] 56：无可提取/恰好到期/溢出边界
+    - Fixtures: happy_path, happy_path_multiple, validate_fail_nothing_to_withdraw, validate_fail_not_expired
+  - [x] 59：三资源类型混合；部分到期部分未到期；验证 total weights 变化
+    - Fixtures: happy_path, happy_path_mixed, validate_fail_nothing_to_cancel, validate_fail_disabled
+  - [x] 57/58：lock/非 lock；lockPeriod 边界；receiver 为合约地址；重复 delegate/unDelegate 顺序依赖
+    - DelegateResource (57): happy_path_bandwidth, happy_path_energy, happy_path_with_lock, validate_fail_insufficient_frozen, validate_fail_self_delegate
+    - UnDelegateResource (58): happy_path, validate_fail_no_delegation, validate_fail_exceeds_amount
 
 ### 2.E（TRC-10 扩展）：ParticipateAssetIssue 9 / UnfreezeAsset 14 / UpdateAsset 15（+ 可能的 VoteAsset 3）
 
