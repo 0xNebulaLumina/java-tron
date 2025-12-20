@@ -1,12 +1,23 @@
 //! Conformance test runner for executing fixtures and comparing results.
+//!
+//! This module provides two modes of fixture testing:
+//! - `validate_fixture`: Structure-only validation (no execution)
+//! - `run_fixture`: Full execution and state comparison (requires storage engine setup)
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::backend::{ExecuteTransactionRequest, ExecuteTransactionResponse};
+use crate::backend::ExecuteTransactionRequest;
 use crate::conformance::kv_format::{compare_kv_data, read_kv_file, KvDiff};
 use crate::conformance::metadata::FixtureMetadata;
+use tron_backend_common::{ExecutionConfig, RemoteExecutionConfig};
+use tron_backend_storage::StorageEngine;
+use tron_backend_execution::{
+    EngineBackedEvmStateStore, ExecutionModule, TronTransaction, TronExecutionContext,
+    TronContractType, TxMetadata,
+};
+use revm_primitives::{Address, U256, Bytes};
 
 /// Result of running a conformance test
 #[derive(Debug)]
@@ -193,6 +204,367 @@ impl ConformanceRunner {
         diffs
     }
 
+    /// Create an execution configuration with all contracts enabled for conformance testing.
+    fn create_conformance_config() -> ExecutionConfig {
+        ExecutionConfig {
+            remote: RemoteExecutionConfig {
+                system_enabled: true,
+                // Enable all Phase 2 contracts for conformance testing
+                proposal_create_enabled: true,
+                proposal_approve_enabled: true,
+                proposal_delete_enabled: true,
+                set_account_id_enabled: true,
+                account_permission_update_enabled: true,
+                update_setting_enabled: true,
+                update_energy_limit_enabled: true,
+                clear_abi_enabled: true,
+                update_brokerage_enabled: true,
+                withdraw_expire_unfreeze_enabled: true,
+                delegate_resource_enabled: true,
+                undelegate_resource_enabled: true,
+                cancel_all_unfreeze_v2_enabled: true,
+                // Enable other system contracts
+                witness_create_enabled: true,
+                witness_update_enabled: true,
+                vote_witness_enabled: true,
+                freeze_balance_enabled: true,
+                unfreeze_balance_enabled: true,
+                freeze_balance_v2_enabled: true,
+                unfreeze_balance_v2_enabled: true,
+                withdraw_balance_enabled: true,
+                account_create_enabled: true,
+                trc10_enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// Load pre-state KV files into a storage engine.
+    fn load_pre_state_into_storage(
+        &self,
+        storage_engine: &StorageEngine,
+        pre_state: &BTreeMap<String, BTreeMap<Vec<u8>, Vec<u8>>>,
+    ) -> Result<(), String> {
+        for (db_name, kv_map) in pre_state {
+            for (key, value) in kv_map {
+                storage_engine.put(db_name, key, value)
+                    .map_err(|e| format!("Failed to write to {}: {:?}", db_name, e))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Dump current state from storage engine for specified databases.
+    fn dump_storage_state(
+        &self,
+        storage_engine: &StorageEngine,
+        databases: &[String],
+    ) -> Result<BTreeMap<String, BTreeMap<Vec<u8>, Vec<u8>>>, String> {
+        let mut state = BTreeMap::new();
+
+        for db_name in databases {
+            let mut db_state = BTreeMap::new();
+            // Iterate over all keys in the database using get_next with pagination
+            let mut start_key = Vec::new();
+            let batch_size = 1000i32;
+
+            loop {
+                let entries = storage_engine.get_next(db_name, &start_key, batch_size)
+                    .map_err(|e| format!("Failed to iterate {}: {:?}", db_name, e))?;
+
+                if entries.is_empty() {
+                    break;
+                }
+
+                for entry in &entries {
+                    db_state.insert(entry.key.clone(), entry.value.clone());
+                }
+
+                // Update start_key for next batch
+                if let Some(last) = entries.last() {
+                    start_key = last.key.clone();
+                    // Append a byte to get the next key
+                    start_key.push(0);
+                } else {
+                    break;
+                }
+
+                // If we got fewer entries than requested, we've reached the end
+                if (entries.len() as i32) < batch_size {
+                    break;
+                }
+            }
+
+            state.insert(db_name.clone(), db_state);
+        }
+
+        Ok(state)
+    }
+
+    /// Convert protobuf request to internal transaction format.
+    /// This is a simplified version for conformance testing.
+    fn convert_request_to_transaction(request: &ExecuteTransactionRequest) -> Result<TronTransaction, String> {
+        let tx = request.transaction.as_ref()
+            .ok_or("Transaction is required")?;
+
+        // Parse from address (strip 0x41 TRON prefix if present)
+        let from_bytes = if tx.from.len() == 21 && tx.from[0] == 0x41 {
+            &tx.from[1..]
+        } else if tx.from.len() == 20 {
+            &tx.from[..]
+        } else {
+            return Err(format!("Invalid from address length: {}", tx.from.len()));
+        };
+        let from = Address::from_slice(from_bytes);
+
+        // Parse to address
+        let to = if tx.to.is_empty() {
+            None
+        } else {
+            let to_bytes = if tx.to.len() == 21 && tx.to[0] == 0x41 {
+                &tx.to[1..]
+            } else if tx.to.len() == 20 {
+                &tx.to[..]
+            } else {
+                return Err(format!("Invalid to address length: {}", tx.to.len()));
+            };
+            Some(Address::from_slice(to_bytes))
+        };
+
+        // Parse value
+        let value = if tx.value.len() <= 32 {
+            U256::from_be_slice(&tx.value)
+        } else {
+            return Err("Invalid value length".to_string());
+        };
+
+        // Parse contract type
+        let contract_type = TronContractType::try_from(tx.contract_type).ok();
+
+        // Parse asset_id
+        let asset_id = if tx.asset_id.is_empty() {
+            None
+        } else {
+            Some(tx.asset_id.clone())
+        };
+
+        Ok(TronTransaction {
+            from,
+            to,
+            value,
+            data: Bytes::from(tx.data.clone()),
+            gas_limit: if tx.energy_limit == 0 { 100000 } else { tx.energy_limit as u64 },
+            gas_price: U256::ZERO, // TRON mode uses gas_price = 0
+            nonce: tx.nonce as u64,
+            metadata: TxMetadata {
+                contract_type,
+                asset_id,
+            },
+        })
+    }
+
+    /// Convert protobuf context to internal execution context.
+    fn convert_request_to_context(request: &ExecuteTransactionRequest) -> Result<TronExecutionContext, String> {
+        let ctx = request.context.as_ref()
+            .ok_or("Execution context is required")?;
+
+        // Parse coinbase (strip 0x41 prefix if present)
+        let block_coinbase = if ctx.coinbase.len() == 21 && ctx.coinbase[0] == 0x41 {
+            Address::from_slice(&ctx.coinbase[1..])
+        } else if ctx.coinbase.len() == 20 {
+            Address::from_slice(&ctx.coinbase)
+        } else if ctx.coinbase.is_empty() {
+            Address::ZERO
+        } else {
+            return Err(format!("Invalid coinbase length: {}", ctx.coinbase.len()));
+        };
+
+        Ok(TronExecutionContext {
+            block_number: ctx.block_number as u64,
+            block_timestamp: ctx.block_timestamp as u64,
+            block_coinbase,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: ctx.energy_limit as u64,
+            chain_id: 2494104990, // TRON mainnet chain ID
+            energy_price: ctx.energy_price as u64,
+            bandwidth_price: 1000, // Default TRON bandwidth price
+        })
+    }
+
+    /// Run a single fixture test with actual execution.
+    /// This loads pre-state, executes the transaction, and compares post-state.
+    pub fn run_fixture(&self, fixture: &FixtureInfo) -> ConformanceResult {
+        // Load metadata
+        let metadata = match FixtureMetadata::from_file(&fixture.metadata_path) {
+            Ok(m) => m,
+            Err(e) => {
+                return ConformanceResult::failure(
+                    FixtureMetadata::default_for_path(&fixture.path),
+                    format!("Failed to load metadata: {}", e),
+                );
+            }
+        };
+
+        // Load request
+        let request = match self.load_request(fixture) {
+            Ok(r) => r,
+            Err(e) => {
+                return ConformanceResult::failure(metadata, format!("Failed to load request: {}", e));
+            }
+        };
+
+        // Load pre-state
+        let pre_state = match self.load_pre_state(fixture) {
+            Ok(s) => s,
+            Err(e) => {
+                return ConformanceResult::failure(metadata, format!("Failed to load pre-state: {}", e));
+            }
+        };
+
+        // Load expected post-state
+        let expected_state = match self.load_expected_state(fixture) {
+            Ok(s) => s,
+            Err(e) => {
+                return ConformanceResult::failure(metadata, format!("Failed to load expected state: {}", e));
+            }
+        };
+
+        // Create temp directory for execution
+        let temp_dir = match tempfile::tempdir() {
+            Ok(d) => d,
+            Err(e) => {
+                return ConformanceResult::failure(metadata, format!("Failed to create temp dir: {}", e));
+            }
+        };
+
+        // Create storage engine and load pre-state
+        let storage_engine = match StorageEngine::new(temp_dir.path()) {
+            Ok(e) => e,
+            Err(e) => {
+                return ConformanceResult::failure(metadata, format!("Failed to create storage engine: {:?}", e));
+            }
+        };
+
+        if let Err(e) = self.load_pre_state_into_storage(&storage_engine, &pre_state) {
+            return ConformanceResult::failure(metadata, e);
+        }
+
+        // Create execution module with all contracts enabled
+        let config = Self::create_conformance_config();
+        let execution_module = ExecutionModule::new(config);
+
+        // Convert protobuf request to internal transaction format
+        let transaction = match Self::convert_request_to_transaction(&request) {
+            Ok(tx) => tx,
+            Err(e) => {
+                return ConformanceResult::failure(metadata, format!("Failed to convert request: {}", e));
+            }
+        };
+
+        // Convert execution context
+        let context = match Self::convert_request_to_context(&request) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                return ConformanceResult::failure(metadata, format!("Failed to convert context: {}", e));
+            }
+        };
+
+        // Create storage adapter
+        let storage_adapter = EngineBackedEvmStateStore::new(storage_engine.clone());
+
+        // Execute transaction using execution module
+        let execution_result = execution_module.execute_transaction_with_storage(
+            storage_adapter,
+            &transaction,
+            &context,
+        );
+
+        // Check execution result
+        let execution_status = match &execution_result {
+            Ok(result) => {
+                if result.success {
+                    "SUCCESS".to_string()
+                } else {
+                    format!("FAILED: {:?}", result.error)
+                }
+            }
+            Err(e) => format!("ERROR: {}", e),
+        };
+
+        // If expected status is FAILURE and we got an error, that's a pass
+        if metadata.expected_status == "FAILURE" || metadata.expected_status.starts_with("VALIDATE_FAIL") {
+            if execution_result.is_err() {
+                // Validate fail case - check error message if expected
+                if let Some(expected_msg) = metadata.expected_error_message.clone() {
+                    if let Err(ref actual_err) = execution_result {
+                        let actual_err_str = format!("{}", actual_err);
+                        if !actual_err_str.contains(&expected_msg) {
+                            return ConformanceResult {
+                                metadata,
+                                passed: false,
+                                db_diffs: Vec::new(),
+                                error: Some(format!(
+                                    "Error message mismatch: expected '{}', got '{}'",
+                                    expected_msg, actual_err
+                                )),
+                                execution_status: Some(execution_status),
+                            };
+                        }
+                    }
+                }
+                // Expected failure occurred
+                return ConformanceResult {
+                    metadata,
+                    passed: true,
+                    db_diffs: Vec::new(),
+                    error: None,
+                    execution_status: Some(execution_status),
+                };
+            } else {
+                // Expected failure but got success
+                return ConformanceResult {
+                    metadata,
+                    passed: false,
+                    db_diffs: Vec::new(),
+                    error: Some("Expected failure but execution succeeded".to_string()),
+                    execution_status: Some(execution_status),
+                };
+            }
+        }
+
+        // For success cases, execution must succeed
+        if execution_result.is_err() {
+            return ConformanceResult {
+                metadata,
+                passed: false,
+                db_diffs: Vec::new(),
+                error: Some(format!("Execution failed: {:?}", execution_result.err())),
+                execution_status: Some(execution_status),
+            };
+        }
+
+        // Dump actual post-state
+        let actual_state = match self.dump_storage_state(&storage_engine, &metadata.databases_touched) {
+            Ok(s) => s,
+            Err(e) => {
+                return ConformanceResult::failure(metadata, format!("Failed to dump post-state: {}", e));
+            }
+        };
+
+        // Compare states
+        let db_diffs = self.compare_states(&expected_state, &actual_state, &metadata.databases_touched);
+
+        let passed = db_diffs.is_empty();
+        ConformanceResult {
+            metadata,
+            passed,
+            db_diffs,
+            error: if passed { None } else { Some("State mismatch".to_string()) },
+            execution_status: Some(execution_status),
+        }
+    }
+
     /// Run a single fixture test (offline - no actual execution).
     /// This validates the fixture structure and can be extended to run actual execution.
     pub fn validate_fixture(&self, fixture: &FixtureInfo) -> ConformanceResult {
@@ -270,8 +642,17 @@ impl ConformanceRunner {
         }
     }
 
-    /// Run all discovered fixtures.
+    /// Run all discovered fixtures with actual execution.
     pub fn run_all(&self) -> Vec<ConformanceResult> {
+        let fixtures = self.discover_fixtures();
+        fixtures
+            .iter()
+            .map(|f| self.run_fixture(f))
+            .collect()
+    }
+
+    /// Validate all discovered fixtures (structure only, no execution).
+    pub fn validate_all(&self) -> Vec<ConformanceResult> {
         let fixtures = self.discover_fixtures();
         fixtures
             .iter()
@@ -395,5 +776,110 @@ mod tests {
 
         let result = runner.validate_fixture(&fixtures[0]);
         assert!(result.passed, "Fixture should pass validation: {:?}", result.error);
+    }
+
+    /// Integration test that runs against real fixtures if they exist.
+    /// This test is meant to be run manually or in CI when fixtures are available.
+    #[test]
+    #[ignore] // Ignore by default - run with --ignored to execute
+    fn test_run_real_fixtures() {
+        // Try multiple possible fixture locations
+        let possible_paths = [
+            "conformance/fixtures",
+            "../conformance/fixtures",
+            "../../conformance/fixtures",
+            "../../../conformance/fixtures",
+            "framework/conformance/fixtures",
+            "../framework/conformance/fixtures",
+            "../../framework/conformance/fixtures",
+        ];
+
+        let fixtures_dir = possible_paths.iter()
+            .map(|p| std::path::PathBuf::from(p))
+            .find(|p| p.exists() && p.is_dir());
+
+        let fixtures_dir = match fixtures_dir {
+            Some(dir) => dir,
+            None => {
+                println!("No fixtures directory found. Skipping real fixture test.");
+                println!("Checked paths: {:?}", possible_paths);
+                return;
+            }
+        };
+
+        println!("Found fixtures directory: {:?}", fixtures_dir);
+
+        let runner = ConformanceRunner::new(&fixtures_dir);
+        let fixtures = runner.discover_fixtures();
+
+        println!("Discovered {} fixtures", fixtures.len());
+
+        if fixtures.is_empty() {
+            println!("No fixtures found in {:?}. Skipping.", fixtures_dir);
+            return;
+        }
+
+        // Just validate structure for now
+        let results = runner.validate_all();
+        ConformanceRunner::print_summary(&results);
+
+        let failed = results.iter().filter(|r| !r.passed).count();
+        assert_eq!(failed, 0, "Some fixtures failed validation");
+    }
+
+    /// Test that the conversion helpers work correctly
+    #[test]
+    fn test_convert_request_to_transaction() {
+        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+
+        // Create a minimal request
+        let mut proto_tx = ProtoTx::default();
+        // Use 21-byte TRON address with 0x41 prefix
+        proto_tx.from = vec![0x41, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+                              0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14];
+        proto_tx.value = vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x42, 0x40]; // 1000000 in big-endian
+        proto_tx.energy_limit = 100000;
+        proto_tx.contract_type = 16; // ProposalCreateContract
+
+        let request = ExecuteTransactionRequest {
+            transaction: Some(proto_tx),
+            context: Some(ExecutionContext {
+                block_number: 1000,
+                block_timestamp: 1705312200000,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let transaction = ConformanceRunner::convert_request_to_transaction(&request).unwrap();
+
+        // Verify conversion worked
+        assert_eq!(transaction.from.as_slice()[0], 0x01); // TRON prefix stripped
+        assert_eq!(transaction.gas_limit, 100000);
+        assert!(transaction.to.is_none()); // Empty to field
+    }
+
+    #[test]
+    fn test_convert_request_to_context() {
+        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+
+        let request = ExecuteTransactionRequest {
+            transaction: Some(ProtoTx::default()),
+            context: Some(ExecutionContext {
+                block_number: 1000,
+                block_timestamp: 1705312200000,
+                energy_limit: 50000000,
+                energy_price: 420,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let context = ConformanceRunner::convert_request_to_context(&request).unwrap();
+
+        assert_eq!(context.block_number, 1000);
+        assert_eq!(context.block_timestamp, 1705312200000);
+        assert_eq!(context.block_gas_limit, 50000000);
+        assert_eq!(context.energy_price, 420);
     }
 }

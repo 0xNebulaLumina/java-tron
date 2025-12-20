@@ -97,6 +97,31 @@ impl FixtureMetadata {
     pub fn fixture_dir_name(&self) -> String {
         format!("{}/{}", self.contract_type.to_lowercase(), self.case_name)
     }
+
+    /// Create a default metadata instance for a given path (used when loading fails).
+    pub fn default_for_path(path: &std::path::Path) -> Self {
+        FixtureMetadata {
+            contract_type: "UNKNOWN".to_string(),
+            contract_type_num: 0,
+            case_name: path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            case_category: "unknown".to_string(),
+            description: None,
+            generated_at: String::new(),
+            generator_version: String::new(),
+            block_number: 0,
+            block_timestamp: 0,
+            databases_touched: Vec::new(),
+            expected_status: String::new(),
+            expected_error_message: None,
+            owner_address: None,
+            dynamic_properties: Default::default(),
+            notes: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]

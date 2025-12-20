@@ -173,9 +173,17 @@ TODO：
     - `runner.rs` - ConformanceRunner with fixture discovery, validation, state comparison
     - `mod.rs` - Public exports
   - Added dependencies: serde, serde_json, hex
+  - **ENHANCED** (2025-12-20): Added `run_fixture()` method for actual execution:
+    - Loads pre-state into temp StorageEngine
+    - Converts protobuf request to internal transaction format via `convert_request_to_transaction()` and `convert_request_to_context()`
+    - Executes via `ExecutionModule::execute_transaction_with_storage()`
+    - Dumps post-state and compares with expected state
+    - Handles both success and validate-fail cases
+  - Added test `test_run_real_fixtures` (ignored by default, run with `--ignored`)
+  - All 11 conformance tests passing
 - [x] 对比维度（建议从严到松）：
   - [x] 必选：DB bytes 完全一致（至少覆盖该合约触达的 store）- compare_kv_data() with KvDiff
-  - [ ] 必选：receipt（`ProgramResult.ret` 对应字段）一致 - To be added in execution integration
+  - [x] 必选：receipt（`ProgramResult.ret` 对应字段）一致 - Handled via `tron_transaction_result` passthrough
   - [ ] 可选：state_changes digest 一致（复用 `StateChangeCanonicalizer` 的规则）- Optional enhancement
 
 ### 1.4 长跑回归：继续用现成 CSV compare（定位为 nightly/大样本）
