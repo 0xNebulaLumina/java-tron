@@ -569,6 +569,20 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               org.tron.common.utils.ByteArray.toHexString(clearAbiContract.getContractAddress().toByteArray()));
           break;
 
+        // Phase 2.C2: UpdateBrokerage Contract (49)
+        case UpdateBrokerageContract:
+          // UpdateBrokerageContract sets the brokerage (commission rate) for a witness
+          org.tron.protos.contract.StorageContract.UpdateBrokerageContract updateBrokerageContract =
+              contractParameter.unpack(org.tron.protos.contract.StorageContract.UpdateBrokerageContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = updateBrokerageContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_BROKERAGE_CONTRACT;
+          logger.debug("Mapped UpdateBrokerageContract to remote request; owner={}, brokerage={}%",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              updateBrokerageContract.getBrokerage());
+          break;
+
         default:
           // Remove TRANSFER fallback - throw exception to fall back to embedded
           logger.error("Contract type {} not mapped to remote; falling back to embedded", contract.getType());

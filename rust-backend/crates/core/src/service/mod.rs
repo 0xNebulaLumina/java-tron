@@ -356,6 +356,14 @@ impl BackendService {
                 debug!("Executing CLEAR_ABI_CONTRACT");
                 self.execute_clear_abi_contract(storage_adapter, transaction, context)
             },
+            // Phase 2.C2: UpdateBrokerage contract (49)
+            Some(tron_backend_execution::TronContractType::UpdateBrokerageContract) => {
+                if !remote_config.update_brokerage_enabled {
+                    return Err("UPDATE_BROKERAGE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing UPDATE_BROKERAGE_CONTRACT");
+                self.execute_update_brokerage_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -3710,6 +3718,138 @@ impl BackendService {
             withdraw_changes: vec![],
             tron_transaction_result: None,
         })
+    }
+
+    // =========================================================================
+    // Phase 2.C2: UpdateBrokerage Contract (49)
+    // =========================================================================
+    // Allows witnesses to set their brokerage (commission rate) for delegation rewards.
+    // Java reference: UpdateBrokerageActuator.java
+
+    /// Execute UPDATE_BROKERAGE_CONTRACT (type 49)
+    /// Updates the brokerage (commission rate) for a witness in DelegationStore.
+    fn execute_update_brokerage_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use tron_backend_execution::TronExecutionResult;
+
+        let owner = transaction.from;
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        debug!("Executing UPDATE_BROKERAGE_CONTRACT for owner {}", owner_tron);
+
+        // 1. Check if delegation changes are allowed
+        // Java: dynamicStore.allowChangeDelegation()
+        let allow_delegation = storage_adapter.allow_change_delegation()
+            .map_err(|e| format!("Failed to check delegation status: {}", e))?;
+
+        if !allow_delegation {
+            return Err("contract type error, unexpected type [UpdateBrokerageContract]".to_string());
+        }
+
+        // 2. Parse the contract data to get brokerage value
+        let brokerage = self.parse_update_brokerage_contract(&transaction.data)?;
+
+        debug!("Parsed UpdateBrokerageContract: brokerage={}%", brokerage);
+
+        // 3. Validate brokerage range: 0-100
+        // Java: if (brokerage < 0 || brokerage > ActuatorConstant.ONE_HUNDRED)
+        if brokerage < 0 || brokerage > 100 {
+            return Err("Invalid brokerage".to_string());
+        }
+
+        // 4. Validate owner exists in AccountStore
+        let _owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| "Account does not exist".to_string())?;
+
+        // 5. Validate owner is a witness
+        // Java: WitnessCapsule witnessCapsule = witnessStore.get(ownerAddress);
+        //       if (witnessCapsule == null) throw "Not existed witness"
+        let is_witness = storage_adapter.is_witness(&owner)
+            .map_err(|e| format!("Failed to check witness: {}", e))?;
+
+        if !is_witness {
+            // Build 21-byte TRON address for error message
+            let mut owner_key = Vec::with_capacity(21);
+            owner_key.push(0x41);
+            owner_key.extend_from_slice(owner.as_slice());
+            return Err(format!("Not existed witness:{}", hex::encode(&owner_key)));
+        }
+
+        // 6. Set brokerage in DelegationStore
+        // Java: delegationStore.setBrokerage(ownerAddress, brokerage)
+        // This is equivalent to setBrokerage(-1, ownerAddress, brokerage)
+        storage_adapter.set_delegation_brokerage(-1, &owner, brokerage)
+            .map_err(|e| format!("Failed to set brokerage: {}", e))?;
+
+        debug!("Brokerage set to {}% for witness {}", brokerage, owner_tron);
+
+        // 7. Build result - no fee for this contract, no account balance changes
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes: vec![], // No account balance changes
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse UpdateBrokerageContract from protobuf bytes
+    /// UpdateBrokerageContract:
+    ///   bytes owner_address = 1;
+    ///   int32 brokerage = 2;
+    fn parse_update_brokerage_contract(&self, data: &[u8]) -> Result<i32, String> {
+        use contracts::proto::read_varint;
+
+        let mut brokerage: i32 = 0;
+        let mut pos = 0;
+
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address - skip (we already have it from transaction.from)
+                    let (length, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    pos += bytes_read + length as usize;
+                }
+                (2, 0) => {
+                    // brokerage (int32, wire type 0 = varint)
+                    let (value, bytes_read) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read brokerage: {}", e))?;
+                    pos += bytes_read;
+                    brokerage = value as i32;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        Ok(brokerage)
     }
 
     /// Parse ClearABIContract from protobuf bytes
