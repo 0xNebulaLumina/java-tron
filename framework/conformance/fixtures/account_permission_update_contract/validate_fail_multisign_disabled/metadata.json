@@ -1,0 +1,20 @@
+{
+  "contractType": "ACCOUNT_PERMISSION_UPDATE_CONTRACT",
+  "contractTypeNum": 46,
+  "caseName": "validate_fail_multisign_disabled",
+  "caseCategory": "validate_fail",
+  "description": "Fail when multi-sign feature is not enabled",
+  "generatedAt": "2025-12-20T12:35:41.202Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "multi sign is not allowed, need to be opened by the committee",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}
