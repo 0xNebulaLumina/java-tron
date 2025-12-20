@@ -87,6 +87,9 @@ pub struct TransactionResultBuilder {
     pub exchange_inject_another_amount: Option<i64>,
     pub exchange_withdraw_another_amount: Option<i64>,
     pub shielded_transaction_fee: Option<i64>,
+    /// map<string, int64> cancel_unfreezeV2_amount = 28
+    /// Keys are resource names: "BANDWIDTH", "ENERGY", "TRON_POWER"
+    pub cancel_unfreezeV2_amount: Option<Vec<(String, i64)>>,
 }
 
 impl TransactionResultBuilder {
@@ -137,6 +140,25 @@ impl TransactionResultBuilder {
     #[allow(dead_code)]
     pub fn with_shielded_transaction_fee(mut self, fee: i64) -> Self {
         self.shielded_transaction_fee = Some(fee);
+        self
+    }
+
+    /// Set cancel_unfreezeV2_amount map for CancelAllUnfreezeV2 contract
+    /// Takes amounts for bandwidth, energy, and tron_power
+    pub fn with_cancel_unfreeze_v2_amounts(mut self, bandwidth: i64, energy: i64, tron_power: i64) -> Self {
+        let mut amounts = Vec::new();
+        if bandwidth > 0 {
+            amounts.push(("BANDWIDTH".to_string(), bandwidth));
+        }
+        if energy > 0 {
+            amounts.push(("ENERGY".to_string(), energy));
+        }
+        if tron_power > 0 {
+            amounts.push(("TRON_POWER".to_string(), tron_power));
+        }
+        if !amounts.is_empty() {
+            self.cancel_unfreezeV2_amount = Some(amounts);
+        }
         self
     }
 
@@ -193,6 +215,29 @@ impl TransactionResultBuilder {
         if let Some(amount) = self.withdraw_expire_amount {
             write_tag(&mut buf, 27, WIRE_TYPE_VARINT);
             write_varint(&mut buf, amount as u64);
+        }
+
+        // Field 28: cancel_unfreezeV2_amount (map<string, int64>)
+        // Protobuf map is encoded as repeated message with key=1, value=2
+        if let Some(amounts) = self.cancel_unfreezeV2_amount {
+            for (key, value) in amounts {
+                // Each map entry is encoded as a length-delimited message
+                let mut entry_buf = Vec::new();
+
+                // Key (field 1, wire type 2 = length-delimited for string)
+                write_tag(&mut entry_buf, 1, 2);
+                write_varint(&mut entry_buf, key.len() as u64);
+                entry_buf.extend_from_slice(key.as_bytes());
+
+                // Value (field 2, wire type 0 = varint for int64)
+                write_tag(&mut entry_buf, 2, WIRE_TYPE_VARINT);
+                write_varint(&mut entry_buf, value as u64);
+
+                // Write the map entry as field 28, wire type 2 (length-delimited)
+                write_tag(&mut buf, 28, 2);
+                write_varint(&mut buf, entry_buf.len() as u64);
+                buf.extend_from_slice(&entry_buf);
+            }
         }
 
         buf

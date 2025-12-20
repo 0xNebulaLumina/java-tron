@@ -21,8 +21,12 @@ import org.tron.core.exception.VMIllegalException;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
+import org.tron.protos.contract.BalanceContract.CancelAllUnfreezeV2Contract;
+import org.tron.protos.contract.BalanceContract.DelegateResourceContract;
 import org.tron.protos.contract.BalanceContract.FreezeBalanceContract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
+import org.tron.protos.contract.BalanceContract.UnDelegateResourceContract;
+import org.tron.protos.contract.BalanceContract.WithdrawExpireUnfreezeContract;
 import org.tron.protos.contract.Common.ResourceCode;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
@@ -581,6 +585,62 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           logger.debug("Mapped UpdateBrokerageContract to remote request; owner={}, brokerage={}%",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               updateBrokerageContract.getBrokerage());
+          break;
+
+        // Phase 2.D: Resource/Freeze/Delegation Contracts (56/57/58/59)
+        case WithdrawExpireUnfreezeContract:
+          // WithdrawExpireUnfreezeContract withdraws TRX from expired unfreezeV2 entries
+          WithdrawExpireUnfreezeContract withdrawExpireUnfreezeContract =
+              contractParameter.unpack(WithdrawExpireUnfreezeContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = withdrawExpireUnfreezeContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.WITHDRAW_EXPIRE_UNFREEZE_CONTRACT;
+          logger.debug("Mapped WithdrawExpireUnfreezeContract to remote request; owner={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress));
+          break;
+
+        case DelegateResourceContract:
+          // DelegateResourceContract delegates frozen resources to another account
+          DelegateResourceContract delegateResourceContract =
+              contractParameter.unpack(DelegateResourceContract.class);
+          toAddress = new byte[0]; // System contract, receiver is in contract data
+          data = delegateResourceContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.DELEGATE_RESOURCE_CONTRACT;
+          logger.debug("Mapped DelegateResourceContract to remote request; owner={}, receiver={}, resource={}, balance={}, lock={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(delegateResourceContract.getReceiverAddress().toByteArray()),
+              delegateResourceContract.getResource(),
+              delegateResourceContract.getBalance(),
+              delegateResourceContract.getLock());
+          break;
+
+        case UnDelegateResourceContract:
+          // UnDelegateResourceContract reclaims delegated resources
+          UnDelegateResourceContract unDelegateResourceContract =
+              contractParameter.unpack(UnDelegateResourceContract.class);
+          toAddress = new byte[0]; // System contract, receiver is in contract data
+          data = unDelegateResourceContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UNDELEGATE_RESOURCE_CONTRACT;
+          logger.debug("Mapped UnDelegateResourceContract to remote request; owner={}, receiver={}, resource={}, balance={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(unDelegateResourceContract.getReceiverAddress().toByteArray()),
+              unDelegateResourceContract.getResource(),
+              unDelegateResourceContract.getBalance());
+          break;
+
+        case CancelAllUnfreezeV2Contract:
+          // CancelAllUnfreezeV2Contract cancels all pending unfreezeV2 entries
+          CancelAllUnfreezeV2Contract cancelAllUnfreezeV2Contract =
+              contractParameter.unpack(CancelAllUnfreezeV2Contract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = cancelAllUnfreezeV2Contract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.CANCEL_ALL_UNFREEZE_V2_CONTRACT;
+          logger.debug("Mapped CancelAllUnfreezeV2Contract to remote request; owner={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress));
           break;
 
         default:

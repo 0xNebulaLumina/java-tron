@@ -370,12 +370,45 @@ receipt：
 - 59：`withdraw_expire_amount` + `cancel_unfreezeV2_amount` map
 
 TODO（这组的前置条件很多）：
-- [ ] Phase 0 的 Account codec + AEXT/resource 字段通路必须先完成（否则无法正确更新 usage/window）
-- [ ] Rust：实现 WithdrawExpireUnfreeze（按时间过滤 unfrozenV2，balance += sum(expired)，清理列表，返回 withdraw_expire_amount）
-- [ ] Rust：实现 CancelAllUnfreezeV2（遍历 unfrozenV2：未到期→回冻并更新 total weights；到期→加到 withdraw_expire_amount；最后清空 unfrozenV2；返回 cancel map）
-- [ ] Rust：实现 DelegateResource/UnDelegateResource（需要严格对齐 Java 的锁期、解锁、usage 迁移、index store 更新逻辑）
-- [ ] Proto/receipt：落实 Phase 0 的 receipt 回传方案（否则 56/59 的 TransactionInfo 一定错）
-- [ ] Java：RemoteExecutionSPI 增加 56/57/58/59 映射；RuntimeSpiImpl 增加对应 apply（或使用 DbKvChange）
+- [x] Phase 0 的 Account codec + AEXT/resource 字段通路必须先完成（否则无法正确更新 usage/window）
+  - **DONE**: Phase 0 Account codec is complete, AEXT tail serialization implemented
+- [x] Rust：实现 WithdrawExpireUnfreeze（按时间过滤 unfrozenV2，balance += sum(expired)，清理列表，返回 withdraw_expire_amount）
+  - **DONE**: Implemented `execute_withdraw_expire_unfreeze_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Filters `unfrozen_v2` entries by `block_timestamp`, sums expired amounts, updates balance
+  - Sets `withdraw_expire_amount` in `TransactionResultBuilder` for receipt passthrough
+  - Clears expired entries from the unfrozen_v2 list
+- [x] Rust：实现 CancelAllUnfreezeV2（遍历 unfrozenV2：未到期→回冻并更新 total weights；到期→加到 withdraw_expire_amount；最后清空 unfrozenV2；返回 cancel map）
+  - **DONE**: Implemented `execute_cancel_all_unfreeze_v2_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Categorizes unfrozen entries into expired (withdrawable) and unexpired (re-freeze)
+  - Updates total weights for BANDWIDTH/ENERGY/TRON_POWER via `add_total_*_weight()` methods
+  - Returns `cancel_unfreezeV2_amount` map via `TransactionResultBuilder::with_cancel_unfreeze_v2_amounts()`
+  - Updates `withdraw_expire_amount` for expired entries
+- [x] Rust：实现 DelegateResource/UnDelegateResource（需要严格对齐 Java 的锁期、解锁、usage 迁移、index store 更新逻辑）
+  - **DONE**: Implemented `execute_delegate_resource_contract()` and `execute_undelegate_resource_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - DelegateResource: Validates supportDR, calculates lock expiration, creates/updates DelegatedResource records
+  - Updates owner's `delegated_frozen_v2_balance_for_*` and receiver's `acquired_delegated_frozen_v2_balance_for_*`
+  - Updates DelegatedResourceAccountIndex for both "from" and "to" lists
+  - UnDelegateResource: Reclaims delegated resources, validates lock expiration, updates balances inversely
+  - Added helper methods: `delegate_resource()`, `undelegate_resource()`, `get_available_delegate_balance()`, `delegate_resource_account_index()`
+- [x] Proto/receipt：落实 Phase 0 的 receipt 回传方案（否则 56/59 的 TransactionInfo 一定错）
+  - **DONE**: Receipt passthrough via `tron_transaction_result` field is fully implemented
+  - `TransactionResultBuilder` in `proto.rs` now supports `withdraw_expire_amount` (field 27) and `cancel_unfreezeV2_amount` map (field 28)
+- [x] Java：RemoteExecutionSPI 增加 56/57/58/59 映射；RuntimeSpiImpl 增加对应 apply（或使用 DbKvChange）
+  - **DONE**: Added `WithdrawExpireUnfreezeContract`, `DelegateResourceContract`, `UnDelegateResourceContract`, `CancelAllUnfreezeV2Contract` cases in `RemoteExecutionSPI.java`
+  - All use `txKind = TxKind.NON_VM`, send full proto bytes as `data`
+  - Rust persists directly, no Java apply needed for these contracts
+- [x] Rust：添加 config flags for gradual rollout
+  - **DONE**: Added `withdraw_expire_unfreeze_enabled`, `delegate_resource_enabled`, `undelegate_resource_enabled`, `cancel_all_unfreeze_v2_enabled` flags to `RemoteExecutionConfig` in `common/src/config.rs`
+  - Default: false for safe rollout
+- [x] Rust：添加 DelegatedResource/DelegatedResourceAccountIndex storage adapter methods
+  - **DONE**: Added to `rust-backend/crates/execution/src/storage_adapter/engine.rs`:
+    - `delegated_resource_database()`, `delegated_resource_account_index_database()`
+    - `delegated_resource_key_v2()`, `to_tron_address_21()`
+    - `delegate_resource()`, `undelegate_resource()`, `get_available_delegate_balance()`
+    - `delegate_resource_account_index()`, `add_to_delegated_index()`
+  - Uses key helpers from `key_helpers.rs` for V2 prefix encoding
+- [x] Rust：添加 DynamicPropertiesStore accessor methods for resource/delegation
+  - **DONE**: Added `add_total_net_weight()`, `get_total_energy_weight()`, `add_total_energy_weight()`, `get_total_tron_power_weight()`, `add_total_tron_power_weight()`, `support_allow_cancel_all_unfreeze_v2()`, `support_dr()` to `engine.rs`
 - [ ] Fixture：
   - [ ] 56：无可提取/恰好到期/溢出边界
   - [ ] 59：三资源类型混合；部分到期部分未到期；验证 total weights 变化
