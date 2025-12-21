@@ -210,19 +210,36 @@ impl ConformanceRunner {
             remote: RemoteExecutionConfig {
                 system_enabled: true,
                 // Enable all Phase 2 contracts for conformance testing
+                // Phase 2.A: Proposal contracts
                 proposal_create_enabled: true,
                 proposal_approve_enabled: true,
                 proposal_delete_enabled: true,
+                // Phase 2.B: Account contracts
                 set_account_id_enabled: true,
                 account_permission_update_enabled: true,
+                // Phase 2.C: Contract metadata
                 update_setting_enabled: true,
                 update_energy_limit_enabled: true,
                 clear_abi_enabled: true,
+                // Phase 2.C2: Brokerage
                 update_brokerage_enabled: true,
+                // Phase 2.D: Resource/delegation
                 withdraw_expire_unfreeze_enabled: true,
                 delegate_resource_enabled: true,
                 undelegate_resource_enabled: true,
                 cancel_all_unfreeze_v2_enabled: true,
+                // Phase 2.E: TRC-10 extensions
+                participate_asset_issue_enabled: true,
+                unfreeze_asset_enabled: true,
+                update_asset_enabled: true,
+                // Phase 2.F: Exchange
+                exchange_create_enabled: true,
+                exchange_inject_enabled: true,
+                exchange_withdraw_enabled: true,
+                exchange_transaction_enabled: true,
+                // Phase 2.G: Market
+                market_sell_asset_enabled: true,
+                market_cancel_order_enabled: true,
                 // Enable other system contracts
                 witness_create_enabled: true,
                 witness_update_enabled: true,
@@ -780,9 +797,21 @@ mod tests {
 
     /// Integration test that runs against real fixtures if they exist.
     /// This test is meant to be run manually or in CI when fixtures are available.
+    ///
+    /// Set CONFORMANCE_FIXTURES_DIR environment variable to the fixtures directory path.
     #[test]
     #[ignore] // Ignore by default - run with --ignored to execute
     fn test_run_real_fixtures() {
+        // First check environment variable (set by CI script)
+        if let Ok(env_path) = std::env::var("CONFORMANCE_FIXTURES_DIR") {
+            let env_dir = std::path::PathBuf::from(&env_path);
+            if env_dir.exists() && env_dir.is_dir() {
+                println!("Found fixtures directory from env: {:?}", env_dir);
+                run_fixtures_from_dir(&env_dir);
+                return;
+            }
+        }
+
         // Try multiple possible fixture locations
         let possible_paths = [
             "conformance/fixtures",
@@ -792,6 +821,8 @@ mod tests {
             "framework/conformance/fixtures",
             "../framework/conformance/fixtures",
             "../../framework/conformance/fixtures",
+            "../../../framework/conformance/fixtures",
+            "../../../../framework/conformance/fixtures",
         ];
 
         let fixtures_dir = possible_paths.iter()
@@ -803,10 +834,16 @@ mod tests {
             None => {
                 println!("No fixtures directory found. Skipping real fixture test.");
                 println!("Checked paths: {:?}", possible_paths);
+                println!("Set CONFORMANCE_FIXTURES_DIR env var to specify the path.");
                 return;
             }
         };
 
+        println!("Found fixtures directory: {:?}", fixtures_dir);
+        run_fixtures_from_dir(&fixtures_dir);
+    }
+
+    fn run_fixtures_from_dir(fixtures_dir: &std::path::Path) {
         println!("Found fixtures directory: {:?}", fixtures_dir);
 
         let runner = ConformanceRunner::new(&fixtures_dir);
