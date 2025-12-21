@@ -712,6 +712,67 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               org.tron.common.utils.ByteArray.toHexString(fromAddress));
           break;
 
+        // Phase 2.F: Exchange Contracts (41-44)
+        case ExchangeCreateContract:
+          // ExchangeCreateContract creates a new Bancor-style exchange
+          org.tron.protos.contract.ExchangeContract.ExchangeCreateContract exchangeCreateContract =
+              contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeCreateContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = exchangeCreateContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_CREATE_CONTRACT;
+          logger.debug("Mapped ExchangeCreateContract to remote request; owner={}, first_token={}, second_token={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              new String(exchangeCreateContract.getFirstTokenId().toByteArray()),
+              new String(exchangeCreateContract.getSecondTokenId().toByteArray()));
+          break;
+
+        case ExchangeInjectContract:
+          // ExchangeInjectContract injects liquidity into an exchange
+          org.tron.protos.contract.ExchangeContract.ExchangeInjectContract exchangeInjectContract =
+              contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeInjectContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = exchangeInjectContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_INJECT_CONTRACT;
+          logger.debug("Mapped ExchangeInjectContract to remote request; owner={}, exchange_id={}, token={}, quant={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              exchangeInjectContract.getExchangeId(),
+              new String(exchangeInjectContract.getTokenId().toByteArray()),
+              exchangeInjectContract.getQuant());
+          break;
+
+        case ExchangeWithdrawContract:
+          // ExchangeWithdrawContract withdraws liquidity from an exchange
+          org.tron.protos.contract.ExchangeContract.ExchangeWithdrawContract exchangeWithdrawContract =
+              contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeWithdrawContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = exchangeWithdrawContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_WITHDRAW_CONTRACT;
+          logger.debug("Mapped ExchangeWithdrawContract to remote request; owner={}, exchange_id={}, token={}, quant={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              exchangeWithdrawContract.getExchangeId(),
+              new String(exchangeWithdrawContract.getTokenId().toByteArray()),
+              exchangeWithdrawContract.getQuant());
+          break;
+
+        case ExchangeTransactionContract:
+          // ExchangeTransactionContract executes a token swap on an exchange
+          org.tron.protos.contract.ExchangeContract.ExchangeTransactionContract exchangeTransactionContract =
+              contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeTransactionContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = exchangeTransactionContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_TRANSACTION_CONTRACT;
+          logger.debug("Mapped ExchangeTransactionContract to remote request; owner={}, exchange_id={}, token={}, quant={}, expected={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              exchangeTransactionContract.getExchangeId(),
+              new String(exchangeTransactionContract.getTokenId().toByteArray()),
+              exchangeTransactionContract.getQuant(),
+              exchangeTransactionContract.getExpected());
+          break;
+
         default:
           // Remove TRANSFER fallback - throw exception to fall back to embedded
           logger.error("Contract type {} not mapped to remote; falling back to embedded", contract.getType());

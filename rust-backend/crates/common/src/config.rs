@@ -321,6 +321,54 @@ pub struct RemoteExecutionConfig {
     /// Requires: AccountStore (asset_issued_id), AssetIssueStore/V2
     /// Default: false for safe rollout
     pub update_asset_enabled: bool,
+
+    // === Phase 2.F: Exchange Contracts (41/42/43/44) ===
+    //
+    // These contracts handle the Bancor-style exchange (AMM) functionality:
+    // - ExchangeCreate (41): Create a new exchange pair with initial liquidity
+    // - ExchangeInject (42): Add liquidity to an existing exchange
+    // - ExchangeWithdraw (43): Remove liquidity from an exchange (creator only)
+    // - ExchangeTransaction (44): Swap tokens using the AMM
+    //
+    // Dependencies:
+    // - ExchangeStore / ExchangeV2Store (dbName: "exchange" / "exchange-v2")
+    // - AccountStore (TRX + asset balances)
+    // - AssetIssueStore (for allowSameTokenName=0 token name→id resolution)
+    // - DynamicPropertiesStore (latestExchangeNum, exchangeBalanceLimit, exchangeCreateFee,
+    //                           allowStrictMath, allowSameTokenName, supportBlackHoleOptimization)
+    //
+    // Receipt fields:
+    // - ExchangeCreate: exchange_id
+    // - ExchangeInject: exchange_inject_another_amount
+    // - ExchangeWithdraw: exchange_withdraw_another_amount
+    // - ExchangeTransaction: exchange_received_amount
+
+    /// Enable EXCHANGE_CREATE_CONTRACT (type 41) execution
+    /// Creates a new exchange pair with initial token balances
+    /// Fee: getExchangeCreateFee() from DynamicPropertiesStore
+    /// Requires: AccountStore, ExchangeStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub exchange_create_enabled: bool,
+
+    /// Enable EXCHANGE_INJECT_CONTRACT (type 42) execution
+    /// Injects additional liquidity into an existing exchange (creator only)
+    /// Calculates proportional amount of the other token
+    /// Requires: AccountStore, ExchangeStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub exchange_inject_enabled: bool,
+
+    /// Enable EXCHANGE_WITHDRAW_CONTRACT (type 43) execution
+    /// Withdraws liquidity from an exchange (creator only)
+    /// Calculates proportional amount of the other token
+    /// Requires: AccountStore, ExchangeStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub exchange_withdraw_enabled: bool,
+
+    /// Enable EXCHANGE_TRANSACTION_CONTRACT (type 44) execution
+    /// Executes a token swap using the Bancor AMM formula
+    /// Requires: AccountStore, ExchangeStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub exchange_transaction_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -484,6 +532,12 @@ impl Config {
         builder = builder.set_default("execution.remote.unfreeze_asset_enabled", false)?;
         builder = builder.set_default("execution.remote.update_asset_enabled", false)?;
 
+        // Phase 2.F: Exchange contracts (41/42/43/44)
+        builder = builder.set_default("execution.remote.exchange_create_enabled", false)?;
+        builder = builder.set_default("execution.remote.exchange_inject_enabled", false)?;
+        builder = builder.set_default("execution.remote.exchange_withdraw_enabled", false)?;
+        builder = builder.set_default("execution.remote.exchange_transaction_enabled", false)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -534,6 +588,11 @@ impl Default for RemoteExecutionConfig {
             participate_asset_issue_enabled: false, // Default false for safe rollout
             unfreeze_asset_enabled: false, // Default false for safe rollout
             update_asset_enabled: false, // Default false for safe rollout
+            // Phase 2.F: Exchange contracts (41/42/43/44)
+            exchange_create_enabled: false, // Default false for safe rollout
+            exchange_inject_enabled: false, // Default false for safe rollout
+            exchange_withdraw_enabled: false, // Default false for safe rollout
+            exchange_transaction_enabled: false, // Default false for safe rollout
         }
     }
 } 

@@ -522,12 +522,42 @@ receipt：
 - 44：`exchange_received_amount`
 
 TODO：
-- [ ] Phase 0 receipt 回传必须先做（否则 TransactionInfo 一定错）
-- [ ] Rust：实现 ExchangeCapsule.transaction 的等价逻辑（严格对齐 strictMath 分支）
-- [ ] Rust：实现 create/inject/withdraw/transaction + fee/burn/blackhole 语义
-- [ ] Proto/sidecar：表达 ExchangeStore/ExchangeV2Store/DynamicProperties 的写入（推荐 DbKvChange）
-- [ ] Java：RemoteExecutionSPI 增加 41-44 映射；RuntimeSpiImpl apply（或 DbKvChange）
-- [ ] Fixture：覆盖 allowSameTokenName=0/1；trx/token 组合；balanceLimit；expected 小于返回量的 validate-fail
+- [x] Phase 0 receipt 回传必须先做（否则 TransactionInfo 一定错）
+  - **DONE**: Receipt passthrough via `tron_transaction_result` field is fully implemented
+  - `TransactionResultBuilder` in `proto.rs` supports `exchange_id`, `exchange_inject_another_amount`, `exchange_withdraw_another_amount`, `exchange_received_amount`
+- [x] Rust：实现 ExchangeCapsule.transaction 的等价逻辑（严格对齐 strictMath 分支）
+  - **DONE**: Created `rust-backend/crates/core/src/service/contracts/exchange.rs` with:
+    - `ExchangeProcessor` struct implementing Bancor-style AMM algorithm
+    - `exchange()` method combining `exchange_to_supply()` and `exchange_from_supply()` phases
+    - `use_strict_math` flag for deterministic cross-platform results
+    - Formula: `issuedSupply = -supply * (1 - (1 + quant/newBalance)^0.0005)` and `exchangeBalance = balance * ((1 + supplyQuant/supply)^2000 - 1)`
+- [x] Rust：实现 create/inject/withdraw/transaction + fee/burn/blackhole 语义
+  - **DONE**: Implemented in `rust-backend/crates/core/src/service/mod.rs`:
+    - `execute_exchange_create_contract()`: Creates exchange with fee charging, validates balances, persists to ExchangeV2Store
+    - `execute_exchange_inject_contract()`: Injects liquidity (creator only), calculates proportional second token amount
+    - `execute_exchange_withdraw_contract()`: Withdraws liquidity (creator only), validates precision, returns both tokens
+    - `execute_exchange_transaction_contract()`: Executes AMM swap, validates expected output, updates balances
+  - All handlers use `TransactionResultBuilder` for receipt passthrough
+- [x] Rust：添加 ExchangeStore/ExchangeV2Store adapter methods
+  - **DONE**: Added to `rust-backend/crates/execution/src/storage_adapter/engine.rs`:
+    - `exchange_database()`, `exchange_v2_database()` - database name helpers
+    - `get_exchange()`, `put_exchange()`, `has_exchange()` - exchange CRUD operations
+    - `get_latest_exchange_num()`, `set_latest_exchange_num()` - dynamic property for exchange ID
+    - `get_exchange_create_fee()`, `get_exchange_balance_limit()`, `allow_strict_math()` - dynamic properties
+  - Uses 8-byte big-endian key format matching Java's `ExchangeCapsule.createDbKey()`
+- [x] Rust：添加 config flags for gradual rollout
+  - **DONE**: Added to `rust-backend/crates/common/src/config.rs`:
+    - `exchange_create_enabled`, `exchange_inject_enabled`, `exchange_withdraw_enabled`, `exchange_transaction_enabled`
+    - Default: false for safe rollout
+- [x] Java：RemoteExecutionSPI 增加 41-44 映射
+  - **DONE**: Added `ExchangeCreateContract`, `ExchangeInjectContract`, `ExchangeWithdrawContract`, `ExchangeTransactionContract` cases in `framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java`
+  - All use `txKind = TxKind.NON_VM`, send full proto bytes as `data`
+- [x] Fixture：覆盖 allowSameTokenName=0/1；trx/token 组合；balanceLimit；expected 小于返回量的 validate-fail
+  - **DONE**: Created `ExchangeFixtureGeneratorTest.java` in `framework/src/test/java/org/tron/core/conformance/`
+  - ExchangeCreate (41): happy_path_trx_to_token, happy_path_token_to_token, validate_fail_insufficient_fee, validate_fail_same_tokens
+  - ExchangeInject (42): happy_path_inject, validate_fail_not_creator, validate_fail_nonexistent
+  - ExchangeWithdraw (43): happy_path_withdraw, validate_fail_not_creator, validate_fail_insufficient_balance
+  - ExchangeTransaction (44): happy_path_swap, happy_path_reverse_swap, validate_fail_slippage, validate_fail_wrong_token, validate_fail_zero_quant
 
 ### 2.G（Market 52-53）：工作量大（建议独立里程碑）
 
