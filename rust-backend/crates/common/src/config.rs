@@ -296,6 +296,31 @@ pub struct RemoteExecutionConfig {
     /// Receipt: withdraw_expire_amount + cancel_unfreezeV2_amount map
     /// Default: false for safe rollout
     pub cancel_all_unfreeze_v2_enabled: bool,
+
+    // === Phase 2.E: TRC-10 Extension Contracts (9/14/15) ===
+    //
+    // These contracts handle TRC-10 token operations beyond basic transfer and issuance:
+    // - ParticipateAssetIssue (9): Participate in a TRC-10 token sale
+    // - UnfreezeAsset (14): Unfreeze frozen TRC-10 asset supply
+    // - UpdateAsset (15): Update TRC-10 asset metadata (url, description, limits)
+
+    /// Enable PARTICIPATE_ASSET_ISSUE_CONTRACT (type 9) execution
+    /// Allows users to participate in a TRC-10 token sale by exchanging TRX for tokens
+    /// Requires: AccountStore (balance + asset map), AssetIssueStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub participate_asset_issue_enabled: bool,
+
+    /// Enable UNFREEZE_ASSET_CONTRACT (type 14) execution
+    /// Unfreezes frozen TRC-10 supply and returns it to the asset issuer's balance
+    /// Requires: AccountStore (frozen_supply + asset map), AssetIssueStore/V2
+    /// Default: false for safe rollout
+    pub unfreeze_asset_enabled: bool,
+
+    /// Enable UPDATE_ASSET_CONTRACT (type 15) execution
+    /// Updates TRC-10 asset metadata: url, description, free_asset_net_limit, public_free_asset_net_limit
+    /// Requires: AccountStore (asset_issued_id), AssetIssueStore/V2
+    /// Default: false for safe rollout
+    pub update_asset_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -454,6 +479,11 @@ impl Config {
         builder = builder.set_default("execution.remote.undelegate_resource_enabled", false)?;
         builder = builder.set_default("execution.remote.cancel_all_unfreeze_v2_enabled", false)?;
 
+        // Phase 2.E: TRC-10 Extension contracts (9/14/15)
+        builder = builder.set_default("execution.remote.participate_asset_issue_enabled", false)?;
+        builder = builder.set_default("execution.remote.unfreeze_asset_enabled", false)?;
+        builder = builder.set_default("execution.remote.update_asset_enabled", false)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -500,6 +530,10 @@ impl Default for RemoteExecutionConfig {
             delegate_resource_enabled: false, // Default false for safe rollout
             undelegate_resource_enabled: false, // Default false for safe rollout
             cancel_all_unfreeze_v2_enabled: false, // Default false for safe rollout
+            // Phase 2.E: TRC-10 Extension contracts (9/14/15)
+            participate_asset_issue_enabled: false, // Default false for safe rollout
+            unfreeze_asset_enabled: false, // Default false for safe rollout
+            update_asset_enabled: false, // Default false for safe rollout
         }
     }
 } 

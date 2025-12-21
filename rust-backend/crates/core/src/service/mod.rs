@@ -393,6 +393,28 @@ impl BackendService {
                 debug!("Executing CANCEL_ALL_UNFREEZE_V2_CONTRACT");
                 self.execute_cancel_all_unfreeze_v2_contract(storage_adapter, transaction, context)
             },
+            // Phase 2.E: TRC-10 Extension contracts (9/14/15)
+            Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract) => {
+                if !remote_config.participate_asset_issue_enabled {
+                    return Err("PARTICIPATE_ASSET_ISSUE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing PARTICIPATE_ASSET_ISSUE_CONTRACT");
+                self.execute_participate_asset_issue_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::UnfreezeAssetContract) => {
+                if !remote_config.unfreeze_asset_enabled {
+                    return Err("UNFREEZE_ASSET_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing UNFREEZE_ASSET_CONTRACT");
+                self.execute_unfreeze_asset_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::UpdateAssetContract) => {
+                if !remote_config.update_asset_enabled {
+                    return Err("UPDATE_ASSET_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing UPDATE_ASSET_CONTRACT");
+                self.execute_update_asset_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -4962,6 +4984,717 @@ impl BackendService {
             res.acquired_delegated_frozen_v2_balance_for_energy = amount;
         }
     }
+
+    // ==========================================================================
+    // Phase 2.E: TRC-10 Extension Contracts (9/14/15)
+    // ==========================================================================
+
+    /// Execute PARTICIPATE_ASSET_ISSUE_CONTRACT (type 9)
+    /// Allows users to participate in a TRC-10 token sale by exchanging TRX for tokens
+    ///
+    /// Java oracle: ParticipateAssetIssueActuator.java
+    fn execute_participate_asset_issue_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        let owner = transaction.from;
+        let owner_tron = add_tron_address_prefix(&owner);
+
+        // Parse contract data
+        let participate_info = self.parse_participate_asset_issue_contract(&transaction.data)?;
+
+        debug!("ParticipateAssetIssue: owner={}, to={}, asset={}, amount={}",
+               hex::encode(&owner_tron),
+               hex::encode(&participate_info.to_address),
+               String::from_utf8_lossy(&participate_info.asset_name),
+               participate_info.amount);
+
+        // 1. Validate addresses
+        let to_address = if participate_info.to_address.len() == 21 {
+            revm_primitives::Address::from_slice(&participate_info.to_address[1..])
+        } else if participate_info.to_address.len() == 20 {
+            revm_primitives::Address::from_slice(&participate_info.to_address)
+        } else {
+            return Err("Invalid to address length".to_string());
+        };
+        let to_tron = add_tron_address_prefix(&to_address);
+
+        if owner == to_address {
+            return Err("Cannot participate asset Issue yourself !".to_string());
+        }
+
+        // 2. Validate amount > 0
+        if participate_info.amount <= 0 {
+            return Err("Amount must greater than 0!".to_string());
+        }
+
+        // 3. Validate owner account exists
+        let owner_account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or("Account does not exist!")?;
+
+        // 4. Validate to account exists (asset issuer)
+        let to_account = storage_adapter.get_account_proto(&to_address)
+            .map_err(|e| format!("Failed to get to account: {}", e))?
+            .ok_or("To account does not exist!")?;
+
+        // 5. Get asset issue (using asset name as key)
+        let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
+
+        let asset_issue = storage_adapter.get_asset_issue(&participate_info.asset_name, allow_same_token_name)
+            .map_err(|e| format!("Failed to get asset issue: {}", e))?
+            .ok_or_else(|| format!("No asset named {}", String::from_utf8_lossy(&participate_info.asset_name)))?;
+
+        // 6. Validate to_address is the asset owner
+        let asset_owner_address = if asset_issue.owner_address.len() == 21 {
+            &asset_issue.owner_address[1..]
+        } else {
+            &asset_issue.owner_address[..]
+        };
+        if to_address.as_slice() != asset_owner_address {
+            return Err(format!("The asset is not issued by {}", hex::encode(&to_tron)));
+        }
+
+        // 7. Validate time window
+        let now = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get timestamp: {}", e))?;
+        if now >= asset_issue.end_time || now < asset_issue.start_time {
+            return Err("No longer valid period!".to_string());
+        }
+
+        // 8. Calculate exchange amount
+        let exchange_amount = Self::safe_multiply_divide(
+            participate_info.amount,
+            asset_issue.num as i64,
+            asset_issue.trx_num as i64,
+        )?;
+        if exchange_amount <= 0 {
+            return Err("Can not process the exchange!".to_string());
+        }
+
+        // 9. Validate owner has enough balance (amount + fee)
+        let fee = 0i64; // ParticipateAssetIssue has no fee
+        if owner_account.balance < participate_info.amount + fee {
+            return Err("No enough balance !".to_string());
+        }
+
+        // 10. Validate issuer has enough tokens
+        let issuer_asset_balance = Self::get_asset_balance_v2(&to_account, &participate_info.asset_name, allow_same_token_name);
+        if issuer_asset_balance < exchange_amount {
+            return Err("Asset balance is not enough !".to_string());
+        }
+
+        // 11. Execute the exchange
+        let mut updated_owner = owner_account.clone();
+        let mut updated_to = to_account.clone();
+
+        // Subtract TRX from owner
+        updated_owner.balance = updated_owner.balance.checked_sub(participate_info.amount)
+            .ok_or("Balance underflow")?;
+
+        // Add TRX to issuer
+        updated_to.balance = updated_to.balance.checked_add(participate_info.amount)
+            .ok_or("Balance overflow")?;
+
+        // Add tokens to owner
+        Self::add_asset_amount_v2(&mut updated_owner, &participate_info.asset_name, exchange_amount, allow_same_token_name);
+
+        // Subtract tokens from issuer
+        Self::reduce_asset_amount_v2(&mut updated_to, &participate_info.asset_name, exchange_amount, allow_same_token_name)?;
+
+        // 12. Persist updated accounts
+        storage_adapter.put_account_proto(&owner, &updated_owner)
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+        storage_adapter.put_account_proto(&to_address, &updated_to)
+            .map_err(|e| format!("Failed to persist to account: {}", e))?;
+
+        // 13. Build state changes for CSV parity
+        let mut state_changes = Vec::new();
+
+        let old_owner_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(owner_account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+        let new_owner_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(updated_owner.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+        state_changes.push(TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(old_owner_info),
+            new_account: Some(new_owner_info),
+        });
+
+        let old_to_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(to_account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+        let new_to_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(updated_to.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+        state_changes.push(TronStateChange::AccountChange {
+            address: to_address,
+            old_account: Some(old_to_info),
+            new_account: Some(new_to_info),
+        });
+
+        // Sort for determinism
+        state_changes.sort_by_key(|c| match c {
+            TronStateChange::AccountChange { address, .. } => address.to_vec(),
+            _ => vec![],
+        });
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("ParticipateAssetIssue: exchanged {} TRX for {} tokens", participate_info.amount, exchange_amount);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Execute UNFREEZE_ASSET_CONTRACT (type 14)
+    /// Unfreezes frozen TRC-10 supply and returns it to the asset issuer's balance
+    ///
+    /// Java oracle: UnfreezeAssetActuator.java
+    fn execute_unfreeze_asset_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        let owner = transaction.from;
+        let owner_tron = add_tron_address_prefix(&owner);
+
+        debug!("UnfreezeAsset: owner={}", hex::encode(&owner_tron));
+
+        // 1. Validate owner account exists
+        let account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&owner_tron)))?;
+
+        // 2. Validate account has frozen supply
+        if account.frozen_supply.is_empty() {
+            return Err("no frozen supply balance".to_string());
+        }
+
+        // 3. Get asset issued info
+        let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
+
+        let asset_key = if allow_same_token_name == 0 {
+            if account.asset_issued_name.is_empty() {
+                return Err("this account has not issued any asset".to_string());
+            }
+            account.asset_issued_name.clone()
+        } else {
+            if account.asset_issued_id.is_empty() {
+                return Err("this account has not issued any asset".to_string());
+            }
+            account.asset_issued_id.clone()
+        };
+
+        // 4. Get current timestamp
+        let now = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get timestamp: {}", e))?;
+
+        // 5. Calculate how many entries have expired
+        let expired_count = account.frozen_supply.iter()
+            .filter(|frozen| frozen.expire_time <= now as i64)
+            .count();
+        if expired_count == 0 {
+            return Err("It's not time to unfreeze asset supply".to_string());
+        }
+
+        // 6. Process frozen supply - separate expired from non-expired
+        let mut unfreeze_asset: i64 = 0;
+        let mut remaining_frozen = Vec::new();
+
+        for frozen in account.frozen_supply.iter() {
+            if frozen.expire_time <= now as i64 {
+                // Expired - add to unfreeze amount
+                unfreeze_asset = unfreeze_asset.checked_add(frozen.frozen_balance)
+                    .ok_or("Overflow calculating unfreeze amount")?;
+            } else {
+                // Not expired - keep in frozen list
+                remaining_frozen.push(frozen.clone());
+            }
+        }
+
+        // 7. Update account
+        let mut updated_account = account.clone();
+        updated_account.frozen_supply = remaining_frozen;
+
+        // Add unfrozen assets back to balance
+        Self::add_asset_amount_v2(&mut updated_account, &asset_key, unfreeze_asset, allow_same_token_name);
+
+        // 8. Persist updated account
+        storage_adapter.put_account_proto(&owner, &updated_account)
+            .map_err(|e| format!("Failed to persist account: {}", e))?;
+
+        // 9. Build state change for CSV parity (balance unchanged, but for consistency)
+        let old_account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+        let new_account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(updated_account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(old_account_info),
+            new_account: Some(new_account_info),
+        }];
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("UnfreezeAsset: unfroze {} tokens", unfreeze_asset);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Execute UPDATE_ASSET_CONTRACT (type 15)
+    /// Updates TRC-10 asset metadata: url, description, free_asset_net_limit, public_free_asset_net_limit
+    ///
+    /// Java oracle: UpdateAssetActuator.java
+    fn execute_update_asset_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        let owner = transaction.from;
+        let owner_tron = add_tron_address_prefix(&owner);
+
+        // Parse contract data
+        let update_info = self.parse_update_asset_contract(&transaction.data)?;
+
+        debug!("UpdateAsset: owner={}, new_limit={}, new_public_limit={}",
+               hex::encode(&owner_tron), update_info.new_limit, update_info.new_public_limit);
+
+        // 1. Validate owner account exists
+        let account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or("Account does not exist")?;
+
+        // 2. Get asset info and validate ownership
+        let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
+
+        // Get asset key based on allowSameTokenName flag
+        let asset_key = if allow_same_token_name == 0 {
+            if account.asset_issued_name.is_empty() {
+                return Err("Account has not issued any asset".to_string());
+            }
+            account.asset_issued_name.clone()
+        } else {
+            if account.asset_issued_id.is_empty() {
+                return Err("Account has not issued any asset".to_string());
+            }
+            account.asset_issued_id.clone()
+        };
+
+        // 3. Validate URL
+        if !Self::valid_url(&update_info.url) {
+            return Err("Invalid url".to_string());
+        }
+
+        // 4. Validate description
+        if !Self::valid_asset_description(&update_info.description) {
+            return Err("Invalid description".to_string());
+        }
+
+        // 5. Validate limits
+        let one_day_net_limit = storage_adapter.get_one_day_net_limit()
+            .map_err(|e| format!("Failed to get oneDayNetLimit: {}", e))?;
+
+        if update_info.new_limit < 0 || update_info.new_limit >= one_day_net_limit {
+            return Err("Invalid FreeAssetNetLimit".to_string());
+        }
+
+        if update_info.new_public_limit < 0 || update_info.new_public_limit >= one_day_net_limit {
+            return Err("Invalid PublicFreeAssetNetLimit".to_string());
+        }
+
+        // 6. Get and update asset issue
+        let asset_issue = storage_adapter.get_asset_issue(&asset_key, allow_same_token_name)
+            .map_err(|e| format!("Failed to get asset issue: {}", e))?
+            .ok_or_else(|| format!("Asset is not existed in AssetIssue{}Store",
+                                   if allow_same_token_name == 0 { "" } else { "V2" }))?;
+
+        let mut updated_asset = asset_issue.clone();
+        updated_asset.free_asset_net_limit = update_info.new_limit;
+        updated_asset.public_free_asset_net_limit = update_info.new_public_limit;
+        updated_asset.url = update_info.url.clone();
+        updated_asset.description = update_info.description.clone();
+
+        // 7. Persist updated asset issue
+        // If allowSameTokenName == 0, update both stores
+        if allow_same_token_name == 0 {
+            // Update AssetIssueStore (by name)
+            storage_adapter.put_asset_issue(&account.asset_issued_name, &updated_asset, false)
+                .map_err(|e| format!("Failed to persist asset issue: {}", e))?;
+            // Update AssetIssueV2Store (by id) if account has issued ID
+            if !account.asset_issued_id.is_empty() {
+                storage_adapter.put_asset_issue(&account.asset_issued_id, &updated_asset, true)
+                    .map_err(|e| format!("Failed to persist asset issue V2: {}", e))?;
+            }
+        } else {
+            // Only update AssetIssueV2Store
+            storage_adapter.put_asset_issue(&account.asset_issued_id, &updated_asset, true)
+                .map_err(|e| format!("Failed to persist asset issue V2: {}", e))?;
+        }
+
+        // 8. Build minimal state change (no TRX balance change)
+        let account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(account_info.clone()),
+            new_account: Some(account_info),
+        }];
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("UpdateAsset: updated asset {}", String::from_utf8_lossy(&asset_key));
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Parse ParticipateAssetIssueContract protobuf bytes
+    fn parse_participate_asset_issue_contract(&self, data: &[u8]) -> Result<ParticipateAssetIssueInfo, String> {
+        use contracts::proto::read_varint;
+
+        let mut to_address = Vec::new();
+        let mut asset_name = Vec::new();
+        let mut amount: i64 = 0;
+
+        let mut pos = 0;
+        while pos < data.len() {
+            // Read tag
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos += new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                // owner_address = 1 (skip, we use transaction.from)
+                1 => {
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for owner_address".to_string());
+                    }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                }
+                // to_address = 2
+                2 => {
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for to_address".to_string());
+                    }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Data truncated reading to_address".to_string());
+                    }
+                    to_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                // asset_name = 3
+                3 => {
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for asset_name".to_string());
+                    }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Data truncated reading asset_name".to_string());
+                    }
+                    asset_name = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                // amount = 4
+                4 => {
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for amount".to_string());
+                    }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    amount = value as i64;
+                    pos += new_pos;
+                }
+                _ => {
+                    // Skip unknown fields
+                    match wire_type {
+                        0 => { let (_, new_pos) = read_varint(&data[pos..])?; pos += new_pos; }
+                        2 => { let (len, new_pos) = read_varint(&data[pos..])?; pos = pos + new_pos + len as usize; }
+                        _ => return Err(format!("Unknown wire type {}", wire_type)),
+                    }
+                }
+            }
+        }
+
+        Ok(ParticipateAssetIssueInfo {
+            to_address,
+            asset_name,
+            amount,
+        })
+    }
+
+    /// Parse UpdateAssetContract protobuf bytes
+    fn parse_update_asset_contract(&self, data: &[u8]) -> Result<UpdateAssetInfo, String> {
+        use contracts::proto::read_varint;
+
+        let mut description = Vec::new();
+        let mut url = Vec::new();
+        let mut new_limit: i64 = 0;
+        let mut new_public_limit: i64 = 0;
+
+        let mut pos = 0;
+        while pos < data.len() {
+            // Read tag
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos += new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                // owner_address = 1 (skip, we use transaction.from)
+                1 => {
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for owner_address".to_string());
+                    }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                }
+                // description = 2
+                2 => {
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for description".to_string());
+                    }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Data truncated reading description".to_string());
+                    }
+                    description = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                // url = 3
+                3 => {
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for url".to_string());
+                    }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Data truncated reading url".to_string());
+                    }
+                    url = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                // new_limit = 4
+                4 => {
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for new_limit".to_string());
+                    }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    new_limit = value as i64;
+                    pos += new_pos;
+                }
+                // new_public_limit = 5
+                5 => {
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for new_public_limit".to_string());
+                    }
+                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    new_public_limit = value as i64;
+                    pos += new_pos;
+                }
+                _ => {
+                    // Skip unknown fields
+                    match wire_type {
+                        0 => { let (_, new_pos) = read_varint(&data[pos..])?; pos += new_pos; }
+                        2 => { let (len, new_pos) = read_varint(&data[pos..])?; pos = pos + new_pos + len as usize; }
+                        _ => return Err(format!("Unknown wire type {}", wire_type)),
+                    }
+                }
+            }
+        }
+
+        Ok(UpdateAssetInfo {
+            description,
+            url,
+            new_limit,
+            new_public_limit,
+        })
+    }
+
+    /// Safe multiply and floor divide (like Java's multiplyExact and floorDiv)
+    fn safe_multiply_divide(value: i64, multiplier: i64, divisor: i64) -> Result<i64, String> {
+        if divisor == 0 {
+            return Err("Division by zero".to_string());
+        }
+        let product = value.checked_mul(multiplier)
+            .ok_or("Overflow in multiplication")?;
+        // Floor division (rounds toward negative infinity for negative results)
+        let result = product / divisor;
+        Ok(result)
+    }
+
+    /// Get asset balance from account (V2 style)
+    fn get_asset_balance_v2(account: &tron_backend_execution::protocol::Account, asset_key: &[u8], allow_same_token_name: i64) -> i64 {
+        let key_str = String::from_utf8_lossy(asset_key).to_string();
+
+        if allow_same_token_name == 0 {
+            // Check assetV2 first, fall back to asset
+            if let Some(balance) = account.asset_v2.get(&key_str) {
+                return *balance;
+            }
+            if let Some(balance) = account.asset.get(&key_str) {
+                return *balance;
+            }
+        } else {
+            // Only check assetV2
+            if let Some(balance) = account.asset_v2.get(&key_str) {
+                return *balance;
+            }
+        }
+        0
+    }
+
+    /// Add asset amount to account (V2 style)
+    fn add_asset_amount_v2(account: &mut tron_backend_execution::protocol::Account, asset_key: &[u8], amount: i64, allow_same_token_name: i64) {
+        let key_str = String::from_utf8_lossy(asset_key).to_string();
+
+        let entry = account.asset_v2.entry(key_str.clone()).or_insert(0);
+        *entry += amount;
+
+        // Also update asset map if allowSameTokenName == 0
+        if allow_same_token_name == 0 {
+            let entry = account.asset.entry(key_str).or_insert(0);
+            *entry += amount;
+        }
+    }
+
+    /// Reduce asset amount from account (V2 style)
+    fn reduce_asset_amount_v2(account: &mut tron_backend_execution::protocol::Account, asset_key: &[u8], amount: i64, allow_same_token_name: i64) -> Result<(), String> {
+        let key_str = String::from_utf8_lossy(asset_key).to_string();
+
+        // Check if has enough balance
+        let current = *account.asset_v2.get(&key_str).unwrap_or(&0);
+        if current < amount {
+            return Err("Insufficient asset balance".to_string());
+        }
+
+        // Reduce from assetV2
+        let entry = account.asset_v2.entry(key_str.clone()).or_insert(0);
+        *entry -= amount;
+
+        // Also reduce from asset map if allowSameTokenName == 0
+        if allow_same_token_name == 0 {
+            if let Some(entry) = account.asset.get_mut(&key_str) {
+                *entry -= amount;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate URL (simplified version of Java's TransactionUtil.validUrl)
+    fn valid_url(url: &[u8]) -> bool {
+        // URL must be non-empty and <= 256 bytes
+        !url.is_empty() && url.len() <= 256
+    }
+
+    /// Validate asset description (simplified version of Java's TransactionUtil.validAssetDescription)
+    fn valid_asset_description(description: &[u8]) -> bool {
+        // Description must be <= 200 bytes
+        description.len() <= 200
+    }
+}
+
+/// Parsed ParticipateAssetIssueContract information
+#[derive(Debug, Clone)]
+struct ParticipateAssetIssueInfo {
+    to_address: Vec<u8>,
+    asset_name: Vec<u8>,
+    amount: i64,
+}
+
+/// Parsed UpdateAssetContract information
+#[derive(Debug, Clone)]
+struct UpdateAssetInfo {
+    description: Vec<u8>,
+    url: Vec<u8>,
+    new_limit: i64,
+    new_public_limit: i64,
 }
 
 /// Parsed AssetIssueContract information (Phase 1 + Phase 2)
