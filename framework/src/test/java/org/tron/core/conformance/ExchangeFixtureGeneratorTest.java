@@ -68,6 +68,15 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
   }
 
   private void initializeTestData() {
+    // Set dynamic properties FIRST - addAssetAmountV2 needs AllowSameTokenName to be set
+    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(1000000);
+    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(10);
+    dbManager.getDynamicPropertiesStore().saveLatestExchangeNum(0);
+    dbManager.getDynamicPropertiesStore().saveExchangeCreateFee(EXCHANGE_CREATE_FEE);
+    dbManager.getDynamicPropertiesStore().saveExchangeBalanceLimit(EXCHANGE_BALANCE_LIMIT);
+    // Enable allowSameTokenName for V2 exchanges - MUST be set before addAssetAmountV2
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
+
     // Create owner account with high balance for exchange creation fee
     AccountCapsule ownerAccount = new AccountCapsule(
         ByteString.copyFromUtf8("owner"),
@@ -86,15 +95,6 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
         AccountType.Normal,
         INITIAL_BALANCE);
     dbManager.getAccountStore().put(otherAccount.getAddress().toByteArray(), otherAccount);
-
-    // Set dynamic properties
-    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(1000000);
-    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(10);
-    dbManager.getDynamicPropertiesStore().saveLatestExchangeNum(0);
-    dbManager.getDynamicPropertiesStore().saveExchangeCreateFee(EXCHANGE_CREATE_FEE);
-    dbManager.getDynamicPropertiesStore().saveExchangeBalanceLimit(EXCHANGE_BALANCE_LIMIT);
-    // Enable allowSameTokenName for V2 exchanges
-    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
   }
 
   // ==========================================================================
