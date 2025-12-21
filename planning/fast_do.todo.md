@@ -626,7 +626,10 @@ TODO（建议）：
 - 但你表里标记为 ❌ 的原因通常不是“没有入口”，而是 **TRON-TVМ 语义/落库/回执不完整**（尤其是 create 的合约元数据落库、能量/回执字段、以及 CreateSmartContract 的 toAddress 语义）。
 
 TODO（分三层推进）：
-- [ ] L1：先把 **CreateSmartContract 的 toAddress 语义**修正并加测试（见 Phase 0.5），确保“创建”不会被误当“call 0 地址”。
+- [x] L1：先把 **CreateSmartContract 的 toAddress 语义**修正并加测试（见 Phase 0.5），确保"创建"不会被误当"call 0 地址"。
+  - **DONE**: Fixed in `rust-backend/crates/core/src/service/grpc/conversion.rs:35-46`
+  - For `tx_kind=VM && contract_type=30 (CreateSmartContract)`, all-zero addresses are now treated as `None` (contract creation) instead of `Some(Address::ZERO)`
+  - Tests added: `test_create_smart_contract_zero_address_treated_as_none`, `test_trigger_smart_contract_zero_address_preserved`, `test_create_smart_contract_type_value` in `tests.rs`
 - [ ] L2：补齐“合约创建后必须落库/可查询”的状态面：
   - [ ] contract/code/abi/contract-state 的 key/value 规则与 Java 对齐（参见 `RepositoryImpl.commit*Cache`，store 在 `chainbase/.../store/*Store.java`）
   - [ ] 远端回传 receipt/ProgramResult.ret（至少保证 `TransactionInfo.contractAddress/contractResult/fee` 正确）
@@ -643,10 +646,30 @@ TODO（分三层推进）：
 ## 5. Phase 3：灰度、回归、CI 门禁
 
 TODO：
-- [ ] Rust：为每个新 contract type 增加 `execution.remote.<contract>_enabled`（默认 false）并在 dispatch 里 gate
-- [ ] Java：RemoteExecutionSPI 增加 JVM property gate（与 Rust 配合，确保可随时回滚到 embedded）
-- [ ] PR 门禁：
-  - [ ] 跑 fixture conformance（覆盖所有新增 contract 的 happy/validate-fail/edge）
+- [x] Rust：为每个新 contract type 增加 `execution.remote.<contract>_enabled`（默认 false）并在 dispatch 里 gate
+  - **DONE**: All Phase 2 contracts have config flags in `rust-backend/crates/common/src/config.rs`:
+    - Proposal: `proposal_create_enabled`, `proposal_approve_enabled`, `proposal_delete_enabled`
+    - Account: `set_account_id_enabled`, `account_permission_update_enabled`
+    - Contract Metadata: `update_setting_enabled`, `update_energy_limit_enabled`, `clear_abi_enabled`
+    - Brokerage: `update_brokerage_enabled`
+    - Resource/Delegation: `withdraw_expire_unfreeze_enabled`, `delegate_resource_enabled`, `undelegate_resource_enabled`, `cancel_all_unfreeze_v2_enabled`
+    - TRC-10: `participate_asset_issue_enabled`, `unfreeze_asset_enabled`, `update_asset_enabled`
+    - Exchange: `exchange_create_enabled`, `exchange_inject_enabled`, `exchange_withdraw_enabled`, `exchange_transaction_enabled`
+    - Market: `market_sell_asset_enabled`, `market_cancel_order_enabled`
+- [x] Java：RemoteExecutionSPI 增加 JVM property gate（与 Rust 配合，确保可随时回滚到 embedded）
+  - **DONE**: Added JVM property gates in `framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java`:
+    - `-Dremote.exec.proposal.enabled=false` (Proposal 16/17/18)
+    - `-Dremote.exec.account.enabled=false` (SetAccountId 19, AccountPermissionUpdate 46)
+    - `-Dremote.exec.contract.enabled=false` (UpdateSetting 33, UpdateEnergyLimit 45, ClearABI 48)
+    - `-Dremote.exec.brokerage.enabled=false` (UpdateBrokerage 49)
+    - `-Dremote.exec.resource.enabled=false` (WithdrawExpireUnfreeze 56, Delegate/UnDelegate 57/58, CancelAllUnfreezeV2 59)
+    - `-Dremote.exec.trc10.enabled=false` (already existed for TRC-10 9/14/15)
+    - `-Dremote.exec.exchange.enabled=false` (Exchange 41-44)
+    - `-Dremote.exec.market.enabled=false` (Market 52/53)
+- [x] PR 门禁：
+  - [x] 跑 fixture conformance（覆盖所有新增 contract 的 happy/validate-fail/edge）
+    - **DONE**: Created `scripts/ci/run_fixture_conformance.sh` script for PR gate
+    - Usage: `./scripts/ci/run_fixture_conformance.sh [--generate-only] [--rust-only] [--contract NAME]`
   - [ ] 跑 `./gradlew :framework:test`（或按 contract 过滤）
   - [ ] 跑 `cargo test`（只跑新增 fixture runner + unit）
 - [ ] Nightly：
