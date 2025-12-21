@@ -415,6 +415,35 @@ impl BackendService {
                 debug!("Executing UPDATE_ASSET_CONTRACT");
                 self.execute_update_asset_contract(storage_adapter, transaction, context)
             },
+            // Phase 2.F: Exchange contracts (41/42/43/44)
+            Some(tron_backend_execution::TronContractType::ExchangeCreateContract) => {
+                if !remote_config.exchange_create_enabled {
+                    return Err("EXCHANGE_CREATE_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing EXCHANGE_CREATE_CONTRACT");
+                self.execute_exchange_create_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::ExchangeInjectContract) => {
+                if !remote_config.exchange_inject_enabled {
+                    return Err("EXCHANGE_INJECT_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing EXCHANGE_INJECT_CONTRACT");
+                self.execute_exchange_inject_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::ExchangeWithdrawContract) => {
+                if !remote_config.exchange_withdraw_enabled {
+                    return Err("EXCHANGE_WITHDRAW_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing EXCHANGE_WITHDRAW_CONTRACT");
+                self.execute_exchange_withdraw_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::ExchangeTransactionContract) => {
+                if !remote_config.exchange_transaction_enabled {
+                    return Err("EXCHANGE_TRANSACTION_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing EXCHANGE_TRANSACTION_CONTRACT");
+                self.execute_exchange_transaction_contract(storage_adapter, transaction, context)
+            },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
                 Err(format!("Contract type {:?} not yet implemented in Rust backend", contract_type))
@@ -5678,6 +5707,1070 @@ impl BackendService {
         // Description must be <= 200 bytes
         description.len() <= 200
     }
+
+    // ============================================================================
+    // Phase 2.F: Exchange Contract Handlers (41/42/43/44)
+    // ============================================================================
+
+    /// Execute EXCHANGE_CREATE_CONTRACT (type 41)
+    /// Creates a new Bancor-style exchange with initial token balances
+    ///
+    /// Java reference: ExchangeCreateActuator.java
+    fn execute_exchange_create_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use contracts::exchange::{TRX_SYMBOL, is_number, is_trx};
+        use contracts::proto::TransactionResultBuilder;
+
+        debug!("Executing EXCHANGE_CREATE_CONTRACT: owner={:?}", transaction.from);
+
+        // 1. Parse contract data
+        let create_info = self.parse_exchange_create_contract(&transaction.data)?;
+        debug!("Parsed ExchangeCreate: first_token={}, second_token={}, balances={}/{}",
+            String::from_utf8_lossy(&create_info.first_token_id),
+            String::from_utf8_lossy(&create_info.second_token_id),
+            create_info.first_token_balance,
+            create_info.second_token_balance
+        );
+
+        // 2. Get owner account
+        let owner = transaction.from;
+        let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or("Owner account not found")?;
+
+        // 3. Get dynamic properties
+        let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
+        let exchange_create_fee = storage_adapter.get_exchange_create_fee()
+            .map_err(|e| format!("Failed to get exchange create fee: {}", e))?;
+        let balance_limit = storage_adapter.get_exchange_balance_limit()
+            .map_err(|e| format!("Failed to get exchange balance limit: {}", e))?;
+
+        // 4. Validate
+        // - Balance for fee
+        if account.balance < exchange_create_fee {
+            return Err("No enough balance for exchange create fee!".to_string());
+        }
+
+        // - Token ID format validation (allowSameTokenName=1)
+        if allow_same_token_name == 1 {
+            if !is_trx(&create_info.first_token_id) && !is_number(&create_info.first_token_id) {
+                return Err("first token id is not a valid number".to_string());
+            }
+            if !is_trx(&create_info.second_token_id) && !is_number(&create_info.second_token_id) {
+                return Err("second token id is not a valid number".to_string());
+            }
+        }
+
+        // - Cannot exchange same tokens
+        if create_info.first_token_id == create_info.second_token_id {
+            return Err("cannot exchange same tokens".to_string());
+        }
+
+        // - Token balances must be positive
+        if create_info.first_token_balance <= 0 || create_info.second_token_balance <= 0 {
+            return Err("token balance must greater than zero".to_string());
+        }
+
+        // - Token balances must be within limit
+        if create_info.first_token_balance > balance_limit || create_info.second_token_balance > balance_limit {
+            return Err(format!("token balance must less than {}", balance_limit));
+        }
+
+        // - Sufficient balance for first token
+        if is_trx(&create_info.first_token_id) {
+            if account.balance < create_info.first_token_balance + exchange_create_fee {
+                return Err("balance is not enough".to_string());
+            }
+        } else {
+            let asset_balance = storage_adapter.get_asset_balance_v2(&owner, &create_info.first_token_id)
+                .map_err(|e| format!("Failed to get first token balance: {}", e))?;
+            if asset_balance < create_info.first_token_balance {
+                return Err("first token balance is not enough".to_string());
+            }
+        }
+
+        // - Sufficient balance for second token
+        if is_trx(&create_info.second_token_id) {
+            if account.balance < create_info.second_token_balance + exchange_create_fee {
+                return Err("balance is not enough".to_string());
+            }
+        } else {
+            let asset_balance = storage_adapter.get_asset_balance_v2(&owner, &create_info.second_token_id)
+                .map_err(|e| format!("Failed to get second token balance: {}", e))?;
+            if asset_balance < create_info.second_token_balance {
+                return Err("second token balance is not enough".to_string());
+            }
+        }
+
+        // 5. Execute
+        let mut updated_account = account.clone();
+
+        // Deduct fee
+        updated_account.balance -= exchange_create_fee;
+
+        // Deduct first token
+        if is_trx(&create_info.first_token_id) {
+            updated_account.balance -= create_info.first_token_balance;
+        } else {
+            storage_adapter.reduce_asset_amount_v2(&owner, &create_info.first_token_id, create_info.first_token_balance)
+                .map_err(|e| format!("Failed to reduce first token: {}", e))?;
+        }
+
+        // Deduct second token
+        if is_trx(&create_info.second_token_id) {
+            updated_account.balance -= create_info.second_token_balance;
+        } else {
+            storage_adapter.reduce_asset_amount_v2(&owner, &create_info.second_token_id, create_info.second_token_balance)
+                .map_err(|e| format!("Failed to reduce second token: {}", e))?;
+        }
+
+        // Create exchange
+        let exchange_id = storage_adapter.get_latest_exchange_num()
+            .map_err(|e| format!("Failed to get latest exchange num: {}", e))? + 1;
+        let now = context.block_timestamp as i64;
+
+        // For allowSameTokenName=0, resolve token names to IDs
+        let mut first_token_id_v2 = create_info.first_token_id.clone();
+        let mut second_token_id_v2 = create_info.second_token_id.clone();
+
+        if allow_same_token_name == 0 {
+            // Save to old store with names
+            let exchange_v1 = tron_backend_execution::protocol::Exchange {
+                exchange_id,
+                creator_address: owner_tron.clone(),
+                create_time: now,
+                first_token_id: create_info.first_token_id.clone(),
+                first_token_balance: create_info.first_token_balance,
+                second_token_id: create_info.second_token_id.clone(),
+                second_token_balance: create_info.second_token_balance,
+            };
+            storage_adapter.put_exchange_to_store(&exchange_v1, false)
+                .map_err(|e| format!("Failed to store exchange V1: {}", e))?;
+
+            // Resolve to real IDs for V2 store
+            if !is_trx(&create_info.first_token_id) {
+                if let Ok(Some(asset)) = storage_adapter.get_asset_issue(&create_info.first_token_id, 0) {
+                    first_token_id_v2 = asset.id.as_bytes().to_vec();
+                }
+            }
+            if !is_trx(&create_info.second_token_id) {
+                if let Ok(Some(asset)) = storage_adapter.get_asset_issue(&create_info.second_token_id, 0) {
+                    second_token_id_v2 = asset.id.as_bytes().to_vec();
+                }
+            }
+        }
+
+        // Save to V2 store
+        let exchange_v2 = tron_backend_execution::protocol::Exchange {
+            exchange_id,
+            creator_address: owner_tron.clone(),
+            create_time: now,
+            first_token_id: first_token_id_v2,
+            first_token_balance: create_info.first_token_balance,
+            second_token_id: second_token_id_v2,
+            second_token_balance: create_info.second_token_balance,
+        };
+        storage_adapter.put_exchange(&exchange_v2)
+            .map_err(|e| format!("Failed to store exchange V2: {}", e))?;
+
+        // Update latest exchange num
+        storage_adapter.set_latest_exchange_num(exchange_id)
+            .map_err(|e| format!("Failed to update latest exchange num: {}", e))?;
+
+        // Update account
+        storage_adapter.set_account_proto(&owner, &updated_account)
+            .map_err(|e| format!("Failed to update account: {}", e))?;
+
+        // Handle fee (burn or blackhole)
+        let support_black_hole = storage_adapter.support_black_hole_optimization()
+            .unwrap_or(true);
+        if !support_black_hole {
+            // Credit blackhole account
+            let blackhole_addr = storage_adapter.get_blackhole_address_evm();
+            storage_adapter.add_balance(&blackhole_addr, exchange_create_fee as u64)
+                .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+        }
+
+        // 6. Build result
+        let account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(updated_account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(revm_primitives::AccountInfo {
+                balance: revm_primitives::U256::from(account.balance as u64),
+                nonce: 0,
+                code_hash: revm_primitives::B256::ZERO,
+                code: None,
+            }),
+            new_account: Some(account_info),
+        }];
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // Build receipt with exchange_id
+        let receipt = TransactionResultBuilder::new()
+            .with_exchange_id(exchange_id)
+            .build();
+
+        debug!("ExchangeCreate: created exchange {} with tokens {}/{}",
+            exchange_id,
+            String::from_utf8_lossy(&create_info.first_token_id),
+            String::from_utf8_lossy(&create_info.second_token_id)
+        );
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: Some(receipt),
+        })
+    }
+
+    /// Execute EXCHANGE_INJECT_CONTRACT (type 42)
+    /// Injects liquidity into an existing exchange (creator only)
+    ///
+    /// Java reference: ExchangeInjectActuator.java
+    fn execute_exchange_inject_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use contracts::exchange::{is_number, is_trx, calculate_inject_another_amount};
+        use contracts::proto::TransactionResultBuilder;
+
+        debug!("Executing EXCHANGE_INJECT_CONTRACT: owner={:?}", transaction.from);
+
+        // 1. Parse contract data
+        let inject_info = self.parse_exchange_inject_contract(&transaction.data)?;
+        debug!("Parsed ExchangeInject: exchange_id={}, token={}, quant={}",
+            inject_info.exchange_id,
+            String::from_utf8_lossy(&inject_info.token_id),
+            inject_info.quant
+        );
+
+        // 2. Get owner account
+        let owner = transaction.from;
+        let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or("Owner account not found")?;
+
+        // 3. Get exchange
+        let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
+        let exchange = storage_adapter.get_exchange(inject_info.exchange_id)
+            .map_err(|e| format!("Failed to get exchange: {}", e))?
+            .ok_or(format!("Exchange[{}] not exists", inject_info.exchange_id))?;
+
+        // 4. Validate
+        // - Must be creator
+        if owner_tron != exchange.creator_address {
+            return Err(format!("account[{}] is not creator", hex::encode(&owner_tron)));
+        }
+
+        // - Token ID format validation
+        if allow_same_token_name == 1 && !is_trx(&inject_info.token_id) && !is_number(&inject_info.token_id) {
+            return Err("token id is not a valid number".to_string());
+        }
+
+        // - Token must be in exchange
+        let is_first_token = inject_info.token_id == exchange.first_token_id;
+        let is_second_token = inject_info.token_id == exchange.second_token_id;
+        if !is_first_token && !is_second_token {
+            return Err("token id is not in exchange".to_string());
+        }
+
+        // - Exchange must not be closed
+        if exchange.first_token_balance == 0 || exchange.second_token_balance == 0 {
+            return Err("Token balance in exchange is equal with 0,the exchange has been closed".to_string());
+        }
+
+        // - Quant must be positive
+        if inject_info.quant <= 0 {
+            return Err("injected token quant must greater than zero".to_string());
+        }
+
+        // Calculate another token amount
+        let (another_token_id, another_token_quant, new_first_balance, new_second_balance) = if is_first_token {
+            let another_quant = calculate_inject_another_amount(
+                exchange.first_token_balance,
+                exchange.second_token_balance,
+                inject_info.quant,
+            );
+            (
+                exchange.second_token_id.clone(),
+                another_quant,
+                exchange.first_token_balance + inject_info.quant,
+                exchange.second_token_balance + another_quant,
+            )
+        } else {
+            let another_quant = calculate_inject_another_amount(
+                exchange.second_token_balance,
+                exchange.first_token_balance,
+                inject_info.quant,
+            );
+            (
+                exchange.first_token_id.clone(),
+                another_quant,
+                exchange.first_token_balance + another_quant,
+                exchange.second_token_balance + inject_info.quant,
+            )
+        };
+
+        // - Another quant must be positive
+        if another_token_quant <= 0 {
+            return Err("the calculated token quant must be greater than 0".to_string());
+        }
+
+        // - Balance limits
+        let balance_limit = storage_adapter.get_exchange_balance_limit()
+            .map_err(|e| format!("Failed to get balance limit: {}", e))?;
+        if new_first_balance > balance_limit || new_second_balance > balance_limit {
+            return Err(format!("token balance must less than {}", balance_limit));
+        }
+
+        // - Sufficient balance for token
+        if is_trx(&inject_info.token_id) {
+            if account.balance < inject_info.quant {
+                return Err("balance is not enough".to_string());
+            }
+        } else {
+            let balance = storage_adapter.get_asset_balance_v2(&owner, &inject_info.token_id)
+                .map_err(|e| format!("Failed to get token balance: {}", e))?;
+            if balance < inject_info.quant {
+                return Err("token balance is not enough".to_string());
+            }
+        }
+
+        // - Sufficient balance for another token
+        if is_trx(&another_token_id) {
+            if account.balance < another_token_quant {
+                return Err("balance is not enough".to_string());
+            }
+        } else {
+            let balance = storage_adapter.get_asset_balance_v2(&owner, &another_token_id)
+                .map_err(|e| format!("Failed to get another token balance: {}", e))?;
+            if balance < another_token_quant {
+                return Err("another token balance is not enough".to_string());
+            }
+        }
+
+        // 5. Execute
+        let mut updated_account = account.clone();
+
+        // Deduct token
+        if is_trx(&inject_info.token_id) {
+            updated_account.balance -= inject_info.quant;
+        } else {
+            storage_adapter.reduce_asset_amount_v2(&owner, &inject_info.token_id, inject_info.quant)
+                .map_err(|e| format!("Failed to reduce token: {}", e))?;
+        }
+
+        // Deduct another token
+        if is_trx(&another_token_id) {
+            updated_account.balance -= another_token_quant;
+        } else {
+            storage_adapter.reduce_asset_amount_v2(&owner, &another_token_id, another_token_quant)
+                .map_err(|e| format!("Failed to reduce another token: {}", e))?;
+        }
+
+        // Update exchange
+        let mut updated_exchange = exchange.clone();
+        updated_exchange.first_token_balance = new_first_balance;
+        updated_exchange.second_token_balance = new_second_balance;
+        storage_adapter.put_exchange(&updated_exchange)
+            .map_err(|e| format!("Failed to update exchange: {}", e))?;
+
+        // Update account
+        storage_adapter.set_account_proto(&owner, &updated_account)
+            .map_err(|e| format!("Failed to update account: {}", e))?;
+
+        // 6. Build result
+        let account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(updated_account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(revm_primitives::AccountInfo {
+                balance: revm_primitives::U256::from(account.balance as u64),
+                nonce: 0,
+                code_hash: revm_primitives::B256::ZERO,
+                code: None,
+            }),
+            new_account: Some(account_info),
+        }];
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // Build receipt with inject_another_amount
+        let receipt = TransactionResultBuilder::new()
+            .with_exchange_inject_another_amount(another_token_quant)
+            .build();
+
+        debug!("ExchangeInject: injected {} of token, calculated {} of another token",
+            inject_info.quant, another_token_quant);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: Some(receipt),
+        })
+    }
+
+    /// Execute EXCHANGE_WITHDRAW_CONTRACT (type 43)
+    /// Withdraws liquidity from an exchange (creator only)
+    ///
+    /// Java reference: ExchangeWithdrawActuator.java
+    fn execute_exchange_withdraw_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use contracts::exchange::{is_number, is_trx, calculate_withdraw_another_amount, is_withdraw_precise_enough};
+        use contracts::proto::TransactionResultBuilder;
+
+        debug!("Executing EXCHANGE_WITHDRAW_CONTRACT: owner={:?}", transaction.from);
+
+        // 1. Parse contract data
+        let withdraw_info = self.parse_exchange_withdraw_contract(&transaction.data)?;
+        debug!("Parsed ExchangeWithdraw: exchange_id={}, token={}, quant={}",
+            withdraw_info.exchange_id,
+            String::from_utf8_lossy(&withdraw_info.token_id),
+            withdraw_info.quant
+        );
+
+        // 2. Get owner account
+        let owner = transaction.from;
+        let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or("Owner account not found")?;
+
+        // 3. Get exchange
+        let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
+        let exchange = storage_adapter.get_exchange(withdraw_info.exchange_id)
+            .map_err(|e| format!("Failed to get exchange: {}", e))?
+            .ok_or(format!("Exchange[{}] not exists", withdraw_info.exchange_id))?;
+
+        // 4. Validate
+        // - Must be creator
+        if owner_tron != exchange.creator_address {
+            return Err(format!("account[{}] is not creator", hex::encode(&owner_tron)));
+        }
+
+        // - Token ID format validation
+        if allow_same_token_name == 1 && !is_trx(&withdraw_info.token_id) && !is_number(&withdraw_info.token_id) {
+            return Err("token id is not a valid number".to_string());
+        }
+
+        // - Token must be in exchange
+        let is_first_token = withdraw_info.token_id == exchange.first_token_id;
+        let is_second_token = withdraw_info.token_id == exchange.second_token_id;
+        if !is_first_token && !is_second_token {
+            return Err("token is not in exchange".to_string());
+        }
+
+        // - Quant must be positive
+        if withdraw_info.quant <= 0 {
+            return Err("withdraw token quant must greater than zero".to_string());
+        }
+
+        // - Exchange must not be closed
+        if exchange.first_token_balance == 0 || exchange.second_token_balance == 0 {
+            return Err("Token balance in exchange is equal with 0,the exchange has been closed".to_string());
+        }
+
+        // Calculate another token amount and validate
+        let (another_token_id, another_token_quant, new_first_balance, new_second_balance, token_balance, other_balance) = if is_first_token {
+            let another_quant = calculate_withdraw_another_amount(
+                exchange.first_token_balance,
+                exchange.second_token_balance,
+                withdraw_info.quant,
+            );
+            (
+                exchange.second_token_id.clone(),
+                another_quant,
+                exchange.first_token_balance - withdraw_info.quant,
+                exchange.second_token_balance - another_quant,
+                exchange.first_token_balance,
+                exchange.second_token_balance,
+            )
+        } else {
+            let another_quant = calculate_withdraw_another_amount(
+                exchange.second_token_balance,
+                exchange.first_token_balance,
+                withdraw_info.quant,
+            );
+            (
+                exchange.first_token_id.clone(),
+                another_quant,
+                exchange.first_token_balance - another_quant,
+                exchange.second_token_balance - withdraw_info.quant,
+                exchange.second_token_balance,
+                exchange.first_token_balance,
+            )
+        };
+
+        // - Exchange balance sufficient
+        if new_first_balance < 0 || new_second_balance < 0 {
+            return Err("exchange balance is not enough".to_string());
+        }
+
+        // - Another quant must be positive
+        if another_token_quant <= 0 {
+            return Err("withdraw another token quant must greater than zero".to_string());
+        }
+
+        // - Precision check
+        if !is_withdraw_precise_enough(token_balance, other_balance, withdraw_info.quant) {
+            return Err("Not precise enough".to_string());
+        }
+
+        // 5. Execute
+        let mut updated_account = account.clone();
+
+        // Add token to account
+        if is_trx(&withdraw_info.token_id) {
+            updated_account.balance += withdraw_info.quant;
+        } else {
+            storage_adapter.add_asset_amount_v2(&owner, &withdraw_info.token_id, withdraw_info.quant)
+                .map_err(|e| format!("Failed to add token: {}", e))?;
+        }
+
+        // Add another token to account
+        if is_trx(&another_token_id) {
+            updated_account.balance += another_token_quant;
+        } else {
+            storage_adapter.add_asset_amount_v2(&owner, &another_token_id, another_token_quant)
+                .map_err(|e| format!("Failed to add another token: {}", e))?;
+        }
+
+        // Update exchange
+        let mut updated_exchange = exchange.clone();
+        updated_exchange.first_token_balance = new_first_balance;
+        updated_exchange.second_token_balance = new_second_balance;
+        storage_adapter.put_exchange(&updated_exchange)
+            .map_err(|e| format!("Failed to update exchange: {}", e))?;
+
+        // Update account
+        storage_adapter.set_account_proto(&owner, &updated_account)
+            .map_err(|e| format!("Failed to update account: {}", e))?;
+
+        // 6. Build result
+        let account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(updated_account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(revm_primitives::AccountInfo {
+                balance: revm_primitives::U256::from(account.balance as u64),
+                nonce: 0,
+                code_hash: revm_primitives::B256::ZERO,
+                code: None,
+            }),
+            new_account: Some(account_info),
+        }];
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // Build receipt with withdraw_another_amount
+        let receipt = TransactionResultBuilder::new()
+            .with_exchange_withdraw_another_amount(another_token_quant)
+            .build();
+
+        debug!("ExchangeWithdraw: withdrew {} of token, plus {} of another token",
+            withdraw_info.quant, another_token_quant);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: Some(receipt),
+        })
+    }
+
+    /// Execute EXCHANGE_TRANSACTION_CONTRACT (type 44)
+    /// Executes a token swap using the Bancor AMM formula
+    ///
+    /// Java reference: ExchangeTransactionActuator.java
+    fn execute_exchange_transaction_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        use contracts::exchange::{ExchangeProcessor, is_number, is_trx};
+        use contracts::proto::TransactionResultBuilder;
+
+        debug!("Executing EXCHANGE_TRANSACTION_CONTRACT: owner={:?}", transaction.from);
+
+        // 1. Parse contract data
+        let tx_info = self.parse_exchange_transaction_contract(&transaction.data)?;
+        debug!("Parsed ExchangeTransaction: exchange_id={}, token={}, quant={}, expected={}",
+            tx_info.exchange_id,
+            String::from_utf8_lossy(&tx_info.token_id),
+            tx_info.quant,
+            tx_info.expected
+        );
+
+        // 2. Get owner account
+        let owner = transaction.from;
+        let account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or("Owner account not found")?;
+
+        // 3. Get exchange and properties
+        let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
+        let use_strict_math = storage_adapter.allow_strict_math()
+            .map_err(|e| format!("Failed to get allowStrictMath: {}", e))?;
+        let mut exchange = storage_adapter.get_exchange(tx_info.exchange_id)
+            .map_err(|e| format!("Failed to get exchange: {}", e))?
+            .ok_or(format!("Exchange[{}] not exists", tx_info.exchange_id))?;
+
+        // 4. Validate
+        // - Token ID format validation
+        if allow_same_token_name == 1 && !is_trx(&tx_info.token_id) && !is_number(&tx_info.token_id) {
+            return Err("token id is not a valid number".to_string());
+        }
+
+        // - Token must be in exchange
+        let is_first_token = tx_info.token_id == exchange.first_token_id;
+        let is_second_token = tx_info.token_id == exchange.second_token_id;
+        if !is_first_token && !is_second_token {
+            return Err("token is not in exchange".to_string());
+        }
+
+        // - Quant must be positive
+        if tx_info.quant <= 0 {
+            return Err("token quant must greater than zero".to_string());
+        }
+
+        // - Expected must be positive
+        if tx_info.expected <= 0 {
+            return Err("token expected must greater than zero".to_string());
+        }
+
+        // - Exchange must not be closed
+        if exchange.first_token_balance == 0 || exchange.second_token_balance == 0 {
+            return Err("Token balance in exchange is equal with 0,the exchange has been closed".to_string());
+        }
+
+        // - Balance limit check
+        let balance_limit = storage_adapter.get_exchange_balance_limit()
+            .map_err(|e| format!("Failed to get balance limit: {}", e))?;
+        let token_balance = if is_first_token { exchange.first_token_balance } else { exchange.second_token_balance };
+        if token_balance + tx_info.quant > balance_limit {
+            return Err(format!("token balance must less than {}", balance_limit));
+        }
+
+        // - Sufficient balance for token
+        if is_trx(&tx_info.token_id) {
+            if account.balance < tx_info.quant {
+                return Err("balance is not enough".to_string());
+            }
+        } else {
+            let balance = storage_adapter.get_asset_balance_v2(&owner, &tx_info.token_id)
+                .map_err(|e| format!("Failed to get token balance: {}", e))?;
+            if balance < tx_info.quant {
+                return Err("token balance is not enough".to_string());
+            }
+        }
+
+        // Calculate received amount using AMM
+        let (another_token_id, another_token_quant) = {
+            let mut processor = ExchangeProcessor::new(use_strict_math);
+
+            let (sell_balance, buy_balance, another_id) = if is_first_token {
+                (exchange.first_token_balance, exchange.second_token_balance, exchange.second_token_id.clone())
+            } else {
+                (exchange.second_token_balance, exchange.first_token_balance, exchange.first_token_id.clone())
+            };
+
+            let buy_quant = processor.exchange(sell_balance, buy_balance, tx_info.quant);
+            (another_id, buy_quant)
+        };
+
+        // - Check expected amount
+        if another_token_quant < tx_info.expected {
+            return Err("token required must greater than expected".to_string());
+        }
+
+        // 5. Execute
+        let mut updated_account = account.clone();
+
+        // Deduct sold token
+        if is_trx(&tx_info.token_id) {
+            updated_account.balance -= tx_info.quant;
+        } else {
+            storage_adapter.reduce_asset_amount_v2(&owner, &tx_info.token_id, tx_info.quant)
+                .map_err(|e| format!("Failed to reduce sold token: {}", e))?;
+        }
+
+        // Add bought token
+        if is_trx(&another_token_id) {
+            updated_account.balance += another_token_quant;
+        } else {
+            storage_adapter.add_asset_amount_v2(&owner, &another_token_id, another_token_quant)
+                .map_err(|e| format!("Failed to add bought token: {}", e))?;
+        }
+
+        // Update exchange balances
+        if is_first_token {
+            exchange.first_token_balance += tx_info.quant;
+            exchange.second_token_balance -= another_token_quant;
+        } else {
+            exchange.first_token_balance -= another_token_quant;
+            exchange.second_token_balance += tx_info.quant;
+        }
+        storage_adapter.put_exchange(&exchange)
+            .map_err(|e| format!("Failed to update exchange: {}", e))?;
+
+        // Update account
+        storage_adapter.set_account_proto(&owner, &updated_account)
+            .map_err(|e| format!("Failed to update account: {}", e))?;
+
+        // 6. Build result
+        let account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(updated_account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(revm_primitives::AccountInfo {
+                balance: revm_primitives::U256::from(account.balance as u64),
+                nonce: 0,
+                code_hash: revm_primitives::B256::ZERO,
+                code: None,
+            }),
+            new_account: Some(account_info),
+        }];
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // Build receipt with received_amount
+        let receipt = TransactionResultBuilder::new()
+            .with_exchange_received_amount(another_token_quant)
+            .build();
+
+        debug!("ExchangeTransaction: sold {} of token, received {} of another token",
+            tx_info.quant, another_token_quant);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: Some(receipt),
+        })
+    }
+
+    /// Parse ExchangeCreateContract protobuf bytes
+    fn parse_exchange_create_contract(&self, data: &[u8]) -> Result<ExchangeCreateInfo, String> {
+        use contracts::proto::read_varint;
+
+        let mut first_token_id = Vec::new();
+        let mut first_token_balance: i64 = 0;
+        let mut second_token_id = Vec::new();
+        let mut second_token_balance: i64 = 0;
+
+        let mut pos = 0;
+        while pos < data.len() {
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos += new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                // owner_address = 1 (skip)
+                1 => {
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                }
+                // first_token_id = 2
+                2 => {
+                    if wire_type != 2 { return Err("Invalid wire type for first_token_id".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    first_token_id = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                // first_token_balance = 3
+                3 => {
+                    if wire_type != 0 { return Err("Invalid wire type for first_token_balance".to_string()); }
+                    let (val, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    first_token_balance = val as i64;
+                }
+                // second_token_id = 4
+                4 => {
+                    if wire_type != 2 { return Err("Invalid wire type for second_token_id".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    second_token_id = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                // second_token_balance = 5
+                5 => {
+                    if wire_type != 0 { return Err("Invalid wire type for second_token_balance".to_string()); }
+                    let (val, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    second_token_balance = val as i64;
+                }
+                _ => {
+                    // Skip unknown fields
+                    match wire_type {
+                        0 => { let (_, new_pos) = read_varint(&data[pos..])?; pos += new_pos; }
+                        2 => { let (len, new_pos) = read_varint(&data[pos..])?; pos = pos + new_pos + len as usize; }
+                        _ => return Err(format!("Unsupported wire type: {}", wire_type)),
+                    }
+                }
+            }
+        }
+
+        Ok(ExchangeCreateInfo {
+            first_token_id,
+            first_token_balance,
+            second_token_id,
+            second_token_balance,
+        })
+    }
+
+    /// Parse ExchangeInjectContract protobuf bytes
+    fn parse_exchange_inject_contract(&self, data: &[u8]) -> Result<ExchangeInjectInfo, String> {
+        use contracts::proto::read_varint;
+
+        let mut exchange_id: i64 = 0;
+        let mut token_id = Vec::new();
+        let mut quant: i64 = 0;
+
+        let mut pos = 0;
+        while pos < data.len() {
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos += new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                // owner_address = 1 (skip)
+                1 => {
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                }
+                // exchange_id = 2
+                2 => {
+                    if wire_type != 0 { return Err("Invalid wire type for exchange_id".to_string()); }
+                    let (val, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    exchange_id = val as i64;
+                }
+                // token_id = 3
+                3 => {
+                    if wire_type != 2 { return Err("Invalid wire type for token_id".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    token_id = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                // quant = 4
+                4 => {
+                    if wire_type != 0 { return Err("Invalid wire type for quant".to_string()); }
+                    let (val, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    quant = val as i64;
+                }
+                _ => {
+                    match wire_type {
+                        0 => { let (_, new_pos) = read_varint(&data[pos..])?; pos += new_pos; }
+                        2 => { let (len, new_pos) = read_varint(&data[pos..])?; pos = pos + new_pos + len as usize; }
+                        _ => return Err(format!("Unsupported wire type: {}", wire_type)),
+                    }
+                }
+            }
+        }
+
+        Ok(ExchangeInjectInfo { exchange_id, token_id, quant })
+    }
+
+    /// Parse ExchangeWithdrawContract protobuf bytes
+    fn parse_exchange_withdraw_contract(&self, data: &[u8]) -> Result<ExchangeWithdrawInfo, String> {
+        // Same structure as inject
+        let inject_info = self.parse_exchange_inject_contract(data)?;
+        Ok(ExchangeWithdrawInfo {
+            exchange_id: inject_info.exchange_id,
+            token_id: inject_info.token_id,
+            quant: inject_info.quant,
+        })
+    }
+
+    /// Parse ExchangeTransactionContract protobuf bytes
+    fn parse_exchange_transaction_contract(&self, data: &[u8]) -> Result<ExchangeTransactionInfo, String> {
+        use contracts::proto::read_varint;
+
+        let mut exchange_id: i64 = 0;
+        let mut token_id = Vec::new();
+        let mut quant: i64 = 0;
+        let mut expected: i64 = 0;
+
+        let mut pos = 0;
+        while pos < data.len() {
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos += new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                // owner_address = 1 (skip)
+                1 => {
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                }
+                // exchange_id = 2
+                2 => {
+                    if wire_type != 0 { return Err("Invalid wire type for exchange_id".to_string()); }
+                    let (val, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    exchange_id = val as i64;
+                }
+                // token_id = 3
+                3 => {
+                    if wire_type != 2 { return Err("Invalid wire type for token_id".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    token_id = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                // quant = 4
+                4 => {
+                    if wire_type != 0 { return Err("Invalid wire type for quant".to_string()); }
+                    let (val, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    quant = val as i64;
+                }
+                // expected = 5
+                5 => {
+                    if wire_type != 0 { return Err("Invalid wire type for expected".to_string()); }
+                    let (val, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    expected = val as i64;
+                }
+                _ => {
+                    match wire_type {
+                        0 => { let (_, new_pos) = read_varint(&data[pos..])?; pos += new_pos; }
+                        2 => { let (len, new_pos) = read_varint(&data[pos..])?; pos = pos + new_pos + len as usize; }
+                        _ => return Err(format!("Unsupported wire type: {}", wire_type)),
+                    }
+                }
+            }
+        }
+
+        Ok(ExchangeTransactionInfo { exchange_id, token_id, quant, expected })
+    }
+}
+
+/// Parsed ExchangeCreateContract information
+#[derive(Debug, Clone)]
+struct ExchangeCreateInfo {
+    first_token_id: Vec<u8>,
+    first_token_balance: i64,
+    second_token_id: Vec<u8>,
+    second_token_balance: i64,
+}
+
+/// Parsed ExchangeInjectContract information
+#[derive(Debug, Clone)]
+struct ExchangeInjectInfo {
+    exchange_id: i64,
+    token_id: Vec<u8>,
+    quant: i64,
+}
+
+/// Parsed ExchangeWithdrawContract information
+#[derive(Debug, Clone)]
+struct ExchangeWithdrawInfo {
+    exchange_id: i64,
+    token_id: Vec<u8>,
+    quant: i64,
+}
+
+/// Parsed ExchangeTransactionContract information
+#[derive(Debug, Clone)]
+struct ExchangeTransactionInfo {
+    exchange_id: i64,
+    token_id: Vec<u8>,
+    quant: i64,
+    expected: i64,
 }
 
 /// Parsed ParticipateAssetIssueContract information

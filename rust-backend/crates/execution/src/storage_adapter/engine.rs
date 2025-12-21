@@ -2402,7 +2402,7 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Convert 20-byte EVM address to 21-byte TRON address
-    fn to_tron_address_21(&self, address: &Address) -> [u8; 21] {
+    pub fn to_tron_address_21(&self, address: &Address) -> [u8; 21] {
         let mut tron_addr = [0u8; 21];
         tron_addr[0] = 0x41;
         tron_addr[1..].copy_from_slice(address.as_slice());
@@ -2910,6 +2910,310 @@ impl EngineBackedEvmStateStore {
         asset_issue.encode(&mut buf)?;
         self.storage_engine.put(db, key, &buf)?;
 
+        Ok(())
+    }
+
+    // ============================================================================
+    // Exchange Store Access Methods (Phase 2.F)
+    // ============================================================================
+    //
+    // These methods provide access to the Exchange stores for Bancor-style AMM operations.
+    //
+    // Database names:
+    // - ExchangeStore: "exchange" (legacy, used when allowSameTokenName=0)
+    // - ExchangeV2Store: "exchange-v2" (primary store)
+    //
+    // Key format: 8-byte big-endian exchange_id (same as ProposalStore)
+    //
+    // Java references:
+    // - ExchangeStore.java: chainbase/src/main/java/org/tron/core/store/ExchangeStore.java
+    // - ExchangeV2Store.java: chainbase/src/main/java/org/tron/core/store/ExchangeV2Store.java
+    // - ExchangeCapsule.java: chainbase/src/main/java/org/tron/core/capsule/ExchangeCapsule.java
+
+    /// Get the database name for exchange store (legacy, allowSameTokenName=0)
+    fn exchange_database(&self) -> &str {
+        db_names::exchange::EXCHANGE
+    }
+
+    /// Get the database name for exchange V2 store (primary)
+    fn exchange_v2_database(&self) -> &str {
+        db_names::exchange::EXCHANGE_V2
+    }
+
+    /// Generate key for exchange store: 8-byte big-endian exchange ID
+    /// Java reference: ExchangeCapsule.createDbKey() -> ByteArray.fromLong(exchangeId)
+    fn exchange_key(&self, exchange_id: i64) -> Vec<u8> {
+        use super::key_helpers::exchange_key;
+        exchange_key(exchange_id)
+    }
+
+    /// Get exchange by ID from V2 store (primary)
+    /// Returns the Exchange protobuf
+    pub fn get_exchange(&self, exchange_id: i64) -> Result<Option<crate::protocol::Exchange>> {
+        self.get_exchange_from_store(exchange_id, true)
+    }
+
+    /// Get exchange by ID from specific store
+    /// v2_store=true uses "exchange-v2", v2_store=false uses "exchange"
+    pub fn get_exchange_from_store(&self, exchange_id: i64, v2_store: bool) -> Result<Option<crate::protocol::Exchange>> {
+        use crate::protocol::Exchange;
+        use prost::Message;
+
+        let key = self.exchange_key(exchange_id);
+        let db = if v2_store { self.exchange_v2_database() } else { self.exchange_database() };
+
+        tracing::debug!("Getting exchange {} from {}, key: {}", exchange_id, db, hex::encode(&key));
+
+        match self.storage_engine.get(db, &key)? {
+            Some(data) => {
+                tracing::debug!("Found exchange data, length: {}", data.len());
+                match Exchange::decode(data.as_slice()) {
+                    Ok(exchange) => {
+                        tracing::debug!(
+                            "Decoded exchange {} - creator: {}, first_token: {}, second_token: {}, balances: {}/{}",
+                            exchange.exchange_id,
+                            hex::encode(&exchange.creator_address),
+                            String::from_utf8_lossy(&exchange.first_token_id),
+                            String::from_utf8_lossy(&exchange.second_token_id),
+                            exchange.first_token_balance,
+                            exchange.second_token_balance
+                        );
+                        Ok(Some(exchange))
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to decode exchange {}: {}", exchange_id, e);
+                        Err(anyhow::anyhow!("Failed to decode exchange: {}", e))
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("Exchange {} not found in {}", exchange_id, db);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store exchange to V2 store (primary)
+    pub fn put_exchange(&mut self, exchange: &crate::protocol::Exchange) -> Result<()> {
+        self.put_exchange_to_store(exchange, true)
+    }
+
+    /// Store exchange to specific store
+    /// v2_store=true uses "exchange-v2", v2_store=false uses "exchange"
+    pub fn put_exchange_to_store(&mut self, exchange: &crate::protocol::Exchange, v2_store: bool) -> Result<()> {
+        use prost::Message;
+
+        let key = self.exchange_key(exchange.exchange_id);
+        let db = if v2_store { self.exchange_v2_database() } else { self.exchange_database() };
+        let data = exchange.encode_to_vec();
+
+        tracing::debug!(
+            "Storing exchange {} to {} - creator: {}, first_token: {}, second_token: {}, balances: {}/{}, key: {}",
+            exchange.exchange_id,
+            db,
+            hex::encode(&exchange.creator_address),
+            String::from_utf8_lossy(&exchange.first_token_id),
+            String::from_utf8_lossy(&exchange.second_token_id),
+            exchange.first_token_balance,
+            exchange.second_token_balance,
+            hex::encode(&key)
+        );
+
+        self.storage_engine.put(db, &key, &data)?;
+        Ok(())
+    }
+
+    /// Check if exchange exists in V2 store
+    pub fn has_exchange(&self, exchange_id: i64) -> Result<bool> {
+        self.has_exchange_in_store(exchange_id, true)
+    }
+
+    /// Check if exchange exists in specific store
+    pub fn has_exchange_in_store(&self, exchange_id: i64, v2_store: bool) -> Result<bool> {
+        let key = self.exchange_key(exchange_id);
+        let db = if v2_store { self.exchange_v2_database() } else { self.exchange_database() };
+        match self.storage_engine.get(db, &key)? {
+            Some(_) => Ok(true),
+            None => Ok(false),
+        }
+    }
+
+    // --- Dynamic Properties for Exchange ---
+
+    /// Get LATEST_EXCHANGE_NUM dynamic property
+    /// Returns the highest exchange ID that has been created
+    pub fn get_latest_exchange_num(&self) -> Result<i64> {
+        let key = b"LATEST_EXCHANGE_NUM";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    let num = i64::from_be_bytes(data.as_slice().try_into()?);
+                    tracing::debug!("LATEST_EXCHANGE_NUM: {}", num);
+                    Ok(num)
+                } else {
+                    tracing::warn!("LATEST_EXCHANGE_NUM has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            },
+            None => {
+                tracing::debug!("LATEST_EXCHANGE_NUM not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Set LATEST_EXCHANGE_NUM dynamic property
+    pub fn set_latest_exchange_num(&mut self, num: i64) -> Result<()> {
+        let key = b"LATEST_EXCHANGE_NUM";
+        let value = num.to_be_bytes();
+        tracing::debug!("Setting LATEST_EXCHANGE_NUM to {}", num);
+        self.storage_engine.put(db_names::system::PROPERTIES, key, &value)?;
+        Ok(())
+    }
+
+    /// Get EXCHANGE_BALANCE_LIMIT dynamic property
+    /// Maximum balance allowed for each token in an exchange
+    /// Default in Java: 1_000_000_000_000_000L (1 quadrillion)
+    pub fn get_exchange_balance_limit(&self) -> Result<i64> {
+        let key = b"EXCHANGE_BALANCE_LIMIT";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    let limit = i64::from_be_bytes(data.as_slice().try_into()?);
+                    tracing::debug!("EXCHANGE_BALANCE_LIMIT: {}", limit);
+                    Ok(limit)
+                } else {
+                    tracing::warn!("EXCHANGE_BALANCE_LIMIT has invalid length: {}", data.len());
+                    Ok(1_000_000_000_000_000i64) // Default
+                }
+            },
+            None => {
+                tracing::debug!("EXCHANGE_BALANCE_LIMIT not found, returning default");
+                Ok(1_000_000_000_000_000i64) // Default: 1 quadrillion
+            }
+        }
+    }
+
+    /// Get EXCHANGE_CREATE_FEE dynamic property
+    /// Fee charged to create an exchange (in SUN)
+    /// Default in Java: 1024_000_000_000L (1024 TRX)
+    pub fn get_exchange_create_fee(&self) -> Result<i64> {
+        let key = b"EXCHANGE_CREATE_FEE";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    let fee = i64::from_be_bytes(data.as_slice().try_into()?);
+                    tracing::debug!("EXCHANGE_CREATE_FEE: {}", fee);
+                    Ok(fee)
+                } else {
+                    tracing::warn!("EXCHANGE_CREATE_FEE has invalid length: {}", data.len());
+                    Ok(1024_000_000_000i64) // Default
+                }
+            },
+            None => {
+                tracing::debug!("EXCHANGE_CREATE_FEE not found, returning default");
+                Ok(1024_000_000_000i64) // Default: 1024 TRX
+            }
+        }
+    }
+
+    /// Get ALLOW_STRICT_MATH dynamic property
+    /// Controls whether strict math mode is used in AMM calculations
+    /// When true, uses StrictMath.pow; when false, uses Math.pow
+    /// Default: 0 (false)
+    pub fn allow_strict_math(&self) -> Result<bool> {
+        let key = b"ALLOW_STRICT_MATH";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    let value = i64::from_be_bytes(data.as_slice().try_into()?);
+                    Ok(value != 0)
+                } else if !data.is_empty() {
+                    // Single byte 0 or 1
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(false)
+                }
+            },
+            None => {
+                tracing::debug!("ALLOW_STRICT_MATH not found, returning false");
+                Ok(false)
+            }
+        }
+    }
+
+    // ==========================================================================
+    // Asset Balance Methods (for Exchange contracts)
+    // ==========================================================================
+
+    /// Get asset balance for an account (V2 format - allowSameTokenName=1)
+    pub fn get_asset_balance_v2(&self, address: &Address, token_id: &[u8]) -> Result<i64> {
+        // Get account and read from assetV2 map
+        if let Some(account) = self.get_account_proto(address)? {
+            // Convert token_id to string key
+            let token_key = String::from_utf8_lossy(token_id).to_string();
+            // Look up in assetV2 map
+            if let Some(&balance) = account.asset_v2.get(&token_key) {
+                return Ok(balance);
+            }
+        }
+        Ok(0)
+    }
+
+    /// Reduce asset amount from an account (V2 format)
+    pub fn reduce_asset_amount_v2(&mut self, address: &Address, token_id: &[u8], amount: i64) -> Result<()> {
+        let mut account = self.get_account_proto(address)?
+            .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+
+        let token_key = String::from_utf8_lossy(token_id).to_string();
+        let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+
+        if current < amount {
+            return Err(anyhow::anyhow!("Insufficient asset balance"));
+        }
+
+        account.asset_v2.insert(token_key, current - amount);
+        self.set_account_proto(address, &account)?;
+        Ok(())
+    }
+
+    /// Add asset amount to an account (V2 format)
+    pub fn add_asset_amount_v2(&mut self, address: &Address, token_id: &[u8], amount: i64) -> Result<()> {
+        let mut account = self.get_account_proto(address)?
+            .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+
+        let token_key = String::from_utf8_lossy(token_id).to_string();
+        let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+
+        account.asset_v2.insert(token_key, current + amount);
+        self.set_account_proto(address, &account)?;
+        Ok(())
+    }
+
+    /// Set/update account from proto
+    pub fn set_account_proto(&mut self, address: &Address, account: &crate::protocol::Account) -> Result<()> {
+        use prost::Message;
+
+        // Encode account to protobuf bytes
+        let mut buf = Vec::new();
+        account.encode(&mut buf)?;
+
+        // Write to account store using TRON 21-byte address
+        let tron_addr = self.to_tron_address_21(address);
+        self.storage_engine.put(self.account_database(), &tron_addr, &buf)?;
+
+        Ok(())
+    }
+
+    /// Add balance to an account (for crediting blackhole, etc.)
+    pub fn add_balance(&mut self, address: &Address, amount: u64) -> Result<()> {
+        let mut account = self.get_account_proto(address)?
+            .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+
+        account.balance = account.balance.checked_add(amount as i64)
+            .ok_or_else(|| anyhow::anyhow!("Balance overflow"))?;
+
+        self.set_account_proto(address, &account)?;
         Ok(())
     }
 }

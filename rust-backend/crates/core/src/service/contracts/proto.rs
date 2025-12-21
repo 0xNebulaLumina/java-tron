@@ -107,31 +107,26 @@ impl TransactionResultBuilder {
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_withdraw_expire_amount(mut self, amount: i64) -> Self {
         self.withdraw_expire_amount = Some(amount);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_exchange_id(mut self, id: i64) -> Self {
         self.exchange_id = Some(id);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_exchange_received_amount(mut self, amount: i64) -> Self {
         self.exchange_received_amount = Some(amount);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_exchange_inject_another_amount(mut self, amount: i64) -> Self {
         self.exchange_inject_another_amount = Some(amount);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_exchange_withdraw_another_amount(mut self, amount: i64) -> Self {
         self.exchange_withdraw_another_amount = Some(amount);
         self
