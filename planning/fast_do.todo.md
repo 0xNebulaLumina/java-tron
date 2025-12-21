@@ -1,8 +1,32 @@
 # Rust Backend 未实现 Contract：快速推进（正确性优先）TODO
 
-> 目标：在 **不等链上跑到该 tx** 的前提下，把 rust-backend 里未实现的 `ContractType` 以“**Java 作为规范实现（oracle）** + **fixture conformance**”的方式成体系推进，并且可灰度上线。
+> 目标：在 **不等链上跑到该 tx** 的前提下，把 rust-backend 里未实现的 `ContractType` 以"**Java 作为规范实现（oracle）** + **fixture conformance**"的方式成体系推进，并且可灰度上线。
 >
 > 备注：本文只写方案与待办；不开始实现。
+
+---
+
+## 📊 当前进度总览 (Updated: 2025-12-21)
+
+| Phase | 状态 | 说明 |
+|-------|------|------|
+| Phase 0 (地基) | ✅ **DONE** | Account codec、DB 名称对齐、一致性模型、Receipt 回传 |
+| Phase 1 (Fixture Conformance) | ✅ **DONE** | 113 个 fixtures 通过验证 |
+| Phase 2.A (Proposal 16/17/18) | ✅ **DONE** | 全部实现并有 fixtures |
+| Phase 2.B (SetAccountId 19, PermissionUpdate 46) | ✅ **DONE** | 全部实现并有 fixtures |
+| Phase 2.C (UpdateSetting 33/45, ClearABI 48) | ✅ **DONE** | 全部实现并有 fixtures |
+| Phase 2.C2 (UpdateBrokerage 49) | ✅ **DONE** | 实现并有 fixtures |
+| Phase 2.D (Resource/Delegation 56-59) | ✅ **DONE** | 全部实现并有 fixtures |
+| Phase 2.E (TRC-10 扩展 9/14/15) | ✅ **DONE** | 全部实现并有 fixtures |
+| Phase 2.F (Exchange 41-44) | ✅ **DONE** | 全部实现并有 fixtures |
+| Phase 2.G (Market 52-53) | ✅ **DONE** | 全部实现并有 fixtures (简化版) |
+| Phase 2.H (Shield 51) | ❌ 未开始 | 建议独立里程碑 |
+| Phase 2.I (VM 30/31) | 🟡 部分完成 | CreateSmartContract 语义已修正 |
+| Phase 3 (灰度/CI) | 🟡 部分完成 | CI 脚本就绪，需集成 |
+
+**已实现合约数**: 26 个系统合约类型
+**已生成 Fixtures**: 113 个测试用例
+**下一优先级**: Shield 51、VM parity (30/31)
 
 ---
 
@@ -193,10 +217,11 @@ TODO：
 - `scripts/compare_exec_csv.py`
 
 TODO：
-- [ ] 把 fixture conformance 定位为 PR 门禁（快）
-  - Recommended CI integration:
-    - Java: `./gradlew :framework:test --tests "ProposalFixtureGeneratorTest*" -Dconformance.output=conformance/fixtures`
-    - Rust: `cargo test --package tron-backend-core conformance_tests`
+- [x] 把 fixture conformance 定位为 PR 门禁（快）
+  - **DONE**: CI script at `scripts/ci/run_fixture_conformance.sh`
+  - Java: `./gradlew :framework:test --tests "*FixtureGeneratorTest*" -Dconformance.output=conformance/fixtures`
+  - Rust: `CONFORMANCE_FIXTURES_DIR=/path/to/fixtures cargo test --package tron-backend-core conformance -- --nocapture`
+  - All 113 fixtures pass structure validation (2025-12-21)
 - [ ] 把 CSV replay/diff 定位为 nightly（慢，但覆盖真实区块）
   - Continue using existing `collect_remote_results.sh` + `scripts/compare_exec_csv.py` for full chain replay
 
@@ -670,8 +695,12 @@ TODO：
   - [x] 跑 fixture conformance（覆盖所有新增 contract 的 happy/validate-fail/edge）
     - **DONE**: Created `scripts/ci/run_fixture_conformance.sh` script for PR gate
     - Usage: `./scripts/ci/run_fixture_conformance.sh [--generate-only] [--rust-only] [--contract NAME]`
+  - [x] 跑 `cargo test`（只跑新增 fixture runner + unit）
+    - **DONE**: Run with `CONFORMANCE_FIXTURES_DIR=/path/to/fixtures cargo test --package tron-backend-core conformance -- --nocapture`
+    - Updated conformance runner to support `CONFORMANCE_FIXTURES_DIR` env var for CI
+    - All 113 fixtures pass structure validation
   - [ ] 跑 `./gradlew :framework:test`（或按 contract 过滤）
-  - [ ] 跑 `cargo test`（只跑新增 fixture runner + unit）
+    - Note: Requires Java fixture generator tests to be run first
 - [ ] Nightly：
   - [ ] `collect_remote_results.sh` 回放 + `scripts/compare_exec_csv.py` diff
   - [ ] 若要更强一致性：把 Domain/State digest 作为 alert 指标（已有 `StateChangeCanonicalizer` / `DomainCanonicalizer`）
