@@ -449,13 +449,55 @@ Java oracle：
 - `DynamicPropertiesStore`（allowSameTokenName、latest timestamp、oneDayNetLimit 等）
 
 TODO：
-- [ ] 先决定“TRC-10 的远端落库语义”：目前 TRC-10 apply 是 delta，且 RemoteExecutionSPI 还 gate（`remote.exec.trc10.enabled=false` 默认）
-- [ ] Proto：扩展 `Trc10Change` oneof：
+- [x] 先决定"TRC-10 的远端落库语义"：目前 TRC-10 apply 是 delta，且 RemoteExecutionSPI 还 gate（`remote.exec.trc10.enabled=false` 默认）
+  - **DONE**: Rust persists directly to stores; TRC-10 extension contracts (9/14/15) share the `trc10_enabled` config flag with TransferAsset
+  - Java RemoteExecutionSPI gates on `remote.exec.trc10.enabled` property (default: false)
+- [x] Rust：实现 ParticipateAssetIssue (9)
+  - **DONE**: Implemented `execute_participate_asset_issue_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Validates asset exists, time window, owner has sufficient TRX, issuer has sufficient tokens
+  - Exchanges TRX from participant to issuer, tokens from issuer to participant
+  - Uses `safe_multiply_divide()` for exchange calculation matching Java's BigInteger arithmetic
+  - Helper methods: `get_asset_balance_v2()`, `add_asset_amount_v2()`, `reduce_asset_amount_v2()`
+- [x] Rust：实现 UnfreezeAsset (14)
+  - **DONE**: Implemented `execute_unfreeze_asset_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Validates owner has frozen supply and is asset issuer
+  - Finds expired frozen supply entries via `frozen_supply` field and `asset_issued_ID`
+  - Unfreezes by adding to owner's asset balance via `add_asset_amount_v2()`
+  - Clears expired entries from `frozen_supply` list
+- [x] Rust：实现 UpdateAsset (15)
+  - **DONE**: Implemented `execute_update_asset_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Validates owner is asset issuer, URL/description validity and length limits
+  - Updates asset metadata: description, url, free_asset_net_limit, public_free_asset_net_limit
+  - Persists to AssetIssueV2Store via `put_asset_issue()`
+  - Helper methods: `valid_url()`, `valid_asset_description()` for validation
+- [x] Rust：添加 AssetIssueStore/AssetIssueV2Store adapter methods
+  - **DONE**: Added to `rust-backend/crates/execution/src/storage_adapter/engine.rs`:
+    - `asset_issue_database()`, `asset_issue_v2_database()` - database name helpers
+    - `get_allow_same_token_name()` - dynamic property accessor
+    - `get_one_day_net_limit()` - dynamic property accessor
+    - `get_asset_issue()`, `put_asset_issue()` - asset issue CRUD operations
+  - **DONE**: Added `AssetIssueContractData` message to `rust-backend/crates/execution/protos/tron.proto`
+    - Matches Java's AssetIssueContract proto with all required fields (name, abbr, total_supply, trx_num, num, precision, start_time, end_time, frozen_supply, etc.)
+    - Renamed from "AssetIssue" to avoid conflict with AccountType.AssetIssue enum
+- [x] Rust：添加 config flags for gradual rollout
+  - **DONE**: Added `participate_asset_issue_enabled`, `unfreeze_asset_enabled`, `update_asset_enabled` to `RemoteExecutionConfig` in `common/src/config.rs`
+  - All reuse `trc10_enabled` flag logic for simplicity; individual flags provide granular control
+  - Default: false for safe rollout
+- [x] Java：RemoteExecutionSPI 增加 9/14/15 映射
+  - **DONE**: Added `ParticipateAssetIssueContract`, `UnfreezeAssetContract`, `UpdateAssetContract` cases in `RemoteExecutionSPI.java`
+  - All use `txKind = TxKind.NON_VM`, send full proto bytes as `data`
+  - Each case gates on `remote.exec.trc10.enabled` property
+- [x] Fixture：
+  - **DONE**: Created `Trc10ExtensionFixtureGeneratorTest.java` in `framework/src/test/java/org/tron/core/conformance/`
+  - ParticipateAssetIssue (9): happy_path, validate_fail_insufficient_balance, validate_fail_asset_not_found, validate_fail_sale_ended, validate_fail_self_participate
+  - UnfreezeAsset (14): happy_path, validate_fail_no_frozen, validate_fail_not_yet_expired
+  - UpdateAsset (15): happy_path, validate_fail_not_owner, validate_fail_invalid_url, validate_fail_description_too_long
+- [ ] Proto：扩展 `Trc10Change` oneof（可选，当前 Rust 直接落库不需要）：
+  - NOTE: Not needed since Rust persists directly to AssetIssue stores
   - [ ] 增加 `Trc10Participated`（参与发行：owner 扣 TRX、issuer 加 TRX、asset 在两边转移）
   - [ ] 增加 `Trc10UnfreezeSupply`（解除冻结供应）
   - [ ] 增加 `Trc10AssetUpdated`（更新 url/description/limits）
-- [ ] 或者：统一用 DbKvChange（Account/AssetIssue* 写入都能表达，避免 oneof 膨胀）
-- [ ] VoteAssetContract：先确认是否已在本 repo 里“事实上废弃”（当前没有 actuator）；若需要支持：
+- [ ] VoteAssetContract：先确认是否已在本 repo 里"事实上废弃"（当前没有 actuator）；若需要支持：
   - [ ] 用 `git log -S "VoteAsset"` 找历史实现/参考旧版本
   - [ ] 没有 oracle 时：写 spec-based fixture（来自 TRON 协议文档）+ 与节点行为对照
 

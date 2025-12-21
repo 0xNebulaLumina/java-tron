@@ -2816,3 +2816,100 @@ impl EvmStateStore for EngineBackedEvmStateStore {
         Ok(())
     }
 }
+
+// ==========================================================================
+// Phase 2.E: TRC-10 Extension Storage Methods
+// ==========================================================================
+
+impl EngineBackedEvmStateStore {
+    /// Get asset issue store database name
+    fn asset_issue_database(&self) -> &str {
+        db_names::asset::ASSET_ISSUE
+    }
+
+    /// Get asset issue V2 store database name
+    fn asset_issue_v2_database(&self) -> &str {
+        db_names::asset::ASSET_ISSUE_V2
+    }
+
+    /// Get AllowSameTokenName dynamic property
+    /// If 0: use asset name as key for AssetIssueStore
+    /// If 1: use asset id as key for AssetIssueV2Store
+    /// Default: 1 (enabled) to match current mainnet
+    pub fn get_allow_same_token_name(&self) -> Result<i64> {
+        let key = b"ALLOW_SAME_TOKEN_NAME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val)
+                } else {
+                    Ok(1) // Default enabled (V2 mode)
+                }
+            },
+            None => Ok(1) // Default enabled (V2 mode)
+        }
+    }
+
+    /// Get OneDayNetLimit dynamic property
+    /// Default: 8640000000 bytes per day
+    pub fn get_one_day_net_limit(&self) -> Result<i64> {
+        let key = b"ONE_DAY_NET_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val)
+                } else {
+                    Ok(8_640_000_000) // Default value
+                }
+            },
+            None => Ok(8_640_000_000) // Default value
+        }
+    }
+
+    /// Get asset issue by key (asset name or asset id depending on allowSameTokenName)
+    pub fn get_asset_issue(&self, key: &[u8], allow_same_token_name: i64) -> Result<Option<crate::protocol::AssetIssueContractData>> {
+        let db = if allow_same_token_name == 0 {
+            self.asset_issue_database()
+        } else {
+            self.asset_issue_v2_database()
+        };
+
+        match self.storage_engine.get(db, key)? {
+            Some(data) => {
+                match crate::protocol::AssetIssueContractData::decode(&data[..]) {
+                    Ok(asset_issue) => Ok(Some(asset_issue)),
+                    Err(e) => {
+                        tracing::warn!("Failed to decode AssetIssueContractData: {}", e);
+                        Err(anyhow::anyhow!("Failed to decode AssetIssueContractData: {}", e))
+                    }
+                }
+            },
+            None => Ok(None)
+        }
+    }
+
+    /// Put asset issue by key
+    pub fn put_asset_issue(&mut self, key: &[u8], asset_issue: &crate::protocol::AssetIssueContractData, v2_store: bool) -> Result<()> {
+        use prost::Message;
+
+        let db = if v2_store {
+            self.asset_issue_v2_database()
+        } else {
+            self.asset_issue_database()
+        };
+
+        let mut buf = Vec::with_capacity(asset_issue.encoded_len());
+        asset_issue.encode(&mut buf)?;
+        self.storage_engine.put(db, key, &buf)?;
+
+        Ok(())
+    }
+}

@@ -354,6 +354,75 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               assetIssueContract.getTotalSupply());
           break;
 
+        // Phase 2.E: TRC-10 Extension Contracts (9/14/15)
+        case ParticipateAssetIssueContract:
+          // ParticipateAssetIssueContract: Participate in a TRC-10 token sale
+          // Gate behind the same TRC-10 feature flag
+          boolean participateAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!participateAssetRemoteEnabled) {
+            logger.debug("TRC-10 ParticipateAssetIssue remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("ParticipateAssetIssue execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+
+          org.tron.protos.contract.AssetIssueContractOuterClass.ParticipateAssetIssueContract participateAssetContract =
+              contractParameter.unpack(org.tron.protos.contract.AssetIssueContractOuterClass.ParticipateAssetIssueContract.class);
+          toAddress = new byte[0]; // System contract, receiver is in contract data
+          value = participateAssetContract.getAmount(); // TRX amount to spend
+          data = participateAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // TRC-10 participation
+          contractType = tron.backend.BackendOuterClass.ContractType.PARTICIPATE_ASSET_ISSUE_CONTRACT;
+          logger.debug(
+              "Mapped ParticipateAssetIssueContract to remote request; owner={}, to={}, asset={}, amount={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(participateAssetContract.getToAddress().toByteArray()),
+              new String(participateAssetContract.getAssetName().toByteArray()),
+              participateAssetContract.getAmount());
+          break;
+
+        case UnfreezeAssetContract:
+          // UnfreezeAssetContract: Unfreeze frozen TRC-10 asset supply
+          // Gate behind the same TRC-10 feature flag
+          boolean unfreezeAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!unfreezeAssetRemoteEnabled) {
+            logger.debug("TRC-10 UnfreezeAsset remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("UnfreezeAsset execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+
+          org.tron.protos.contract.AssetIssueContractOuterClass.UnfreezeAssetContract unfreezeAssetContract =
+              contractParameter.unpack(org.tron.protos.contract.AssetIssueContractOuterClass.UnfreezeAssetContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          value = 0; // No value transfer
+          data = unfreezeAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // TRC-10 unfreeze
+          contractType = tron.backend.BackendOuterClass.ContractType.UNFREEZE_ASSET_CONTRACT;
+          logger.debug(
+              "Mapped UnfreezeAssetContract to remote request; owner={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress));
+          break;
+
+        case UpdateAssetContract:
+          // UpdateAssetContract: Update TRC-10 asset metadata (url, description, limits)
+          // Gate behind the same TRC-10 feature flag
+          boolean updateAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!updateAssetRemoteEnabled) {
+            logger.debug("TRC-10 UpdateAsset remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("UpdateAsset execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+
+          org.tron.protos.contract.AssetIssueContractOuterClass.UpdateAssetContract updateAssetContract =
+              contractParameter.unpack(org.tron.protos.contract.AssetIssueContractOuterClass.UpdateAssetContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          value = 0; // No value transfer
+          data = updateAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // TRC-10 update
+          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_ASSET_CONTRACT;
+          logger.debug(
+              "Mapped UpdateAssetContract to remote request; owner={}, new_limit={}, new_public_limit={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              updateAssetContract.getNewLimit(),
+              updateAssetContract.getNewPublicLimit());
+          break;
+
         case CreateSmartContract:
           CreateSmartContract createContract = contractParameter.unpack(CreateSmartContract.class);
           if (createContract.getNewContract() != null) {

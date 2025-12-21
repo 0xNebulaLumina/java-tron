@@ -58,6 +58,36 @@ message Exchange {
   int64 second_token_balance = 9;
 }
 
+// AssetIssueContractData message - matches core/contract/asset_issue_contract.proto AssetIssueContract
+// and chainbase AssetIssueCapsule (stored in AssetIssueStore / AssetIssueV2Store)
+// Renamed from "AssetIssue" to avoid conflict with AccountType.AssetIssue enum value
+message AssetIssueContractData {
+  message FrozenSupply {
+    int64 frozen_amount = 1;
+    int64 frozen_days = 2;
+  }
+
+  bytes owner_address = 1;
+  bytes name = 2;
+  bytes abbr = 3;
+  int64 total_supply = 4;
+  repeated FrozenSupply frozen_supply = 5;
+  int32 trx_num = 6;
+  int32 precision = 7;
+  int32 num = 8;
+  int64 start_time = 9;
+  int64 end_time = 10;
+  int64 order = 11;  // (deprecated)
+  int32 vote_score = 16;
+  bytes description = 20;
+  bytes url = 21;
+  int64 free_asset_net_limit = 22;
+  int64 public_free_asset_net_limit = 23;
+  int64 public_free_asset_net_usage = 24;
+  int64 public_latest_free_net_time = 25;
+  string id = 41;
+}
+
 // Key message - matches core/Tron.proto:243
 message Key {
   bytes address = 1;
