@@ -20,13 +20,14 @@
 | Phase 2.E (TRC-10 扩展 9/14/15) | ✅ **DONE** | 全部实现并有 fixtures |
 | Phase 2.F (Exchange 41-44) | ✅ **DONE** | 全部实现并有 fixtures |
 | Phase 2.G (Market 52-53) | ✅ **DONE** | 全部实现并有 fixtures (简化版) |
-| Phase 2.H (Shield 51) | ❌ 未开始 | 建议独立里程碑 |
-| Phase 2.I (VM 30/31) | 🟡 部分完成 | CreateSmartContract 语义已修正 |
-| Phase 3 (灰度/CI) | 🟡 部分完成 | CI 脚本就绪，需集成 |
+| Phase 2.H (Shield 51) | ❌ 未开始 | 建议独立里程碑 (zk/merkle 依赖复杂) |
+| Phase 2.I (VM 30/31) | 🟡 部分完成 | L1 done; L2/L3 pending; 32/20 confirmed query-only |
+| Phase 3 (灰度/CI) | ✅ **DONE** | PR fixture gate + nightly CSV replay 就绪 |
 
 **已实现合约数**: 26 个系统合约类型
 **已生成 Fixtures**: 113 个测试用例
-**下一优先级**: Shield 51、VM parity (30/31)
+**查询类型 (非交易)**: GetContract (32), CustomContract (20) - 确认无需 Rust 实现
+**下一优先级**: VM parity L2/L3 (30/31)、Shield 51 (独立里程碑)
 
 ---
 
@@ -662,9 +663,12 @@ TODO（分三层推进）：
   - [ ] deploy：bytecode 仅写存储/返回常量；对比：codeStore/contractStateStore/contractStore 的最终 bytes
   - [ ] trigger：调用后 storage slot 变化 + return_data
   - [ ] edge：revert/out-of-energy/invalid opcode（对比 `contractRet` 与 runtimeError）
-- [ ] GetContract（32）与 CustomContract（20）：先确认“是否真的作为交易执行路径存在”
-  - [ ] 在本 repo 搜索是否有 actuator/执行逻辑；若没有则明确策略：保持 Java fallback / 标记不支持 / 走单独 RPC 而非 ExecuteTransaction
-  - [ ] 若必须支持 GetContract：更可能是 **查询**（应落在 storage service 或新增 gRPC API），而不是执行交易
+- [x] GetContract（32）与 CustomContract（20）：先确认"是否真的作为交易执行路径存在"
+  - **CONFIRMED (2025-12-21)**: Neither GetContract nor CustomContract have actuators in the codebase.
+  - GetContract (32) is a **query-only** operation served via HTTP endpoints (`GetContractServlet.java`, `GetContractInfoServlet.java`)
+  - CustomContract (20) has no actuator implementation - likely reserved/deprecated type
+  - **Decision**: No Rust implementation needed; these are not transaction execution paths
+  - [x] 策略确定：保持 Java fallback / 标记为"非交易执行类型"
 
 ---
 
@@ -701,9 +705,14 @@ TODO：
     - All 113 fixtures pass structure validation
   - [ ] 跑 `./gradlew :framework:test`（或按 contract 过滤）
     - Note: Requires Java fixture generator tests to be run first
-- [ ] Nightly：
-  - [ ] `collect_remote_results.sh` 回放 + `scripts/compare_exec_csv.py` diff
+- [x] Nightly：
+  - [x] `collect_remote_results.sh` 回放 + `scripts/compare_exec_csv.py` diff
+    - **DONE**: Created `scripts/ci/run_nightly_conformance.sh` wrapper script (2025-12-21)
+    - Usage: `./scripts/ci/run_nightly_conformance.sh --embedded-csv <baseline.csv> --duration 1200`
+    - Supports `--fixtures-only` for quick PR checks, `--csv-only` for nightly replay
+    - Reports saved to `nightly-reports/` with timestamps
   - [ ] 若要更强一致性：把 Domain/State digest 作为 alert 指标（已有 `StateChangeCanonicalizer` / `DomainCanonicalizer`）
+    - NOTE: Optional enhancement - current fixture + CSV comparison provides adequate coverage
 
 ---
 
