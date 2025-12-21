@@ -3216,4 +3216,219 @@ impl EngineBackedEvmStateStore {
         self.set_account_proto(address, &account)?;
         Ok(())
     }
+
+    // ==========================================================================
+    // Market (DEX) Store Methods - Phase 2.G
+    // ==========================================================================
+
+    /// Get database name for MarketOrderStore (dbName: "market_order")
+    fn market_order_database(&self) -> &str {
+        db_names::market::MARKET_ORDER
+    }
+
+    /// Get database name for MarketAccountStore (dbName: "market_account")
+    fn market_account_database(&self) -> &str {
+        db_names::market::MARKET_ACCOUNT
+    }
+
+    /// Get database name for MarketPairToPriceStore (dbName: "market_pair_to_price")
+    fn market_pair_to_price_database(&self) -> &str {
+        db_names::market::MARKET_PAIR_TO_PRICE
+    }
+
+    /// Get database name for MarketPairPriceToOrderStore (dbName: "market_pair_price_to_order")
+    fn market_pair_price_to_order_database(&self) -> &str {
+        db_names::market::MARKET_PAIR_PRICE_TO_ORDER
+    }
+
+    /// Get ALLOW_MARKET_TRANSACTION dynamic property
+    /// Controls whether market transactions are allowed
+    /// Default: 0 (disabled)
+    pub fn allow_market_transaction(&self) -> Result<bool> {
+        let key = b"ALLOW_MARKET_TRANSACTION";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    let value = i64::from_be_bytes(data.as_slice().try_into()?);
+                    Ok(value != 0)
+                } else if !data.is_empty() {
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(false)
+                }
+            },
+            None => {
+                tracing::debug!("ALLOW_MARKET_TRANSACTION not found, returning false");
+                Ok(false)
+            }
+        }
+    }
+
+    /// Get MARKET_SELL_FEE dynamic property
+    /// Fee for placing a sell order
+    /// Default: 0
+    pub fn get_market_sell_fee(&self) -> Result<i64> {
+        let key = b"MARKET_SELL_FEE";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    Ok(i64::from_be_bytes(data.as_slice().try_into()?))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Get MARKET_CANCEL_FEE dynamic property
+    /// Fee for canceling an order
+    /// Default: 0
+    pub fn get_market_cancel_fee(&self) -> Result<i64> {
+        let key = b"MARKET_CANCEL_FEE";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    Ok(i64::from_be_bytes(data.as_slice().try_into()?))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Get MARKET_QUANTITY_LIMIT dynamic property
+    /// Maximum quantity for market orders
+    /// Default: Long.MAX_VALUE
+    pub fn get_market_quantity_limit(&self) -> Result<i64> {
+        let key = b"MARKET_QUANTITY_LIMIT";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    Ok(i64::from_be_bytes(data.as_slice().try_into()?))
+                } else {
+                    Ok(i64::MAX)
+                }
+            },
+            None => Ok(i64::MAX)
+        }
+    }
+
+    /// Get a MarketOrder by order ID
+    /// Key: order_id bytes (SHA3 hash)
+    pub fn get_market_order(&self, order_id: &[u8]) -> Result<Option<crate::protocol::MarketOrder>> {
+        use prost::Message;
+        match self.storage_engine.get(self.market_order_database(), order_id)? {
+            Some(data) => {
+                let order = crate::protocol::MarketOrder::decode(data.as_slice())?;
+                Ok(Some(order))
+            },
+            None => Ok(None)
+        }
+    }
+
+    /// Put a MarketOrder
+    pub fn put_market_order(&mut self, order_id: &[u8], order: &crate::protocol::MarketOrder) -> Result<()> {
+        use prost::Message;
+        let mut buf = Vec::new();
+        order.encode(&mut buf)?;
+        self.storage_engine.put(self.market_order_database(), order_id, &buf)?;
+        Ok(())
+    }
+
+    /// Check if a MarketOrder exists
+    pub fn has_market_order(&self, order_id: &[u8]) -> Result<bool> {
+        Ok(self.get_market_order(order_id)?.is_some())
+    }
+
+    /// Get MarketAccountOrder for an account
+    /// Key: 21-byte TRON address (with 0x41 prefix)
+    pub fn get_market_account_order(&self, address: &Address) -> Result<Option<crate::protocol::MarketAccountOrder>> {
+        use prost::Message;
+        let key = self.to_tron_address_21(address);
+        match self.storage_engine.get(self.market_account_database(), &key)? {
+            Some(data) => {
+                let account_order = crate::protocol::MarketAccountOrder::decode(data.as_slice())?;
+                Ok(Some(account_order))
+            },
+            None => Ok(None)
+        }
+    }
+
+    /// Put MarketAccountOrder for an account
+    pub fn put_market_account_order(&mut self, address: &Address, account_order: &crate::protocol::MarketAccountOrder) -> Result<()> {
+        use prost::Message;
+        let key = self.to_tron_address_21(address);
+        let mut buf = Vec::new();
+        account_order.encode(&mut buf)?;
+        self.storage_engine.put(self.market_account_database(), &key, &buf)?;
+        Ok(())
+    }
+
+    /// Get price count for a token pair
+    /// Key: createPairKey(sellTokenId, buyTokenId) = 38 bytes (19 + 19)
+    pub fn get_market_pair_price_count(&self, pair_key: &[u8]) -> Result<i64> {
+        match self.storage_engine.get(self.market_pair_to_price_database(), pair_key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    Ok(i64::from_be_bytes(data.as_slice().try_into()?))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Set price count for a token pair
+    pub fn set_market_pair_price_count(&mut self, pair_key: &[u8], count: i64) -> Result<()> {
+        let data = count.to_be_bytes();
+        self.storage_engine.put(self.market_pair_to_price_database(), pair_key, &data)?;
+        Ok(())
+    }
+
+    /// Delete a token pair from MarketPairToPriceStore
+    pub fn delete_market_pair(&mut self, pair_key: &[u8]) -> Result<()> {
+        self.storage_engine.delete(self.market_pair_to_price_database(), pair_key)?;
+        Ok(())
+    }
+
+    /// Check if a token pair exists
+    pub fn has_market_pair(&self, pair_key: &[u8]) -> Result<bool> {
+        Ok(self.storage_engine.get(self.market_pair_to_price_database(), pair_key)?.is_some())
+    }
+
+    /// Get MarketOrderIdList for a price key
+    /// Key: createPairPriceKey(sellTokenId, buyTokenId, sellQuantity, buyQuantity) = 54 bytes
+    pub fn get_market_order_id_list(&self, price_key: &[u8]) -> Result<Option<crate::protocol::MarketOrderIdList>> {
+        use prost::Message;
+        match self.storage_engine.get(self.market_pair_price_to_order_database(), price_key)? {
+            Some(data) => {
+                let list = crate::protocol::MarketOrderIdList::decode(data.as_slice())?;
+                Ok(Some(list))
+            },
+            None => Ok(None)
+        }
+    }
+
+    /// Put MarketOrderIdList for a price key
+    pub fn put_market_order_id_list(&mut self, price_key: &[u8], list: &crate::protocol::MarketOrderIdList) -> Result<()> {
+        use prost::Message;
+        let mut buf = Vec::new();
+        list.encode(&mut buf)?;
+        self.storage_engine.put(self.market_pair_price_to_order_database(), price_key, &buf)?;
+        Ok(())
+    }
+
+    /// Delete MarketOrderIdList for a price key
+    pub fn delete_market_order_id_list(&mut self, price_key: &[u8]) -> Result<()> {
+        self.storage_engine.delete(self.market_pair_price_to_order_database(), price_key)?;
+        Ok(())
+    }
+
+    /// Check if a price key exists in MarketPairPriceToOrderStore
+    pub fn has_market_price_key(&self, price_key: &[u8]) -> Result<bool> {
+        Ok(self.storage_engine.get(self.market_pair_price_to_order_database(), price_key)?.is_some())
+    }
 }

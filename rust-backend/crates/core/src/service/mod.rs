@@ -18,6 +18,7 @@ pub mod contracts;
 
 // Import utilities from submodules
 use contracts::proto::read_varint;
+use contracts::proto::TransactionResultBuilder;
 use grpc::address::add_tron_address_prefix;
 
 /// Vote witness contract constants
@@ -443,6 +444,20 @@ impl BackendService {
                 }
                 debug!("Executing EXCHANGE_TRANSACTION_CONTRACT");
                 self.execute_exchange_transaction_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::MarketSellAssetContract) => {
+                if !remote_config.market_sell_asset_enabled {
+                    return Err("MARKET_SELL_ASSET_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing MARKET_SELL_ASSET_CONTRACT");
+                self.execute_market_sell_asset_contract(storage_adapter, transaction, context)
+            },
+            Some(tron_backend_execution::TronContractType::MarketCancelOrderContract) => {
+                if !remote_config.market_cancel_order_enabled {
+                    return Err("MARKET_CANCEL_ORDER_CONTRACT execution is disabled - falling back to Java".to_string());
+                }
+                debug!("Executing MARKET_CANCEL_ORDER_CONTRACT");
+                self.execute_market_cancel_order_contract(storage_adapter, transaction, context)
             },
             Some(contract_type) => {
                 // Other contract types not yet implemented - return error to fall back to Java
@@ -6737,6 +6752,770 @@ impl BackendService {
 
         Ok(ExchangeTransactionInfo { exchange_id, token_id, quant, expected })
     }
+
+    // ==========================================================================
+    // Phase 2.G: Market (DEX) Contracts (52/53)
+    // ==========================================================================
+
+    /// Execute MARKET_CANCEL_ORDER_CONTRACT (type 53)
+    ///
+    /// Cancels an existing active order and returns remaining tokens to the owner.
+    ///
+    /// Implementation matches Java: MarketCancelOrderActuator.java
+    ///
+    /// Validation:
+    /// - Market transaction must be enabled (ALLOW_MARKET_TRANSACTION)
+    /// - Order must exist
+    /// - Order must be active
+    /// - Owner must match
+    /// - Sufficient balance for fee
+    ///
+    /// Execution:
+    /// 1. Charge fee (to blackhole or burn)
+    /// 2. Return remaining sell tokens to owner
+    /// 3. Update order state to CANCELED
+    /// 4. Remove order from order book (linked list + price index)
+    fn execute_market_cancel_order_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        debug!("Executing MARKET_CANCEL_ORDER_CONTRACT");
+
+        let owner = transaction.from;
+        let execution_config = self.get_execution_config()?;
+        let fee_config = &execution_config.fees;
+
+        // Parse the contract
+        let tx_info = self.parse_market_cancel_order_contract(&transaction.data)?;
+        debug!("MarketCancelOrder: order_id={:?}", hex::encode(&tx_info.order_id));
+
+        // 1. Validate: market transactions must be enabled
+        let allow_market = storage_adapter.allow_market_transaction()
+            .map_err(|e| format!("Failed to check ALLOW_MARKET_TRANSACTION: {}", e))?;
+        if !allow_market {
+            return Err("Market transactions are not enabled".to_string());
+        }
+
+        // 2. Get the order
+        let order = storage_adapter.get_market_order(&tx_info.order_id)
+            .map_err(|e| format!("Failed to get order: {}", e))?
+            .ok_or("Order does not exist")?;
+
+        // 3. Validate: order must be active
+        if order.state != 0 { // 0 = ACTIVE
+            return Err("Order is not active".to_string());
+        }
+
+        // 4. Validate: owner must match
+        let order_owner_20 = if order.owner_address.len() == 21 && order.owner_address[0] == 0x41 {
+            &order.owner_address[1..]
+        } else {
+            &order.owner_address[..]
+        };
+        if order_owner_20 != owner.as_slice() {
+            return Err("Order does not belong to the account".to_string());
+        }
+
+        // 5. Get account and validate fee
+        let mut account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or("Account does not exist")?;
+
+        let fee = storage_adapter.get_market_cancel_fee()
+            .map_err(|e| format!("Failed to get MARKET_CANCEL_FEE: {}", e))?;
+
+        if account.balance < fee {
+            return Err("No enough balance for fee".to_string());
+        }
+
+        // 6. Deduct fee
+        let old_balance = account.balance;
+        account.balance = account.balance.checked_sub(fee)
+            .ok_or("Balance underflow")?;
+
+        // Handle fee: burn or credit to blackhole
+        let state_changes = if fee_config.support_black_hole_optimization {
+            // Burn: no additional state change
+            vec![]
+        } else {
+            // Credit to blackhole
+            let blackhole = storage_adapter.get_blackhole_address_evm();
+            storage_adapter.add_balance(&blackhole, fee as u64)
+                .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+            vec![]
+        };
+
+        // 7. Return remaining sell tokens to owner
+        let sell_token_remain = order.sell_token_quantity_remain;
+        if sell_token_remain > 0 {
+            let sell_token_id = &order.sell_token_id;
+            if sell_token_id == b"_" || sell_token_id.is_empty() {
+                // TRX
+                account.balance = account.balance.checked_add(sell_token_remain)
+                    .ok_or("Balance overflow")?;
+            } else {
+                // TRC-10 token
+                let token_key = String::from_utf8_lossy(sell_token_id).to_string();
+                let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+                account.asset_v2.insert(token_key, current + sell_token_remain);
+            }
+        }
+
+        // 8. Update order state to CANCELED (2)
+        let mut updated_order = order.clone();
+        updated_order.state = 2; // CANCELED
+        updated_order.sell_token_quantity_remain = 0;
+
+        // 9. Update MarketAccountOrder (remove order from account's list)
+        if let Some(mut account_order) = storage_adapter.get_market_account_order(&owner)
+            .map_err(|e| format!("Failed to get account order: {}", e))? {
+            // Remove order_id from the list
+            account_order.orders.retain(|id| id != &tx_info.order_id);
+            account_order.count = account_order.count.saturating_sub(1);
+            storage_adapter.put_market_account_order(&owner, &account_order)
+                .map_err(|e| format!("Failed to update account order: {}", e))?;
+        }
+
+        // 10. Remove from order book linked list
+        let pair_price_key = Self::create_pair_price_key(
+            &order.sell_token_id,
+            &order.buy_token_id,
+            order.sell_token_quantity,
+            order.buy_token_quantity,
+        );
+
+        if let Some(mut order_list) = storage_adapter.get_market_order_id_list(&pair_price_key)
+            .map_err(|e| format!("Failed to get order list: {}", e))? {
+
+            // Handle linked list removal
+            self.remove_order_from_linked_list(
+                storage_adapter,
+                &mut order_list,
+                &updated_order,
+                &pair_price_key,
+            )?;
+
+            // Update or delete the order list
+            if order_list.head.is_empty() {
+                // List is empty, delete the price key
+                storage_adapter.delete_market_order_id_list(&pair_price_key)
+                    .map_err(|e| format!("Failed to delete order list: {}", e))?;
+
+                // Decrease price count for the pair
+                let pair_key = Self::create_pair_key(&order.sell_token_id, &order.buy_token_id);
+                let price_count = storage_adapter.get_market_pair_price_count(&pair_key)
+                    .map_err(|e| format!("Failed to get price count: {}", e))?;
+
+                if price_count <= 1 {
+                    // Delete the pair
+                    storage_adapter.delete_market_pair(&pair_key)
+                        .map_err(|e| format!("Failed to delete pair: {}", e))?;
+                } else {
+                    storage_adapter.set_market_pair_price_count(&pair_key, price_count - 1)
+                        .map_err(|e| format!("Failed to update price count: {}", e))?;
+                }
+            } else {
+                storage_adapter.put_market_order_id_list(&pair_price_key, &order_list)
+                    .map_err(|e| format!("Failed to update order list: {}", e))?;
+            }
+        }
+
+        // 11. Save order and account
+        storage_adapter.put_market_order(&tx_info.order_id, &updated_order)
+            .map_err(|e| format!("Failed to update order: {}", e))?;
+        storage_adapter.set_account_proto(&owner, &account)
+            .map_err(|e| format!("Failed to update account: {}", e))?;
+
+        // 12. Build result
+        let account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        let mut final_state_changes = vec![TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(revm_primitives::AccountInfo {
+                balance: revm_primitives::U256::from(old_balance as u64),
+                nonce: 0,
+                code_hash: revm_primitives::B256::ZERO,
+                code: None,
+            }),
+            new_account: Some(account_info),
+        }];
+        final_state_changes.extend(state_changes);
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        debug!("MarketCancelOrder: order canceled, returned {} sell tokens",
+            sell_token_remain);
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes: final_state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+        })
+    }
+
+    /// Execute MARKET_SELL_ASSET_CONTRACT (type 52)
+    ///
+    /// Creates a sell order and matches against existing orders.
+    ///
+    /// Implementation matches Java: MarketSellAssetActuator.java
+    ///
+    /// This is a complex contract with order matching logic.
+    /// For Phase 2.G initial implementation, we focus on order creation without matching.
+    fn execute_market_sell_asset_contract(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronExecutionResult, String> {
+        debug!("Executing MARKET_SELL_ASSET_CONTRACT");
+
+        let owner = transaction.from;
+        let execution_config = self.get_execution_config()?;
+        let fee_config = &execution_config.fees;
+
+        // Parse the contract
+        let tx_info = self.parse_market_sell_asset_contract(&transaction.data)?;
+        debug!("MarketSellAsset: sell_token={:?}, sell_qty={}, buy_token={:?}, buy_qty={}",
+            String::from_utf8_lossy(&tx_info.sell_token_id),
+            tx_info.sell_token_quantity,
+            String::from_utf8_lossy(&tx_info.buy_token_id),
+            tx_info.buy_token_quantity);
+
+        // 1. Validate: market transactions must be enabled
+        let allow_market = storage_adapter.allow_market_transaction()
+            .map_err(|e| format!("Failed to check ALLOW_MARKET_TRANSACTION: {}", e))?;
+        if !allow_market {
+            return Err("Market transactions are not enabled".to_string());
+        }
+
+        // 2. Validate token IDs
+        if tx_info.sell_token_id == tx_info.buy_token_id {
+            return Err("Cannot exchange same tokens".to_string());
+        }
+
+        // 3. Validate quantities
+        if tx_info.sell_token_quantity <= 0 || tx_info.buy_token_quantity <= 0 {
+            return Err("Token quantity must be greater than zero".to_string());
+        }
+
+        let quantity_limit = storage_adapter.get_market_quantity_limit()
+            .map_err(|e| format!("Failed to get MARKET_QUANTITY_LIMIT: {}", e))?;
+        if tx_info.sell_token_quantity > quantity_limit || tx_info.buy_token_quantity > quantity_limit {
+            return Err(format!("Token quantity must be less than {}", quantity_limit));
+        }
+
+        // 4. Validate order count limit
+        let max_active_orders: i64 = 100;
+        if let Some(account_order) = storage_adapter.get_market_account_order(&owner)
+            .map_err(|e| format!("Failed to get account order: {}", e))? {
+            if account_order.count >= max_active_orders {
+                return Err(format!("Maximum number of orders exceeded, {}", max_active_orders));
+            }
+        }
+
+        // 5. Get account and validate balance
+        let mut account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or("Account does not exist")?;
+
+        let fee = storage_adapter.get_market_sell_fee()
+            .map_err(|e| format!("Failed to get MARKET_SELL_FEE: {}", e))?;
+
+        let is_sell_trx = tx_info.sell_token_id == b"_" || tx_info.sell_token_id.is_empty();
+
+        if is_sell_trx {
+            // Selling TRX: need sell_qty + fee
+            let required = tx_info.sell_token_quantity.checked_add(fee)
+                .ok_or("Amount overflow")?;
+            if account.balance < required {
+                return Err("No enough balance".to_string());
+            }
+        } else {
+            // Selling TRC-10: need fee in TRX + token balance
+            if account.balance < fee {
+                return Err("No enough balance for fee".to_string());
+            }
+            let token_key = String::from_utf8_lossy(&tx_info.sell_token_id).to_string();
+            let token_balance = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+            if token_balance < tx_info.sell_token_quantity {
+                return Err("SellToken balance is not enough".to_string());
+            }
+        }
+
+        // 6. Deduct fee
+        let old_balance = account.balance;
+        account.balance = account.balance.checked_sub(fee)
+            .ok_or("Balance underflow")?;
+
+        // Handle fee: burn or credit to blackhole
+        if !fee_config.support_black_hole_optimization && fee > 0 {
+            let blackhole = storage_adapter.get_blackhole_address_evm();
+            storage_adapter.add_balance(&blackhole, fee as u64)
+                .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+        }
+
+        // 7. Transfer sell tokens from account to order (escrow)
+        if is_sell_trx {
+            account.balance = account.balance.checked_sub(tx_info.sell_token_quantity)
+                .ok_or("Balance underflow")?;
+        } else {
+            let token_key = String::from_utf8_lossy(&tx_info.sell_token_id).to_string();
+            let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+            account.asset_v2.insert(token_key, current - tx_info.sell_token_quantity);
+        }
+
+        // 8. Create order
+        let owner_tron_addr = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let mut account_order = storage_adapter.get_market_account_order(&owner)
+            .map_err(|e| format!("Failed to get account order: {}", e))?
+            .unwrap_or_else(|| {
+                tron_backend_execution::protocol::MarketAccountOrder {
+                    owner_address: owner_tron_addr.clone(),
+                    orders: vec![],
+                    count: 0,
+                    total_count: 0,
+                }
+            });
+
+        let order_id = Self::calculate_order_id(
+            &owner_tron_addr,
+            &tx_info.sell_token_id,
+            &tx_info.buy_token_id,
+            account_order.total_count,
+        );
+
+        let timestamp = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get timestamp: {}", e))?;
+
+        let new_order = tron_backend_execution::protocol::MarketOrder {
+            order_id: order_id.clone(),
+            owner_address: owner_tron_addr.clone(),
+            create_time: timestamp,
+            sell_token_id: tx_info.sell_token_id.clone(),
+            sell_token_quantity: tx_info.sell_token_quantity,
+            buy_token_id: tx_info.buy_token_id.clone(),
+            buy_token_quantity: tx_info.buy_token_quantity,
+            sell_token_quantity_remain: tx_info.sell_token_quantity,
+            sell_token_quantity_return: 0,
+            state: 0, // ACTIVE
+            prev: vec![],
+            next: vec![],
+        };
+
+        // 9. Update account order
+        account_order.orders.push(order_id.clone());
+        account_order.count += 1;
+        account_order.total_count += 1;
+
+        // 10. Save order
+        storage_adapter.put_market_order(&order_id, &new_order)
+            .map_err(|e| format!("Failed to save order: {}", e))?;
+        storage_adapter.put_market_account_order(&owner, &account_order)
+            .map_err(|e| format!("Failed to save account order: {}", e))?;
+
+        // 11. Add order to order book (skip matching for now - full implementation would be complex)
+        let pair_price_key = Self::create_pair_price_key(
+            &tx_info.sell_token_id,
+            &tx_info.buy_token_id,
+            tx_info.sell_token_quantity,
+            tx_info.buy_token_quantity,
+        );
+        let pair_key = Self::create_pair_key(&tx_info.sell_token_id, &tx_info.buy_token_id);
+
+        // Check if price key exists
+        let mut order_list = storage_adapter.get_market_order_id_list(&pair_price_key)
+            .map_err(|e| format!("Failed to get order list: {}", e))?
+            .unwrap_or_else(|| {
+                // New price point, increment pair count
+                tron_backend_execution::protocol::MarketOrderIdList {
+                    head: vec![],
+                    tail: vec![],
+                }
+            });
+
+        let is_new_price = order_list.head.is_empty();
+
+        // Add to linked list (at tail)
+        if order_list.head.is_empty() {
+            order_list.head = order_id.clone();
+            order_list.tail = order_id.clone();
+        } else {
+            // Update previous tail's next pointer
+            let tail_id = order_list.tail.clone();
+            if let Some(mut tail_order) = storage_adapter.get_market_order(&tail_id)
+                .map_err(|e| format!("Failed to get tail order: {}", e))? {
+                tail_order.next = order_id.clone();
+                storage_adapter.put_market_order(&tail_id, &tail_order)
+                    .map_err(|e| format!("Failed to update tail order: {}", e))?;
+            }
+            // Update new order's prev pointer
+            let mut updated_new_order = new_order.clone();
+            updated_new_order.prev = tail_id;
+            storage_adapter.put_market_order(&order_id, &updated_new_order)
+                .map_err(|e| format!("Failed to update new order: {}", e))?;
+            // Update list tail
+            order_list.tail = order_id.clone();
+        }
+
+        storage_adapter.put_market_order_id_list(&pair_price_key, &order_list)
+            .map_err(|e| format!("Failed to save order list: {}", e))?;
+
+        // Update pair price count if new price
+        if is_new_price {
+            let has_pair = storage_adapter.has_market_pair(&pair_key)
+                .map_err(|e| format!("Failed to check pair: {}", e))?;
+            if has_pair {
+                let count = storage_adapter.get_market_pair_price_count(&pair_key)
+                    .map_err(|e| format!("Failed to get price count: {}", e))?;
+                storage_adapter.set_market_pair_price_count(&pair_key, count + 1)
+                    .map_err(|e| format!("Failed to update price count: {}", e))?;
+            } else {
+                // New pair
+                storage_adapter.set_market_pair_price_count(&pair_key, 1)
+                    .map_err(|e| format!("Failed to set price count: {}", e))?;
+                // Create head key for the pair (price = 0/0)
+                let head_key = Self::create_pair_price_key(
+                    &tx_info.sell_token_id,
+                    &tx_info.buy_token_id,
+                    0, 0,
+                );
+                let empty_list = tron_backend_execution::protocol::MarketOrderIdList {
+                    head: vec![],
+                    tail: vec![],
+                };
+                storage_adapter.put_market_order_id_list(&head_key, &empty_list)
+                    .map_err(|e| format!("Failed to create head key: {}", e))?;
+            }
+        }
+
+        // 12. Save account
+        storage_adapter.set_account_proto(&owner, &account)
+            .map_err(|e| format!("Failed to update account: {}", e))?;
+
+        // 13. Build result
+        let account_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(account.balance as u64),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(revm_primitives::AccountInfo {
+                balance: revm_primitives::U256::from(old_balance as u64),
+                nonce: 0,
+                code_hash: revm_primitives::B256::ZERO,
+                code: None,
+            }),
+            new_account: Some(account_info),
+        }];
+
+        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // Build receipt with order_id
+        // Note: orderDetails would be populated during matching (not implemented yet)
+        let receipt = TransactionResultBuilder::new()
+            .with_order_id(&order_id)
+            .build();
+
+        debug!("MarketSellAsset: order created with id={}", hex::encode(&order_id));
+
+        Ok(TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used,
+            state_changes,
+            logs: Vec::new(),
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: Some(receipt),
+        })
+    }
+
+    /// Parse MarketCancelOrderContract protobuf bytes
+    fn parse_market_cancel_order_contract(&self, data: &[u8]) -> Result<MarketCancelOrderInfo, String> {
+        use contracts::proto::read_varint;
+
+        let mut order_id = Vec::new();
+
+        let mut pos = 0;
+        while pos < data.len() {
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos += new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                // owner_address = 1 (skip)
+                1 => {
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                }
+                // order_id = 2
+                2 => {
+                    if wire_type != 2 { return Err("Invalid wire type for order_id".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    order_id = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                _ => {
+                    match wire_type {
+                        0 => { let (_, new_pos) = read_varint(&data[pos..])?; pos += new_pos; }
+                        2 => { let (len, new_pos) = read_varint(&data[pos..])?; pos = pos + new_pos + len as usize; }
+                        _ => return Err(format!("Unsupported wire type: {}", wire_type)),
+                    }
+                }
+            }
+        }
+
+        Ok(MarketCancelOrderInfo { order_id })
+    }
+
+    /// Parse MarketSellAssetContract protobuf bytes
+    fn parse_market_sell_asset_contract(&self, data: &[u8]) -> Result<MarketSellAssetInfo, String> {
+        use contracts::proto::read_varint;
+
+        let mut sell_token_id = Vec::new();
+        let mut sell_token_quantity: i64 = 0;
+        let mut buy_token_id = Vec::new();
+        let mut buy_token_quantity: i64 = 0;
+
+        let mut pos = 0;
+        while pos < data.len() {
+            let (tag, new_pos) = read_varint(&data[pos..])?;
+            pos += new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match field_number {
+                // owner_address = 1 (skip)
+                1 => {
+                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos = pos + new_pos + len as usize;
+                }
+                // sell_token_id = 2
+                2 => {
+                    if wire_type != 2 { return Err("Invalid wire type for sell_token_id".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    sell_token_id = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                // sell_token_quantity = 3
+                3 => {
+                    if wire_type != 0 { return Err("Invalid wire type for sell_token_quantity".to_string()); }
+                    let (val, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    sell_token_quantity = val as i64;
+                }
+                // buy_token_id = 4
+                4 => {
+                    if wire_type != 2 { return Err("Invalid wire type for buy_token_id".to_string()); }
+                    let (len, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    buy_token_id = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
+                }
+                // buy_token_quantity = 5
+                5 => {
+                    if wire_type != 0 { return Err("Invalid wire type for buy_token_quantity".to_string()); }
+                    let (val, new_pos) = read_varint(&data[pos..])?;
+                    pos += new_pos;
+                    buy_token_quantity = val as i64;
+                }
+                _ => {
+                    match wire_type {
+                        0 => { let (_, new_pos) = read_varint(&data[pos..])?; pos += new_pos; }
+                        2 => { let (len, new_pos) = read_varint(&data[pos..])?; pos = pos + new_pos + len as usize; }
+                        _ => return Err(format!("Unsupported wire type: {}", wire_type)),
+                    }
+                }
+            }
+        }
+
+        Ok(MarketSellAssetInfo {
+            sell_token_id,
+            sell_token_quantity,
+            buy_token_id,
+            buy_token_quantity,
+        })
+    }
+
+    /// Remove order from the linked list in MarketOrderIdList
+    fn remove_order_from_linked_list(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        order_list: &mut tron_backend_execution::protocol::MarketOrderIdList,
+        order: &tron_backend_execution::protocol::MarketOrder,
+        _price_key: &[u8],
+    ) -> Result<(), String> {
+        let order_id = &order.order_id;
+
+        // Get prev and next
+        let prev_id = &order.prev;
+        let next_id = &order.next;
+
+        // Update prev's next pointer
+        if !prev_id.is_empty() {
+            if let Some(mut prev_order) = storage_adapter.get_market_order(prev_id)
+                .map_err(|e| format!("Failed to get prev order: {}", e))? {
+                prev_order.next = next_id.clone();
+                storage_adapter.put_market_order(prev_id, &prev_order)
+                    .map_err(|e| format!("Failed to update prev order: {}", e))?;
+            }
+        } else {
+            // Order is head, update list head
+            order_list.head = next_id.clone();
+        }
+
+        // Update next's prev pointer
+        if !next_id.is_empty() {
+            if let Some(mut next_order) = storage_adapter.get_market_order(next_id)
+                .map_err(|e| format!("Failed to get next order: {}", e))? {
+                next_order.prev = prev_id.clone();
+                storage_adapter.put_market_order(next_id, &next_order)
+                    .map_err(|e| format!("Failed to update next order: {}", e))?;
+            }
+        } else {
+            // Order is tail, update list tail
+            order_list.tail = prev_id.clone();
+        }
+
+        // Clear order's prev and next pointers
+        let mut updated_order = order.clone();
+        updated_order.prev = vec![];
+        updated_order.next = vec![];
+        storage_adapter.put_market_order(order_id, &updated_order)
+            .map_err(|e| format!("Failed to clear order pointers: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Create pair key: sellTokenId(19) + buyTokenId(19) = 38 bytes
+    /// Matches MarketUtils.createPairKey
+    fn create_pair_key(sell_token_id: &[u8], buy_token_id: &[u8]) -> Vec<u8> {
+        const TOKEN_ID_LENGTH: usize = 19;
+        let mut result = vec![0u8; TOKEN_ID_LENGTH * 2];
+
+        let sell_len = std::cmp::min(sell_token_id.len(), TOKEN_ID_LENGTH);
+        result[..sell_len].copy_from_slice(&sell_token_id[..sell_len]);
+
+        let buy_len = std::cmp::min(buy_token_id.len(), TOKEN_ID_LENGTH);
+        result[TOKEN_ID_LENGTH..TOKEN_ID_LENGTH + buy_len].copy_from_slice(&buy_token_id[..buy_len]);
+
+        result
+    }
+
+    /// Create pair price key: sellTokenId(19) + buyTokenId(19) + sellQty(8) + buyQty(8) = 54 bytes
+    /// Matches MarketUtils.createPairPriceKey (with GCD normalization)
+    fn create_pair_price_key(
+        sell_token_id: &[u8],
+        buy_token_id: &[u8],
+        sell_token_quantity: i64,
+        buy_token_quantity: i64,
+    ) -> Vec<u8> {
+        const TOKEN_ID_LENGTH: usize = 19;
+
+        // Calculate GCD for price normalization
+        let gcd = Self::find_gcd(sell_token_quantity, buy_token_quantity);
+        let (norm_sell, norm_buy) = if gcd == 0 {
+            (sell_token_quantity, buy_token_quantity)
+        } else {
+            (sell_token_quantity / gcd, buy_token_quantity / gcd)
+        };
+
+        let mut result = vec![0u8; TOKEN_ID_LENGTH * 2 + 16];
+
+        // Copy token IDs
+        let sell_len = std::cmp::min(sell_token_id.len(), TOKEN_ID_LENGTH);
+        result[..sell_len].copy_from_slice(&sell_token_id[..sell_len]);
+
+        let buy_len = std::cmp::min(buy_token_id.len(), TOKEN_ID_LENGTH);
+        result[TOKEN_ID_LENGTH..TOKEN_ID_LENGTH + buy_len].copy_from_slice(&buy_token_id[..buy_len]);
+
+        // Append quantities as big-endian
+        result[TOKEN_ID_LENGTH * 2..TOKEN_ID_LENGTH * 2 + 8].copy_from_slice(&norm_sell.to_be_bytes());
+        result[TOKEN_ID_LENGTH * 2 + 8..].copy_from_slice(&norm_buy.to_be_bytes());
+
+        result
+    }
+
+    /// Find GCD of two numbers
+    fn find_gcd(a: i64, b: i64) -> i64 {
+        if a == 0 || b == 0 {
+            return 0;
+        }
+        Self::calc_gcd(a.abs(), b.abs())
+    }
+
+    fn calc_gcd(a: i64, b: i64) -> i64 {
+        if b == 0 { a } else { Self::calc_gcd(b, a % b) }
+    }
+
+    /// Calculate order ID: SHA3(ownerAddress + sellTokenId(padded) + buyTokenId(padded) + count)
+    /// Matches MarketUtils.calculateOrderId
+    fn calculate_order_id(
+        owner_address: &[u8],
+        sell_token_id: &[u8],
+        buy_token_id: &[u8],
+        count: i64,
+    ) -> Vec<u8> {
+        use sha3::{Digest, Keccak256};
+
+        const TOKEN_ID_LENGTH: usize = 19;
+        let count_bytes = count.to_be_bytes();
+
+        let mut data = Vec::with_capacity(owner_address.len() + TOKEN_ID_LENGTH * 2 + 8);
+        data.extend_from_slice(owner_address);
+
+        // Pad sell token ID
+        let mut sell_padded = vec![0u8; TOKEN_ID_LENGTH];
+        let sell_len = std::cmp::min(sell_token_id.len(), TOKEN_ID_LENGTH);
+        sell_padded[..sell_len].copy_from_slice(&sell_token_id[..sell_len]);
+        data.extend_from_slice(&sell_padded);
+
+        // Pad buy token ID
+        let mut buy_padded = vec![0u8; TOKEN_ID_LENGTH];
+        let buy_len = std::cmp::min(buy_token_id.len(), TOKEN_ID_LENGTH);
+        buy_padded[..buy_len].copy_from_slice(&buy_token_id[..buy_len]);
+        data.extend_from_slice(&buy_padded);
+
+        data.extend_from_slice(&count_bytes);
+
+        let mut hasher = Keccak256::new();
+        hasher.update(&data);
+        hasher.finalize().to_vec()
+    }
 }
 
 /// Parsed ExchangeCreateContract information
@@ -6826,6 +7605,21 @@ struct UnDelegateResourceInfo {
     receiver_address: Vec<u8>,
     balance: i64,
     resource: i32, // 0 = BANDWIDTH, 1 = ENERGY
+}
+
+/// Parsed MarketCancelOrderContract information
+#[derive(Debug, Clone)]
+struct MarketCancelOrderInfo {
+    order_id: Vec<u8>,
+}
+
+/// Parsed MarketSellAssetContract information
+#[derive(Debug, Clone)]
+struct MarketSellAssetInfo {
+    sell_token_id: Vec<u8>,
+    sell_token_quantity: i64,
+    buy_token_id: Vec<u8>,
+    buy_token_quantity: i64,
 }
 
 #[cfg(test)]

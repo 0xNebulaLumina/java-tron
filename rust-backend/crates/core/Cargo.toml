@@ -42,6 +42,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = "0.4"
 
+# SHA3/Keccak for Market order ID calculation
+sha3 = "0.10"
+
 # Temporary directory for fixture execution
 tempfile = "3.8"
 

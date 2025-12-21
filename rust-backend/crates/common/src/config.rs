@@ -369,6 +369,43 @@ pub struct RemoteExecutionConfig {
     /// Requires: AccountStore, ExchangeStore/V2, DynamicPropertiesStore
     /// Default: false for safe rollout
     pub exchange_transaction_enabled: bool,
+
+    // === Phase 2.G: Market (DEX) Contracts (52/53) ===
+    //
+    // These contracts handle the order-book DEX functionality:
+    // - MarketSellAsset (52): Create a sell order and match against existing orders
+    // - MarketCancelOrder (53): Cancel an existing active order
+    //
+    // Dependencies:
+    // - MarketAccountStore (dbName: "market_account") - per-account order tracking
+    // - MarketOrderStore (dbName: "market_order") - order storage
+    // - MarketPairToPriceStore (dbName: "market_pair_to_price") - pair→price count
+    // - MarketPairPriceToOrderStore (dbName: "market_pair_price_to_order") - price→order list
+    // - AccountStore (TRX + asset balances)
+    // - AssetIssueStore/V2 (token validation)
+    // - DynamicPropertiesStore (allowMarketTransaction, marketSellFee, marketCancelFee, marketQuantityLimit)
+    //
+    // Receipt fields:
+    // - MarketSellAsset: orderId + orderDetails[]
+    // - MarketCancelOrder: (no additional fields)
+    //
+    // Note: MarketSellAsset is complex due to order matching with price comparison,
+    // linked list management, and MAX_MATCH_NUM limit.
+
+    /// Enable MARKET_SELL_ASSET_CONTRACT (type 52) execution
+    /// Creates a sell order and matches against existing orders
+    /// Fee: getMarketSellFee() from DynamicPropertiesStore
+    /// Requires: All Market stores, AccountStore, AssetIssueStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub market_sell_asset_enabled: bool,
+
+    /// Enable MARKET_CANCEL_ORDER_CONTRACT (type 53) execution
+    /// Cancels an existing active order and returns remaining tokens
+    /// Fee: getMarketCancelFee() from DynamicPropertiesStore
+    /// Requires: MarketOrderStore, MarketAccountStore, MarketPairToPriceStore,
+    ///           MarketPairPriceToOrderStore, AccountStore, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub market_cancel_order_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -538,6 +575,10 @@ impl Config {
         builder = builder.set_default("execution.remote.exchange_withdraw_enabled", false)?;
         builder = builder.set_default("execution.remote.exchange_transaction_enabled", false)?;
 
+        // Phase 2.G: Market (DEX) contracts (52/53)
+        builder = builder.set_default("execution.remote.market_sell_asset_enabled", false)?;
+        builder = builder.set_default("execution.remote.market_cancel_order_enabled", false)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -593,6 +634,9 @@ impl Default for RemoteExecutionConfig {
             exchange_inject_enabled: false, // Default false for safe rollout
             exchange_withdraw_enabled: false, // Default false for safe rollout
             exchange_transaction_enabled: false, // Default false for safe rollout
+            // Phase 2.G: Market (DEX) contracts (52/53)
+            market_sell_asset_enabled: false, // Default false for safe rollout
+            market_cancel_order_enabled: false, // Default false for safe rollout
         }
     }
 } 

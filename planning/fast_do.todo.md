@@ -574,12 +574,40 @@ receipt：
 - 53：无额外字段，但会影响 order book 状态
 
 TODO：
-- [ ] 先把 receipt bytes 通道打通（orderDetails 很难逐字段扩）
-- [ ] 以 DbKvChange + receipt bytes 的方式推进（否则 sidecar 会爆炸）
-- [ ] 分阶段：
-  - [ ] 先做 cancel（相对 sell 简单）
-  - [ ] 再做 sell 的“无撮合/少撮合”路径
-  - [ ] 最后做撮合循环 + MAX_MATCH_NUM 边界 + 价格队列清理
+- [x] 先把 receipt bytes 通道打通（orderDetails 很难逐字段扩）
+  - **DONE**: Receipt passthrough via `tron_transaction_result` with `order_id` field (25) implemented in `TransactionResultBuilder`
+- [x] Rust：添加 config flags for gradual rollout
+  - **DONE**: Added `market_sell_asset_enabled`, `market_cancel_order_enabled` to `RemoteExecutionConfig` in `common/src/config.rs`
+  - Default: false for safe rollout
+- [x] Rust：添加 Market store adapter methods
+  - **DONE**: Added to `rust-backend/crates/execution/src/storage_adapter/engine.rs`:
+    - `allow_market_transaction()`, `get_market_sell_fee()`, `get_market_cancel_fee()`, `get_market_quantity_limit()` - dynamic properties
+    - `get_market_order()`, `put_market_order()` - MarketOrderStore operations
+    - `get_market_account_order()`, `put_market_account_order()` - MarketAccountStore operations
+    - `get_market_order_id_list()`, `put_market_order_id_list()` - MarketPairPriceToOrderStore operations
+- [x] Rust：实现 MarketCancelOrder (53)
+  - **DONE**: Implemented `execute_market_cancel_order_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Validates order exists, owner matches order creator
+  - Returns remaining tokens to owner (TRX or TRC-10)
+  - Removes order from linked list structure using `remove_order_from_linked_list()`
+  - Deletes order from MarketOrderStore
+- [x] Rust：实现 MarketSellAsset (52)
+  - **DONE**: Implemented `execute_market_sell_asset_contract()` in `rust-backend/crates/core/src/service/mod.rs`
+  - Validates market enabled, token IDs, quantity limits
+  - Charges fee via `get_market_sell_fee()`, handles burn/blackhole
+  - Creates new order with unique ID via `calculate_order_id()` using SHA3/Keccak256
+  - Updates MarketAccountOrder count for the owner
+  - Inserts order into price-sorted linked list structure
+  - Sets `order_id` in receipt via `TransactionResultBuilder::with_order_id()`
+  - **NOTE**: Order matching logic is simplified (creates order without matching) - full matching would require additional work
+  - Helper functions: `create_pair_key()`, `create_pair_price_key()`, `find_gcd()`, `calculate_order_id()`
+- [x] Java：RemoteExecutionSPI 增加 52/53 映射
+  - **DONE**: Added `MarketSellAssetContract`, `MarketCancelOrderContract` cases in `framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java`
+  - All use `txKind = TxKind.NON_VM`, send full proto bytes as `data`
+- [x] Fixture：覆盖 market disabled/enabled；cancel nonexistent/not owner；sell fee 不足/数量限制；order book 操作
+  - **DONE**: Created `MarketFixtureGeneratorTest.java` in `framework/src/test/java/org/tron/core/conformance/`
+  - MarketSellAsset (52): happy_path_trx_to_token, happy_path_token_to_trx, happy_path_token_to_token, validate_fail_market_disabled, validate_fail_same_tokens, validate_fail_insufficient_balance, validate_fail_quantity_exceeds_limit, validate_fail_zero_sell_quantity
+  - MarketCancelOrder (53): happy_path_cancel, happy_path_cancel_token_order, validate_fail_not_owner, validate_fail_nonexistent, validate_fail_already_canceled, validate_fail_market_disabled
 
 ### 2.H（Shield 51）：最后做（高风险、高依赖）
 

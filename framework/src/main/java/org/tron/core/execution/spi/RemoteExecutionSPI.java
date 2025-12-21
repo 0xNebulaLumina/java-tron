@@ -773,6 +773,35 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               exchangeTransactionContract.getExpected());
           break;
 
+        case MarketSellAssetContract:
+          // MarketSellAssetContract creates a sell order on the DEX
+          org.tron.protos.contract.MarketContract.MarketSellAssetContract marketSellAssetContract =
+              contractParameter.unpack(org.tron.protos.contract.MarketContract.MarketSellAssetContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = marketSellAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.MARKET_SELL_ASSET_CONTRACT;
+          logger.debug("Mapped MarketSellAssetContract to remote request; owner={}, sell_token={}, sell_qty={}, buy_token={}, buy_qty={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              new String(marketSellAssetContract.getSellTokenId().toByteArray()),
+              marketSellAssetContract.getSellTokenQuantity(),
+              new String(marketSellAssetContract.getBuyTokenId().toByteArray()),
+              marketSellAssetContract.getBuyTokenQuantity());
+          break;
+
+        case MarketCancelOrderContract:
+          // MarketCancelOrderContract cancels an existing order on the DEX
+          org.tron.protos.contract.MarketContract.MarketCancelOrderContract marketCancelOrderContract =
+              contractParameter.unpack(org.tron.protos.contract.MarketContract.MarketCancelOrderContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = marketCancelOrderContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.MARKET_CANCEL_ORDER_CONTRACT;
+          logger.debug("Mapped MarketCancelOrderContract to remote request; owner={}, order_id={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(marketCancelOrderContract.getOrderId().toByteArray()));
+          break;
+
         default:
           // Remove TRANSFER fallback - throw exception to fall back to embedded
           logger.error("Contract type {} not mapped to remote; falling back to embedded", contract.getType());
