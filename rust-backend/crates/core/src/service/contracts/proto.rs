@@ -87,6 +87,8 @@ pub struct TransactionResultBuilder {
     pub exchange_inject_another_amount: Option<i64>,
     pub exchange_withdraw_another_amount: Option<i64>,
     pub shielded_transaction_fee: Option<i64>,
+    /// bytes orderId = 25
+    pub order_id: Option<Vec<u8>>,
     /// map<string, int64> cancel_unfreezeV2_amount = 28
     /// Keys are resource names: "BANDWIDTH", "ENERGY", "TRON_POWER"
     pub cancel_unfreezeV2_amount: Option<Vec<(String, i64)>>,
@@ -135,6 +137,13 @@ impl TransactionResultBuilder {
     #[allow(dead_code)]
     pub fn with_shielded_transaction_fee(mut self, fee: i64) -> Self {
         self.shielded_transaction_fee = Some(fee);
+        self
+    }
+
+    /// Set order ID for MarketSellAsset contract
+    /// Field 25: bytes orderId
+    pub fn with_order_id(mut self, order_id: &[u8]) -> Self {
+        self.order_id = Some(order_id.to_vec());
         self
     }
 
@@ -204,6 +213,13 @@ impl TransactionResultBuilder {
         if let Some(fee) = self.shielded_transaction_fee {
             write_tag(&mut buf, 22, WIRE_TYPE_VARINT);
             write_varint(&mut buf, fee as u64);
+        }
+
+        // Field 25: orderId (bytes, wire type 2 = length-delimited)
+        if let Some(ref order_id) = self.order_id {
+            write_tag(&mut buf, 25, 2);
+            write_varint(&mut buf, order_id.len() as u64);
+            buf.extend_from_slice(order_id);
         }
 
         // Field 27: withdraw_expire_amount
