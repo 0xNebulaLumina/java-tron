@@ -534,6 +534,11 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
         // Phase 2.A: Proposal Contracts (16/17/18)
         case ProposalCreateContract:
+          // Check JVM property gate for Proposal contracts
+          boolean proposalRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.proposal.enabled", "false"));
+          if (!proposalRemoteEnabled) {
+            throw new UnsupportedOperationException("Proposal execution via remote backend is disabled. Use -Dremote.exec.proposal.enabled=true to enable.");
+          }
           // ProposalCreateContract creates a new governance proposal
           org.tron.protos.contract.ProposalContract.ProposalCreateContract proposalCreateContract =
               contractParameter.unpack(org.tron.protos.contract.ProposalContract.ProposalCreateContract.class);
@@ -547,6 +552,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case ProposalApproveContract:
+          // Check JVM property gate for Proposal contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.proposal.enabled", "false"))) {
+            throw new UnsupportedOperationException("Proposal execution via remote backend is disabled. Use -Dremote.exec.proposal.enabled=true to enable.");
+          }
           // ProposalApproveContract adds/removes approval from a proposal
           org.tron.protos.contract.ProposalContract.ProposalApproveContract proposalApproveContract =
               contractParameter.unpack(org.tron.protos.contract.ProposalContract.ProposalApproveContract.class);
@@ -561,6 +570,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case ProposalDeleteContract:
+          // Check JVM property gate for Proposal contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.proposal.enabled", "false"))) {
+            throw new UnsupportedOperationException("Proposal execution via remote backend is disabled. Use -Dremote.exec.proposal.enabled=true to enable.");
+          }
           // ProposalDeleteContract cancels a proposal (only by proposer)
           org.tron.protos.contract.ProposalContract.ProposalDeleteContract proposalDeleteContract =
               contractParameter.unpack(org.tron.protos.contract.ProposalContract.ProposalDeleteContract.class);
@@ -575,6 +588,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
         // Phase 2.B: Account Management Contracts (19/46)
         case SetAccountIdContract:
+          // Check JVM property gate for Account management contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.account.enabled", "false"))) {
+            throw new UnsupportedOperationException("Account management execution via remote backend is disabled. Use -Dremote.exec.account.enabled=true to enable.");
+          }
           // SetAccountIdContract sets a unique, immutable account ID
           org.tron.protos.contract.AccountContract.SetAccountIdContract setAccountIdContract =
               contractParameter.unpack(org.tron.protos.contract.AccountContract.SetAccountIdContract.class);
@@ -588,6 +605,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case AccountPermissionUpdateContract:
+          // Check JVM property gate for Account management contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.account.enabled", "false"))) {
+            throw new UnsupportedOperationException("Account management execution via remote backend is disabled. Use -Dremote.exec.account.enabled=true to enable.");
+          }
           // AccountPermissionUpdateContract updates account permissions for multi-sig
           org.tron.protos.contract.AccountContract.AccountPermissionUpdateContract permissionUpdateContract =
               contractParameter.unpack(org.tron.protos.contract.AccountContract.AccountPermissionUpdateContract.class);
@@ -602,6 +623,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
         // Phase 2.C: Contract Metadata Contracts (33/45/48)
         case UpdateSettingContract:
+          // Check JVM property gate for Contract metadata contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.contract.enabled", "false"))) {
+            throw new UnsupportedOperationException("Contract metadata execution via remote backend is disabled. Use -Dremote.exec.contract.enabled=true to enable.");
+          }
           // UpdateSettingContract updates consume_user_resource_percent of a smart contract
           org.tron.protos.contract.SmartContractOuterClass.UpdateSettingContract updateSettingContract =
               contractParameter.unpack(org.tron.protos.contract.SmartContractOuterClass.UpdateSettingContract.class);
@@ -616,6 +641,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case UpdateEnergyLimitContract:
+          // Check JVM property gate for Contract metadata contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.contract.enabled", "false"))) {
+            throw new UnsupportedOperationException("Contract metadata execution via remote backend is disabled. Use -Dremote.exec.contract.enabled=true to enable.");
+          }
           // UpdateEnergyLimitContract updates origin_energy_limit of a smart contract
           org.tron.protos.contract.SmartContractOuterClass.UpdateEnergyLimitContract updateEnergyLimitContract =
               contractParameter.unpack(org.tron.protos.contract.SmartContractOuterClass.UpdateEnergyLimitContract.class);
@@ -630,6 +659,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case ClearABIContract:
+          // Check JVM property gate for Contract metadata contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.contract.enabled", "false"))) {
+            throw new UnsupportedOperationException("Contract metadata execution via remote backend is disabled. Use -Dremote.exec.contract.enabled=true to enable.");
+          }
           // ClearABIContract clears the ABI of a smart contract
           org.tron.protos.contract.SmartContractOuterClass.ClearABIContract clearAbiContract =
               contractParameter.unpack(org.tron.protos.contract.SmartContractOuterClass.ClearABIContract.class);
@@ -644,6 +677,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
         // Phase 2.C2: UpdateBrokerage Contract (49)
         case UpdateBrokerageContract:
+          // Check JVM property gate for Brokerage contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.brokerage.enabled", "false"))) {
+            throw new UnsupportedOperationException("Brokerage execution via remote backend is disabled. Use -Dremote.exec.brokerage.enabled=true to enable.");
+          }
           // UpdateBrokerageContract sets the brokerage (commission rate) for a witness
           org.tron.protos.contract.StorageContract.UpdateBrokerageContract updateBrokerageContract =
               contractParameter.unpack(org.tron.protos.contract.StorageContract.UpdateBrokerageContract.class);
@@ -658,6 +695,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
         // Phase 2.D: Resource/Freeze/Delegation Contracts (56/57/58/59)
         case WithdrawExpireUnfreezeContract:
+          // Check JVM property gate for Resource/Delegation contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.resource.enabled", "false"))) {
+            throw new UnsupportedOperationException("Resource/Delegation execution via remote backend is disabled. Use -Dremote.exec.resource.enabled=true to enable.");
+          }
           // WithdrawExpireUnfreezeContract withdraws TRX from expired unfreezeV2 entries
           WithdrawExpireUnfreezeContract withdrawExpireUnfreezeContract =
               contractParameter.unpack(WithdrawExpireUnfreezeContract.class);
@@ -670,6 +711,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case DelegateResourceContract:
+          // Check JVM property gate for Resource/Delegation contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.resource.enabled", "false"))) {
+            throw new UnsupportedOperationException("Resource/Delegation execution via remote backend is disabled. Use -Dremote.exec.resource.enabled=true to enable.");
+          }
           // DelegateResourceContract delegates frozen resources to another account
           DelegateResourceContract delegateResourceContract =
               contractParameter.unpack(DelegateResourceContract.class);
@@ -686,6 +731,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case UnDelegateResourceContract:
+          // Check JVM property gate for Resource/Delegation contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.resource.enabled", "false"))) {
+            throw new UnsupportedOperationException("Resource/Delegation execution via remote backend is disabled. Use -Dremote.exec.resource.enabled=true to enable.");
+          }
           // UnDelegateResourceContract reclaims delegated resources
           UnDelegateResourceContract unDelegateResourceContract =
               contractParameter.unpack(UnDelegateResourceContract.class);
@@ -701,6 +750,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case CancelAllUnfreezeV2Contract:
+          // Check JVM property gate for Resource/Delegation contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.resource.enabled", "false"))) {
+            throw new UnsupportedOperationException("Resource/Delegation execution via remote backend is disabled. Use -Dremote.exec.resource.enabled=true to enable.");
+          }
           // CancelAllUnfreezeV2Contract cancels all pending unfreezeV2 entries
           CancelAllUnfreezeV2Contract cancelAllUnfreezeV2Contract =
               contractParameter.unpack(CancelAllUnfreezeV2Contract.class);
@@ -714,6 +767,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
         // Phase 2.F: Exchange Contracts (41-44)
         case ExchangeCreateContract:
+          // Check JVM property gate for Exchange contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.exchange.enabled", "false"))) {
+            throw new UnsupportedOperationException("Exchange execution via remote backend is disabled. Use -Dremote.exec.exchange.enabled=true to enable.");
+          }
           // ExchangeCreateContract creates a new Bancor-style exchange
           org.tron.protos.contract.ExchangeContract.ExchangeCreateContract exchangeCreateContract =
               contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeCreateContract.class);
@@ -728,6 +785,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case ExchangeInjectContract:
+          // Check JVM property gate for Exchange contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.exchange.enabled", "false"))) {
+            throw new UnsupportedOperationException("Exchange execution via remote backend is disabled. Use -Dremote.exec.exchange.enabled=true to enable.");
+          }
           // ExchangeInjectContract injects liquidity into an exchange
           org.tron.protos.contract.ExchangeContract.ExchangeInjectContract exchangeInjectContract =
               contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeInjectContract.class);
@@ -743,6 +804,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case ExchangeWithdrawContract:
+          // Check JVM property gate for Exchange contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.exchange.enabled", "false"))) {
+            throw new UnsupportedOperationException("Exchange execution via remote backend is disabled. Use -Dremote.exec.exchange.enabled=true to enable.");
+          }
           // ExchangeWithdrawContract withdraws liquidity from an exchange
           org.tron.protos.contract.ExchangeContract.ExchangeWithdrawContract exchangeWithdrawContract =
               contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeWithdrawContract.class);
@@ -758,6 +823,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case ExchangeTransactionContract:
+          // Check JVM property gate for Exchange contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.exchange.enabled", "false"))) {
+            throw new UnsupportedOperationException("Exchange execution via remote backend is disabled. Use -Dremote.exec.exchange.enabled=true to enable.");
+          }
           // ExchangeTransactionContract executes a token swap on an exchange
           org.tron.protos.contract.ExchangeContract.ExchangeTransactionContract exchangeTransactionContract =
               contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeTransactionContract.class);
@@ -774,6 +843,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case MarketSellAssetContract:
+          // Check JVM property gate for Market contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.market.enabled", "false"))) {
+            throw new UnsupportedOperationException("Market execution via remote backend is disabled. Use -Dremote.exec.market.enabled=true to enable.");
+          }
           // MarketSellAssetContract creates a sell order on the DEX
           org.tron.protos.contract.MarketContract.MarketSellAssetContract marketSellAssetContract =
               contractParameter.unpack(org.tron.protos.contract.MarketContract.MarketSellAssetContract.class);
@@ -790,6 +863,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         case MarketCancelOrderContract:
+          // Check JVM property gate for Market contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.market.enabled", "false"))) {
+            throw new UnsupportedOperationException("Market execution via remote backend is disabled. Use -Dremote.exec.market.enabled=true to enable.");
+          }
           // MarketCancelOrderContract cancels an existing order on the DEX
           org.tron.protos.contract.MarketContract.MarketCancelOrderContract marketCancelOrderContract =
               contractParameter.unpack(org.tron.protos.contract.MarketContract.MarketCancelOrderContract.class);
