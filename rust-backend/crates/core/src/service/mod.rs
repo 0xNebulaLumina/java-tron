@@ -2611,14 +2611,113 @@ impl BackendService {
         true
     }
 
+    fn check_account_permission_update_permission(
+        &self,
+        storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore,
+        permission: &tron_backend_execution::protocol::Permission,
+        address_prefix: u8,
+    ) -> Result<(), String> {
+        use std::collections::HashSet;
+        use tron_backend_execution::protocol::permission::PermissionType;
+
+        let total_sign_num = storage_adapter.get_total_sign_num()
+            .map_err(|e| format!("Failed to get TOTAL_SIGN_NUM: {}", e))?;
+        if permission.keys.len() as i64 > total_sign_num {
+            return Err(format!(
+                "number of keys in permission should not be greater than {}",
+                total_sign_num
+            ));
+        }
+        if permission.keys.is_empty() {
+            return Err("key's count should be greater than 0".to_string());
+        }
+
+        let permission_type = PermissionType::from_i32(permission.r#type)
+            .ok_or_else(|| "Invalid permission type".to_string())?;
+        let permission_type_str = match permission_type {
+            PermissionType::Owner => "Owner",
+            PermissionType::Witness => "Witness",
+            PermissionType::Active => "Active",
+        };
+
+        if permission_type == PermissionType::Witness && permission.keys.len() != 1 {
+            return Err("Witness permission's key count should be 1".to_string());
+        }
+        if permission.threshold <= 0 {
+            return Err("permission's threshold should be greater than 0".to_string());
+        }
+        if !permission.permission_name.is_empty() && permission.permission_name.len() > 32 {
+            return Err("permission's name is too long".to_string());
+        }
+        if permission.parent_id != 0 {
+            return Err("permission's parent should be owner".to_string());
+        }
+
+        let mut seen_addresses: HashSet<&[u8]> = HashSet::new();
+        let mut weight_sum: i64 = 0;
+        for key in &permission.keys {
+            if !seen_addresses.insert(key.address.as_slice()) {
+                return Err(format!(
+                    "address should be distinct in permission {}",
+                    permission_type_str
+                ));
+            }
+            if key.address.len() != 21 || key.address[0] != address_prefix {
+                return Err("key is not a validate address".to_string());
+            }
+            if key.weight <= 0 {
+                return Err("key's weight should be greater than 0".to_string());
+            }
+            weight_sum = weight_sum
+                .checked_add(key.weight)
+                .ok_or_else(|| "long overflow".to_string())?;
+        }
+        if weight_sum < permission.threshold {
+            return Err(format!(
+                "sum of all key's weight should not be less than threshold in permission {}",
+                permission_type_str
+            ));
+        }
+
+        let operations = permission.operations.as_slice();
+        if permission_type != PermissionType::Active {
+            if !operations.is_empty() {
+                return Err(format!(
+                    "{} permission needn't operations",
+                    permission_type_str
+                ));
+            }
+            return Ok(());
+        }
+
+        if operations.is_empty() || operations.len() != 32 {
+            return Err("operations size must 32".to_string());
+        }
+
+        // Check operations bits against AVAILABLE_CONTRACT_TYPE bitmap when present.
+        let available_contract_type = storage_adapter.get_available_contract_type()
+            .map_err(|e| format!("Failed to get AVAILABLE_CONTRACT_TYPE: {}", e))?;
+        let allow_all = [0xFFu8; 32];
+        let allowed_bitmap: &[u8] = match available_contract_type.as_deref() {
+            Some(b) if b.len() >= 32 => &b[..32],
+            _ => &allow_all,
+        };
+
+        for i in 0..256 {
+            let byte_index = i / 8;
+            let bit_mask = 1u8 << (i % 8);
+            let op_enabled = (operations[byte_index] & bit_mask) != 0;
+            let op_allowed = (allowed_bitmap[byte_index] & bit_mask) != 0;
+            if op_enabled && !op_allowed {
+                return Err(format!("{} isn't a validate ContractType", i));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Execute an ACCOUNT_PERMISSION_UPDATE_CONTRACT (type 46)
     /// Updates owner/witness/active permissions for multi-sig functionality
-    ///
-    /// Note: This is a complex contract that requires full Account proto support.
-    /// For now, we implement a minimal version that:
-    /// 1. Validates multi-sign is enabled
-    /// 2. Charges the update permission fee
-    /// 3. Updates the permissions on the account
     ///
     /// Java reference: AccountPermissionUpdateActuator.java
     fn execute_account_permission_update_contract(
@@ -2634,71 +2733,120 @@ impl BackendService {
 
         info!("AccountPermissionUpdate owner={}", owner_tron);
 
-        // 1. Check if multi-sign is enabled
+        // Validate: multi-sign must be enabled
         let allow_multi_sign = storage_adapter.get_allow_multi_sign()
             .map_err(|e| format!("Failed to get allow_multi_sign: {}", e))?;
-
         if !allow_multi_sign {
             return Err("multi sign is not allowed, need to be opened by the committee".to_string());
         }
 
-        // 2. Get fee
-        let fee = storage_adapter.get_update_account_permission_fee()
-            .map_err(|e| format!("Failed to get update_account_permission_fee: {}", e))?;
-
-        info!("AccountPermissionUpdate: owner={}, fee={}", owner_tron, fee);
-
-        // 3. Get owner account
-        let mut account_proto = storage_adapter.get_account_proto(&owner)
-            .map_err(|e| format!("Failed to get account: {}", e))?
-            .ok_or_else(|| "Account does not exist".to_string())?;
-
-        // 4. Parse the permission update contract
-        let (owner_permission, witness_permission, active_permissions) =
+        // Parse contract
+        let (mut owner_permission, witness_permission, active_permissions) =
             self.parse_account_permission_update_contract(&transaction.data)?;
 
-        // 5. Validate permissions (simplified - full validation would be complex)
-        // For now, just check that owner permission is present
-        if owner_permission.is_none() {
-            return Err("Owner permission is required".to_string());
+        // Load owner account (address is transaction.from, matching fixture generator)
+        let mut account_proto = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or_else(|| "ownerAddress account does not exist".to_string())?;
+
+        // Validation (match java-tron ordering)
+        let address_prefix = storage_adapter.to_tron_address_21(&owner)[0];
+
+        let mut owner_permission = owner_permission
+            .take()
+            .ok_or_else(|| "owner permission is missed".to_string())?;
+
+        if account_proto.is_witness {
+            if witness_permission.is_none() {
+                return Err("witness permission is missed".to_string());
+            }
+        } else if witness_permission.is_some() {
+            return Err("account isn't witness can't set witness permission".to_string());
         }
 
-        // 6. Check if account has enough balance for fee
-        let current_balance = account_proto.balance;
-        if current_balance < fee {
-            return Err(format!("Insufficient balance for fee: {} < {}", current_balance, fee));
+        if active_permissions.is_empty() {
+            return Err("active permission is missed".to_string());
+        }
+        if active_permissions.len() > 8 {
+            return Err("active permission is too many".to_string());
         }
 
-        // 7. Deduct fee from account
-        account_proto.balance = current_balance - fee;
+        use tron_backend_execution::protocol::permission::PermissionType;
+        if PermissionType::from_i32(owner_permission.r#type) != Some(PermissionType::Owner) {
+            return Err("owner permission type is error".to_string());
+        }
+        self.check_account_permission_update_permission(
+            storage_adapter,
+            &owner_permission,
+            address_prefix,
+        )?;
 
-        // 8. Update permissions on account
-        if let Some(owner_perm) = owner_permission {
-            account_proto.owner_permission = Some(owner_perm);
+        if account_proto.is_witness {
+            let witness_perm = witness_permission.as_ref().ok_or_else(|| "witness permission is missed".to_string())?;
+            if PermissionType::from_i32(witness_perm.r#type) != Some(PermissionType::Witness) {
+                return Err("witness permission type is error".to_string());
+            }
+            self.check_account_permission_update_permission(storage_adapter, witness_perm, address_prefix)?;
         }
-        if let Some(witness_perm) = witness_permission {
-            account_proto.witness_permission = Some(witness_perm);
+
+        for active_perm in &active_permissions {
+            if PermissionType::from_i32(active_perm.r#type) != Some(PermissionType::Active) {
+                return Err("active permission type is error".to_string());
+            }
+            self.check_account_permission_update_permission(storage_adapter, active_perm, address_prefix)?;
         }
-        // Replace active permissions
+
+        // Execute (match java-tron: update permissions first, then charge fee)
+        owner_permission.id = 0;
+        account_proto.owner_permission = Some(owner_permission);
+
+        if account_proto.is_witness {
+            if let Some(mut witness_perm) = witness_permission {
+                witness_perm.id = 1;
+                account_proto.witness_permission = Some(witness_perm);
+            }
+        }
+
         account_proto.active_permission.clear();
-        for active in active_permissions {
-            account_proto.active_permission.push(active);
+        for (i, mut active_perm) in active_permissions.into_iter().enumerate() {
+            active_perm.id = i as i32 + 2;
+            account_proto.active_permission.push(active_perm);
         }
 
-        // 9. Persist updated account
+        // Persist permissions update before charging fee (so insufficient balance keeps permission changes)
         storage_adapter.put_account_proto(&owner, &account_proto)
             .map_err(|e| format!("Failed to persist account: {}", e))?;
 
-        // 10. Handle fee: burn or credit to blackhole
+        let fee = storage_adapter.get_update_account_permission_fee()
+            .map_err(|e| format!("Failed to get update_account_permission_fee: {}", e))?;
+        info!("AccountPermissionUpdate: owner={}, fee={}", owner_tron, fee);
+
+        if fee < 0 {
+            return Err("Invalid update account permission fee".to_string());
+        }
+        if fee > 0 {
+            let current_balance = account_proto.balance;
+            if current_balance < fee {
+                let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&owner));
+                return Err(format!(
+                    "{} insufficient balance, balance: {}, amount: {}",
+                    owner_hex, current_balance, fee
+                ));
+            }
+            account_proto.balance = current_balance - fee;
+            storage_adapter.put_account_proto(&owner, &account_proto)
+                .map_err(|e| format!("Failed to persist account: {}", e))?;
+        }
+
+        // Handle fee: burn or credit to blackhole
         let support_blackhole_optimization = storage_adapter.support_black_hole_optimization()
             .map_err(|e| format!("Failed to get blackhole optimization flag: {}", e))?;
 
         if !support_blackhole_optimization {
-            // Credit fee to blackhole account
-            let blackhole_addr = storage_adapter.get_blackhole_address_evm();
-            if let Ok(Some(mut blackhole_account)) = storage_adapter.get_account_proto(&blackhole_addr) {
-                blackhole_account.balance += fee;
-                let _ = storage_adapter.put_account_proto(&blackhole_addr, &blackhole_account);
+            if fee > 0 {
+                let blackhole_addr = storage_adapter.get_blackhole_address_evm();
+                storage_adapter.add_balance(&blackhole_addr, fee as u64)
+                    .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
             }
         }
         // If blackhole optimization is enabled, fee is just burned (not credited anywhere)

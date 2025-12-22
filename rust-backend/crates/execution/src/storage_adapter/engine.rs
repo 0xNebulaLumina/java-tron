@@ -470,7 +470,15 @@ impl EngineBackedEvmStateStore {
         let key = b"ALLOW_MULTI_SIGN";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                if !data.is_empty() {
+                // Java stores dynamic properties as big-endian i64/u64.
+                // For small values (e.g. 1), the first byte is 0; so interpret as 8-byte integer.
+                if data.len() >= 8 {
+                    let val = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    Ok(val != 0)
+                } else if !data.is_empty() {
                     Ok(data[0] != 0)
                 } else {
                     Ok(true) // Default enabled
@@ -578,24 +586,14 @@ impl EngineBackedEvmStateStore {
                     addr_bytes.copy_from_slice(&data[0..20]);
                     Ok(Some(Address::from(addr_bytes)))
                 } else {
-                    // Invalid or empty value: fall back to default
-                    Ok(Self::default_blackhole_address())
+                    // Invalid or empty value: fall back to default for the detected network prefix
+                    Ok(Some(self.get_blackhole_address_evm()))
                 }
             },
             None => {
-                // Not configured in dynamic properties - use sane network default
-                Ok(Self::default_blackhole_address())
+                // Not configured in dynamic properties - use sane network default for prefix
+                Ok(Some(self.get_blackhole_address_evm()))
             }
-        }
-    }
-
-    /// Default blackhole address (mainnet): TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy
-    /// Provided as 20-byte EVM address wrapped in revm_primitives::Address.
-    fn default_blackhole_address() -> Option<Address> {
-        // Use common address utility to decode TRON Base58
-        match tron_backend_common::from_tron_address("TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy") {
-            Ok(bytes20) => Some(Address::from(bytes20)),
-            Err(_) => None,
         }
     }
 
@@ -2266,19 +2264,28 @@ impl EngineBackedEvmStateStore {
     /// Get the blackhole address as 21-byte TRON format (0x41 prefix + 20 bytes)
     /// Java: AccountStore.getBlackhole() returns BURN_ADDRESS or HOLE_ADDRESS
     pub fn get_blackhole_address_tron(&self) -> [u8; 21] {
-        // TRON blackhole address: TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy (mainnet default)
-        // Base58 decoded to hex: 4174b2c93cba4fb9d734c4c3fc2c0df8ff9d36d50c
-        [
-            0x41,
-            0x74, 0xb2, 0xc9, 0x3c, 0xba, 0x4f, 0xb9, 0xd7,
-            0x34, 0xc4, 0xc3, 0xfc, 0x2c, 0x0d, 0xf8, 0xff,
-            0x9d, 0x36, 0xd5, 0x0c,
-        ]
+        // Mainnet default: TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy
+        // Testnet default (config-test.conf genesis): 27WtBq2KoSy5v8VnVZBZHHJcDuWNiSgjbE3
+        match self.address_prefix {
+            0xa0 => [
+                0xa0,
+                0x55, 0x9c, 0xcf, 0x55, 0xfa, 0xdf, 0xfd, 0xf8,
+                0x14, 0xa4, 0x2a, 0xff, 0x33, 0x1d, 0xe9, 0x68,
+                0x8c, 0x13, 0x26, 0x12,
+            ],
+            _ => [
+                0x41,
+                0x77, 0x94, 0x4d, 0x19, 0xc0, 0x52, 0xb7, 0x3e,
+                0xe2, 0x28, 0x68, 0x23, 0xaa, 0x83, 0xf8, 0x13,
+                0x8c, 0xb7, 0x03, 0x2f,
+            ],
+        }
     }
 
     /// Get the blackhole address as an EVM Address (20 bytes, no 0x41 prefix)
     pub fn get_blackhole_address_evm(&self) -> Address {
-        Self::default_blackhole_address().unwrap_or(Address::ZERO)
+        let tron = self.get_blackhole_address_tron();
+        Address::from_slice(&tron[1..])
     }
 
     // ==========================================================================
