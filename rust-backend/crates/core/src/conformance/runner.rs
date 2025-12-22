@@ -326,7 +326,7 @@ impl ConformanceRunner {
             .ok_or("Transaction is required")?;
 
         // Parse from address (strip 0x41 TRON prefix if present)
-        let from_bytes = if tx.from.len() == 21 && tx.from[0] == 0x41 {
+        let from_bytes = if tx.from.len() == 21 && (tx.from[0] == 0x41 || tx.from[0] == 0xa0) {
             &tx.from[1..]
         } else if tx.from.len() == 20 {
             &tx.from[..]
@@ -339,7 +339,7 @@ impl ConformanceRunner {
         let to = if tx.to.is_empty() {
             None
         } else {
-            let to_bytes = if tx.to.len() == 21 && tx.to[0] == 0x41 {
+            let to_bytes = if tx.to.len() == 21 && (tx.to[0] == 0x41 || tx.to[0] == 0xa0) {
                 &tx.to[1..]
             } else if tx.to.len() == 20 {
                 &tx.to[..]
@@ -387,7 +387,7 @@ impl ConformanceRunner {
             .ok_or("Execution context is required")?;
 
         // Parse coinbase (strip 0x41 prefix if present)
-        let block_coinbase = if ctx.coinbase.len() == 21 && ctx.coinbase[0] == 0x41 {
+        let block_coinbase = if ctx.coinbase.len() == 21 && (ctx.coinbase[0] == 0x41 || ctx.coinbase[0] == 0xa0) {
             Address::from_slice(&ctx.coinbase[1..])
         } else if ctx.coinbase.len() == 20 {
             Address::from_slice(&ctx.coinbase)
