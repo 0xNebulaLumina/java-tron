@@ -402,7 +402,13 @@ impl ConformanceRunner {
             block_timestamp: ctx.block_timestamp as u64,
             block_coinbase,
             block_difficulty: U256::ZERO,
-            block_gas_limit: ctx.energy_limit as u64,
+            block_gas_limit: if ctx.energy_limit == 0 {
+                // TRON does not have an EVM-style per-block gas limit.
+                // Use a realistic default large enough for typical system-contract execution.
+                ExecutionConfig::default().energy_limit
+            } else {
+                ctx.energy_limit as u64
+            },
             chain_id: 2494104990, // TRON mainnet chain ID
             energy_price: ctx.energy_price as u64,
             bandwidth_price: 1000, // Default TRON bandwidth price
