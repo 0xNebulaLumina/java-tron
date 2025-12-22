@@ -24,7 +24,7 @@ import org.tron.protos.contract.StorageContract.UpdateBrokerageContract;
 /**
  * Generates conformance test fixtures for UpdateBrokerageContract (49).
  *
- * <p>Run with: ./gradlew :framework:test --tests "BrokerageFixtureGeneratorTest" -Dconformance.output=conformance/fixtures
+ * <p>Run with: ./gradlew :framework:test --tests "BrokerageFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures
  */
 public class BrokerageFixtureGeneratorTest extends BaseTest {
 
@@ -46,7 +46,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
   public void setup() {
     initializeTestData();
 
-    String outputPath = System.getProperty("conformance.output", "conformance/fixtures");
+    String outputPath = System.getProperty("conformance.output", "../conformance/fixtures");
     outputDir = new File(outputPath);
     generator = new FixtureGenerator(dbManager, chainBaseManager);
     generator.setOutputDir(outputDir);

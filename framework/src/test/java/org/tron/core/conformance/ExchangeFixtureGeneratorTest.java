@@ -27,7 +27,7 @@ import org.tron.protos.contract.ExchangeContract.ExchangeTransactionContract;
 /**
  * Generates conformance test fixtures for Exchange contracts (41-44).
  *
- * <p>Run with: ./gradlew :framework:test --tests "ExchangeFixtureGeneratorTest" -Dconformance.output=conformance/fixtures
+ * <p>Run with: ./gradlew :framework:test --tests "ExchangeFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures
  */
 public class ExchangeFixtureGeneratorTest extends BaseTest {
 
@@ -59,7 +59,7 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
     initializeTestData();
 
     // Configure fixture generator
-    String outputPath = System.getProperty("conformance.output", "conformance/fixtures");
+    String outputPath = System.getProperty("conformance.output", "../conformance/fixtures");
     outputDir = new File(outputPath);
     generator = new FixtureGenerator(dbManager, chainBaseManager);
     generator.setOutputDir(outputDir);

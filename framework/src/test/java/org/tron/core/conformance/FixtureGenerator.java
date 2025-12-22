@@ -43,7 +43,7 @@ import tron.backend.BackendOuterClass.TxKind;
  * <p>Usage:
  * <pre>
  * FixtureGenerator generator = new FixtureGenerator(dbManager, chainBaseManager);
- * generator.setOutputDir(new File("conformance/fixtures"));
+ * generator.setOutputDir(new File("../conformance/fixtures"));
  * generator.generate(transactionCapsule, blockCapsule, metadata);
  * </pre>
  */
@@ -89,7 +89,7 @@ public class FixtureGenerator {
   public FixtureGenerator(Manager dbManager, ChainBaseManager chainBaseManager) {
     this.dbManager = dbManager;
     this.chainBaseManager = chainBaseManager;
-    this.outputDir = new File("conformance/fixtures");
+    this.outputDir = new File("../conformance/fixtures");
   }
 
   public void setOutputDir(File outputDir) {

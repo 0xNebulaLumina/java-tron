@@ -28,7 +28,7 @@ import org.tron.protos.contract.MarketContract.MarketCancelOrderContract;
 /**
  * Generates conformance test fixtures for Market contracts (52-53).
  *
- * <p>Run with: ./gradlew :framework:test --tests "MarketFixtureGeneratorTest" -Dconformance.output=conformance/fixtures
+ * <p>Run with: ./gradlew :framework:test --tests "MarketFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures
  */
 public class MarketFixtureGeneratorTest extends BaseTest {
 
@@ -61,7 +61,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
     initializeTestData();
 
     // Configure fixture generator
-    String outputPath = System.getProperty("conformance.output", "conformance/fixtures");
+    String outputPath = System.getProperty("conformance.output", "../conformance/fixtures");
     outputDir = new File(outputPath);
     generator = new FixtureGenerator(dbManager, chainBaseManager);
     generator.setOutputDir(outputDir);

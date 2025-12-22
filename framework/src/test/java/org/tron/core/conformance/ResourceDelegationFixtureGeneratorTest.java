@@ -36,7 +36,7 @@ import org.tron.protos.contract.Common.ResourceCode;
  * - UnDelegateResourceContract (58)
  * - CancelAllUnfreezeV2Contract (59)
  *
- * <p>Run with: ./gradlew :framework:test --tests "ResourceDelegationFixtureGeneratorTest" -Dconformance.output=conformance/fixtures
+ * <p>Run with: ./gradlew :framework:test --tests "ResourceDelegationFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures
  */
 public class ResourceDelegationFixtureGeneratorTest extends BaseTest {
 
@@ -61,7 +61,7 @@ public class ResourceDelegationFixtureGeneratorTest extends BaseTest {
   public void setup() {
     initializeTestData();
 
-    String outputPath = System.getProperty("conformance.output", "conformance/fixtures");
+    String outputPath = System.getProperty("conformance.output", "../conformance/fixtures");
     outputDir = new File(outputPath);
     generator = new FixtureGenerator(dbManager, chainBaseManager);
     generator.setOutputDir(outputDir);

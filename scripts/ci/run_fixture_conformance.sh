@@ -21,7 +21,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUST_BACKEND="$PROJECT_ROOT/rust-backend"
-FIXTURES_DIR="$PROJECT_ROOT/framework/conformance/fixtures"
+FIXTURES_DIR="$PROJECT_ROOT/conformance/fixtures"
 
 # Parse arguments
 GENERATE_ONLY=false

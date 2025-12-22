@@ -220,7 +220,7 @@ TODO：
 TODO：
 - [x] 把 fixture conformance 定位为 PR 门禁（快）
   - **DONE**: CI script at `scripts/ci/run_fixture_conformance.sh`
-  - Java: `./gradlew :framework:test --tests "*FixtureGeneratorTest*" -Dconformance.output=conformance/fixtures`
+  - Java: `./gradlew :framework:test --tests "*FixtureGeneratorTest*"` (outputs to `conformance/fixtures/`)
   - Rust: `CONFORMANCE_FIXTURES_DIR=/path/to/fixtures cargo test --package tron-backend-core conformance -- --nocapture`
   - All 113 fixtures pass structure validation (2025-12-21)
 - [ ] 把 CSV replay/diff 定位为 nightly（慢，但覆盖真实区块）
@@ -272,7 +272,7 @@ TODO：
 - [ ] Java：`RuntimeSpiImpl` 增加 `applyProposalChanges`（带 JVM toggle：`-Dremote.exec.apply.proposal=false`）
   - **NOT NEEDED**: Rust persists directly to ProposalStore, no sidecar/apply needed
 - [x] Fixture：create/approve/delete 的 happy + expired + canceled + repeat approve/unapprove
-  - **DONE**: All fixture cases generated and stored in `framework/conformance/fixtures/proposal_*_contract/`
+  - **DONE**: All fixture cases generated and stored in `conformance/fixtures/proposal_*_contract/`
   - Create: happy_path_create, happy_path_multiple_params, validate_fail_empty_params, validate_fail_not_witness
   - Approve: happy_path_approve, happy_path_remove_approval, validate_fail_nonexistent, validate_fail_expired, validate_fail_canceled, validate_fail_repeat_approval, validate_fail_remove_not_approved
   - Delete: happy_path_delete, validate_fail_not_owner, validate_fail_nonexistent, validate_fail_already_canceled, validate_fail_expired
