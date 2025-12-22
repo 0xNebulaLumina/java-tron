@@ -4,7 +4,7 @@
   "caseName": "happy_path_no_abi",
   "caseCategory": "happy",
   "description": "Clear ABI on a contract that has no ABI (idempotent operation)",
-  "generatedAt": "2025-12-20T12:35:45.038Z",
+  "generatedAt": "2025-12-22T11:07:44.159Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
