@@ -3698,7 +3698,10 @@ impl BackendService {
 
         // 5. Validate owner is the contract's origin_address
         if smart_contract.origin_address != owner_key {
-            return Err(format!("Account {} is not the owner of the contract", owner_tron));
+            return Err(format!(
+                "Account[{}] is not the owner of the contract",
+                hex::encode(&owner_key)
+            ));
         }
 
         // 6. Update the consume_user_resource_percent field
@@ -3855,7 +3858,10 @@ impl BackendService {
 
         // 6. Validate owner is the contract's origin_address
         if smart_contract.origin_address != owner_key {
-            return Err(format!("Account {} is not the owner of the contract", owner_tron));
+            return Err(format!(
+                "Account[{}] is not the owner of the contract",
+                hex::encode(&owner_key)
+            ));
         }
 
         // 7. Update the origin_energy_limit field
@@ -4002,7 +4008,10 @@ impl BackendService {
 
         // 5. Validate owner is the contract's origin_address
         if smart_contract.origin_address != owner_key {
-            return Err(format!("Account {} is not the owner of the contract", owner_tron));
+            return Err(format!(
+                "Account[{}] is not the owner of the contract",
+                hex::encode(&owner_key)
+            ));
         }
 
         // 6. Clear ABI by writing default empty ABI to AbiStore

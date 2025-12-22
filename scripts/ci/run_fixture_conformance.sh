@@ -135,7 +135,6 @@ if [ "$GENERATE_ONLY" = false ]; then
     if [ "${FIXTURE_CONFORMANCE_INCLUDE_UNSUPPORTED:-0}" != "1" ]; then
         should_exclude_fixture_contract_dir() {
             case "$1" in
-clear_abi_contract|\
 delegate_resource_contract|\
 exchange_create_contract|\
 exchange_inject_contract|\
