@@ -193,12 +193,21 @@ impl BackendService {
     
     /// Execute a non-VM transaction with contract type dispatch
     /// Routes to specific handlers based on TRON contract type
-    fn execute_non_vm_contract(
+    pub(crate) fn execute_non_vm_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
+        // Java sends `Transaction.Contract.parameter` bytes, which are encoded as
+        // `google.protobuf.Any { type_url, value }`. Most parsers below expect the inner
+        // contract protobuf bytes, so unwrap once here.
+        let mut tx = transaction.clone();
+        if let Ok(inner) = Self::unwrap_any_value_if_present(tx.data.as_ref()) {
+            tx.data = revm_primitives::Bytes::from(inner);
+        }
+        let transaction = &tx;
+
         debug!("Executing non-VM contract: from={:?}, to={:?}, value={}, contract_type={:?}",
                transaction.from, transaction.to, transaction.value, transaction.metadata.contract_type);
 
@@ -469,6 +478,75 @@ impl BackendService {
                 self.execute_transfer_contract(storage_adapter, transaction, context)
             }
         }
+    }
+
+    /// If `data` is a `google.protobuf.Any` wrapper, extract and return the inner `value` bytes.
+    ///
+    /// Fixture generation (and the Java runtime) serialize `Transaction.Contract.parameter`
+    /// directly, which is an Any. For convenience, we accept either Any-wrapped bytes or raw
+    /// contract bytes.
+    fn unwrap_any_value_if_present(data: &[u8]) -> Result<Vec<u8>, String> {
+        // Fast-path: `Any` always starts with field 1 (type_url) as a string.
+        // We detect it by checking for the "type.googleapis.com/" prefix.
+        let mut pos = 0;
+        let (field_header, header_len) =
+            read_varint(&data[pos..]).map_err(|e| format!("Failed to read Any field header: {}", e))?;
+        pos += header_len;
+        let field_number = field_header >> 3;
+        let wire_type = field_header & 0x7;
+        if field_number != 1 || wire_type != 2 {
+            return Err("Not an Any wrapper".to_string());
+        }
+
+        let (len, len_bytes) =
+            read_varint(&data[pos..]).map_err(|e| format!("Failed to read Any.type_url length: {}", e))?;
+        pos += len_bytes;
+        let end = pos + len as usize;
+        if end > data.len() {
+            return Err("Invalid Any.type_url length".to_string());
+        }
+        if !data[pos..end].starts_with(b"type.googleapis.com/") {
+            return Err("Not an Any wrapper".to_string());
+        }
+
+        // Full parse to find field 2 (value).
+        let mut pos = 0;
+        let mut value: Option<Vec<u8>> = None;
+        while pos < data.len() {
+            let (fh, fh_len) =
+                read_varint(&data[pos..]).map_err(|e| format!("Failed to read Any field header: {}", e))?;
+            pos += fh_len;
+            let fn_num = fh >> 3;
+            let wt = fh & 0x7;
+
+            match (fn_num, wt) {
+                (1, 2) => {
+                    // type_url
+                    let (l, l_len) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read Any.type_url length: {}", e))?;
+                    pos += l_len + l as usize;
+                }
+                (2, 2) => {
+                    // value
+                    let (l, l_len) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read Any.value length: {}", e))?;
+                    pos += l_len;
+                    let end = pos + l as usize;
+                    if end > data.len() {
+                        return Err("Invalid Any.value length".to_string());
+                    }
+                    value = Some(data[pos..end].to_vec());
+                    pos = end;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&data[pos..], wt)
+                        .map_err(|e| format!("Failed to skip Any field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        value.ok_or_else(|| "Missing Any.value".to_string())
     }
 
     /// Execute a TRANSFER_CONTRACT (legacy non-VM transaction)
@@ -1160,8 +1238,8 @@ impl BackendService {
                     let addr_bytes = &data[pos..pos + length as usize];
                     pos += length as usize;
 
-                    // Remove 0x41 prefix if present (21-byte Tron address → 20-byte EVM address)
-                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                    // Remove TRON address prefix if present (0x41 mainnet / 0xa0 testnet)
+                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
                         &addr_bytes[1..]
                     } else if addr_bytes.len() == 20 {
                         addr_bytes
@@ -1867,9 +1945,9 @@ impl BackendService {
                     let addr_bytes = &data[pos..pos + length as usize];
                     pos += length as usize;
 
-                    // Handle 21-byte Tron address (0x41 prefix) or 20-byte EVM address
-                    let evm_addr_bytes = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
-                        // Strip 0x41 prefix
+                    // Handle 21-byte Tron address (0x41 mainnet / 0xa0 testnet) or 20-byte EVM address
+                    let evm_addr_bytes = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
+                        // Strip network prefix
                         &addr_bytes[1..]
                     } else if addr_bytes.len() == 20 {
                         addr_bytes
@@ -1962,10 +2040,8 @@ impl BackendService {
         let now = context.block_timestamp as i64;
         let expiration_time = now + (expire_time_ms as i64);
 
-        // 5. Build owner address in 21-byte format
-        let mut owner_address_bytes = Vec::with_capacity(21);
-        owner_address_bytes.push(0x41);
-        owner_address_bytes.extend_from_slice(owner.as_slice());
+        // 5. Build owner address in 21-byte format (network-aware prefix)
+        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
 
         // 6. Create new Proposal
         let proposal = Proposal {
@@ -2155,10 +2231,8 @@ impl BackendService {
             return Err("Proposal has already been processed".to_string());
         }
 
-        // 5. Build owner address in 21-byte format for comparison
-        let mut owner_address_bytes = Vec::with_capacity(21);
-        owner_address_bytes.push(0x41);
-        owner_address_bytes.extend_from_slice(owner.as_slice());
+        // 5. Build owner address in 21-byte format for comparison (network-aware prefix)
+        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
 
         // 6. Add or remove approval
         if is_add_approval {
@@ -2167,7 +2241,7 @@ impl BackendService {
                 warn!("Witness {} has already approved proposal {}", owner_tron, proposal_id);
                 return Err("Witness has already approved".to_string());
             }
-            proposal.approvals.push(owner_address_bytes);
+            proposal.approvals.push(owner_address_bytes.clone());
             info!("Added approval from {} to proposal {}", owner_tron, proposal_id);
         } else {
             // Remove approval
@@ -2292,9 +2366,7 @@ impl BackendService {
             .ok_or_else(|| format!("Proposal {} does not exist", proposal_id))?;
 
         // 3. Validate owner is the proposer
-        let mut owner_address_bytes = Vec::with_capacity(21);
-        owner_address_bytes.push(0x41);
-        owner_address_bytes.extend_from_slice(owner.as_slice());
+        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
 
         if proposal.proposer_address != owner_address_bytes {
             warn!(
@@ -2439,9 +2511,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to persist account: {}", e))?;
 
         // 8. Add to account ID index
-        let mut owner_address_bytes = Vec::with_capacity(21);
-        owner_address_bytes.push(0x41);
-        owner_address_bytes.extend_from_slice(owner.as_slice());
+        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
 
         storage_adapter.put_account_id_index(&account_id, &owner_address_bytes)
             .map_err(|e| format!("Failed to persist account id index: {}", e))?;
@@ -2569,7 +2639,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get allow_multi_sign: {}", e))?;
 
         if !allow_multi_sign {
-            return Err("Multi-sign is not allowed, need to be opened by the committee".to_string());
+            return Err("multi sign is not allowed, need to be opened by the committee".to_string());
         }
 
         // 2. Get fee
@@ -3456,10 +3526,8 @@ impl BackendService {
                hex::encode(&contract_address), new_percent);
 
         // 2. Validate owner exists
-        // Build owner key as 21-byte TRON address (0x41 prefix + 20-byte EVM address)
-        let mut owner_key = Vec::with_capacity(21);
-        owner_key.push(0x41);
-        owner_key.extend_from_slice(owner.as_slice());
+        // Build owner key as 21-byte TRON address (network-aware prefix)
+        let owner_key = storage_adapter.to_tron_address_21(&owner).to_vec();
 
         let _owner_account = storage_adapter.get_account(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
@@ -3615,10 +3683,8 @@ impl BackendService {
                hex::encode(&contract_address), new_origin_energy_limit);
 
         // 3. Validate owner exists
-        // Build owner key as 21-byte TRON address (0x41 prefix + 20-byte EVM address)
-        let mut owner_key = Vec::with_capacity(21);
-        owner_key.push(0x41);
-        owner_key.extend_from_slice(owner.as_slice());
+        // Build owner key as 21-byte TRON address (network-aware prefix)
+        let owner_key = storage_adapter.to_tron_address_21(&owner).to_vec();
 
         let _owner_account = storage_adapter.get_account(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
@@ -3769,10 +3835,8 @@ impl BackendService {
         debug!("Parsed ClearABIContract: contract_address={}", hex::encode(&contract_address));
 
         // 3. Validate owner exists
-        // Build owner key as 21-byte TRON address (0x41 prefix + 20-byte EVM address)
-        let mut owner_key = Vec::with_capacity(21);
-        owner_key.push(0x41);
-        owner_key.extend_from_slice(owner.as_slice());
+        // Build owner key as 21-byte TRON address (network-aware prefix)
+        let owner_key = storage_adapter.to_tron_address_21(&owner).to_vec();
 
         let _owner_account = storage_adapter.get_account(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
@@ -3868,10 +3932,8 @@ impl BackendService {
             .map_err(|e| format!("Failed to check witness: {}", e))?;
 
         if !is_witness {
-            // Build 21-byte TRON address for error message
-            let mut owner_key = Vec::with_capacity(21);
-            owner_key.push(0x41);
-            owner_key.extend_from_slice(owner.as_slice());
+            // Build 21-byte TRON address for error message (network-aware prefix)
+            let owner_key = storage_adapter.to_tron_address_21(&owner).to_vec();
             return Err(format!("Not existed witness:{}", hex::encode(&owner_key)));
         }
 
@@ -6809,7 +6871,8 @@ impl BackendService {
         }
 
         // 4. Validate: owner must match
-        let order_owner_20 = if order.owner_address.len() == 21 && order.owner_address[0] == 0x41 {
+        let order_owner_20 = if order.owner_address.len() == 21
+            && (order.owner_address[0] == 0x41 || order.owner_address[0] == 0xa0) {
             &order.owner_address[1..]
         } else {
             &order.owner_address[..]
