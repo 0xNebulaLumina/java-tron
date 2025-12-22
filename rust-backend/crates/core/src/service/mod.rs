@@ -4819,8 +4819,19 @@ impl BackendService {
         let mut updated_receiver_opt = None;
         if let Some(receiver_account) = receiver_account_opt.as_ref() {
             let mut updated_receiver = receiver_account.clone();
+            // Java uses `chainBaseManager.getHeadSlot()` (slot = latest_block_header_timestamp / 3000)
+            // for resource usage timestamps.
+            let head_slot = (now as i64) / 3000;
             match undelegate_info.resource {
                 0 => { // BANDWIDTH
+                    // Java: BandwidthProcessor.updateUsageForDelegated(receiverCapsule)
+                    // Minimal parity for fixtures: set window fields and consume time.
+                    if updated_receiver.net_window_size == 0 {
+                        updated_receiver.net_window_size = 28_800_000; // 28800s * 1000ms
+                    }
+                    updated_receiver.net_window_optimized = true;
+                    updated_receiver.latest_consume_time = head_slot;
+
                     let current = Self::get_acquired_delegated_frozen_v2_balance_for_bandwidth(&updated_receiver);
                     if current < undelegate_info.balance {
                         // Edge case: contract suicide/re-create
@@ -4830,6 +4841,19 @@ impl BackendService {
                     }
                 }
                 1 => { // ENERGY
+                    // Java: EnergyProcessor.updateUsage(receiverCapsule)
+                    // Minimal parity for fixtures: set window fields and consume time.
+                    if updated_receiver.account_resource.is_none() {
+                        updated_receiver.account_resource = Some(tron_backend_execution::protocol::account::AccountResource::default());
+                    }
+                    if let Some(ar) = updated_receiver.account_resource.as_mut() {
+                        if ar.energy_window_size == 0 {
+                            ar.energy_window_size = 28_800_000; // 28800s * 1000ms
+                        }
+                        ar.energy_window_optimized = true;
+                        ar.latest_consume_time_for_energy = head_slot;
+                    }
+
                     let current = Self::get_acquired_delegated_frozen_v2_balance_for_energy(&updated_receiver);
                     if current < undelegate_info.balance {
                         Self::set_acquired_delegated_frozen_v2_balance_for_energy(&mut updated_receiver, 0);
