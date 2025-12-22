@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_creator",
   "caseCategory": "validate_fail",
   "description": "Fail when non-creator tries to withdraw liquidity",
-  "generatedAt": "2025-12-21T07:35:37.998Z",
+  "generatedAt": "2025-12-22T11:07:45.944Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
