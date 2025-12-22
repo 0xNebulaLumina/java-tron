@@ -2646,7 +2646,9 @@ impl BackendService {
         if permission.threshold <= 0 {
             return Err("permission's threshold should be greater than 0".to_string());
         }
-        if !permission.permission_name.is_empty() && permission.permission_name.len() > 32 {
+        // Java uses String.length() which counts UTF-16 code units, not bytes.
+        // Use encode_utf16().count() to match Java's behavior exactly.
+        if !permission.permission_name.is_empty() && permission.permission_name.encode_utf16().count() > 32 {
             return Err("permission's name is too long".to_string());
         }
         if permission.parent_id != 0 {

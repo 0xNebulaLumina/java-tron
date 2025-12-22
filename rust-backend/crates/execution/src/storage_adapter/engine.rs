@@ -465,27 +465,32 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get AllowMultiSign dynamic property
-    /// Default value: 1 (enabled)
+    /// Default value: false (disabled until committee enables it)
+    ///
+    /// Note: Java uses `getAllowMultiSign() != 1` to check if DISABLED.
+    /// So only value == 1 means enabled. Any other value (0, 2, etc.) means disabled.
+    /// See AccountPermissionUpdateActuator.validate() line 162.
     pub fn get_allow_multi_sign(&self) -> Result<bool> {
         let key = b"ALLOW_MULTI_SIGN";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 // Java stores dynamic properties as big-endian i64/u64.
-                // For small values (e.g. 1), the first byte is 0; so interpret as 8-byte integer.
+                // Only value == 1 means enabled (matching Java's `!= 1` check for disabled)
                 if data.len() >= 8 {
                     let val = u64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7],
                     ]);
-                    Ok(val != 0)
+                    Ok(val == 1)
                 } else if !data.is_empty() {
-                    Ok(data[0] != 0)
+                    // Fallback for shorter data: treat as single byte
+                    Ok(data[0] == 1)
                 } else {
-                    Ok(true) // Default enabled
+                    Ok(false) // Empty value means disabled
                 }
             },
             None => {
-                Ok(true) // Default enabled
+                Ok(false) // Not set means disabled (needs committee approval)
             }
         }
     }
@@ -495,21 +500,26 @@ impl EngineBackedEvmStateStore {
     /// When this flag is 1, the node BURNS fees (optimization enabled).
     /// When 0, the node CREDITS the blackhole account.
     /// Default: false (credit blackhole) to match early-chain behavior when key is absent.
+    ///
+    /// Note: Java uses `getAllowBlackHoleOptimization() == 1L` to check if enabled.
+    /// So only value == 1 means enabled. Any other value means disabled.
+    /// See DynamicPropertiesStore.supportBlackHoleOptimization().
     pub fn support_black_hole_optimization(&self) -> Result<bool> {
         // Parity key with java-tron DynamicPropertiesStore
         let key = b"ALLOW_BLACKHOLE_OPTIMIZATION";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 // Java writes a long; interpret big-endian u64 when length >= 8.
+                // Only value == 1 means enabled (matching Java's `== 1L` check)
                 if data.len() >= 8 {
                     let val = u64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7]
                     ]);
-                    Ok(val != 0)
+                    Ok(val == 1)
                 } else if !data.is_empty() {
-                    // Fallback: treat first byte as boolean
-                    Ok(data[0] != 0)
+                    // Fallback: treat first byte
+                    Ok(data[0] == 1)
                 } else {
                     // Empty value → treat as disabled (credit blackhole)
                     Ok(false)
@@ -2195,17 +2205,20 @@ impl EngineBackedEvmStateStore {
     /// Get TOTAL_SIGN_NUM dynamic property
     /// Maximum number of keys allowed in a permission
     /// Default: 5
+    ///
+    /// Note: Java stores this as 4-byte int via ByteArray.fromInt(), not 8-byte long.
+    /// See DynamicPropertiesStore.saveTotalSignNum() and getTotalSignNum().
     pub fn get_total_sign_num(&self) -> Result<i64> {
         let key = b"TOTAL_SIGN_NUM";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                if data.len() >= 8 {
-                    let value = i64::from_be_bytes([
+                // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
+                if data.len() >= 4 {
+                    let value = i32::from_be_bytes([
                         data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!("TOTAL_SIGN_NUM: {}", value);
-                    Ok(value)
+                    Ok(value as i64)
                 } else {
                     tracing::warn!("TOTAL_SIGN_NUM has invalid length: {}", data.len());
                     Ok(5) // Default
