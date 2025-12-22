@@ -11,13 +11,14 @@ use std::path::{Path, PathBuf};
 use crate::backend::ExecuteTransactionRequest;
 use crate::conformance::kv_format::{compare_kv_data, read_kv_file, KvDiff};
 use crate::conformance::metadata::FixtureMetadata;
-use tron_backend_common::{ExecutionConfig, RemoteExecutionConfig};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_storage::StorageEngine;
 use tron_backend_execution::{
     EngineBackedEvmStateStore, ExecutionModule, TronTransaction, TronExecutionContext,
     TronContractType, TxMetadata,
 };
 use revm_primitives::{Address, U256, Bytes};
+use crate::BackendService;
 
 /// Result of running a conformance test
 #[derive(Debug)]
@@ -257,6 +258,18 @@ impl ConformanceRunner {
         }
     }
 
+    /// Map fixture DB aliases to the actual storage DB names used by the adapter.
+    ///
+    /// The fixture generator uses some human-friendly names (e.g. "dynamic-properties"),
+    /// but the underlying Java stores (and our adapter constants) use different names
+    /// (e.g. DynamicPropertiesStore dbName = "properties").
+    fn canonical_db_name(db_name: &str) -> &str {
+        match db_name {
+            "dynamic-properties" => "properties",
+            other => other,
+        }
+    }
+
     /// Load pre-state KV files into a storage engine.
     fn load_pre_state_into_storage(
         &self,
@@ -264,8 +277,9 @@ impl ConformanceRunner {
         pre_state: &BTreeMap<String, BTreeMap<Vec<u8>, Vec<u8>>>,
     ) -> Result<(), String> {
         for (db_name, kv_map) in pre_state {
+            let canonical_db_name = Self::canonical_db_name(db_name);
             for (key, value) in kv_map {
-                storage_engine.put(db_name, key, value)
+                storage_engine.put(canonical_db_name, key, value)
                     .map_err(|e| format!("Failed to write to {}: {:?}", db_name, e))?;
             }
         }
@@ -281,13 +295,14 @@ impl ConformanceRunner {
         let mut state = BTreeMap::new();
 
         for db_name in databases {
+            let canonical_db_name = Self::canonical_db_name(db_name);
             let mut db_state = BTreeMap::new();
             // Iterate over all keys in the database using get_next with pagination
             let mut start_key = Vec::new();
             let batch_size = 1000i32;
 
             loop {
-                let entries = storage_engine.get_next(db_name, &start_key, batch_size)
+                let entries = storage_engine.get_next(canonical_db_name, &start_key, batch_size)
                     .map_err(|e| format!("Failed to iterate {}: {:?}", db_name, e))?;
 
                 if entries.is_empty() {
@@ -473,8 +488,14 @@ impl ConformanceRunner {
             return ConformanceResult::failure(metadata, e);
         }
 
-        // Create execution module with all contracts enabled
+        // Create a BackendService instance configured for conformance.
+        // This ensures we exercise the same NON_VM dispatch path as the gRPC server.
         let config = Self::create_conformance_config();
+        let mut module_manager = ModuleManager::new();
+        module_manager.register("execution", Box::new(ExecutionModule::new(config.clone())));
+        let backend_service = BackendService::new(module_manager);
+
+        // Keep an execution module for VM tx kinds (not currently used by fixtures, but supported).
         let execution_module = ExecutionModule::new(config);
 
         // Convert protobuf request to internal transaction format
@@ -493,15 +514,26 @@ impl ConformanceRunner {
             }
         };
 
-        // Create storage adapter
-        let storage_adapter = EngineBackedEvmStateStore::new(storage_engine.clone());
+        // Determine tx_kind from the protobuf request (proto3 default is NON_VM).
+        let tx_kind = request
+            .transaction
+            .as_ref()
+            .and_then(|tx| crate::backend::TxKind::try_from(tx.tx_kind).ok())
+            .unwrap_or(crate::backend::TxKind::NonVm);
 
-        // Execute transaction using execution module
-        let execution_result = execution_module.execute_transaction_with_storage(
-            storage_adapter,
-            &transaction,
-            &context,
-        );
+        // Execute transaction using the same dispatch logic as the real backend.
+        let execution_result: Result<tron_backend_execution::TronExecutionResult, String> = match tx_kind {
+            crate::backend::TxKind::NonVm => {
+                let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine.clone());
+                backend_service.execute_non_vm_contract(&mut storage_adapter, &transaction, &context)
+            }
+            crate::backend::TxKind::Vm => {
+                let storage_adapter = EngineBackedEvmStateStore::new(storage_engine.clone());
+                execution_module
+                    .execute_transaction_with_storage(storage_adapter, &transaction, &context)
+                    .map_err(|e| format!("VM execution error: {}", e))
+            }
+        };
 
         // Check execution result
         let execution_status = match &execution_result {
@@ -509,65 +541,13 @@ impl ConformanceRunner {
                 if result.success {
                     "SUCCESS".to_string()
                 } else {
-                    format!("FAILED: {:?}", result.error)
+                    format!("REVERT: {:?}", result.error)
                 }
             }
             Err(e) => format!("ERROR: {}", e),
         };
 
-        // If expected status is FAILURE and we got an error, that's a pass
-        if metadata.expected_status == "FAILURE" || metadata.expected_status.starts_with("VALIDATE_FAIL") {
-            if execution_result.is_err() {
-                // Validate fail case - check error message if expected
-                if let Some(expected_msg) = metadata.expected_error_message.clone() {
-                    if let Err(ref actual_err) = execution_result {
-                        let actual_err_str = format!("{}", actual_err);
-                        if !actual_err_str.contains(&expected_msg) {
-                            return ConformanceResult {
-                                metadata,
-                                passed: false,
-                                db_diffs: Vec::new(),
-                                error: Some(format!(
-                                    "Error message mismatch: expected '{}', got '{}'",
-                                    expected_msg, actual_err
-                                )),
-                                execution_status: Some(execution_status),
-                            };
-                        }
-                    }
-                }
-                // Expected failure occurred
-                return ConformanceResult {
-                    metadata,
-                    passed: true,
-                    db_diffs: Vec::new(),
-                    error: None,
-                    execution_status: Some(execution_status),
-                };
-            } else {
-                // Expected failure but got success
-                return ConformanceResult {
-                    metadata,
-                    passed: false,
-                    db_diffs: Vec::new(),
-                    error: Some("Expected failure but execution succeeded".to_string()),
-                    execution_status: Some(execution_status),
-                };
-            }
-        }
-
-        // For success cases, execution must succeed
-        if execution_result.is_err() {
-            return ConformanceResult {
-                metadata,
-                passed: false,
-                db_diffs: Vec::new(),
-                error: Some(format!("Execution failed: {:?}", execution_result.err())),
-                execution_status: Some(execution_status),
-            };
-        }
-
-        // Dump actual post-state
+        // Dump actual post-state (even for failure cases) and compare against fixture oracle.
         let actual_state = match self.dump_storage_state(&storage_engine, &metadata.databases_touched) {
             Ok(s) => s,
             Err(e) => {
@@ -577,13 +557,76 @@ impl ConformanceRunner {
 
         // Compare states
         let db_diffs = self.compare_states(&expected_state, &actual_state, &metadata.databases_touched);
+        let state_ok = db_diffs.is_empty();
 
-        let passed = db_diffs.is_empty();
+        // Check execution outcome vs expected status.
+        let mut status_ok = true;
+        let mut status_error: Option<String> = None;
+
+        if metadata.expects_success() {
+            match &execution_result {
+                Ok(r) if r.success => {}
+                Ok(r) => {
+                    status_ok = false;
+                    status_error = Some(format!("Expected SUCCESS but got REVERT: {:?}", r.error));
+                }
+                Err(e) => {
+                    status_ok = false;
+                    status_error = Some(format!("Expected SUCCESS but got ERROR: {}", e));
+                }
+            }
+        } else if metadata.expects_validation_failure() || metadata.expected_status == "REVERT" {
+            // Java fixture generator classifies non-success as either VALIDATION_FAILED or REVERT.
+            match &execution_result {
+                Ok(r) if !r.success => {}
+                Err(_) => {}
+                Ok(_) => {
+                    status_ok = false;
+                    status_error = Some(format!("Expected {} but execution succeeded", metadata.expected_status));
+                }
+            }
+
+            if status_ok {
+                if let Some(expected_msg) = metadata.expected_error_message.clone() {
+                    let actual_msg = match &execution_result {
+                        Ok(r) => r.error.clone().unwrap_or_default(),
+                        Err(e) => e.clone(),
+                    };
+                    if !actual_msg.contains(&expected_msg) {
+                        status_ok = false;
+                        status_error = Some(format!(
+                            "Error message mismatch: expected '{}', got '{}'",
+                            expected_msg, actual_msg
+                        ));
+                    }
+                }
+            }
+        } else {
+            // Unknown/legacy status strings: treat anything other than SUCCESS as a failure-expected case.
+            if metadata.expected_status != "SUCCESS" {
+                match &execution_result {
+                    Ok(r) if !r.success => {}
+                    Err(_) => {}
+                    Ok(_) => {
+                        status_ok = false;
+                        status_error = Some(format!("Expected {} but execution succeeded", metadata.expected_status));
+                    }
+                }
+            }
+        }
+
+        let passed = status_ok && state_ok;
         ConformanceResult {
             metadata,
             passed,
             db_diffs,
-            error: if passed { None } else { Some("State mismatch".to_string()) },
+            error: if passed {
+                None
+            } else if !status_ok {
+                status_error
+            } else {
+                Some("State mismatch".to_string())
+            },
             execution_status: Some(execution_status),
         }
     }

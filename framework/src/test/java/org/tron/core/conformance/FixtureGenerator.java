@@ -212,6 +212,8 @@ public class FixtureGenerator {
       switch (dbName) {
         case "account":
           return convertIterator(chainBaseManager.getAccountStore().iterator());
+        case "accountid-index":
+          return convertIterator(chainBaseManager.getAccountIdIndexStore().iterator());
         case "proposal":
           return convertIterator(chainBaseManager.getProposalStore().iterator());
         case "witness":
@@ -230,12 +232,24 @@ public class FixtureGenerator {
           return convertIterator(chainBaseManager.getDelegatedResourceAccountIndexStore().iterator());
         case "delegation":
           return convertIterator(chainBaseManager.getDelegationStore().iterator());
+        case "exchange":
+          return convertIterator(chainBaseManager.getExchangeStore().iterator());
+        case "exchange-v2":
+          return convertIterator(chainBaseManager.getExchangeV2Store().iterator());
         case "votes":
           return convertIterator(chainBaseManager.getVotesStore().iterator());
         case "asset-issue":
           return convertIterator(chainBaseManager.getAssetIssueStore().iterator());
         case "asset-issue-v2":
           return convertIterator(chainBaseManager.getAssetIssueV2Store().iterator());
+        case "market_account":
+          return convertIterator(chainBaseManager.getMarketAccountStore().iterator());
+        case "market_order":
+          return convertIterator(chainBaseManager.getMarketOrderStore().iterator());
+        case "market_pair_to_price":
+          return convertIterator(chainBaseManager.getMarketPairToPriceStore().iterator());
+        case "market_pair_price_to_order":
+          return convertIterator(chainBaseManager.getMarketPairPriceToOrderStore().iterator());
         default:
           logger.warn("Unknown database: {}", dbName);
           return null;

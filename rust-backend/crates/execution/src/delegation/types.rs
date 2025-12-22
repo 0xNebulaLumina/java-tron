@@ -108,8 +108,8 @@ impl AccountVoteSnapshot {
                     let addr_bytes = &data[pos..pos + length as usize];
                     pos += length as usize;
 
-                    // Remove 0x41 prefix if present
-                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                    // Remove TRON prefix if present (0x41 mainnet / 0xa0 testnet)
+                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
                         &addr_bytes[1..]
                     } else if addr_bytes.len() == 20 {
                         addr_bytes
@@ -197,7 +197,7 @@ fn deserialize_vote(data: &[u8]) -> Result<DelegationVote> {
                 pos += length as usize;
 
                 // Remove 0x41 prefix if present
-                let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
                     &addr_bytes[1..]
                 } else if addr_bytes.len() == 20 {
                     addr_bytes

@@ -30,13 +30,44 @@ use crate::protocol::{Account as ProtoAccount, AccountType as ProtoAccountType};
 /// while providing a unified interface for EVM execution.
 pub struct EngineBackedEvmStateStore {
     storage_engine: StorageEngine,
+    address_prefix: u8,
 }
 
 impl EngineBackedEvmStateStore {
     pub fn new(storage_engine: StorageEngine) -> Self {
+        let address_prefix = Self::detect_address_prefix(&storage_engine);
         Self {
             storage_engine,
+            address_prefix,
         }
+    }
+
+    /// Detect the TRON address prefix byte used by the underlying database.
+    ///
+    /// Mainnet uses `0x41`, testnets commonly use `0xa0`.
+    fn detect_address_prefix(storage_engine: &StorageEngine) -> u8 {
+        let candidate_dbs = [
+            db_names::account::ACCOUNT,
+            db_names::governance::WITNESS,
+            db_names::governance::VOTES,
+        ];
+
+        for db_name in candidate_dbs {
+            let entries = match storage_engine.get_next(db_name, &Vec::new(), 1) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if let Some(first) = entries.first() {
+                if first.key.len() == 21 {
+                    let prefix = first.key[0];
+                    if prefix == 0x41 || prefix == 0xa0 {
+                        return prefix;
+                    }
+                }
+            }
+        }
+
+        0x41
     }
 
     /// Get the appropriate database name for account data
@@ -79,7 +110,7 @@ impl EngineBackedEvmStateStore {
     /// REVM uses 20-byte addresses, so we need to add the 0x41 prefix
     fn account_key(&self, address: &Address) -> Vec<u8> {
         let mut key = Vec::with_capacity(21);
-        key.push(0x41); // Tron address prefix
+        key.push(self.address_prefix);
         key.extend_from_slice(address.as_slice()); // 20-byte address
         key
     }
@@ -92,7 +123,7 @@ impl EngineBackedEvmStateStore {
     /// Convert Address to storage key for witness store (21-byte address with 0x41 prefix)
     fn witness_key(&self, address: &Address) -> Vec<u8> {
         let mut key = Vec::with_capacity(21);
-        key.push(0x41); // Tron address prefix
+        key.push(self.address_prefix);
         key.extend_from_slice(address.as_slice()); // 20-byte address
         key
     }
@@ -100,7 +131,7 @@ impl EngineBackedEvmStateStore {
     /// Convert Address to storage key for votes store (21-byte address with 0x41 prefix)
     fn votes_key(&self, address: &Address) -> Vec<u8> {
         let mut key = Vec::with_capacity(21);
-        key.push(0x41); // Tron address prefix
+        key.push(self.address_prefix);
         key.extend_from_slice(address.as_slice()); // 20-byte address
         key
     }
@@ -114,7 +145,7 @@ impl EngineBackedEvmStateStore {
     /// Format: 21-byte tron address (0x41 + 20-byte) + 1-byte resource type
     fn freeze_record_key(&self, address: &Address, resource: u8) -> Vec<u8> {
         let mut key = Vec::with_capacity(22);
-        key.push(0x41); // Tron address prefix
+        key.push(self.address_prefix);
         key.extend_from_slice(address.as_slice()); // 20-byte address
         key.push(resource); // Resource type (0=BANDWIDTH, 1=ENERGY, 2=TRON_POWER)
         key
@@ -1240,8 +1271,8 @@ impl EngineBackedEvmStateStore {
                     let addr_bytes = &data[pos..pos + length as usize];
                     pos += length as usize;
 
-                    // Remove 0x41 prefix if present (21-byte Tron → 20-byte EVM)
-                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                    // Remove TRON address prefix if present (21-byte Tron → 20-byte EVM)
+                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
                         &addr_bytes[1..]
                     } else if addr_bytes.len() == 20 {
                         addr_bytes
@@ -1535,7 +1566,7 @@ impl EngineBackedEvmStateStore {
     /// Generate key for delegation store address lookups (21-byte with 0x41 prefix)
     fn delegation_address_key(&self, address: &Address) -> Vec<u8> {
         let mut key = Vec::with_capacity(21);
-        key.push(0x41); // Tron address prefix
+        key.push(self.address_prefix);
         key.extend_from_slice(address.as_slice());
         key
     }
@@ -2404,7 +2435,7 @@ impl EngineBackedEvmStateStore {
     /// Convert 20-byte EVM address to 21-byte TRON address
     pub fn to_tron_address_21(&self, address: &Address) -> [u8; 21] {
         let mut tron_addr = [0u8; 21];
-        tron_addr[0] = 0x41;
+        tron_addr[0] = self.address_prefix;
         tron_addr[1..].copy_from_slice(address.as_slice());
         tron_addr
     }
