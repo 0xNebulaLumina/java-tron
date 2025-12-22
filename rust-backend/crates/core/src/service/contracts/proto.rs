@@ -79,6 +79,10 @@ pub(crate) fn write_tag(buf: &mut Vec<u8>, field_number: u32, wire_type: u8) {
 /// - map<string, int64> cancel_unfreezeV2_amount = 28;
 #[derive(Default)]
 pub struct TransactionResultBuilder {
+    /// int64 fee = 1
+    pub fee: Option<i64>,
+    /// code ret = 2 (enum: SUCESS=0, FAILED=1, etc)
+    pub ret: Option<i32>,
     pub withdraw_amount: Option<i64>,
     pub unfreeze_amount: Option<i64>,
     pub withdraw_expire_amount: Option<i64>,
@@ -97,6 +101,20 @@ pub struct TransactionResultBuilder {
 impl TransactionResultBuilder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the fee (field 1)
+    pub fn with_fee(mut self, fee: i64) -> Self {
+        self.fee = Some(fee);
+        self
+    }
+
+    /// Set the result code (field 2)
+    /// 0 = SUCESS, 1 = FAILED
+    #[allow(dead_code)]
+    pub fn with_ret(mut self, ret: i32) -> Self {
+        self.ret = Some(ret);
+        self
     }
 
     pub fn with_withdraw_amount(mut self, amount: i64) -> Self {
@@ -172,6 +190,18 @@ impl TransactionResultBuilder {
 
         // Wire type 0 = varint for int64 fields
         const WIRE_TYPE_VARINT: u8 = 0;
+
+        // Field 1: fee (int64)
+        if let Some(fee) = self.fee {
+            write_tag(&mut buf, 1, WIRE_TYPE_VARINT);
+            write_varint(&mut buf, fee as u64);
+        }
+
+        // Field 2: ret (enum code, wire type 0 = varint)
+        if let Some(ret) = self.ret {
+            write_tag(&mut buf, 2, WIRE_TYPE_VARINT);
+            write_varint(&mut buf, ret as u64);
+        }
 
         // Field 15: withdraw_amount
         if let Some(amount) = self.withdraw_amount {

@@ -2707,6 +2707,11 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
+        // Build Transaction.Result with fee for receipt passthrough
+        let tron_transaction_result = TransactionResultBuilder::new()
+            .with_fee(fee)
+            .build();
+
         Ok(TronExecutionResult {
             success: true,
             return_data: revm_primitives::Bytes::new(),
@@ -2721,7 +2726,7 @@ impl BackendService {
             trc10_changes: vec![],
             vote_changes: vec![],
             withdraw_changes: vec![],
-            tron_transaction_result: None,
+            tron_transaction_result: Some(tron_transaction_result),
         })
     }
 
