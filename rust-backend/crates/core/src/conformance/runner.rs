@@ -812,17 +812,13 @@ mod tests {
             }
         }
 
-        // Try multiple possible fixture locations
+        // Try multiple possible fixture locations (relative to rust-backend crate)
         let possible_paths = [
             "conformance/fixtures",
             "../conformance/fixtures",
             "../../conformance/fixtures",
             "../../../conformance/fixtures",
-            "framework/conformance/fixtures",
-            "../framework/conformance/fixtures",
-            "../../framework/conformance/fixtures",
-            "../../../framework/conformance/fixtures",
-            "../../../../framework/conformance/fixtures",
+            "../../../../conformance/fixtures",
         ];
 
         let fixtures_dir = possible_paths.iter()

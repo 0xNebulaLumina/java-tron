@@ -30,7 +30,7 @@ import org.tron.protos.contract.AssetIssueContractOuterClass.UpdateAssetContract
  * - UnfreezeAssetContract (14)
  * - UpdateAssetContract (15)
  *
- * <p>Run with: ./gradlew :framework:test --tests "Trc10ExtensionFixtureGeneratorTest" -Dconformance.output=conformance/fixtures
+ * <p>Run with: ./gradlew :framework:test --tests "Trc10ExtensionFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures
  */
 public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
@@ -59,7 +59,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
   public void setup() {
     initializeTestData();
 
-    String outputPath = System.getProperty("conformance.output", "conformance/fixtures");
+    String outputPath = System.getProperty("conformance.output", "../conformance/fixtures");
     outputDir = new File(outputPath);
     generator = new FixtureGenerator(dbManager, chainBaseManager);
     generator.setOutputDir(outputDir);

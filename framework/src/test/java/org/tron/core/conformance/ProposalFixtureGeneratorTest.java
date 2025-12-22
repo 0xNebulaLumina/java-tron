@@ -30,7 +30,7 @@ import org.tron.protos.contract.ProposalContract.ProposalDeleteContract;
 /**
  * Generates conformance test fixtures for Proposal contracts (16, 17, 18).
  *
- * <p>Run with: ./gradlew :framework:test --tests "ProposalFixtureGeneratorTest" -Dconformance.output=conformance/fixtures
+ * <p>Run with: ./gradlew :framework:test --tests "ProposalFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures
  */
 public class ProposalFixtureGeneratorTest extends BaseTest {
 
@@ -53,7 +53,7 @@ public class ProposalFixtureGeneratorTest extends BaseTest {
     initializeTestData();
 
     // Configure fixture generator
-    String outputPath = System.getProperty("conformance.output", "conformance/fixtures");
+    String outputPath = System.getProperty("conformance.output", "../conformance/fixtures");
     outputDir = new File(outputPath);
     generator = new FixtureGenerator(dbManager, chainBaseManager);
     generator.setOutputDir(outputDir);

@@ -31,7 +31,7 @@ import org.tron.protos.contract.SmartContractOuterClass.UpdateSettingContract;
  * - UpdateEnergyLimitContract (45)
  * - ClearABIContract (48)
  *
- * <p>Run with: ./gradlew :framework:test --tests "ContractMetadataFixtureGeneratorTest" -Dconformance.output=conformance/fixtures
+ * <p>Run with: ./gradlew :framework:test --tests "ContractMetadataFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures
  */
 public class ContractMetadataFixtureGeneratorTest extends BaseTest {
 
@@ -55,7 +55,7 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
   public void setup() {
     initializeTestData();
 
-    String outputPath = System.getProperty("conformance.output", "conformance/fixtures");
+    String outputPath = System.getProperty("conformance.output", "../conformance/fixtures");
     outputDir = new File(outputPath);
     generator = new FixtureGenerator(dbManager, chainBaseManager);
     generator.setOutputDir(outputDir);
