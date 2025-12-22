@@ -144,7 +144,7 @@ if [ "$GENERATE_ONLY" = false ]; then
     export CONFORMANCE_FIXTURES_DIR="$FIXTURES_DIR"
 
     # Run conformance tests (use --ignored to include the real fixture runner)
-    cargo test --package tron-backend-core conformance -- --nocapture || {
+    cargo test --package tron-backend-core conformance -- --nocapture --ignored || {
         echo "ERROR: Rust conformance tests failed"
         exit 2
     }

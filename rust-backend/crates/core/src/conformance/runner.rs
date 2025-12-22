@@ -852,8 +852,8 @@ mod tests {
             return;
         }
 
-        // Just validate structure for now
-        let results = runner.validate_all();
+        // Run actual execution and compare states (not just structure validation)
+        let results = runner.run_all();
         ConformanceRunner::print_summary(&results);
 
         let failed = results.iter().filter(|r| !r.passed).count();
