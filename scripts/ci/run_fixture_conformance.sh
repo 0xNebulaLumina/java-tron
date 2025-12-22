@@ -143,6 +143,16 @@ if [ "$GENERATE_ONLY" = false ]; then
     # Set fixtures path for Rust tests
     export CONFORMANCE_FIXTURES_DIR="$FIXTURES_DIR"
 
+    # Some environments (including sandboxed CI) configure a global rustc wrapper
+    # like sccache via cargo config, which can fail with permission errors.
+    # Disable wrappers for this script unless explicitly opted in.
+    if [ "${FIXTURE_CONFORMANCE_KEEP_RUSTC_WRAPPER:-0}" != "1" ]; then
+        unset RUSTC_WRAPPER
+        unset RUSTC_WORKSPACE_WRAPPER
+        export CARGO_BUILD_RUSTC_WRAPPER=
+        export CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=
+    fi
+
     # Run conformance tests (use --ignored to include the real fixture runner)
     cargo test --package tron-backend-core conformance -- --nocapture --ignored || {
         echo "ERROR: Rust conformance tests failed"
