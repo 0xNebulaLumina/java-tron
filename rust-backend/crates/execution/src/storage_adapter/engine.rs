@@ -2416,10 +2416,12 @@ impl EngineBackedEvmStateStore {
     // Java reference: DelegatedResourceStore.java, DelegatedResourceAccountIndexStore.java
     //
     // Key format for DelegatedResourceStore (V2):
-    //   DELEGATED_RESOURCE_V2_KEY_PREFIX (0x01) + from_address (21 bytes) + to_address (21 bytes) = 43 bytes
+    //   UNLOCK_PREFIX (0x01) + from_address (21 bytes) + to_address (21 bytes) = 43 bytes
+    //   LOCK_PREFIX   (0x02) + from_address (21 bytes) + to_address (21 bytes) = 43 bytes
     //
     // Key format for DelegatedResourceAccountIndexStore (V2):
-    //   FROM_PREFIX (0x03) or TO_PREFIX (0x04) + address (21 bytes) = 22 bytes
+    //   FROM_PREFIX (0x03) + from_address (21 bytes) + to_address (21 bytes) = 43 bytes
+    //   TO_PREFIX   (0x04) + to_address (21 bytes) + from_address (21 bytes) = 43 bytes
 
     /// Get the database name for DelegatedResource store
     fn delegated_resource_database(&self) -> &str {
@@ -2431,12 +2433,13 @@ impl EngineBackedEvmStateStore {
         db_names::delegation::DELEGATED_RESOURCE_ACCOUNT_INDEX
     }
 
-    /// Create V2 key for DelegatedResource store (from -> to)
-    fn delegated_resource_key_v2(&self, from: &Address, to: &Address) -> Vec<u8> {
+    /// Create V2 key for DelegatedResource store (from -> to).
+    /// Lock semantics match Java: lock=false uses 0x01 prefix, lock=true uses 0x02 prefix.
+    fn delegated_resource_key_v2(&self, from: &Address, to: &Address, lock: bool) -> Vec<u8> {
         use super::key_helpers::delegated_resource;
         let from_tron = self.to_tron_address_21(from);
         let to_tron = self.to_tron_address_21(to);
-        delegated_resource::create_db_key_v2_from(&from_tron, &to_tron)
+        delegated_resource::create_db_key_v2(&from_tron, &to_tron, lock)
     }
 
     /// Convert 20-byte EVM address to 21-byte TRON address
@@ -2458,7 +2461,11 @@ impl EngineBackedEvmStateStore {
         lock: bool,
         expire_time: i64,
     ) -> Result<()> {
-        let key = self.delegated_resource_key_v2(owner, receiver);
+        // Java parity: unlock expired locked balances before mutating records.
+        let now = self.get_latest_block_header_timestamp()?;
+        self.unlock_expired_delegated_resource(owner, receiver, now)?;
+
+        let key = self.delegated_resource_key_v2(owner, receiver, lock);
         tracing::debug!("Delegating resource: from={}, to={}, is_bw={}, balance={}, lock={}, expire={}",
                        hex::encode(owner), hex::encode(receiver), is_bandwidth, balance, lock, expire_time);
 
@@ -2484,19 +2491,79 @@ impl EngineBackedEvmStateStore {
         // Update based on resource type
         if is_bandwidth {
             dr.frozen_balance_for_bandwidth += balance;
-            if lock && expire_time > dr.expire_time_for_bandwidth {
-                dr.expire_time_for_bandwidth = expire_time;
-            }
+            dr.expire_time_for_bandwidth = expire_time;
         } else {
             dr.frozen_balance_for_energy += balance;
-            if lock && expire_time > dr.expire_time_for_energy {
-                dr.expire_time_for_energy = expire_time;
-            }
+            dr.expire_time_for_energy = expire_time;
         }
 
         // Persist
         let data = dr.encode_to_vec();
         self.storage_engine.put(self.delegated_resource_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Java parity: `DelegatedResourceStore.unLockExpireResource(from, to, now)`
+    /// Moves expired balances from the lock record (0x02) to the unlock record (0x01).
+    pub fn unlock_expired_delegated_resource(&self, from: &Address, to: &Address, now: i64) -> Result<()> {
+        let lock_key = self.delegated_resource_key_v2(from, to, true);
+        let unlock_key = self.delegated_resource_key_v2(from, to, false);
+
+        let Some(lock_data) = self.storage_engine.get(self.delegated_resource_database(), &lock_key)? else {
+            return Ok(());
+        };
+
+        let mut lock_resource = crate::protocol::DelegatedResource::decode(&lock_data[..])
+            .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource lock record: {}", e))?;
+
+        // If neither resource has expired, no-op.
+        if lock_resource.expire_time_for_energy >= now && lock_resource.expire_time_for_bandwidth >= now {
+            return Ok(());
+        }
+
+        let mut unlock_resource = match self.storage_engine.get(self.delegated_resource_database(), &unlock_key)? {
+            Some(data) => crate::protocol::DelegatedResource::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource unlock record: {}", e))?,
+            None => crate::protocol::DelegatedResource {
+                from: self.to_tron_address_21(from).to_vec(),
+                to: self.to_tron_address_21(to).to_vec(),
+                frozen_balance_for_bandwidth: 0,
+                frozen_balance_for_energy: 0,
+                expire_time_for_bandwidth: 0,
+                expire_time_for_energy: 0,
+            },
+        };
+
+        if lock_resource.expire_time_for_energy < now {
+            unlock_resource.frozen_balance_for_energy += lock_resource.frozen_balance_for_energy;
+            unlock_resource.expire_time_for_energy = 0;
+            lock_resource.frozen_balance_for_energy = 0;
+            lock_resource.expire_time_for_energy = 0;
+        }
+
+        if lock_resource.expire_time_for_bandwidth < now {
+            unlock_resource.frozen_balance_for_bandwidth += lock_resource.frozen_balance_for_bandwidth;
+            unlock_resource.expire_time_for_bandwidth = 0;
+            lock_resource.frozen_balance_for_bandwidth = 0;
+            lock_resource.expire_time_for_bandwidth = 0;
+        }
+
+        if lock_resource.frozen_balance_for_bandwidth == 0 && lock_resource.frozen_balance_for_energy == 0 {
+            self.storage_engine.delete(self.delegated_resource_database(), &lock_key)?;
+        } else {
+            self.storage_engine.put(
+                self.delegated_resource_database(),
+                &lock_key,
+                &lock_resource.encode_to_vec(),
+            )?;
+        }
+
+        self.storage_engine.put(
+            self.delegated_resource_database(),
+            &unlock_key,
+            &unlock_resource.encode_to_vec(),
+        )?;
+
         Ok(())
     }
 
@@ -2507,9 +2574,12 @@ impl EngineBackedEvmStateStore {
         receiver: &Address,
         is_bandwidth: bool,
         balance: i64,
-        _now: i64,
+        now: i64,
     ) -> Result<()> {
-        let key = self.delegated_resource_key_v2(owner, receiver);
+        // Java parity: transfer expired locked balances to the unlock record before mutating.
+        self.unlock_expired_delegated_resource(owner, receiver, now)?;
+
+        let key = self.delegated_resource_key_v2(owner, receiver, false);
         tracing::debug!("Undelegating resource: from={}, to={}, is_bw={}, balance={}",
                        hex::encode(owner), hex::encode(receiver), is_bandwidth, balance);
 
@@ -2547,95 +2617,98 @@ impl EngineBackedEvmStateStore {
         is_bandwidth: bool,
         now: i64,
     ) -> Result<i64> {
-        let key = self.delegated_resource_key_v2(owner, receiver);
+        // Matches Java validate() logic:
+        // - Always include unlocked balance (prefix 0x01)
+        // - Include locked balance (prefix 0x02) only if expired for the resource type
+        let unlock_key = self.delegated_resource_key_v2(owner, receiver, false);
+        let lock_key = self.delegated_resource_key_v2(owner, receiver, true);
 
-        match self.storage_engine.get(self.delegated_resource_database(), &key)? {
-            Some(data) => {
-                let dr = crate::protocol::DelegatedResource::decode(&data[..])
-                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+        let mut balance = 0i64;
 
-                if is_bandwidth {
-                    // Check if lock has expired
-                    if dr.expire_time_for_bandwidth > now {
-                        Ok(0) // Still locked
-                    } else {
-                        Ok(dr.frozen_balance_for_bandwidth)
-                    }
-                } else {
-                    if dr.expire_time_for_energy > now {
-                        Ok(0) // Still locked
-                    } else {
-                        Ok(dr.frozen_balance_for_energy)
-                    }
-                }
+        if let Some(data) = self.storage_engine.get(self.delegated_resource_database(), &unlock_key)? {
+            let dr = crate::protocol::DelegatedResource::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+            if is_bandwidth {
+                balance += dr.frozen_balance_for_bandwidth;
+            } else {
+                balance += dr.frozen_balance_for_energy;
             }
-            None => Ok(0) // No delegation exists
         }
+
+        if let Some(data) = self.storage_engine.get(self.delegated_resource_database(), &lock_key)? {
+            let dr = crate::protocol::DelegatedResource::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+            if is_bandwidth {
+                if dr.expire_time_for_bandwidth < now {
+                    balance += dr.frozen_balance_for_bandwidth;
+                }
+            } else if dr.expire_time_for_energy < now {
+                balance += dr.frozen_balance_for_energy;
+            }
+        }
+
+        Ok(balance)
     }
 
-    /// Update DelegatedResourceAccountIndex for a delegation
-    /// Adds receiver to owner's "to" list and owner to receiver's "from" list
+    /// Update DelegatedResourceAccountIndex for a delegation.
+    ///
+    /// Matches Java `DelegatedResourceAccountIndexStore.delegateV2()` semantics:
+    /// - 0x03 + from + to  -> { account=to, timestamp }
+    /// - 0x04 + to + from  -> { account=from, timestamp }
     pub fn delegate_resource_account_index(
         &self,
         owner: &Address,
         receiver: &Address,
         timestamp: i64,
     ) -> Result<()> {
+        use super::key_helpers::delegated_resource_account_index;
+
         let owner_tron = self.to_tron_address_21(owner);
         let receiver_tron = self.to_tron_address_21(receiver);
 
-        // Update owner's "to" list
-        self.add_to_delegated_index(&owner_tron, &receiver_tron, false, timestamp)?;
+        let from_key = delegated_resource_account_index::create_db_key_v2_from(&owner_tron, &receiver_tron);
+        let to_key = delegated_resource_account_index::create_db_key_v2_to(&owner_tron, &receiver_tron);
 
-        // Update receiver's "from" list
-        self.add_to_delegated_index(&receiver_tron, &owner_tron, true, timestamp)?;
+        let to_index = crate::protocol::DelegatedResourceAccountIndex {
+            account: receiver_tron.to_vec(),
+            from_accounts: Vec::new(),
+            to_accounts: Vec::new(),
+            timestamp,
+        };
+
+        let from_index = crate::protocol::DelegatedResourceAccountIndex {
+            account: owner_tron.to_vec(),
+            from_accounts: Vec::new(),
+            to_accounts: Vec::new(),
+            timestamp,
+        };
+
+        self.storage_engine.put(
+            self.delegated_resource_account_index_database(),
+            &from_key,
+            &to_index.encode_to_vec(),
+        )?;
+        self.storage_engine.put(
+            self.delegated_resource_account_index_database(),
+            &to_key,
+            &from_index.encode_to_vec(),
+        )?;
 
         Ok(())
     }
 
-    /// Add an address to a delegated resource account index
-    /// is_from: true means adding to "from" list (0x03 prefix), false means "to" list (0x04 prefix)
-    fn add_to_delegated_index(
-        &self,
-        account: &[u8; 21],
-        related: &[u8; 21],
-        is_from: bool,
-        timestamp: i64,
-    ) -> Result<()> {
+    /// Remove DelegatedResourceAccountIndex entries for a delegation (unDelegateV2).
+    pub fn undelegate_resource_account_index(&self, owner: &Address, receiver: &Address) -> Result<()> {
         use super::key_helpers::delegated_resource_account_index;
 
-        let key = if is_from {
-            delegated_resource_account_index::create_db_key_v2_from(account)
-        } else {
-            delegated_resource_account_index::create_db_key_v2_to(account)
-        };
+        let owner_tron = self.to_tron_address_21(owner);
+        let receiver_tron = self.to_tron_address_21(receiver);
 
-        // Get or create index
-        let mut index = match self.storage_engine.get(self.delegated_resource_account_index_database(), &key)? {
-            Some(data) => {
-                crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
-                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?
-            }
-            None => {
-                crate::protocol::DelegatedResourceAccountIndex {
-                    account: account.to_vec(),
-                    from_accounts: Vec::new(),
-                    to_accounts: Vec::new(),
-                    timestamp: 0,
-                }
-            }
-        };
+        let from_key = delegated_resource_account_index::create_db_key_v2_from(&owner_tron, &receiver_tron);
+        let to_key = delegated_resource_account_index::create_db_key_v2_to(&owner_tron, &receiver_tron);
 
-        // Add to appropriate list if not already present
-        let list = if is_from { &mut index.from_accounts } else { &mut index.to_accounts };
-        if !list.iter().any(|a| a == related) {
-            list.push(related.to_vec());
-        }
-        index.timestamp = timestamp;
-
-        // Persist
-        let data = index.encode_to_vec();
-        self.storage_engine.put(self.delegated_resource_account_index_database(), &key, &data)?;
+        self.storage_engine.delete(self.delegated_resource_account_index_database(), &from_key)?;
+        self.storage_engine.delete(self.delegated_resource_account_index_database(), &to_key)?;
 
         Ok(())
     }

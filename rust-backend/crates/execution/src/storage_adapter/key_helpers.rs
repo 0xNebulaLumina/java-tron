@@ -59,57 +59,72 @@ pub fn tron_address_key_from_slice(address: &[u8]) -> Vec<u8> {
 /// DelegatedResource V2 key prefix constants.
 /// Java: DelegatedResourceCapsule.java
 pub mod delegated_resource {
-    /// V2 key prefix for "from" lookups: 0x01 + from_address + to_address
-    pub const V2_FROM_PREFIX: u8 = 0x01;
-    /// V2 key prefix for "to" lookups: 0x02 + to_address + from_address
-    pub const V2_TO_PREFIX: u8 = 0x02;
+    /// V2 key prefix (unlock): 0x01 + from_address + to_address
+    /// Java: DelegatedResourceCapsule.V2_PREFIX
+    pub const V2_PREFIX: u8 = 0x01;
+    /// V2 key prefix (lock): 0x02 + from_address + to_address
+    /// Java: DelegatedResourceCapsule.V2_LOCK_PREFIX
+    pub const V2_LOCK_PREFIX: u8 = 0x02;
 
-    /// Create DelegatedResource V2 key for "from" direction.
+    /// Create DelegatedResource V2 key (unlock).
     /// Format: 0x01 + from_address (21-byte) + to_address (21-byte)
     /// Total: 43 bytes
-    pub fn create_db_key_v2_from(from_address: &[u8], to_address: &[u8]) -> Vec<u8> {
+    pub fn create_db_key_v2_unlock(from_address: &[u8], to_address: &[u8]) -> Vec<u8> {
         let mut key = Vec::with_capacity(43);
-        key.push(V2_FROM_PREFIX);
+        key.push(V2_PREFIX);
         key.extend_from_slice(from_address); // 21 bytes
         key.extend_from_slice(to_address);   // 21 bytes
         key
     }
 
-    /// Create DelegatedResource V2 key for "to" direction.
-    /// Format: 0x02 + to_address (21-byte) + from_address (21-byte)
+    /// Create DelegatedResource V2 key (lock).
+    /// Format: 0x02 + from_address (21-byte) + to_address (21-byte)
     /// Total: 43 bytes
-    pub fn create_db_key_v2_to(from_address: &[u8], to_address: &[u8]) -> Vec<u8> {
+    pub fn create_db_key_v2_lock(from_address: &[u8], to_address: &[u8]) -> Vec<u8> {
         let mut key = Vec::with_capacity(43);
-        key.push(V2_TO_PREFIX);
-        key.extend_from_slice(to_address);   // 21 bytes
+        key.push(V2_LOCK_PREFIX);
         key.extend_from_slice(from_address); // 21 bytes
+        key.extend_from_slice(to_address);   // 21 bytes
         key
+    }
+
+    /// Create DelegatedResource V2 key based on `lock` flag.
+    pub fn create_db_key_v2(from_address: &[u8], to_address: &[u8], lock: bool) -> Vec<u8> {
+        if lock {
+            create_db_key_v2_lock(from_address, to_address)
+        } else {
+            create_db_key_v2_unlock(from_address, to_address)
+        }
     }
 }
 
 /// DelegatedResourceAccountIndex key prefix constants.
 /// Java: DelegatedResourceAccountIndexCapsule.java
 pub mod delegated_resource_account_index {
-    /// V2 key prefix for "from" index: 0x03 + address
+    /// V2 key prefix for "from" index: 0x03 + from + to
     pub const V2_FROM_PREFIX: u8 = 0x03;
-    /// V2 key prefix for "to" index: 0x04 + address
+    /// V2 key prefix for "to" index: 0x04 + to + from
     pub const V2_TO_PREFIX: u8 = 0x04;
 
     /// Create index key for "from" direction.
-    /// Format: 0x03 + address (21-byte)
-    pub fn create_db_key_v2_from(address: &[u8]) -> Vec<u8> {
-        let mut key = Vec::with_capacity(22);
+    /// Format: 0x03 + from_address (21-byte) + to_address (21-byte)
+    /// Total: 43 bytes
+    pub fn create_db_key_v2_from(from_address: &[u8], to_address: &[u8]) -> Vec<u8> {
+        let mut key = Vec::with_capacity(43);
         key.push(V2_FROM_PREFIX);
-        key.extend_from_slice(address);
+        key.extend_from_slice(from_address);
+        key.extend_from_slice(to_address);
         key
     }
 
     /// Create index key for "to" direction.
-    /// Format: 0x04 + address (21-byte)
-    pub fn create_db_key_v2_to(address: &[u8]) -> Vec<u8> {
-        let mut key = Vec::with_capacity(22);
+    /// Format: 0x04 + to_address (21-byte) + from_address (21-byte)
+    /// Total: 43 bytes
+    pub fn create_db_key_v2_to(from_address: &[u8], to_address: &[u8]) -> Vec<u8> {
+        let mut key = Vec::with_capacity(43);
         key.push(V2_TO_PREFIX);
-        key.extend_from_slice(address);
+        key.extend_from_slice(to_address);
+        key.extend_from_slice(from_address);
         key
     }
 }
@@ -181,17 +196,17 @@ mod tests {
         let from_addr = vec![0x41; 21];
         let to_addr = vec![0x42; 21];
 
-        let from_key = delegated_resource::create_db_key_v2_from(&from_addr, &to_addr);
-        assert_eq!(from_key.len(), 43);
-        assert_eq!(from_key[0], 0x01);
-        assert_eq!(&from_key[1..22], from_addr.as_slice());
-        assert_eq!(&from_key[22..43], to_addr.as_slice());
+        let unlock_key = delegated_resource::create_db_key_v2_unlock(&from_addr, &to_addr);
+        assert_eq!(unlock_key.len(), 43);
+        assert_eq!(unlock_key[0], 0x01);
+        assert_eq!(&unlock_key[1..22], from_addr.as_slice());
+        assert_eq!(&unlock_key[22..43], to_addr.as_slice());
 
-        let to_key = delegated_resource::create_db_key_v2_to(&from_addr, &to_addr);
-        assert_eq!(to_key.len(), 43);
-        assert_eq!(to_key[0], 0x02);
-        assert_eq!(&to_key[1..22], to_addr.as_slice());
-        assert_eq!(&to_key[22..43], from_addr.as_slice());
+        let lock_key = delegated_resource::create_db_key_v2_lock(&from_addr, &to_addr);
+        assert_eq!(lock_key.len(), 43);
+        assert_eq!(lock_key[0], 0x02);
+        assert_eq!(&lock_key[1..22], from_addr.as_slice());
+        assert_eq!(&lock_key[22..43], to_addr.as_slice());
     }
 
     #[test]
