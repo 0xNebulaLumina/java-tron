@@ -2113,8 +2113,11 @@ impl BackendService {
     /// ProposalCreateContract:
     ///   bytes owner_address = 1;
     ///   map<int64, int64> parameters = 2;
-    fn parse_proposal_create_contract(&self, data: &[u8]) -> Result<std::collections::HashMap<i64, i64>, String> {
-        let mut parameters = std::collections::HashMap::new();
+    fn parse_proposal_create_contract(
+        &self,
+        data: &[u8],
+    ) -> Result<std::collections::BTreeMap<i64, i64>, String> {
+        let mut parameters = std::collections::BTreeMap::new();
         let mut pos = 0;
 
         while pos < data.len() {
@@ -6037,9 +6040,9 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        use contracts::exchange::{TRX_SYMBOL, is_number, is_trx};
+        use contracts::exchange::{is_number, is_trx};
         use contracts::proto::TransactionResultBuilder;
 
         debug!("Executing EXCHANGE_CREATE_CONTRACT: owner={:?}", transaction.from);
@@ -6135,22 +6138,31 @@ impl BackendService {
         if is_trx(&create_info.first_token_id) {
             updated_account.balance -= create_info.first_token_balance;
         } else {
-            storage_adapter.reduce_asset_amount_v2(&owner, &create_info.first_token_id, create_info.first_token_balance)
-                .map_err(|e| format!("Failed to reduce first token: {}", e))?;
+            Self::reduce_asset_amount_v2(
+                &mut updated_account,
+                &create_info.first_token_id,
+                create_info.first_token_balance,
+                allow_same_token_name,
+            )?;
         }
 
         // Deduct second token
         if is_trx(&create_info.second_token_id) {
             updated_account.balance -= create_info.second_token_balance;
         } else {
-            storage_adapter.reduce_asset_amount_v2(&owner, &create_info.second_token_id, create_info.second_token_balance)
-                .map_err(|e| format!("Failed to reduce second token: {}", e))?;
+            Self::reduce_asset_amount_v2(
+                &mut updated_account,
+                &create_info.second_token_id,
+                create_info.second_token_balance,
+                allow_same_token_name,
+            )?;
         }
 
         // Create exchange
         let exchange_id = storage_adapter.get_latest_exchange_num()
             .map_err(|e| format!("Failed to get latest exchange num: {}", e))? + 1;
-        let now = context.block_timestamp as i64;
+        let now = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest block header timestamp: {}", e))?;
 
         // For allowSameTokenName=0, resolve token names to IDs
         let mut first_token_id_v2 = create_info.first_token_id.clone();
@@ -6274,7 +6286,9 @@ impl BackendService {
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        use contracts::exchange::{is_number, is_trx, calculate_inject_another_amount};
+        use contracts::exchange::{
+            calculate_inject_another_amount, calculate_inject_another_amount_multiply_exact, is_number, is_trx,
+        };
         use contracts::proto::TransactionResultBuilder;
 
         debug!("Executing EXCHANGE_INJECT_CONTRACT: owner={:?}", transaction.from);
@@ -6330,7 +6344,8 @@ impl BackendService {
         }
 
         // Calculate another token amount
-        let (another_token_id, another_token_quant, new_first_balance, new_second_balance) = if is_first_token {
+        let (another_token_id, another_token_quant_validate, new_first_balance_validate, new_second_balance_validate) =
+            if is_first_token {
             let another_quant = calculate_inject_another_amount(
                 exchange.first_token_balance,
                 exchange.second_token_balance,
@@ -6357,14 +6372,14 @@ impl BackendService {
         };
 
         // - Another quant must be positive
-        if another_token_quant <= 0 {
+        if another_token_quant_validate <= 0 {
             return Err("the calculated token quant must be greater than 0".to_string());
         }
 
         // - Balance limits
         let balance_limit = storage_adapter.get_exchange_balance_limit()
             .map_err(|e| format!("Failed to get balance limit: {}", e))?;
-        if new_first_balance > balance_limit || new_second_balance > balance_limit {
+        if new_first_balance_validate > balance_limit || new_second_balance_validate > balance_limit {
             return Err(format!("token balance must less than {}", balance_limit));
         }
 
@@ -6383,34 +6398,67 @@ impl BackendService {
 
         // - Sufficient balance for another token
         if is_trx(&another_token_id) {
-            if account.balance < another_token_quant {
+            if account.balance < another_token_quant_validate {
                 return Err("balance is not enough".to_string());
             }
         } else {
             let balance = storage_adapter.get_asset_balance_v2(&owner, &another_token_id)
                 .map_err(|e| format!("Failed to get another token balance: {}", e))?;
-            if balance < another_token_quant {
+            if balance < another_token_quant_validate {
                 return Err("another token balance is not enough".to_string());
             }
         }
 
         // 5. Execute
+        let another_token_quant = if is_first_token {
+            calculate_inject_another_amount_multiply_exact(
+                exchange.first_token_balance,
+                exchange.second_token_balance,
+                inject_info.quant,
+            )?
+        } else {
+            calculate_inject_another_amount_multiply_exact(
+                exchange.second_token_balance,
+                exchange.first_token_balance,
+                inject_info.quant,
+            )?
+        };
+        let (new_first_balance, new_second_balance) = if is_first_token {
+            (
+                exchange.first_token_balance + inject_info.quant,
+                exchange.second_token_balance + another_token_quant,
+            )
+        } else {
+            (
+                exchange.first_token_balance + another_token_quant,
+                exchange.second_token_balance + inject_info.quant,
+            )
+        };
+
         let mut updated_account = account.clone();
 
         // Deduct token
         if is_trx(&inject_info.token_id) {
             updated_account.balance -= inject_info.quant;
         } else {
-            storage_adapter.reduce_asset_amount_v2(&owner, &inject_info.token_id, inject_info.quant)
-                .map_err(|e| format!("Failed to reduce token: {}", e))?;
+            Self::reduce_asset_amount_v2(
+                &mut updated_account,
+                &inject_info.token_id,
+                inject_info.quant,
+                allow_same_token_name,
+            )?;
         }
 
         // Deduct another token
         if is_trx(&another_token_id) {
             updated_account.balance -= another_token_quant;
         } else {
-            storage_adapter.reduce_asset_amount_v2(&owner, &another_token_id, another_token_quant)
-                .map_err(|e| format!("Failed to reduce another token: {}", e))?;
+            Self::reduce_asset_amount_v2(
+                &mut updated_account,
+                &another_token_id,
+                another_token_quant,
+                allow_same_token_name,
+            )?;
         }
 
         // Update exchange
@@ -6589,16 +6637,24 @@ impl BackendService {
         if is_trx(&withdraw_info.token_id) {
             updated_account.balance += withdraw_info.quant;
         } else {
-            storage_adapter.add_asset_amount_v2(&owner, &withdraw_info.token_id, withdraw_info.quant)
-                .map_err(|e| format!("Failed to add token: {}", e))?;
+            Self::add_asset_amount_v2(
+                &mut updated_account,
+                &withdraw_info.token_id,
+                withdraw_info.quant,
+                allow_same_token_name,
+            );
         }
 
         // Add another token to account
         if is_trx(&another_token_id) {
             updated_account.balance += another_token_quant;
         } else {
-            storage_adapter.add_asset_amount_v2(&owner, &another_token_id, another_token_quant)
-                .map_err(|e| format!("Failed to add another token: {}", e))?;
+            Self::add_asset_amount_v2(
+                &mut updated_account,
+                &another_token_id,
+                another_token_quant,
+                allow_same_token_name,
+            );
         }
 
         // Update exchange
@@ -6773,16 +6829,24 @@ impl BackendService {
         if is_trx(&tx_info.token_id) {
             updated_account.balance -= tx_info.quant;
         } else {
-            storage_adapter.reduce_asset_amount_v2(&owner, &tx_info.token_id, tx_info.quant)
-                .map_err(|e| format!("Failed to reduce sold token: {}", e))?;
+            Self::reduce_asset_amount_v2(
+                &mut updated_account,
+                &tx_info.token_id,
+                tx_info.quant,
+                allow_same_token_name,
+            )?;
         }
 
         // Add bought token
         if is_trx(&another_token_id) {
             updated_account.balance += another_token_quant;
         } else {
-            storage_adapter.add_asset_amount_v2(&owner, &another_token_id, another_token_quant)
-                .map_err(|e| format!("Failed to add bought token: {}", e))?;
+            Self::add_asset_amount_v2(
+                &mut updated_account,
+                &another_token_id,
+                another_token_quant,
+                allow_same_token_name,
+            );
         }
 
         // Update exchange balances

@@ -163,6 +163,24 @@ pub fn calculate_inject_another_amount(
     result as i64
 }
 
+/// Calculate the amount of the other token needed for an injection using Java's `Math.multiplyExact`
+/// semantics.
+///
+/// Java's `ExchangeInjectActuator.execute()` uses:
+/// `floorDiv(multiplyExact(otherBalance, tokenQuant), tokenBalance)`
+///
+/// This can overflow even when the final division result would fit in a long.
+pub fn calculate_inject_another_amount_multiply_exact(
+    token_balance: i64,
+    other_balance: i64,
+    token_quant: i64,
+) -> Result<i64, String> {
+    let product = other_balance
+        .checked_mul(token_quant)
+        .ok_or_else(|| "Unexpected error: long overflow".to_string())?;
+    Ok(product.div_euclid(token_balance))
+}
+
 /// Calculate the amount of the other token to withdraw
 ///
 /// When withdrawing `token_quant` of one token, calculates how much of the
