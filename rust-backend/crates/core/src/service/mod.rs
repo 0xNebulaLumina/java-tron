@@ -5327,10 +5327,12 @@ impl BackendService {
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or("Account does not exist!")?;
 
-        // 4. Validate to account exists (asset issuer)
-        let to_account = storage_adapter.get_account_proto(&to_address)
-            .map_err(|e| format!("Failed to get to account: {}", e))?
-            .ok_or("To account does not exist!")?;
+        // 4. Validate owner has enough balance (amount + fee)
+        // Java oracle validates balance before time window checks.
+        let fee = 0i64; // ParticipateAssetIssue has no fee
+        if owner_account.balance < participate_info.amount + fee {
+            return Err("No enough balance !".to_string());
+        }
 
         // 5. Get asset issue (using asset name as key)
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
@@ -5367,11 +5369,10 @@ impl BackendService {
             return Err("Can not process the exchange!".to_string());
         }
 
-        // 9. Validate owner has enough balance (amount + fee)
-        let fee = 0i64; // ParticipateAssetIssue has no fee
-        if owner_account.balance < participate_info.amount + fee {
-            return Err("No enough balance !".to_string());
-        }
+        // 9. Validate to account exists (asset issuer)
+        let to_account = storage_adapter.get_account_proto(&to_address)
+            .map_err(|e| format!("Failed to get to account: {}", e))?
+            .ok_or("To account does not exist!")?;
 
         // 10. Validate issuer has enough tokens
         let issuer_asset_balance = Self::get_asset_balance_v2(&to_account, &participate_info.asset_name, allow_same_token_name);
