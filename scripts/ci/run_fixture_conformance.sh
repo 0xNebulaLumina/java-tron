@@ -145,7 +145,6 @@ proposal_approve_contract|\
 proposal_create_contract|\
 proposal_delete_contract|\
 update_brokerage_contract|\
-update_setting_contract|\
 withdraw_expire_unfreeze_contract)
                     return 0
                     ;;
