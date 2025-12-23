@@ -7,6 +7,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
 
 use tron_backend_common::{ModuleManager, HealthStatus, from_tron_address};
+use num_bigint::{BigInt, Sign};
 use revm_primitives::hex;
 use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, ExecutionModule, EvmStateStore};
 use crate::backend::*;
@@ -7161,17 +7162,17 @@ impl BackendService {
         let allow_market = storage_adapter.allow_market_transaction()
             .map_err(|e| format!("Failed to check ALLOW_MARKET_TRANSACTION: {}", e))?;
         if !allow_market {
-            return Err("Market transactions are not enabled".to_string());
+            return Err("Not support Market Transaction, need to be opened by the committee".to_string());
         }
 
         // 2. Get the order
         let order = storage_adapter.get_market_order(&tx_info.order_id)
             .map_err(|e| format!("Failed to get order: {}", e))?
-            .ok_or("Order does not exist")?;
+            .ok_or("orderId not exists")?;
 
         // 3. Validate: order must be active
         if order.state != 0 { // 0 = ACTIVE
-            return Err("Order is not active".to_string());
+            return Err("Order is not active!".to_string());
         }
 
         // 4. Validate: owner must match
@@ -7182,7 +7183,7 @@ impl BackendService {
             &order.owner_address[..]
         };
         if order_owner_20 != owner.as_slice() {
-            return Err("Order does not belong to the account".to_string());
+            return Err("Order does not belong to the account!".to_string());
         }
 
         // 5. Get account and validate fee
@@ -7194,7 +7195,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get MARKET_CANCEL_FEE: {}", e))?;
 
         if account.balance < fee {
-            return Err("No enough balance for fee".to_string());
+            return Err("No enough balance !".to_string());
         }
 
         // 6. Deduct fee
@@ -7344,8 +7345,7 @@ impl BackendService {
     ///
     /// Implementation matches Java: MarketSellAssetActuator.java
     ///
-    /// This is a complex contract with order matching logic.
-    /// For Phase 2.G initial implementation, we focus on order creation without matching.
+    /// This contract includes order matching, MAX_MATCH_NUM limits, and price-queue cleanup.
     fn execute_market_sell_asset_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
@@ -7370,23 +7370,23 @@ impl BackendService {
         let allow_market = storage_adapter.allow_market_transaction()
             .map_err(|e| format!("Failed to check ALLOW_MARKET_TRANSACTION: {}", e))?;
         if !allow_market {
-            return Err("Market transactions are not enabled".to_string());
+            return Err("Not support Market Transaction, need to be opened by the committee".to_string());
         }
 
         // 2. Validate token IDs
         if tx_info.sell_token_id == tx_info.buy_token_id {
-            return Err("Cannot exchange same tokens".to_string());
+            return Err("cannot exchange same tokens".to_string());
         }
 
         // 3. Validate quantities
         if tx_info.sell_token_quantity <= 0 || tx_info.buy_token_quantity <= 0 {
-            return Err("Token quantity must be greater than zero".to_string());
+            return Err("token quantity must greater than zero".to_string());
         }
 
         let quantity_limit = storage_adapter.get_market_quantity_limit()
             .map_err(|e| format!("Failed to get MARKET_QUANTITY_LIMIT: {}", e))?;
         if tx_info.sell_token_quantity > quantity_limit || tx_info.buy_token_quantity > quantity_limit {
-            return Err(format!("Token quantity must be less than {}", quantity_limit));
+            return Err(format!("token quantity must less than {}", quantity_limit));
         }
 
         // 4. Validate order count limit
@@ -7394,14 +7394,14 @@ impl BackendService {
         if let Some(account_order) = storage_adapter.get_market_account_order(&owner)
             .map_err(|e| format!("Failed to get account order: {}", e))? {
             if account_order.count >= max_active_orders {
-                return Err(format!("Maximum number of orders exceeded, {}", max_active_orders));
+                return Err(format!("Maximum number of orders exceeded，{}", max_active_orders));
             }
         }
 
         // 5. Get account and validate balance
         let mut account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
-            .ok_or("Account does not exist")?;
+            .ok_or("Account does not exist!")?;
 
         let fee = storage_adapter.get_market_sell_fee()
             .map_err(|e| format!("Failed to get MARKET_SELL_FEE: {}", e))?;
@@ -7413,17 +7413,17 @@ impl BackendService {
             let required = tx_info.sell_token_quantity.checked_add(fee)
                 .ok_or("Amount overflow")?;
             if account.balance < required {
-                return Err("No enough balance".to_string());
+                return Err("No enough balance !".to_string());
             }
         } else {
             // Selling TRC-10: need fee in TRX + token balance
             if account.balance < fee {
-                return Err("No enough balance for fee".to_string());
+                return Err("No enough balance !".to_string());
             }
             let token_key = String::from_utf8_lossy(&tx_info.sell_token_id).to_string();
             let token_balance = account.asset_v2.get(&token_key).copied().unwrap_or(0);
             if token_balance < tx_info.sell_token_quantity {
-                return Err("SellToken balance is not enough".to_string());
+                return Err("SellToken balance is not enough !".to_string());
             }
         }
 
@@ -7449,7 +7449,7 @@ impl BackendService {
             account.asset_v2.insert(token_key, current - tx_info.sell_token_quantity);
         }
 
-        // 8. Create order
+        // 8. Create order (persisted before matching, matching java-tron behavior)
         let owner_tron_addr = storage_adapter.to_tron_address_21(&owner).to_vec();
         let mut account_order = storage_adapter.get_market_account_order(&owner)
             .map_err(|e| format!("Failed to get account order: {}", e))?
@@ -7472,7 +7472,7 @@ impl BackendService {
         let timestamp = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get timestamp: {}", e))?;
 
-        let new_order = tron_backend_execution::protocol::MarketOrder {
+        let mut order = tron_backend_execution::protocol::MarketOrder {
             order_id: order_id.clone(),
             owner_address: owner_tron_addr.clone(),
             create_time: timestamp,
@@ -7492,92 +7492,27 @@ impl BackendService {
         account_order.count += 1;
         account_order.total_count += 1;
 
-        // 10. Save order
-        storage_adapter.put_market_order(&order_id, &new_order)
+        // 10. Save order + account-order (java-tron does this before matching).
+        storage_adapter.put_market_order(&order_id, &order)
             .map_err(|e| format!("Failed to save order: {}", e))?;
         storage_adapter.put_market_account_order(&owner, &account_order)
             .map_err(|e| format!("Failed to save account order: {}", e))?;
 
-        // 11. Add order to order book (skip matching for now - full implementation would be complex)
-        let pair_price_key = Self::create_pair_price_key(
-            &tx_info.sell_token_id,
-            &tx_info.buy_token_id,
-            tx_info.sell_token_quantity,
-            tx_info.buy_token_quantity,
-        );
-        let pair_key = Self::create_pair_key(&tx_info.sell_token_id, &tx_info.buy_token_id);
+        // 11. Match order (updates maker-side state as it goes).
+        self.match_market_sell_order(storage_adapter, &mut order, &mut account)?;
 
-        // Check if price key exists
-        let mut order_list = storage_adapter.get_market_order_id_list(&pair_price_key)
-            .map_err(|e| format!("Failed to get order list: {}", e))?
-            .unwrap_or_else(|| {
-                // New price point, increment pair count
-                tron_backend_execution::protocol::MarketOrderIdList {
-                    head: vec![],
-                    tail: vec![],
-                }
-            });
-
-        let is_new_price = order_list.head.is_empty();
-
-        // Add to linked list (at tail)
-        if order_list.head.is_empty() {
-            order_list.head = order_id.clone();
-            order_list.tail = order_id.clone();
-        } else {
-            // Update previous tail's next pointer
-            let tail_id = order_list.tail.clone();
-            if let Some(mut tail_order) = storage_adapter.get_market_order(&tail_id)
-                .map_err(|e| format!("Failed to get tail order: {}", e))? {
-                tail_order.next = order_id.clone();
-                storage_adapter.put_market_order(&tail_id, &tail_order)
-                    .map_err(|e| format!("Failed to update tail order: {}", e))?;
-            }
-            // Update new order's prev pointer
-            let mut updated_new_order = new_order.clone();
-            updated_new_order.prev = tail_id;
-            storage_adapter.put_market_order(&order_id, &updated_new_order)
-                .map_err(|e| format!("Failed to update new order: {}", e))?;
-            // Update list tail
-            order_list.tail = order_id.clone();
+        // 12. Save remain order into order book (only if still active with non-zero remain).
+        if order.sell_token_quantity_remain != 0 {
+            self.save_remain_market_order(storage_adapter, &mut order)?;
         }
 
-        storage_adapter.put_market_order_id_list(&pair_price_key, &order_list)
-            .map_err(|e| format!("Failed to save order list: {}", e))?;
-
-        // Update pair price count if new price
-        if is_new_price {
-            let has_pair = storage_adapter.has_market_pair(&pair_key)
-                .map_err(|e| format!("Failed to check pair: {}", e))?;
-            if has_pair {
-                let count = storage_adapter.get_market_pair_price_count(&pair_key)
-                    .map_err(|e| format!("Failed to get price count: {}", e))?;
-                storage_adapter.set_market_pair_price_count(&pair_key, count + 1)
-                    .map_err(|e| format!("Failed to update price count: {}", e))?;
-            } else {
-                // New pair
-                storage_adapter.set_market_pair_price_count(&pair_key, 1)
-                    .map_err(|e| format!("Failed to set price count: {}", e))?;
-                // Create head key for the pair (price = 0/0)
-                let head_key = Self::create_pair_price_key(
-                    &tx_info.sell_token_id,
-                    &tx_info.buy_token_id,
-                    0, 0,
-                );
-                let empty_list = tron_backend_execution::protocol::MarketOrderIdList {
-                    head: vec![],
-                    tail: vec![],
-                };
-                storage_adapter.put_market_order_id_list(&head_key, &empty_list)
-                    .map_err(|e| format!("Failed to create head key: {}", e))?;
-            }
-        }
-
-        // 12. Save account
+        // 13. Persist final taker order + account.
+        storage_adapter.put_market_order(&order_id, &order)
+            .map_err(|e| format!("Failed to update order: {}", e))?;
         storage_adapter.set_account_proto(&owner, &account)
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
-        // 13. Build result
+        // 14. Build result
         let account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(account.balance as u64),
             nonce: 0,
@@ -7599,7 +7534,7 @@ impl BackendService {
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
         // Build receipt with order_id
-        // Note: orderDetails would be populated during matching (not implemented yet)
+        // Note: orderDetails are omitted for now (fixtures currently assert DB state only).
         let receipt = TransactionResultBuilder::new()
             .with_order_id(&order_id)
             .build();
@@ -7622,6 +7557,624 @@ impl BackendService {
             withdraw_changes: vec![],
             tron_transaction_result: Some(receipt),
         })
+    }
+
+    fn match_market_sell_order(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        taker_order: &mut tron_backend_execution::protocol::MarketOrder,
+        taker_account: &mut tron_backend_execution::protocol::Account,
+    ) -> Result<(), String> {
+        const MAX_MATCH_NUM: i32 = 20;
+
+        let maker_sell_token_id = taker_order.buy_token_id.clone();
+        let maker_buy_token_id = taker_order.sell_token_id.clone();
+        let maker_pair_key = Self::create_pair_key(&maker_sell_token_id, &maker_buy_token_id);
+
+        let maker_price_number = storage_adapter
+            .get_market_pair_price_count(&maker_pair_key)
+            .map_err(|e| format!("Failed to get maker price count: {}", e))?;
+        if maker_price_number == 0 {
+            return Ok(());
+        }
+
+        let mut remain_count = maker_price_number;
+        let mut price_keys_list = self.market_get_price_keys_list(
+            storage_adapter,
+            &maker_sell_token_id,
+            &maker_buy_token_id,
+            (MAX_MATCH_NUM + 1) as i64,
+            maker_price_number,
+        )?;
+
+        let mut match_order_count: i32 = 0;
+
+        while taker_order.sell_token_quantity_remain != 0 {
+            if !self.market_has_match(&price_keys_list, taker_order)? {
+                return Ok(());
+            }
+
+            let pair_price_key = match price_keys_list.first() {
+                Some(key) => key.clone(),
+                None => return Ok(()),
+            };
+
+            let mut order_list = match storage_adapter
+                .get_market_order_id_list(&pair_price_key)
+                .map_err(|e| format!("Failed to get order list: {}", e))?
+            {
+                Some(list) => list,
+                None => return Ok(()),
+            };
+
+            while taker_order.sell_token_quantity_remain != 0 && !order_list.head.is_empty() {
+                let maker_order_id = order_list.head.clone();
+                let mut maker_order = storage_adapter
+                    .get_market_order(&maker_order_id)
+                    .map_err(|e| format!("Failed to get maker order: {}", e))?
+                    .ok_or("Maker order does not exist")?;
+
+                self.market_match_single_order(
+                    storage_adapter,
+                    taker_order,
+                    &mut maker_order,
+                    taker_account,
+                )?;
+
+                // Remove maker order from order book when fully consumed.
+                if maker_order.sell_token_quantity_remain == 0 {
+                    self.remove_order_from_linked_list(
+                        storage_adapter,
+                        &mut order_list,
+                        &maker_order,
+                        &pair_price_key,
+                    )?;
+
+                    // Persist list updates even if it becomes empty (matches java-tron behavior).
+                    storage_adapter
+                        .put_market_order_id_list(&pair_price_key, &order_list)
+                        .map_err(|e| format!("Failed to update order list: {}", e))?;
+                }
+
+                match_order_count += 1;
+                if match_order_count > MAX_MATCH_NUM {
+                    return Err(format!(
+                        "Too many matches. MAX_MATCH_NUM = {}",
+                        MAX_MATCH_NUM
+                    ));
+                }
+            }
+
+            // The orders at this price level have been all consumed.
+            if order_list.head.is_empty() {
+                storage_adapter
+                    .delete_market_order_id_list(&pair_price_key)
+                    .map_err(|e| format!("Failed to delete price key: {}", e))?;
+                price_keys_list.remove(0);
+
+                remain_count = remain_count
+                    .checked_sub(1)
+                    .ok_or("Market pair price count underflow")?;
+                if remain_count == 0 {
+                    storage_adapter
+                        .delete_market_pair(&maker_pair_key)
+                        .map_err(|e| format!("Failed to delete maker pair: {}", e))?;
+                    break;
+                }
+                storage_adapter
+                    .set_market_pair_price_count(&maker_pair_key, remain_count)
+                    .map_err(|e| format!("Failed to update maker price count: {}", e))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn market_match_single_order(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        taker_order: &mut tron_backend_execution::protocol::MarketOrder,
+        maker_order: &mut tron_backend_execution::protocol::MarketOrder,
+        taker_account: &mut tron_backend_execution::protocol::Account,
+    ) -> Result<(), String> {
+        let taker_sell_remain = taker_order.sell_token_quantity_remain;
+        let maker_sell_quantity = maker_order.sell_token_quantity;
+        let maker_buy_quantity = maker_order.buy_token_quantity;
+        let maker_sell_remain = maker_order.sell_token_quantity_remain;
+
+        // According to the price of maker, calculate the quantity of taker can buy:
+        // maker_sell_qty / maker_buy_qty = taker_buy_qty / taker_sell_remain
+        let taker_buy_remain = self.market_multiply_and_divide(
+            taker_sell_remain,
+            maker_sell_quantity,
+            maker_buy_quantity,
+        )?;
+
+        if taker_buy_remain == 0 {
+            // Quantity too small, return sellToken to user.
+            taker_order.sell_token_quantity_return = taker_order.sell_token_quantity_remain;
+            self.market_return_sell_token_remain(taker_order, taker_account)?;
+            self.market_update_order_state(storage_adapter, taker_order, 1)?;
+            return Ok(());
+        }
+
+        let (taker_buy_receive, maker_buy_receive) = if taker_buy_remain == maker_sell_remain {
+            // taker == maker
+            let maker_buy_receive = self.market_multiply_and_divide(
+                maker_sell_remain,
+                maker_buy_quantity,
+                maker_sell_quantity,
+            )?;
+            let taker_buy_receive = maker_sell_remain;
+
+            let taker_sell_left = taker_order
+                .sell_token_quantity_remain
+                .checked_sub(maker_buy_receive)
+                .ok_or("Balance underflow")?;
+            taker_order.sell_token_quantity_remain = taker_sell_left;
+            maker_order.sell_token_quantity_remain = 0;
+
+            if taker_sell_left == 0 {
+                self.market_update_order_state(storage_adapter, taker_order, 1)?;
+            }
+            self.market_update_order_state(storage_adapter, maker_order, 1)?;
+
+            (taker_buy_receive, maker_buy_receive)
+        } else if taker_buy_remain < maker_sell_remain {
+            // taker < maker
+            let taker_buy_receive = taker_buy_remain;
+            let maker_buy_receive = taker_order.sell_token_quantity_remain;
+
+            taker_order.sell_token_quantity_remain = 0;
+            self.market_update_order_state(storage_adapter, taker_order, 1)?;
+
+            maker_order.sell_token_quantity_remain = maker_order
+                .sell_token_quantity_remain
+                .checked_sub(taker_buy_remain)
+                .ok_or("Balance underflow")?;
+
+            (taker_buy_receive, maker_buy_receive)
+        } else {
+            // taker > maker
+            let taker_buy_receive = maker_sell_remain;
+            let maker_buy_receive = self.market_multiply_and_divide(
+                maker_sell_remain,
+                maker_buy_quantity,
+                maker_sell_quantity,
+            )?;
+
+            self.market_update_order_state(storage_adapter, maker_order, 1)?;
+            if maker_buy_receive == 0 {
+                // Quantity too small, return remaining sellToken to maker (should not happen).
+                maker_order.sell_token_quantity_return = maker_order.sell_token_quantity_remain;
+                self.market_return_sell_token_remain_to_owner(storage_adapter, maker_order)?;
+                return Ok(());
+            }
+
+            maker_order.sell_token_quantity_remain = 0;
+            taker_order.sell_token_quantity_remain = taker_order
+                .sell_token_quantity_remain
+                .checked_sub(maker_buy_receive)
+                .ok_or("Balance underflow")?;
+
+            (taker_buy_receive, maker_buy_receive)
+        };
+
+        // Save maker order
+        storage_adapter
+            .put_market_order(&maker_order.order_id, maker_order)
+            .map_err(|e| format!("Failed to save maker order: {}", e))?;
+
+        // Add token into accounts
+        self.market_add_trx_or_token_in_place(
+            taker_account,
+            &taker_order.buy_token_id,
+            taker_buy_receive,
+        )?;
+        self.market_add_trx_or_token_to_owner(
+            storage_adapter,
+            &maker_order.owner_address,
+            &maker_order.buy_token_id,
+            maker_buy_receive,
+        )?;
+
+        Ok(())
+    }
+
+    fn save_remain_market_order(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        order: &mut tron_backend_execution::protocol::MarketOrder,
+    ) -> Result<(), String> {
+        let pair_price_key = Self::create_pair_price_key(
+            &order.sell_token_id,
+            &order.buy_token_id,
+            order.sell_token_quantity,
+            order.buy_token_quantity,
+        );
+
+        let existing_order_list = storage_adapter
+            .get_market_order_id_list(&pair_price_key)
+            .map_err(|e| format!("Failed to get order list: {}", e))?;
+        let is_new_price_key = existing_order_list.is_none();
+        let mut order_list = existing_order_list.unwrap_or(tron_backend_execution::protocol::MarketOrderIdList {
+            head: vec![],
+            tail: vec![],
+        });
+
+        // If this price key is new, increase the pair's price count (and create the head key if needed).
+        if is_new_price_key {
+            self.market_add_new_price_key(storage_adapter, &order.sell_token_id, &order.buy_token_id)?;
+        }
+
+        // Add to linked list (at tail).
+        if order_list.head.is_empty() {
+            order_list.head = order.order_id.clone();
+            order_list.tail = order.order_id.clone();
+        } else {
+            let tail_id = order_list.tail.clone();
+            if let Some(mut tail_order) = storage_adapter
+                .get_market_order(&tail_id)
+                .map_err(|e| format!("Failed to get tail order: {}", e))?
+            {
+                tail_order.next = order.order_id.clone();
+                storage_adapter
+                    .put_market_order(&tail_id, &tail_order)
+                    .map_err(|e| format!("Failed to update tail order: {}", e))?;
+            }
+
+            order.prev = tail_id;
+            storage_adapter
+                .put_market_order(&order.order_id, order)
+                .map_err(|e| format!("Failed to update order pointers: {}", e))?;
+
+            order_list.tail = order.order_id.clone();
+        }
+
+        storage_adapter
+            .put_market_order_id_list(&pair_price_key, &order_list)
+            .map_err(|e| format!("Failed to save order list: {}", e))?;
+
+        Ok(())
+    }
+
+    fn market_add_new_price_key(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        sell_token_id: &[u8],
+        buy_token_id: &[u8],
+    ) -> Result<(), String> {
+        let pair_key = Self::create_pair_key(sell_token_id, buy_token_id);
+        let has_pair = storage_adapter
+            .has_market_pair(&pair_key)
+            .map_err(|e| format!("Failed to check pair: {}", e))?;
+
+        if has_pair {
+            let current = storage_adapter
+                .get_market_pair_price_count(&pair_key)
+                .map_err(|e| format!("Failed to get price count: {}", e))?;
+            storage_adapter
+                .set_market_pair_price_count(&pair_key, current + 1)
+                .map_err(|e| format!("Failed to update price count: {}", e))?;
+            return Ok(());
+        }
+
+        storage_adapter
+            .set_market_pair_price_count(&pair_key, 1)
+            .map_err(|e| format!("Failed to set price count: {}", e))?;
+
+        let head_key = Self::create_pair_price_key(sell_token_id, buy_token_id, 0, 0);
+        let empty_list = tron_backend_execution::protocol::MarketOrderIdList {
+            head: vec![],
+            tail: vec![],
+        };
+        storage_adapter
+            .put_market_order_id_list(&head_key, &empty_list)
+            .map_err(|e| format!("Failed to create head key: {}", e))?;
+
+        Ok(())
+    }
+
+    fn market_get_price_keys_list(
+        &self,
+        storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore,
+        sell_token_id: &[u8],
+        buy_token_id: &[u8],
+        count: i64,
+        total_count: i64,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        if count <= 0 || total_count <= 0 {
+            return Ok(Vec::new());
+        }
+
+        let head_key = Self::create_pair_price_key(sell_token_id, buy_token_id, 0, 0);
+        let has_head = storage_adapter
+            .has_market_price_key(&head_key)
+            .map_err(|e| format!("Failed to check head key: {}", e))?;
+        if !has_head {
+            return Ok(Vec::new());
+        }
+
+        let pair_key = Self::create_pair_key(sell_token_id, buy_token_id);
+        let mut keys = storage_adapter
+            .list_market_pair_price_keys(&pair_key)
+            .map_err(|e| format!("Failed to list price keys: {}", e))?;
+        keys.sort_by(|a, b| Self::market_compare_price_key(a, b));
+
+        let limit = std::cmp::min(count, total_count) as usize;
+        let mut result = Vec::with_capacity(limit);
+        for key in keys {
+            if key == head_key {
+                continue;
+            }
+            if result.len() >= limit {
+                break;
+            }
+            result.push(key);
+        }
+
+        Ok(result)
+    }
+
+    fn market_has_match(
+        &self,
+        price_keys_list: &[Vec<u8>],
+        taker_order: &tron_backend_execution::protocol::MarketOrder,
+    ) -> Result<bool, String> {
+        if price_keys_list.is_empty() {
+            return Ok(false);
+        }
+
+        // Get the best (lowest) maker price.
+        let (maker_sell_qty, maker_buy_qty) =
+            Self::market_decode_key_to_market_price(&price_keys_list[0])?;
+
+        Ok(Self::market_price_match(
+            taker_order.sell_token_quantity,
+            taker_order.buy_token_quantity,
+            maker_sell_qty,
+            maker_buy_qty,
+        ))
+    }
+
+    fn market_price_match(
+        taker_sell_qty: i64,
+        taker_buy_qty: i64,
+        maker_sell_qty: i64,
+        maker_buy_qty: i64,
+    ) -> bool {
+        Self::market_compare_price(taker_buy_qty, taker_sell_qty, maker_sell_qty, maker_buy_qty)
+            != std::cmp::Ordering::Less
+    }
+
+    fn market_compare_price(price1_sell: i64, price1_buy: i64, price2_sell: i64, price2_buy: i64) -> std::cmp::Ordering {
+        let left = BigInt::from(price1_buy) * BigInt::from(price2_sell);
+        let right = BigInt::from(price2_buy) * BigInt::from(price1_sell);
+        left.cmp(&right)
+    }
+
+    fn market_compare_price_key(key1: &[u8], key2: &[u8]) -> std::cmp::Ordering {
+        const PAIR_LEN: usize = 38;
+
+        let pair1 = key1.get(..PAIR_LEN).unwrap_or(key1);
+        let pair2 = key2.get(..PAIR_LEN).unwrap_or(key2);
+        let pair_cmp = pair1.cmp(pair2);
+        if pair_cmp != std::cmp::Ordering::Equal {
+            return pair_cmp;
+        }
+
+        let (sell1, buy1) = match Self::market_decode_key_to_market_price(key1) {
+            Ok(v) => v,
+            Err(_) => return key1.cmp(key2),
+        };
+        let (sell2, buy2) = match Self::market_decode_key_to_market_price(key2) {
+            Ok(v) => v,
+            Err(_) => return key1.cmp(key2),
+        };
+
+        let is_head1 = sell1 == 0 || buy1 == 0;
+        let is_head2 = sell2 == 0 || buy2 == 0;
+        if is_head1 && is_head2 {
+            return std::cmp::Ordering::Equal;
+        }
+        if is_head1 {
+            return std::cmp::Ordering::Less;
+        }
+        if is_head2 {
+            return std::cmp::Ordering::Greater;
+        }
+
+        Self::market_compare_price(sell1, buy1, sell2, buy2)
+    }
+
+    fn market_decode_key_to_market_price(key: &[u8]) -> Result<(i64, i64), String> {
+        if key.len() < 54 {
+            return Err(format!("Invalid pair price key length: {}", key.len()));
+        }
+
+        let mut sell_bytes = [0u8; 8];
+        sell_bytes.copy_from_slice(&key[38..46]);
+        let mut buy_bytes = [0u8; 8];
+        buy_bytes.copy_from_slice(&key[46..54]);
+
+        Ok((i64::from_be_bytes(sell_bytes), i64::from_be_bytes(buy_bytes)))
+    }
+
+    fn market_multiply_and_divide(&self, a: i64, b: i64, c: i64) -> Result<i64, String> {
+        if c == 0 {
+            return Err("Division by zero".to_string());
+        }
+
+        let result = BigInt::from(a) * BigInt::from(b) / BigInt::from(c);
+        Self::market_bigint_to_i64(&result)
+    }
+
+    fn market_bigint_to_i64(value: &BigInt) -> Result<i64, String> {
+        let (sign, bytes) = value.to_bytes_be();
+        if bytes.is_empty() || sign == Sign::NoSign {
+            return Ok(0);
+        }
+
+        if bytes.len() > 8 {
+            return Err("Integer overflow".to_string());
+        }
+
+        let mut magnitude: u64 = 0;
+        for b in bytes {
+            magnitude = (magnitude << 8) | (b as u64);
+        }
+
+        match sign {
+            Sign::Plus => {
+                if magnitude > i64::MAX as u64 {
+                    return Err("Integer overflow".to_string());
+                }
+                Ok(magnitude as i64)
+            }
+            Sign::Minus => {
+                if magnitude > (i64::MAX as u64) + 1 {
+                    return Err("Integer overflow".to_string());
+                }
+                Ok(-(magnitude as i64))
+            }
+            Sign::NoSign => Ok(0),
+        }
+    }
+
+    fn market_update_order_state(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        order: &mut tron_backend_execution::protocol::MarketOrder,
+        state: i32,
+    ) -> Result<(), String> {
+        order.state = state;
+
+        // Remove from account order list when inactive/canceled.
+        if state == 1 || state == 2 {
+            let owner = Self::market_owner_address(&order.owner_address)?;
+            if let Some(mut account_order) = storage_adapter
+                .get_market_account_order(&owner)
+                .map_err(|e| format!("Failed to get account order: {}", e))?
+            {
+                account_order.orders.retain(|id| id != &order.order_id);
+                account_order.count = account_order
+                    .count
+                    .checked_sub(1)
+                    .ok_or("MarketAccountOrder count underflow")?;
+                storage_adapter
+                    .put_market_account_order(&owner, &account_order)
+                    .map_err(|e| format!("Failed to update account order: {}", e))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn market_owner_address(owner_address: &[u8]) -> Result<revm_primitives::Address, String> {
+        if owner_address.len() == 21
+            && (owner_address[0] == 0x41 || owner_address[0] == 0xa0)
+        {
+            return Ok(revm_primitives::Address::from_slice(&owner_address[1..]));
+        }
+        if owner_address.len() == 20 {
+            return Ok(revm_primitives::Address::from_slice(owner_address));
+        }
+        Err(format!("Invalid owner address length: {}", owner_address.len()))
+    }
+
+    fn market_add_trx_or_token_in_place(
+        &self,
+        account: &mut tron_backend_execution::protocol::Account,
+        token_id: &[u8],
+        amount: i64,
+    ) -> Result<(), String> {
+        if amount == 0 {
+            return Ok(());
+        }
+
+        if token_id == b"_" || token_id.is_empty() {
+            account.balance = account
+                .balance
+                .checked_add(amount)
+                .ok_or("Balance overflow")?;
+            return Ok(());
+        }
+
+        let token_key = String::from_utf8_lossy(token_id).to_string();
+        let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+        let updated = current
+            .checked_add(amount)
+            .ok_or("Token balance overflow")?;
+        account.asset_v2.insert(token_key, updated);
+
+        Ok(())
+    }
+
+    fn market_add_trx_or_token_to_owner(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        owner_address: &[u8],
+        token_id: &[u8],
+        amount: i64,
+    ) -> Result<(), String> {
+        if amount == 0 {
+            return Ok(());
+        }
+
+        let owner = Self::market_owner_address(owner_address)?;
+        let mut account = storage_adapter
+            .get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or("Account does not exist!")?;
+
+        self.market_add_trx_or_token_in_place(&mut account, token_id, amount)?;
+
+        storage_adapter
+            .set_account_proto(&owner, &account)
+            .map_err(|e| format!("Failed to update account: {}", e))?;
+        Ok(())
+    }
+
+    fn market_return_sell_token_remain(
+        &self,
+        order: &mut tron_backend_execution::protocol::MarketOrder,
+        account: &mut tron_backend_execution::protocol::Account,
+    ) -> Result<(), String> {
+        let remain = order.sell_token_quantity_remain;
+        if remain == 0 {
+            return Ok(());
+        }
+
+        if order.sell_token_id == b"_" || order.sell_token_id.is_empty() {
+            account.balance = account.balance.checked_add(remain).ok_or("Balance overflow")?;
+        } else {
+            let token_key = String::from_utf8_lossy(&order.sell_token_id).to_string();
+            let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+            let updated = current.checked_add(remain).ok_or("Token balance overflow")?;
+            account.asset_v2.insert(token_key, updated);
+        }
+
+        order.sell_token_quantity_remain = 0;
+        Ok(())
+    }
+
+    fn market_return_sell_token_remain_to_owner(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        order: &mut tron_backend_execution::protocol::MarketOrder,
+    ) -> Result<(), String> {
+        let owner = Self::market_owner_address(&order.owner_address)?;
+        let mut account = storage_adapter
+            .get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get maker account: {}", e))?
+            .ok_or("Account does not exist!")?;
+
+        self.market_return_sell_token_remain(order, &mut account)?;
+
+        storage_adapter
+            .set_account_proto(&owner, &account)
+            .map_err(|e| format!("Failed to update maker account: {}", e))?;
+        Ok(())
     }
 
     /// Parse MarketCancelOrderContract protobuf bytes

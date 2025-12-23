@@ -3618,4 +3618,18 @@ impl EngineBackedEvmStateStore {
     pub fn has_market_price_key(&self, price_key: &[u8]) -> Result<bool> {
         Ok(self.storage_engine.get(self.market_pair_price_to_order_database(), price_key)?.is_some())
     }
+
+    /// List all price keys for a given token pair prefix from MarketPairPriceToOrderStore.
+    ///
+    /// This includes the special head key (price 0/0) if present.
+    /// Keys are returned in the underlying RocksDB iteration order (lexicographic).
+    /// Java-tron configures a custom comparator for this CF, so callers should
+    /// apply TRON's MarketUtils.comparePriceKey ordering when needed.
+    pub fn list_market_pair_price_keys(&self, pair_key_prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let entries = self.storage_engine.prefix_query(
+            self.market_pair_price_to_order_database(),
+            pair_key_prefix,
+        )?;
+        Ok(entries.into_iter().map(|kv| kv.key).collect())
+    }
 }
