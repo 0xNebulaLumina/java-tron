@@ -4,10 +4,10 @@
   "caseName": "validate_fail_invalid_url",
   "caseCategory": "validate_fail",
   "description": "Fail when URL is invalid",
-  "generatedAt": "2025-12-22T11:07:52.527Z",
+  "generatedAt": "2025-12-23T10:39:33.583Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1766401675527,
+  "blockTimestamp": 1766486376582,
   "databasesTouched": [
     "account",
     "asset-issue-v2",

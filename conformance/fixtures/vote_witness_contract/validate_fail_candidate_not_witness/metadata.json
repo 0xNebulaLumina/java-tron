@@ -1,0 +1,22 @@
+{
+  "contractType": "VOTE_WITNESS_CONTRACT",
+  "contractTypeNum": 4,
+  "caseName": "validate_fail_candidate_not_witness",
+  "caseCategory": "validate_fail",
+  "description": "Fail when vote target is not a witness",
+  "generatedAt": "2025-12-23T10:39:35.092Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Witness[a06e6f6e5f7769746e6573735f3030310000000000] not exists",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049152",
+  "dynamicProperties": {},
+  "notes": []
+}

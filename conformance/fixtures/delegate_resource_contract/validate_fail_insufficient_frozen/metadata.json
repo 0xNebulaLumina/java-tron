@@ -4,10 +4,10 @@
   "caseName": "validate_fail_insufficient_frozen",
   "caseCategory": "validate_fail",
   "description": "Fail when owner has insufficient frozen balance",
-  "generatedAt": "2025-12-22T11:07:50.987Z",
+  "generatedAt": "2025-12-23T10:39:30.838Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1766401673987,
+  "blockTimestamp": 1766486373838,
   "databasesTouched": [
     "account",
     "DelegatedResource",

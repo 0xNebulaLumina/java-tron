@@ -1,0 +1,23 @@
+{
+  "contractType": "VOTE_WITNESS_CONTRACT",
+  "contractTypeNum": 4,
+  "caseName": "happy_path_single_vote",
+  "caseCategory": "happy",
+  "description": "Vote for a single witness with sufficient TRON power",
+  "generatedAt": "2025-12-23T10:39:35.104Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0766f7465725f73696e676c655f30303100000000",
+  "dynamicProperties": {
+    "CHANGE_DELEGATION": 0
+  },
+  "notes": []
+}

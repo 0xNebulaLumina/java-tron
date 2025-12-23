@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_invalid_name_trx",
+  "caseCategory": "validate_fail",
+  "description": "Fail when asset name is \u0027trx\u0027 (reserved)",
+  "generatedAt": "2025-12-23T10:39:17.243Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "assetName can\u0027t be trx",
+  "ownerAddress": "a061737365745f6973737565725f30350000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

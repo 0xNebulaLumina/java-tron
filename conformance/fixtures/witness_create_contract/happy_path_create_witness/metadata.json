@@ -1,0 +1,22 @@
+{
+  "contractType": "WITNESS_CREATE_CONTRACT",
+  "contractTypeNum": 5,
+  "caseName": "happy_path_create_witness",
+  "caseCategory": "happy",
+  "description": "Create a new witness with valid URL and sufficient balance",
+  "generatedAt": "2025-12-23T10:39:35.110Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a06e65775f7769746e6573735f6f776e3100000000",
+  "dynamicProperties": {
+    "ACCOUNT_UPGRADE_COST": 9999000000
+  },
+  "notes": []
+}

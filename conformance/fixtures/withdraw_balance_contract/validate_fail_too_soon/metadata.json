@@ -1,0 +1,20 @@
+{
+  "contractType": "WITHDRAW_BALANCE_CONTRACT",
+  "contractTypeNum": 13,
+  "caseName": "validate_fail_too_soon",
+  "caseCategory": "validate_fail",
+  "description": "Fail when withdrawing before cooldown period ends",
+  "generatedAt": "2025-12-23T10:39:35.046Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "The last withdraw time is 1699999999000, less than 24 hours",
+  "ownerAddress": "a07769746e6573735f726563656e745f3031000000",
+  "dynamicProperties": {},
+  "notes": []
+}
