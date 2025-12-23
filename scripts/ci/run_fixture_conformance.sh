@@ -143,8 +143,7 @@ market_sell_asset_contract|\
 market_cancel_order_contract|\
 proposal_approve_contract|\
 proposal_create_contract|\
-proposal_delete_contract|\
-withdraw_expire_unfreeze_contract)
+proposal_delete_contract)
                     return 0
                     ;;
                 *)

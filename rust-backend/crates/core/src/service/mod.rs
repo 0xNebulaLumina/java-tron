@@ -4275,7 +4275,7 @@ impl BackendService {
 
         // 5. Validate there's something to withdraw
         if total_withdraw <= 0 {
-            return Err("no unFreeze balance to withdraw".to_string());
+            return Err("no unFreeze balance to withdraw ".to_string());
         }
 
         // 6. Check for overflow
