@@ -144,7 +144,6 @@ market_cancel_order_contract|\
 proposal_approve_contract|\
 proposal_create_contract|\
 proposal_delete_contract|\
-set_account_id_contract|\
 update_brokerage_contract|\
 update_setting_contract|\
 withdraw_expire_unfreeze_contract)

@@ -2482,25 +2482,25 @@ impl BackendService {
         info!("SetAccountId: owner={}, account_id={:?}",
               owner_tron, String::from_utf8_lossy(&account_id));
 
-        // 2. Validate account ID format (8-32 bytes, valid characters)
+        // 2. Validate account ID format
         if !self.validate_account_id(&account_id) {
-            return Err("Invalid account ID format".to_string());
+            return Err("Invalid accountId".to_string());
         }
 
-        // 3. Check if account ID is already taken
-        if storage_adapter.has_account_id(&account_id)
-            .map_err(|e| format!("Failed to check account id: {}", e))? {
-            return Err("This account ID has already been used".to_string());
-        }
-
-        // 4. Get owner account
+        // 3. Get owner account
         let mut account_proto = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
-            .ok_or_else(|| "Account does not exist".to_string())?;
+            .ok_or_else(|| "Account has not existed".to_string())?;
 
-        // 5. Check if account already has an ID
+        // 4. Check if account already has an ID
         if !account_proto.account_id.is_empty() {
-            return Err("This account has already set an account ID".to_string());
+            return Err("This account id already set".to_string());
+        }
+
+        // 5. Check if account ID is already taken
+        if storage_adapter.has_account_id(&account_id)
+            .map_err(|e| format!("Failed to check account id: {}", e))? {
+            return Err("This id has existed".to_string());
         }
 
         // 6. Set account ID
@@ -2589,21 +2589,16 @@ impl BackendService {
     /// Java: TransactionUtil.validAccountId(accountId)
     /// Rules:
     /// - Length: 8-32 bytes
-    /// - Valid ASCII characters only (no spaces, no Chinese chars)
+    /// - Readable ASCII characters only (from '!' to '~')
     fn validate_account_id(&self, account_id: &[u8]) -> bool {
-        // Length check: 8-32 bytes
+        // validReadableBytes(accountId, 32) && accountId.length >= 8
         if account_id.len() < 8 || account_id.len() > 32 {
             return false;
         }
 
-        // Check for valid ASCII characters (printable, no spaces)
+        // b must be readable: 0x21 = '!', 0x7E = '~'
         for &b in account_id {
-            // Allow: a-z, A-Z, 0-9, underscore
-            let valid = (b >= b'a' && b <= b'z')
-                || (b >= b'A' && b <= b'Z')
-                || (b >= b'0' && b <= b'9')
-                || b == b'_';
-            if !valid {
+            if b < 0x21 || b > 0x7E {
                 return false;
             }
         }
