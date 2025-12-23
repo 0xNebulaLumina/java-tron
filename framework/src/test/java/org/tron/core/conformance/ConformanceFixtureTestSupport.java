@@ -349,7 +349,7 @@ public final class ConformanceFixtureTestSupport {
 
     // Witness creation settings
     dynamicStore.saveAccountUpgradeCost(9999 * ONE_TRX); // 9999 TRX
-    dynamicStore.saveTotalCreateWitnessCost(0);
+    dynamicStore.saveTotalCreateWitnessFee(0);
 
     // Witness allowance settings
     dynamicStore.saveWitnessAllowanceFrozenTime(1); // 1 day cooldown
@@ -362,22 +362,30 @@ public final class ConformanceFixtureTestSupport {
    * @return Hex address with proper prefix
    */
   public static String generateAddress(long seed) {
-    String seedHex = String.format("%040d", seed);
+    // Use hex format and pad to 40 chars
+    String seedHex = String.format("%040x", seed);
     return Wallet.getAddressPreFixString() + seedHex;
   }
 
   /**
    * Generate a deterministic hex address based on a string prefix.
    *
-   * @param prefix A string prefix (will be padded/truncated to fit)
+   * @param prefix A string prefix (will be hashed to generate valid hex)
    * @return Hex address with proper prefix
    */
   public static String generateAddress(String prefix) {
-    // Pad or truncate to 40 hex chars
-    String padded = String.format("%-40s", prefix).replace(' ', '0');
-    if (padded.length() > 40) {
-      padded = padded.substring(0, 40);
+    // Convert the prefix string to its hex representation and pad/truncate to 40 chars
+    StringBuilder hexBuilder = new StringBuilder();
+    for (char c : prefix.toCharArray()) {
+      hexBuilder.append(String.format("%02x", (int) c));
     }
-    return Wallet.getAddressPreFixString() + padded;
+    String hexStr = hexBuilder.toString();
+    // Pad with zeros or truncate to 40 chars
+    if (hexStr.length() < 40) {
+      hexStr = hexStr + String.format("%0" + (40 - hexStr.length()) + "d", 0);
+    } else if (hexStr.length() > 40) {
+      hexStr = hexStr.substring(0, 40);
+    }
+    return Wallet.getAddressPreFixString() + hexStr;
   }
 }

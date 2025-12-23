@@ -100,7 +100,7 @@ public class WitnessVotingFixtureGeneratorTest extends BaseTest {
     AccountCapsule voterAccount = putAccount(dbManager, voterAddress, INITIAL_BALANCE, "voter");
     // Add frozen balance for TRON power
     Protocol.Account.Builder builder = voterAccount.getInstance().toBuilder();
-    builder.setFrozen(0, Frozen.newBuilder()
+    builder.addFrozen(Frozen.newBuilder()
         .setFrozenBalance(100 * ONE_TRX) // 100 TRX frozen = 100 TRON power
         .setExpireTime(DEFAULT_BLOCK_TIMESTAMP + 86400000 * 3) // 3 days
         .build());
@@ -218,7 +218,7 @@ public class WitnessVotingFixtureGeneratorTest extends BaseTest {
     // Create account with small TRON power
     AccountCapsule voterAccount = putAccount(dbManager, smallPowerVoter, INITIAL_BALANCE, "small_power");
     Protocol.Account.Builder builder = voterAccount.getInstance().toBuilder();
-    builder.setFrozen(0, Frozen.newBuilder()
+    builder.addFrozen(Frozen.newBuilder()
         .setFrozenBalance(ONE_TRX) // 1 TRX frozen = 1 TRON power
         .setExpireTime(DEFAULT_BLOCK_TIMESTAMP + 86400000 * 3)
         .build());
