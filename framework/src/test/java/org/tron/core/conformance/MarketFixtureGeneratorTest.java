@@ -1,29 +1,41 @@
 package org.tron.core.conformance;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import org.junit.Before;
+import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.junit.Test;
 import org.tron.common.BaseTest;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Constant;
 import org.tron.core.Wallet;
+import org.tron.core.actuator.MarketSellAssetActuator;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.MarketAccountOrderCapsule;
 import org.tron.core.capsule.MarketOrderCapsule;
+import org.tron.core.capsule.MarketOrderIdListCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.config.args.Args;
+import org.tron.core.capsule.utils.MarketUtils;
+import org.tron.core.db.TronStoreWithRevoking;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.AccountType;
-import org.tron.protos.Protocol.MarketOrder;
 import org.tron.protos.Protocol.MarketOrder.State;
 import org.tron.protos.Protocol.Transaction;
-import org.tron.protos.contract.MarketContract.MarketSellAssetContract;
 import org.tron.protos.contract.MarketContract.MarketCancelOrderContract;
+import org.tron.protos.contract.MarketContract.MarketSellAssetContract;
 
 /**
  * Generates conformance test fixtures for Market contracts (52-53).
@@ -57,6 +69,8 @@ public class MarketFixtureGeneratorTest extends BaseTest {
 
   @Before
   public void setup() {
+    clearMarketStores();
+
     // Initialize test accounts and dynamic properties
     initializeTestData();
 
@@ -75,6 +89,11 @@ public class MarketFixtureGeneratorTest extends BaseTest {
     dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(10);
     // Enable allowSameTokenName for V2
     dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
+    // Seed TRC-10 assets for validate() checks
+    ConformanceFixtureTestSupport.putAssetIssueV2(
+        dbManager, new String(TOKEN_A), OWNER_ADDRESS, "TokenA", 1_000_000_000_000L);
+    ConformanceFixtureTestSupport.putAssetIssueV2(
+        dbManager, new String(TOKEN_B), OWNER_ADDRESS, "TokenB", 1_000_000_000_000L);
     // Enable market transactions
     dbManager.getDynamicPropertiesStore().saveAllowMarketTransaction(1);
     // Set market fees and limits
@@ -207,6 +226,222 @@ public class MarketFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("MarketSellAsset Token-to-Token happy path: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateMarketSellAsset_edge_matchSingleMakerOrder() throws Exception {
+    byte[] makerOrderId = createMarketOrder(1, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN,
+        1_000_000_000L, 1_000_000_000L);
+
+    // Taker: Sell TRX to buy TOKEN_A, should match the single maker order.
+    MarketSellAssetContract contract = MarketSellAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setSellTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setSellTokenQuantity(1_000_000_000L)
+        .setBuyTokenId(ByteString.copyFrom(TOKEN_A))
+        .setBuyTokenQuantity(1_000_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.MarketSellAssetContract, contract);
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("MARKET_SELL_ASSET_CONTRACT", 52)
+        .caseName("edge_match_single_maker_order")
+        .caseCategory("edge")
+        .description("Match a taker order against one maker order")
+        .database("account")
+        .database("market_order")
+        .database("market_account")
+        .database("market_pair_to_price")
+        .database("market_pair_price_to_order")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    assertTrue(result.isSuccess());
+    assertNotNull(result.getResultProto());
+    assertEquals(1, result.getResultProto().getOrderDetailsCount());
+
+    MarketOrderCapsule makerOrderCapsule = chainBaseManager.getMarketOrderStore().get(makerOrderId);
+    assertEquals(State.INACTIVE, makerOrderCapsule.getSt());
+  }
+
+  @Test
+  public void generateMarketSellAsset_edge_matchLoop_samePriceMultipleOrders() throws Exception {
+    createMarketOrder(1, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN, 1_000_000_000L, 1_000_000_000L);
+    createMarketOrder(2, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN, 1_000_000_000L, 1_000_000_000L);
+    createMarketOrder(3, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN, 1_000_000_000L, 1_000_000_000L);
+
+    // Taker matches three maker orders at the same price (inner match loop).
+    MarketSellAssetContract contract = MarketSellAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setSellTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setSellTokenQuantity(3_000_000_000L)
+        .setBuyTokenId(ByteString.copyFrom(TOKEN_A))
+        .setBuyTokenQuantity(3_000_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.MarketSellAssetContract, contract);
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("MARKET_SELL_ASSET_CONTRACT", 52)
+        .caseName("edge_match_loop_same_price_multiple_orders")
+        .caseCategory("edge")
+        .description("Match loop: taker consumes multiple maker orders at the same price")
+        .database("account")
+        .database("market_order")
+        .database("market_account")
+        .database("market_pair_to_price")
+        .database("market_pair_price_to_order")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    assertTrue(result.isSuccess());
+    assertNotNull(result.getResultProto());
+    assertEquals(3, result.getResultProto().getOrderDetailsCount());
+  }
+
+  @Test
+  public void generateMarketSellAsset_edge_maxMatchNum_atLimit() throws Exception {
+    int maxMatchNum = MarketSellAssetActuator.getMAX_MATCH_NUM();
+    long unit = 1_000_000L;
+    for (int i = 0; i < maxMatchNum; i++) {
+      createMarketOrder(i, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN, unit, unit);
+    }
+
+    // Taker matches exactly MAX_MATCH_NUM maker orders.
+    MarketSellAssetContract contract = MarketSellAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setSellTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setSellTokenQuantity(unit * maxMatchNum)
+        .setBuyTokenId(ByteString.copyFrom(TOKEN_A))
+        .setBuyTokenQuantity(unit * maxMatchNum)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.MarketSellAssetContract, contract);
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("MARKET_SELL_ASSET_CONTRACT", 52)
+        .caseName("edge_max_match_num_at_limit")
+        .caseCategory("edge")
+        .description("MAX_MATCH_NUM boundary: exactly at limit should succeed")
+        .database("account")
+        .database("market_order")
+        .database("market_account")
+        .database("market_pair_to_price")
+        .database("market_pair_price_to_order")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    assertTrue(result.isSuccess());
+    assertNotNull(result.getResultProto());
+    assertEquals(maxMatchNum, result.getResultProto().getOrderDetailsCount());
+  }
+
+  @Test
+  public void generateMarketSellAsset_edge_maxMatchNum_exceeded() throws Exception {
+    int maxMatchNum = MarketSellAssetActuator.getMAX_MATCH_NUM();
+    long unit = 1_000_000L;
+    for (int i = 0; i < maxMatchNum + 1; i++) {
+      createMarketOrder(i, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN, unit, unit);
+    }
+
+    // Taker tries to match MAX_MATCH_NUM + 1 maker orders; execution should revert.
+    MarketSellAssetContract contract = MarketSellAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setSellTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setSellTokenQuantity(unit * (maxMatchNum + 1))
+        .setBuyTokenId(ByteString.copyFrom(TOKEN_A))
+        .setBuyTokenQuantity(unit * (maxMatchNum + 1))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.MarketSellAssetContract, contract);
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("MARKET_SELL_ASSET_CONTRACT", 52)
+        .caseName("edge_max_match_num_exceeded")
+        .caseCategory("edge")
+        .description("MAX_MATCH_NUM boundary: exceeding limit should revert")
+        .database("account")
+        .database("market_order")
+        .database("market_account")
+        .database("market_pair_to_price")
+        .database("market_pair_price_to_order")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    assertFalse(result.isSuccess());
+    assertNotNull(result.getExecutionError());
+    assertTrue(result.getExecutionError().contains("Too many matches. MAX_MATCH_NUM"));
+  }
+
+  @Test
+  public void generateMarketSellAsset_edge_priceQueueCleanup_removeEmptyPriceLevel() throws Exception {
+    byte[] makerOrderId1 = createMarketOrder(1, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN,
+        1_000_000_000L, 1_000_000_000L);
+    byte[] makerOrderId2 = createMarketOrder(2, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN,
+        1_000_000_000L, 2_000_000_000L);
+
+    // Taker only matches the best price level (1:1), leaving the worse price level intact.
+    MarketSellAssetContract contract = MarketSellAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setSellTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setSellTokenQuantity(1_000_000_000L)
+        .setBuyTokenId(ByteString.copyFrom(TOKEN_A))
+        .setBuyTokenQuantity(1_000_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.MarketSellAssetContract, contract);
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("MARKET_SELL_ASSET_CONTRACT", 52)
+        .caseName("edge_price_queue_cleanup_remove_empty_price_level")
+        .caseCategory("edge")
+        .description("Price queue cleanup: delete empty price level after matching")
+        .database("account")
+        .database("market_order")
+        .database("market_account")
+        .database("market_pair_to_price")
+        .database("market_pair_price_to_order")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    assertTrue(result.isSuccess());
+    assertNotNull(result.getResultProto());
+    assertEquals(1, result.getResultProto().getOrderDetailsCount());
+
+    MarketOrderCapsule makerOrderCapsule1 = chainBaseManager.getMarketOrderStore().get(makerOrderId1);
+    assertEquals(State.INACTIVE, makerOrderCapsule1.getSt());
+
+    MarketOrderCapsule makerOrderCapsule2 = chainBaseManager.getMarketOrderStore().get(makerOrderId2);
+    assertEquals(State.ACTIVE, makerOrderCapsule2.getSt());
+
+    byte[] makerPair = MarketUtils.createPairKey(TOKEN_A, TRX_TOKEN);
+    assertEquals(1L, chainBaseManager.getMarketPairToPriceStore().getPriceNum(makerPair));
+
+    byte[] priceKey1 = MarketUtils.createPairPriceKey(TOKEN_A, TRX_TOKEN, 1_000_000_000L, 1_000_000_000L);
+    byte[] priceKey2 = MarketUtils.createPairPriceKey(TOKEN_A, TRX_TOKEN, 1_000_000_000L, 2_000_000_000L);
+    assertFalse(chainBaseManager.getMarketPairPriceToOrderStore().has(priceKey1));
+    assertTrue(chainBaseManager.getMarketPairPriceToOrderStore().has(priceKey2));
   }
 
   @Test
@@ -596,6 +831,27 @@ public class MarketFixtureGeneratorTest extends BaseTest {
   // Helper Methods
   // ==========================================================================
 
+  private void clearMarketStores() {
+    clearStore(chainBaseManager.getMarketAccountStore());
+    clearStore(chainBaseManager.getMarketOrderStore());
+    clearStore(chainBaseManager.getMarketPairToPriceStore());
+    clearStore(chainBaseManager.getMarketPairPriceToOrderStore());
+  }
+
+  private void clearStore(TronStoreWithRevoking<?> store) {
+    List<byte[]> keys = new ArrayList<>();
+    Iterator<?> iterator = store.iterator();
+    while (iterator.hasNext()) {
+      Object entry = iterator.next();
+      if (entry instanceof Map.Entry) {
+        keys.add((byte[]) ((Map.Entry<?, ?>) entry).getKey());
+      }
+    }
+    for (byte[] key : keys) {
+      store.delete(key);
+    }
+  }
+
   private TransactionCapsule createTransaction(Transaction.Contract.ContractType type,
                                                 com.google.protobuf.Message contract) {
     Transaction.Contract protoContract = Transaction.Contract.newBuilder()
@@ -647,75 +903,75 @@ public class MarketFixtureGeneratorTest extends BaseTest {
    * @return the order ID
    */
   private byte[] createMarketOrder(long count, String ownerAddress, byte[] sellTokenId,
-      byte[] buyTokenId, long sellQuantity, long buyQuantity) {
+      byte[] buyTokenId, long sellQuantity, long buyQuantity) throws Exception {
 
     byte[] ownerBytes = ByteArray.fromHexString(ownerAddress);
     long createTime = chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
 
-    // Calculate order ID using Keccak256 hash (matching Java implementation)
-    byte[] orderId = calculateOrderId(ownerBytes, sellTokenId, buyTokenId, count);
+    // Deduct sell balance/token from owner to simulate order creation
+    AccountCapsule ownerAccount = chainBaseManager.getAccountStore().get(ownerBytes);
+    if (ownerAccount == null) {
+      throw new IllegalStateException("Account does not exist: " + ownerAddress);
+    }
+    if (java.util.Arrays.equals(sellTokenId, TRX_TOKEN)) {
+      ownerAccount.setBalance(ownerAccount.getBalance() - sellQuantity);
+    } else if (!ownerAccount.reduceAssetAmountV2(
+        sellTokenId,
+        sellQuantity,
+        chainBaseManager.getDynamicPropertiesStore(),
+        chainBaseManager.getAssetIssueStore())) {
+      throw new IllegalStateException("Insufficient token balance for sellTokenId");
+    }
+    chainBaseManager.getAccountStore().put(ownerBytes, ownerAccount);
+
+    // Calculate order ID using MarketUtils.calculateOrderId (Keccak256)
+    byte[] orderId = MarketUtils.calculateOrderId(ByteString.copyFrom(ownerBytes),
+        sellTokenId, buyTokenId, count);
 
     // Create the market order
-    MarketOrder order = MarketOrder.newBuilder()
-        .setOrderId(ByteString.copyFrom(orderId))
+    MarketSellAssetContract contract = MarketSellAssetContract.newBuilder()
         .setOwnerAddress(ByteString.copyFrom(ownerBytes))
-        .setCreateTime(createTime)
         .setSellTokenId(ByteString.copyFrom(sellTokenId))
         .setSellTokenQuantity(sellQuantity)
-        .setSellTokenQuantityRemain(sellQuantity)
         .setBuyTokenId(ByteString.copyFrom(buyTokenId))
         .setBuyTokenQuantity(buyQuantity)
-        .setState(State.ACTIVE)
         .build();
 
-    MarketOrderCapsule orderCapsule = new MarketOrderCapsule(order);
+    MarketOrderCapsule orderCapsule = new MarketOrderCapsule(orderId, contract);
+    orderCapsule.setCreateTime(createTime);
+
     chainBaseManager.getMarketOrderStore().put(orderId, orderCapsule);
 
-    // Update market account order count
-    byte[] accountKey = ownerBytes;
-    MarketAccountOrderCapsule accountOrder;
-    try {
-      if (chainBaseManager.getMarketAccountStore().has(accountKey)) {
-        accountOrder = chainBaseManager.getMarketAccountStore().get(accountKey);
-      } else {
-        accountOrder = new MarketAccountOrderCapsule(ByteString.copyFrom(ownerBytes));
-      }
-    } catch (Exception e) {
-      accountOrder = new MarketAccountOrderCapsule(ByteString.copyFrom(ownerBytes));
+    // Update market account order list/counters (count = active, totalCount = orderId counter)
+    MarketAccountOrderCapsule accountOrderCapsule = chainBaseManager
+        .getMarketAccountStore()
+        .getUnchecked(ownerBytes);
+    if (accountOrderCapsule == null) {
+      accountOrderCapsule = new MarketAccountOrderCapsule(ByteString.copyFrom(ownerBytes));
     }
-    accountOrder.setCount(count);
-    chainBaseManager.getMarketAccountStore().put(accountKey, accountOrder);
+    accountOrderCapsule.addOrders(orderCapsule.getID());
+    accountOrderCapsule.setCount(accountOrderCapsule.getCount() + 1);
+    accountOrderCapsule.setTotalCount(Math.max(accountOrderCapsule.getTotalCount(), count + 1));
+    chainBaseManager.getMarketAccountStore().put(ownerBytes, accountOrderCapsule);
+
+    // Add order into order book (pairToPrice / pairPriceToOrder)
+    byte[] pairPriceKey = MarketUtils.createPairPriceKey(
+        sellTokenId, buyTokenId, sellQuantity, buyQuantity);
+    MarketOrderIdListCapsule orderIdListCapsule = chainBaseManager
+        .getMarketPairPriceToOrderStore()
+        .getUnchecked(pairPriceKey);
+    if (orderIdListCapsule == null) {
+      orderIdListCapsule = new MarketOrderIdListCapsule();
+      chainBaseManager.getMarketPairToPriceStore()
+          .addNewPriceKey(sellTokenId, buyTokenId, chainBaseManager.getMarketPairPriceToOrderStore());
+    }
+    orderIdListCapsule.addOrder(orderCapsule, chainBaseManager.getMarketOrderStore());
+    chainBaseManager.getMarketPairPriceToOrderStore().put(pairPriceKey, orderIdListCapsule);
 
     log.info("Created market order {} for testing: {} -> {}",
         ByteArray.toHexString(orderId).substring(0, 16) + "...",
         new String(sellTokenId), new String(buyTokenId));
 
     return orderId;
-  }
-
-  /**
-   * Calculate order ID using Keccak256 hash (matching MarketUtils.calculateOrderId).
-   */
-  private byte[] calculateOrderId(byte[] owner, byte[] sellTokenId, byte[] buyTokenId, long count) {
-    // Combine: owner (21 bytes) + sellTokenId + buyTokenId + count (8 bytes)
-    byte[] countBytes = new byte[8];
-    for (int i = 7; i >= 0; i--) {
-      countBytes[i] = (byte) (count & 0xFF);
-      count >>= 8;
-    }
-
-    int len = owner.length + sellTokenId.length + buyTokenId.length + 8;
-    byte[] data = new byte[len];
-    int offset = 0;
-    System.arraycopy(owner, 0, data, offset, owner.length);
-    offset += owner.length;
-    System.arraycopy(sellTokenId, 0, data, offset, sellTokenId.length);
-    offset += sellTokenId.length;
-    System.arraycopy(buyTokenId, 0, data, offset, buyTokenId.length);
-    offset += buyTokenId.length;
-    System.arraycopy(countBytes, 0, data, offset, 8);
-
-    // Use SHA3-256 (Keccak256)
-    return org.tron.common.crypto.Hash.sha3(data);
   }
 }
