@@ -2000,7 +2000,7 @@ impl EngineBackedEvmStateStore {
     /// Store proposal
     pub fn put_proposal(&self, proposal: &crate::protocol::Proposal) -> Result<()> {
         let key = self.proposal_key(proposal.proposal_id);
-        let data = proposal.encode_to_vec();
+        let data = self.encode_proposal_java_compatible(proposal);
 
         tracing::debug!(
             "Storing proposal {} - proposer: {}, state: {:?}, approvals: {}, key: {}",
@@ -2013,6 +2013,82 @@ impl EngineBackedEvmStateStore {
 
         self.storage_engine.put(self.proposal_database(), &key, &data)?;
         Ok(())
+    }
+
+    /// Encode a `Proposal` exactly the way java-tron persists it.
+    ///
+    /// `prost`'s default map encoding omits map-entry keys when the key is `0`, but java-tron
+    /// includes the key field (`08 00`) in that case. Conformance fixtures assert raw DB bytes,
+    /// so proposal persistence must be byte-for-byte compatible.
+    fn encode_proposal_java_compatible(&self, proposal: &crate::protocol::Proposal) -> Vec<u8> {
+        let mut out = Vec::new();
+
+        // Field 1: proposal_id (int64, varint)
+        if proposal.proposal_id != 0 {
+            self.write_varint(&mut out, (1 << 3) | 0);
+            self.write_varint(&mut out, proposal.proposal_id as u64);
+        }
+
+        // Field 2: proposer_address (bytes)
+        if !proposal.proposer_address.is_empty() {
+            self.write_varint(&mut out, (2 << 3) | 2);
+            self.write_varint(&mut out, proposal.proposer_address.len() as u64);
+            out.extend_from_slice(&proposal.proposer_address);
+        }
+
+        // Field 3: parameters (map<int64,int64>) - entries are encoded in ascending key order.
+        if !proposal.parameters.is_empty() {
+            let mut entries: Vec<(i64, i64)> = proposal
+                .parameters
+                .iter()
+                .map(|(k, v)| (*k, *v))
+                .collect();
+            entries.sort_by_key(|(k, _)| *k);
+
+            for (key, value) in entries {
+                let mut entry_buf = Vec::new();
+                // Map entry field 1: key (int64, varint) - ALWAYS encoded (even if 0).
+                self.write_varint(&mut entry_buf, (1 << 3) | 0);
+                self.write_varint(&mut entry_buf, key as u64);
+                // Map entry field 2: value (int64, varint) - encoded for parity with java-tron.
+                self.write_varint(&mut entry_buf, (2 << 3) | 0);
+                self.write_varint(&mut entry_buf, value as u64);
+
+                self.write_varint(&mut out, (3 << 3) | 2);
+                self.write_varint(&mut out, entry_buf.len() as u64);
+                out.extend_from_slice(&entry_buf);
+            }
+        }
+
+        // Field 4: expiration_time (int64, varint)
+        if proposal.expiration_time != 0 {
+            self.write_varint(&mut out, (4 << 3) | 0);
+            self.write_varint(&mut out, proposal.expiration_time as u64);
+        }
+
+        // Field 5: create_time (int64, varint)
+        if proposal.create_time != 0 {
+            self.write_varint(&mut out, (5 << 3) | 0);
+            self.write_varint(&mut out, proposal.create_time as u64);
+        }
+
+        // Field 6: approvals (repeated bytes)
+        for approval in &proposal.approvals {
+            if approval.is_empty() {
+                continue;
+            }
+            self.write_varint(&mut out, (6 << 3) | 2);
+            self.write_varint(&mut out, approval.len() as u64);
+            out.extend_from_slice(approval);
+        }
+
+        // Field 7: state (enum, varint) - proto3 omits default 0.
+        if proposal.state != 0 {
+            self.write_varint(&mut out, (7 << 3) | 0);
+            self.write_varint(&mut out, proposal.state as u64);
+        }
+
+        out
     }
 
     /// Check if proposal exists

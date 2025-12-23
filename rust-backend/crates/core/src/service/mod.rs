@@ -1994,7 +1994,7 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
         use tron_backend_execution::protocol::Proposal;
@@ -2002,16 +2002,26 @@ impl BackendService {
 
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
+        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let readable_owner_address = hex::encode(&owner_address_bytes);
 
         info!("ProposalCreate owner={}", owner_tron);
 
-        // 1. Validate owner is a witness
+        // 1. Validate owner exists and is a witness
+        // Java: AccountStore.has(owner) then WitnessStore.has(owner)
+        let account_exists = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .is_some();
+        if !account_exists {
+            warn!("Account {} does not exist", owner_tron);
+            return Err(format!("Account[{}] not exists", readable_owner_address));
+        }
+
         let is_witness = storage_adapter.is_witness(&owner)
             .map_err(|e| format!("Failed to check witness status: {}", e))?;
-
         if !is_witness {
-            warn!("Account {} is not a witness", owner_tron);
-            return Err("Account is not a witness".to_string());
+            warn!("Witness {} does not exist", owner_tron);
+            return Err(format!("Witness[{}] not exists", readable_owner_address));
         }
 
         // 2. Parse ProposalCreateContract from transaction.data
@@ -2032,18 +2042,29 @@ impl BackendService {
             .map_err(|e| format!("Failed to get LATEST_PROPOSAL_NUM: {}", e))?;
         let new_proposal_id = latest_proposal_num + 1;
 
-        // 4. Calculate expiration time
-        // Java: now + CommonParameter.getInstance().getProposalExpireTime()
+        // 4. Calculate create/expiration time (java-tron parity)
+        // Java reference: ProposalCreateActuator.execute()
+        //   now = dynamicStore.getLatestBlockHeaderTimestamp()
+        //   currentMaintenanceTime = dynamicStore.getNextMaintenanceTime()
+        //   maintenanceTimeInterval = dynamicStore.getMaintenanceTimeInterval()
+        //   now3 = now + CommonParameter.getInstance().getProposalExpireTime()
+        //   round = (now3 - currentMaintenanceTime) / maintenanceTimeInterval
+        //   expirationTime = currentMaintenanceTime + (round + 1) * maintenanceTimeInterval
         let execution_config = self.get_execution_config()?;
-        let expire_time_ms = execution_config.remote.proposal_expire_time_ms;
+        let proposal_expire_time_ms = execution_config.remote.proposal_expire_time_ms as i64;
 
-        let now = context.block_timestamp as i64;
-        let expiration_time = now + (expire_time_ms as i64);
+        let now = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?;
+        let current_maintenance_time = storage_adapter.get_next_maintenance_time()
+            .map_err(|e| format!("Failed to get NEXT_MAINTENANCE_TIME: {}", e))?;
+        let maintenance_time_interval = storage_adapter.get_maintenance_time_interval()
+            .map_err(|e| format!("Failed to get MAINTENANCE_TIME_INTERVAL: {}", e))?;
 
-        // 5. Build owner address in 21-byte format (network-aware prefix)
-        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let now3 = now + proposal_expire_time_ms;
+        let round = (now3 - current_maintenance_time) / maintenance_time_interval;
+        let expiration_time = current_maintenance_time + (round + 1) * maintenance_time_interval;
 
-        // 6. Create new Proposal
+        // 5. Create new Proposal
         let proposal = Proposal {
             proposal_id: new_proposal_id,
             proposer_address: owner_address_bytes,
@@ -2054,11 +2075,11 @@ impl BackendService {
             state: 0, // PENDING
         };
 
-        // 7. Persist proposal
+        // 6. Persist proposal
         storage_adapter.put_proposal(&proposal)
             .map_err(|e| format!("Failed to persist proposal: {}", e))?;
 
-        // 8. Update LATEST_PROPOSAL_NUM
+        // 7. Update LATEST_PROPOSAL_NUM
         storage_adapter.set_latest_proposal_num(new_proposal_id)
             .map_err(|e| format!("Failed to update LATEST_PROPOSAL_NUM: {}", e))?;
 
@@ -2196,16 +2217,25 @@ impl BackendService {
 
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
+        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let readable_owner_address = hex::encode(&owner_address_bytes);
 
         info!("ProposalApprove owner={}", owner_tron);
 
-        // 1. Validate owner is a witness
+        // 1. Validate owner exists and is a witness (java-tron parity)
+        let account_exists = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .is_some();
+        if !account_exists {
+            warn!("Account {} does not exist", owner_tron);
+            return Err(format!("Account[{}] not exists", readable_owner_address));
+        }
+
         let is_witness = storage_adapter.is_witness(&owner)
             .map_err(|e| format!("Failed to check witness status: {}", e))?;
-
         if !is_witness {
-            warn!("Account {} is not a witness", owner_tron);
-            return Err("Account is not a witness".to_string());
+            warn!("Witness {} does not exist", owner_tron);
+            return Err(format!("Witness[{}] not exists", readable_owner_address));
         }
 
         // 2. Parse ProposalApproveContract
@@ -2220,38 +2250,47 @@ impl BackendService {
             proposal_id, is_add_approval
         );
 
-        // 3. Get proposal
-        let mut proposal = storage_adapter.get_proposal(proposal_id)
-            .map_err(|e| format!("Failed to get proposal: {}", e))?
-            .ok_or_else(|| format!("Proposal {} does not exist", proposal_id))?;
-
-        // 4. Validate proposal state is PENDING (0)
-        if proposal.state != 0 {
-            warn!("Proposal {} has already been processed, state={}", proposal_id, proposal.state);
-            return Err("Proposal has already been processed".to_string());
+        // 3. Validate proposal exists (java-tron parity checks LATEST_PROPOSAL_NUM first)
+        let latest_proposal_num = storage_adapter.get_latest_proposal_num()
+            .map_err(|e| format!("Failed to get LATEST_PROPOSAL_NUM: {}", e))?;
+        if proposal_id > latest_proposal_num {
+            return Err(format!("Proposal[{}] not exists", proposal_id));
         }
 
-        // 5. Build owner address in 21-byte format for comparison (network-aware prefix)
-        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let mut proposal = storage_adapter.get_proposal(proposal_id)
+            .map_err(|e| format!("Failed to get proposal: {}", e))?
+            .ok_or_else(|| format!("Proposal[{}] not exists", proposal_id))?;
+
+        // 4. Validate expiration / canceled status
+        let now = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?;
+        if now >= proposal.expiration_time {
+            return Err(format!("Proposal[{}] expired", proposal_id));
+        }
+        if proposal.state == 3 {
+            return Err(format!("Proposal[{}] canceled", proposal_id));
+        }
+
+        // 5. Validate approval add/remove semantics
+        if is_add_approval {
+            if proposal.approvals.iter().any(|a| a == &owner_address_bytes) {
+                return Err(format!(
+                    "Witness[{}]has approved proposal[{}] before",
+                    readable_owner_address, proposal_id
+                ));
+            }
+        } else if !proposal.approvals.iter().any(|a| a == &owner_address_bytes) {
+            return Err(format!(
+                "Witness[{}]has not approved proposal[{}] before",
+                readable_owner_address, proposal_id
+            ));
+        }
 
         // 6. Add or remove approval
         if is_add_approval {
-            // Check if already approved
-            if proposal.approvals.iter().any(|a| a == &owner_address_bytes) {
-                warn!("Witness {} has already approved proposal {}", owner_tron, proposal_id);
-                return Err("Witness has already approved".to_string());
-            }
             proposal.approvals.push(owner_address_bytes.clone());
-            info!("Added approval from {} to proposal {}", owner_tron, proposal_id);
         } else {
-            // Remove approval
-            let original_len = proposal.approvals.len();
             proposal.approvals.retain(|a| a != &owner_address_bytes);
-            if proposal.approvals.len() == original_len {
-                warn!("Witness {} has not approved proposal {}", owner_tron, proposal_id);
-                return Err("Witness has not approved".to_string());
-            }
-            info!("Removed approval from {} to proposal {}", owner_tron, proposal_id);
         }
 
         // 7. Persist updated proposal
@@ -2290,7 +2329,7 @@ impl BackendService {
     ///   bool is_add_approval = 3;
     fn parse_proposal_approve_contract(&self, data: &[u8]) -> Result<(i64, bool), String> {
         let mut proposal_id: Option<i64> = None;
-        let mut is_add_approval = true; // Default to true
+        let mut is_add_approval = false; // proto3 default is false when field is omitted
         let mut pos = 0;
 
         while pos < data.len() {
@@ -2349,8 +2388,19 @@ impl BackendService {
 
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
+        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let readable_owner_address = hex::encode(&owner_address_bytes);
 
         info!("ProposalDelete owner={}", owner_tron);
+
+        // 0. Validate owner exists
+        let account_exists = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .is_some();
+        if !account_exists {
+            warn!("Account {} does not exist", owner_tron);
+            return Err(format!("Account[{}] not exists", readable_owner_address));
+        }
 
         // 1. Parse ProposalDeleteContract
         // ProposalDeleteContract:
@@ -2360,26 +2410,33 @@ impl BackendService {
 
         info!("ProposalDelete: id={}", proposal_id);
 
-        // 2. Get proposal
-        let mut proposal = storage_adapter.get_proposal(proposal_id)
-            .map_err(|e| format!("Failed to get proposal: {}", e))?
-            .ok_or_else(|| format!("Proposal {} does not exist", proposal_id))?;
-
-        // 3. Validate owner is the proposer
-        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
-
-        if proposal.proposer_address != owner_address_bytes {
-            warn!(
-                "Account {} is not the proposer of proposal {}",
-                owner_tron, proposal_id
-            );
-            return Err("Only the proposer can delete the proposal".to_string());
+        // 2. Validate proposal exists (java-tron parity checks LATEST_PROPOSAL_NUM first)
+        let latest_proposal_num = storage_adapter.get_latest_proposal_num()
+            .map_err(|e| format!("Failed to get LATEST_PROPOSAL_NUM: {}", e))?;
+        if proposal_id > latest_proposal_num {
+            return Err(format!("Proposal[{}] not exists", proposal_id));
         }
 
-        // 4. Validate proposal state is PENDING (0)
-        if proposal.state != 0 {
-            warn!("Proposal {} has already been processed, state={}", proposal_id, proposal.state);
-            return Err("Proposal has already been processed".to_string());
+        let mut proposal = storage_adapter.get_proposal(proposal_id)
+            .map_err(|e| format!("Failed to get proposal: {}", e))?
+            .ok_or_else(|| format!("Proposal[{}] not exists", proposal_id))?;
+
+        // 3. Validate owner is the proposer
+        if proposal.proposer_address != owner_address_bytes {
+            return Err(format!(
+                "Proposal[{}] is not proposed by {}",
+                proposal_id, readable_owner_address
+            ));
+        }
+
+        // 4. Validate expiration / canceled status
+        let now = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?;
+        if now >= proposal.expiration_time {
+            return Err(format!("Proposal[{}] expired", proposal_id));
+        }
+        if proposal.state == 3 {
+            return Err(format!("Proposal[{}] canceled", proposal_id));
         }
 
         // 5. Set state to CANCELED (3)
