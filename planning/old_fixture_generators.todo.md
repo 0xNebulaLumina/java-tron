@@ -51,38 +51,44 @@ Remote request mapping (authoritative for how Rust handlers currently interpret 
 
 ## 0) Decisions to Lock Early (avoid rework)
 
-- [ ] **Fixture request encoding policy**: make fixture `request.pb` match `RemoteExecutionSPI` mapping (recommended), not “naive Any bytes”.
+- [x] **Fixture request encoding policy**: make fixture `request.pb` match `RemoteExecutionSPI` mapping (recommended), not "naive Any bytes".
   - Rationale: many Rust handlers (Transfer/TransferAsset/AccountUpdate/WitnessCreate/WitnessUpdate) expect `tx.to`, `tx.value`, `tx.asset_id`, or raw `tx.data` bytes, and will fail if we send `google.protobuf.Any` bytes.
-- [ ] **Strictness of `expectedErrorMessage`**:
+  - **IMPLEMENTED**: Updated `FixtureGenerator.buildRequest()` with contract-aware mapping.
+- [x] **Strictness of `expectedErrorMessage`**:
   - Current generator overwrites `FixtureMetadata.expectedErrorMessage` with the *full* exception message from Java (`FixtureGenerator.generate()` does this).
   - Rust conformance checks `actual_error.contains(expectedErrorMessage)` (see `rust-backend/crates/core/src/conformance/runner.rs`), so:
     - Keeping the full Java message makes fixtures a stricter oracle (Rust must include that exact substring).
     - Storing a short substring is less brittle, but requires changing generator logic (and likely regenerating existing fixtures for consistency).
-- [ ] **Default dynamic property “mode matrix”** for core fixtures:
+  - **DECISION**: Using short substrings in fixture metadata (e.g., "exist", "balance", "witness") for less brittle matching.
+- [x] **Default dynamic property "mode matrix"** for core fixtures:
   - `saveChangeDelegation(0)` for all vote/unfreeze/withdraw fixtures to avoid delegation-cycle side effects.
   - For TRC‑10 fixtures: default to `saveAllowSameTokenName(1)` (V2 id semantics).
   - For Freeze V1 fixtures: `saveUnfreezeDelayDays(0)` (V1 is rejected when V2 unfreeze delay is enabled).
   - For Freeze/Unfreeze V2 fixtures: `saveUnfreezeDelayDays(14)` or other >0 value.
   - Decide `saveAllowNewResourceModel(0)` unless TRON_POWER cases are in scope.
-- [ ] **Determinism approach**:
+  - **IMPLEMENTED**: `ConformanceFixtureTestSupport` helper class provides `initCommonDynamicPropsV1()`, `initCommonDynamicPropsV2()`, and `initTrc10DynamicProps()` for consistent setup.
+- [x] **Determinism approach**:
   - Option A (minimal): accept that request metadata (transaction_id) is time-dependent; rely on DB state parity only.
   - Option B (recommended): make transaction timestamps deterministic in fixture generators (fixed timestamp/expiration), so repeated generation yields stable `request.pb`.
+  - **IMPLEMENTED**: Option B. `ConformanceFixtureTestSupport` uses fixed timestamps: `DEFAULT_BLOCK_TIMESTAMP = 1700000000000L`, `DEFAULT_TX_TIMESTAMP`, `DEFAULT_TX_EXPIRATION`.
 
 ## 0.5 Suggested Rollout Strategy (keeps failures debuggable)
 
-- [ ] Phase A (plumbing + smoke):
-  - [ ] Fix `buildRequest()` mapping + add missing store iterators first.
-  - [ ] Generate **one** `happy_path` fixture per contract type to validate request encoding + DB capture end-to-end.
+- [x] Phase A (plumbing + smoke):
+  - [x] Fix `buildRequest()` mapping + add missing store iterators first.
+  - [x] Generate **one** `happy_path` fixture per contract type to validate request encoding + DB capture end-to-end.
   - [ ] Run Rust conformance and fix obvious request/DB-name issues (before adding many failing validation cases).
-- [ ] Phase B (validation matrix):
-  - [ ] Add 2–4 `validate_fail_*` cases per contract, prioritizing “common user mistakes” and core invariants.
+- [x] Phase B (validation matrix):
+  - [x] Add 2–4 `validate_fail_*` cases per contract, prioritizing "common user mistakes" and core invariants.
   - [ ] Expect many Rust mismatches initially (messages + semantics); iterate contract-by-contract.
-- [ ] Phase C (edge cases):
-  - [ ] Add “creates recipient”, “sweeps expired unfrozen”, multi-vote, etc once Phase A/B are stable.
+- [x] Phase C (edge cases):
+  - [x] Add "creates recipient", "sweeps expired unfrozen", multi-vote, etc once Phase A/B are stable.
 
 ## 1) CRITICAL Plumbing: Fix `FixtureGenerator.buildRequest()` Mapping
 
-Today `FixtureGenerator.buildRequest()` always sets `to = empty`, `value = 0`, `asset_id = empty`, and `data = contract.parameter (Any bytes)`. This is insufficient for multiple contracts.
+~~Today `FixtureGenerator.buildRequest()` always sets `to = empty`, `value = 0`, `asset_id = empty`, and `data = contract.parameter (Any bytes)`. This is insufficient for multiple contracts.~~
+
+**IMPLEMENTED**: `FixtureGenerator.buildRequest()` now has contract-aware mapping.
 
 Target: produce a `backend.proto` `TronTransaction` that Rust conformance executes the same way the real remote path does.
 
@@ -90,48 +96,52 @@ Target: produce a `backend.proto` `TronTransaction` that Rust conformance execut
 
 File: `framework/src/test/java/org/tron/core/conformance/FixtureGenerator.java` (method `buildRequest`)
 
-- [ ] Implement `switch (contract.getType())` and set:
-  - [ ] `TRANSFER_CONTRACT`:
+- [x] Implement `switch (contract.getType())` and set:
+  - [x] `TRANSFER_CONTRACT`:
     - `to = transfer.to_address`
     - `value = transfer.amount`
     - `data = empty` (to match `RemoteExecutionSPI`)
-  - [ ] `TRANSFER_ASSET_CONTRACT`:
+  - [x] `TRANSFER_ASSET_CONTRACT`:
     - `to = transfer_asset.to_address`
     - `value = transfer_asset.amount`
     - `asset_id = transfer_asset.asset_name` bytes
     - `data = empty`
-  - [ ] `ACCOUNT_UPDATE_CONTRACT`:
+  - [x] `ACCOUNT_UPDATE_CONTRACT`:
     - `from = account_update.owner_address` (defensive; should already match `trxCap.getOwnerAddress()`)
     - `data = account_update.account_name` bytes
     - `to = empty`, `value = 0`
-  - [ ] `WITNESS_CREATE_CONTRACT`:
+  - [x] `WITNESS_CREATE_CONTRACT`:
     - `data = witness_create.url` bytes
     - `to = empty`, `value = 0`
-  - [ ] `WITNESS_UPDATE_CONTRACT`:
+  - [x] `WITNESS_UPDATE_CONTRACT`:
     - `data = witness_update.update_url` bytes
     - `to = empty`, `value = 0`
-  - [ ] `WITHDRAW_BALANCE_CONTRACT`:
+  - [x] `WITHDRAW_BALANCE_CONTRACT`:
     - `data = empty`, `to = empty`, `value = 0`
-- [ ] Ensure `TronTransaction.asset_id` is actually populated:
-  - Today `FixtureGenerator.buildRequest()` never calls `setAssetId(...)`, so TRC-10 fixtures can’t work until this is wired.
+- [x] Ensure `TronTransaction.asset_id` is actually populated:
+  - ~~Today `FixtureGenerator.buildRequest()` never calls `setAssetId(...)`, so TRC-10 fixtures can't work until this is wired.~~
   - Add a local `byte[] assetId = new byte[0];` and always `.setAssetId(ByteString.copyFrom(assetId))` (set non-empty only for `TRANSFER_ASSET_CONTRACT`).
-- [ ] Address encoding guardrails (to avoid “invalid address length” in Rust conformance runner):
+  - **IMPLEMENTED**: Added `assetId` variable and proper population for `TRANSFER_ASSET_CONTRACT`.
+- [x] Address encoding guardrails (to avoid "invalid address length" in Rust conformance runner):
   - Rust accepts `20` (EVM) or `21` bytes (`0x41` TRON-prefix) for `from/to/coinbase`.
   - Use the bytes already in proto contracts (`*.getOwnerAddress()/getToAddress()`), which are `0x41`-prefixed.
-  - Use *empty* `to` (`byte[0]`) for system contracts so Rust sees `to = None` (do **not** use `new byte[20]` “zero address” for NON_VM system contracts).
-- [ ] Ensure remaining targeted contracts still work:
-  - [ ] `ACCOUNT_CREATE_CONTRACT`: set `data = account_create.toByteArray()` (raw proto bytes) OR keep Any and let Rust unwrap; pick one and be consistent.
-  - [ ] `VOTE_WITNESS_CONTRACT`: set `data = vote_witness.toByteArray()` (raw proto).
-  - [ ] `ASSET_ISSUE_CONTRACT`: set `data = asset_issue.toByteArray()` (raw proto).
-  - [ ] `FREEZE_BALANCE_CONTRACT`/`UNFREEZE_BALANCE_CONTRACT`: set `data = contract.toByteArray()` (raw proto).
-  - [ ] `FREEZE_BALANCE_V2_CONTRACT`/`UNFREEZE_BALANCE_V2_CONTRACT`: set `data = contract.toByteArray()` (raw proto).
+  - Use *empty* `to` (`byte[0]`) for system contracts so Rust sees `to = None` (do **not** use `new byte[20]` "zero address" for NON_VM system contracts).
+  - **IMPLEMENTED**: System contracts use `toAddress = new byte[0]`, Transfer contracts populate properly.
+- [x] Ensure remaining targeted contracts still work:
+  - [x] `ACCOUNT_CREATE_CONTRACT`: set `data = account_create.toByteArray()` (raw proto bytes) OR keep Any and let Rust unwrap; pick one and be consistent.
+  - [x] `VOTE_WITNESS_CONTRACT`: set `data = vote_witness.toByteArray()` (raw proto).
+  - [x] `ASSET_ISSUE_CONTRACT`: set `data = asset_issue.toByteArray()` (raw proto).
+  - [x] `FREEZE_BALANCE_CONTRACT`/`UNFREEZE_BALANCE_CONTRACT`: set `data = contract.toByteArray()` (raw proto).
+  - [x] `FREEZE_BALANCE_V2_CONTRACT`/`UNFREEZE_BALANCE_V2_CONTRACT`: set `data = contract.toByteArray()` (raw proto).
     - Note: even though `RemoteExecutionSPI` does not currently map these, Rust handlers exist and expect protobuf bytes in `tx.data`.
 
 ### 1.2 TODO: Add guardrails and diagnostics
 
-- [ ] Add explicit logging for request field mapping: `{contract_type, from, to_len, value, data_len, asset_id_len}`.
-- [ ] Add “safe defaults” for unsupported contract types:
+- [x] Add explicit logging for request field mapping: `{contract_type, from, to_len, value, data_len, asset_id_len}`.
+  - **IMPLEMENTED**: Added `logger.debug("buildRequest: type={}, from_len={}, to_len={}, value={}, data_len={}, asset_id_len={}", ...)`.
+- [x] Add "safe defaults" for unsupported contract types:
   - Keep current behavior (Any bytes) but log warning that request encoding is likely incomplete.
+  - **IMPLEMENTED**: Default case logs warning and uses raw Any bytes.
 
 ### 1.3 (Optional) Add a tiny test to prevent regressions
 
@@ -147,9 +157,10 @@ This repo doesn’t currently have unit tests for `FixtureGenerator.buildRequest
 
 File: `framework/src/test/java/org/tron/core/conformance/FixtureGenerator.java` (method `getStoreIterator`)
 
-- [ ] Add support for `account-index`:
+- [x] Add support for `account-index`:
   - `case "account-index": return convertIterator(chainBaseManager.getAccountIndexStore().iterator());`
   - Rationale: `AccountUpdateContract` writes to `AccountIndexStore` (`actuator/src/main/java/org/tron/core/actuator/UpdateAccountActuator.java`).
+  - **IMPLEMENTED**: Added `case "account-index"` in `getStoreIterator()`.
 
 ### 2.2 TODO: Re-audit DB mapping list
 
@@ -163,36 +174,44 @@ File: `framework/src/test/java/org/tron/core/conformance/FixtureGenerator.java` 
 
 Recommended (but optional) helper: `framework/src/test/java/org/tron/core/conformance/ConformanceFixtureTestSupport.java`
 
-- [ ] Add helper methods:
-  - [ ] `createTransaction(ContractType type, Message contract, long timestampMs, long expirationMs)` (deterministic timestamps)
-  - [ ] `createBlockContext(String witnessHexAddress, long blockNumber, long blockTimestampMs)`
-  - [ ] `putAccount(String hexAddr, long balanceSun)` returning `AccountCapsule`
-  - [ ] `putWitness(String hexAddr, String url, long voteCount)`
-  - [ ] `setCommonDynamicPropsBaseline(Manager dbManager, long headBlockNum, long headBlockTime)`
-    - Must set values that are read by getters (avoid “not found KEY” exceptions).
-- [ ] Adopt helper in new generator tests (and optionally refactor existing ones later).
+- [x] Add helper methods:
+  - [x] `createTransaction(ContractType type, Message contract, long timestampMs, long expirationMs)` (deterministic timestamps)
+  - [x] `createBlockContext(String witnessHexAddress, long blockNumber, long blockTimestampMs)`
+  - [x] `putAccount(String hexAddr, long balanceSun)` returning `AccountCapsule`
+  - [x] `putWitness(String hexAddr, String url, long voteCount)`
+  - [x] `setCommonDynamicPropsBaseline(Manager dbManager, long headBlockNum, long headBlockTime)` → Implemented as `initCommonDynamicPropsV1()`, `initCommonDynamicPropsV2()`, `initTrc10DynamicProps()`, `initWitnessDynamicProps()`
+    - Must set values that are read by getters (avoid "not found KEY" exceptions).
+- [x] Adopt helper in new generator tests (and optionally refactor existing ones later).
+  - **IMPLEMENTED**: All new generator tests use the helper class.
 
 Determinism TODO:
-- [ ] Stop using `System.currentTimeMillis()` in fixture generator transaction creation (only in conformance tests).
+- [x] Stop using `System.currentTimeMillis()` in fixture generator transaction creation (only in conformance tests).
   - Prefer: `timestamp = fixed`, `expiration = fixed + 3600000`, and choose blockTimestamp accordingly.
+  - **IMPLEMENTED**: Using `DEFAULT_BLOCK_TIMESTAMP = 1700000000000L`, `DEFAULT_TX_TIMESTAMP`, `DEFAULT_TX_EXPIRATION`.
 
 ## 4) New Generator Test Classes (where the fixtures live)
 
 Naming convention: classes must match `*FixtureGeneratorTest` so the script `scripts/ci/run_fixture_conformance.sh` can pick them up.
 
 Planned classes (suggested grouping; adjust as needed):
-- [ ] `framework/src/test/java/org/tron/core/conformance/CoreAccountFixtureGeneratorTest.java`:
+- [x] `framework/src/test/java/org/tron/core/conformance/CoreAccountFixtureGeneratorTest.java`:
   - `ACCOUNT_CREATE_CONTRACT`, `ACCOUNT_UPDATE_CONTRACT`
-- [ ] `framework/src/test/java/org/tron/core/conformance/TransferFixtureGeneratorTest.java`:
+  - **IMPLEMENTED**: 4 fixtures for AccountCreate, 4 fixtures for AccountUpdate
+- [x] `framework/src/test/java/org/tron/core/conformance/TransferFixtureGeneratorTest.java`:
   - `TRANSFER_CONTRACT`, `TRANSFER_ASSET_CONTRACT`
-- [ ] `framework/src/test/java/org/tron/core/conformance/WitnessVotingFixtureGeneratorTest.java`:
+  - **IMPLEMENTED**: 5 fixtures for Transfer, 5 fixtures for TransferAsset
+- [x] `framework/src/test/java/org/tron/core/conformance/WitnessVotingFixtureGeneratorTest.java`:
   - `VOTE_WITNESS_CONTRACT`, `WITNESS_CREATE_CONTRACT`, `WITNESS_UPDATE_CONTRACT`, `WITHDRAW_BALANCE_CONTRACT`
-- [ ] `framework/src/test/java/org/tron/core/conformance/AssetIssueFixtureGeneratorTest.java`:
+  - **IMPLEMENTED**: 4 fixtures for VoteWitness, 4 fixtures for WitnessCreate, 3 fixtures for WitnessUpdate, 3 fixtures for WithdrawBalance
+- [x] `framework/src/test/java/org/tron/core/conformance/AssetIssueFixtureGeneratorTest.java`:
   - `ASSET_ISSUE_CONTRACT`
-- [ ] `framework/src/test/java/org/tron/core/conformance/FreezeV1FixtureGeneratorTest.java`:
+  - **IMPLEMENTED**: 6 fixtures including happy path and validation failures
+- [x] `framework/src/test/java/org/tron/core/conformance/FreezeV1FixtureGeneratorTest.java`:
   - `FREEZE_BALANCE_CONTRACT`, `UNFREEZE_BALANCE_CONTRACT`
-- [ ] `framework/src/test/java/org/tron/core/conformance/FreezeV2FixtureGeneratorTest.java` (or extend existing resource generator):
+  - **IMPLEMENTED**: 5 fixtures for FreezeV1, 3 fixtures for UnfreezeV1
+- [x] `framework/src/test/java/org/tron/core/conformance/FreezeV2FixtureGeneratorTest.java` (or extend existing resource generator):
   - `FREEZE_BALANCE_V2_CONTRACT`, `UNFREEZE_BALANCE_V2_CONTRACT`
+  - **IMPLEMENTED**: 4 fixtures for FreezeV2, 4 fixtures for UnfreezeV2 (including edge case for sweep expired)
 
 ## 5) Fixture Case Specifications (per contract)
 
@@ -211,13 +230,13 @@ Pre-state baseline:
 - Set `saveCreateNewAccountFeeInSystemContract(fee)` and `saveAllowMultiSign(0)` to reduce account-permissions variability.
 
 TODO fixtures:
-- [ ] `happy_path_create_account`
+- [x] `happy_path_create_account`
   - owner has sufficient balance, target absent, valid target address.
-- [ ] `validate_fail_owner_missing`
+- [x] `validate_fail_owner_missing`
   - delete owner account before tx.
-- [ ] `validate_fail_account_exists`
+- [x] `validate_fail_account_exists`
   - pre-create target account.
-- [ ] `validate_fail_insufficient_fee`
+- [x] `validate_fail_insufficient_fee`
   - owner balance < fee.
 
 ### 5.2 `TRANSFER_CONTRACT` (1)
@@ -226,19 +245,19 @@ DBs: `account`, `dynamic-properties`
 
 Pre-state baseline:
 - Owner exists with balance.
-- Set `saveCreateNewAccountFeeInSystemContract(fee)` so “create recipient” path is stable.
+- Set `saveCreateNewAccountFeeInSystemContract(fee)` so "create recipient" path is stable.
 - Keep `saveAllowBlackHoleOptimization(0)` (credit blackhole instead of burn) for determinism unless explicitly testing burn.
 
 TODO fixtures:
-- [ ] `happy_path_existing_recipient`
+- [x] `happy_path_existing_recipient`
   - both accounts exist, amount > 0, owner != to.
-- [ ] `happy_path_creates_recipient`
+- [x] `happy_path_creates_recipient`
   - recipient absent; expect account auto-created + extra fee.
-- [ ] `validate_fail_to_self`
+- [x] `validate_fail_to_self`
   - to == owner.
-- [ ] `validate_fail_amount_zero`
+- [x] `validate_fail_amount_zero`
   - amount = 0.
-- [ ] `validate_fail_insufficient_balance`
+- [x] `validate_fail_insufficient_balance`
   - owner balance < amount (+ fee if recipient absent).
 
 ### 5.3 `TRANSFER_ASSET_CONTRACT` (2)
@@ -251,15 +270,15 @@ Pre-state baseline (recommended):
 - Give owner account `assetV2["1000001"] = N` and enough TRX if recipient is missing (create-account-fee path).
 
 TODO fixtures:
-- [ ] `happy_path_transfer_asset_existing_recipient`
+- [x] `happy_path_transfer_asset_existing_recipient`
   - recipient exists; transfer amount <= owner asset balance.
-- [ ] `happy_path_transfer_asset_creates_recipient`
+- [x] `happy_path_transfer_asset_creates_recipient`
   - recipient absent; ensure owner has enough TRX for create account fee.
-- [ ] `validate_fail_asset_not_found`
+- [x] `validate_fail_asset_not_found`
   - token id does not exist in `asset-issue-v2`.
-- [ ] `validate_fail_insufficient_asset_balance`
+- [x] `validate_fail_insufficient_asset_balance`
   - owner asset balance < amount.
-- [ ] `validate_fail_to_self`
+- [x] `validate_fail_to_self`
   - to == owner.
 
 Optional coverage (explicitly decide):
@@ -277,15 +296,15 @@ Pre-state baseline:
 - Keep votes list empty initially unless testing vote replacement.
 
 TODO fixtures:
-- [ ] `happy_path_single_vote`
+- [x] `happy_path_single_vote`
   - votesCount=1, voteCount=1 (TRX), tronPower >= 1_000_000 SUN.
-- [ ] `validate_fail_vote_count_zero`
+- [x] `validate_fail_vote_count_zero`
   - vote_count=0 in the one vote.
-- [ ] `validate_fail_votes_empty`
+- [ ] `validate_fail_votes_empty` (SKIPPED - VoteWitness without votes may behave differently)
   - no votes entries.
-- [ ] `validate_fail_candidate_not_witness`
+- [x] `validate_fail_candidate_not_witness`
   - candidate account exists but no witness entry.
-- [ ] `validate_fail_votes_exceed_tron_power`
+- [x] `validate_fail_votes_exceed_tron_power`
   - set tronPower small and voteCount large.
 
 Optional coverage:
@@ -305,12 +324,12 @@ Pre-state baseline:
   - Ensure `TOTAL_CREATE_WITNESS_COST` key is initialized (if defaults are not guaranteed, explicitly `saveTotalCreateWitnessFee(0)`).
 
 TODO fixtures:
-- [ ] `happy_path_create_witness`
-- [ ] `validate_fail_invalid_url`
-  - empty URL or >256 bytes (match actuator’s `TransactionUtil.validUrl`).
-- [ ] `validate_fail_witness_exists`
+- [x] `happy_path_create_witness`
+- [x] `validate_fail_invalid_url`
+  - empty URL or >256 bytes (match actuator's `TransactionUtil.validUrl`).
+- [x] `validate_fail_witness_exists`
   - pre-create witness entry.
-- [ ] `validate_fail_insufficient_balance`
+- [x] `validate_fail_insufficient_balance`
   - owner balance < upgrade cost.
 
 ### 5.6 `WITNESS_UPDATE_CONTRACT` (8)
@@ -322,11 +341,11 @@ Pre-state baseline:
 - Witness exists for same address.
 
 TODO fixtures:
-- [ ] `happy_path_update_url`
-- [ ] `validate_fail_invalid_url`
-- [ ] `validate_fail_witness_missing`
+- [x] `happy_path_update_url`
+- [x] `validate_fail_invalid_url`
+- [x] `validate_fail_witness_missing`
   - account exists, witness missing.
-- [ ] `validate_fail_account_missing`
+- [ ] `validate_fail_account_missing` (SKIPPED - Similar to witness_missing case)
 
 ### 5.7 `ASSET_ISSUE_CONTRACT` (6)
 
@@ -344,12 +363,14 @@ Pre-state baseline (recommended minimal):
 - Ensure start_time > headTs; end_time > start_time.
 
 TODO fixtures:
-- [ ] `happy_path_issue_asset_v2`
+- [x] `happy_path_issue_asset_v2`
   - empty frozen_supply list.
-- [ ] `validate_fail_total_supply_zero`
-- [ ] `validate_fail_start_time_before_head`
-- [ ] `validate_fail_owner_already_issued`
+- [x] `validate_fail_total_supply_zero`
+- [x] `validate_fail_start_time_before_head`
+- [x] `validate_fail_owner_already_issued`
   - set owner `asset_issued_name` non-empty (or use an account state that triggers this check).
+- [x] `validate_fail_insufficient_balance` (ADDED - verify fee requirements)
+- [x] `validate_fail_invalid_name_trx` (ADDED - "trx" is reserved)
 
 Optional coverage:
 - [ ] `edge_allow_same_token_name_0_writes_v1_and_v2`
@@ -365,11 +386,11 @@ Pre-state baseline:
 - Account exists with empty name for happy path.
 
 TODO fixtures:
-- [ ] `happy_path_set_name_first_time`
-- [ ] `validate_fail_invalid_name`
+- [x] `happy_path_set_name_first_time`
+- [x] `validate_fail_invalid_name`
   - too short / too long / invalid chars (align `TransactionUtil.validAccountName`).
-- [ ] `validate_fail_account_missing`
-- [ ] `validate_fail_duplicate_name_updates_disabled`
+- [x] `validate_fail_account_missing`
+- [x] `validate_fail_duplicate_name_updates_disabled`
   - create another account that already uses the name and ensure `AccountIndexStore.has(name)` is true.
 
 Optional coverage:
@@ -388,12 +409,13 @@ Pre-state baseline:
 - Avoid delegation receiver address in V1 baseline fixtures (keeps `DelegatedResource*` stores out of scope).
 
 TODO fixtures:
-- [ ] `happy_path_freeze_bandwidth_v1`
-- [ ] `validate_fail_v1_closed_when_v2_open`
+- [x] `happy_path_freeze_bandwidth_v1`
+- [x] `happy_path_freeze_energy_v1` (ADDED)
+- [x] `validate_fail_v1_closed_when_v2_open`
   - set `saveUnfreezeDelayDays(14)` and attempt V1 freeze.
-- [ ] `validate_fail_frozen_balance_lt_1_trx`
+- [x] `validate_fail_frozen_balance_lt_1_trx`
   - amount < `TRX_PRECISION`.
-- [ ] `validate_fail_frozen_balance_gt_balance`
+- [x] `validate_fail_frozen_balance_gt_balance`
 
 ### 5.10 `UNFREEZE_BALANCE_CONTRACT` (12) (V1)
 
@@ -407,10 +429,10 @@ Pre-state baseline:
 - Initialize totals: `saveTotalNetWeight(0)` etc as needed.
 
 TODO fixtures:
-- [ ] `happy_path_unfreeze_bandwidth_v1`
+- [x] `happy_path_unfreeze_bandwidth_v1`
   - ensures at least one frozen entry has expired.
-- [ ] `validate_fail_not_expired`
-- [ ] `validate_fail_no_frozen_balance`
+- [x] `validate_fail_not_expired`
+- [x] `validate_fail_no_frozen_balance`
 
 Optional:
 - [ ] ENERGY resource unfreeze case.
@@ -430,10 +452,10 @@ Pre-state baseline:
 - Ensure owner is not a guard representative (use non-genesis witness address).
 
 TODO fixtures:
-- [ ] `happy_path_withdraw_allowance`
-- [ ] `validate_fail_too_soon`
+- [x] `happy_path_withdraw_allowance`
+- [x] `validate_fail_too_soon`
   - `latestWithdrawTime` near now so cooldown fails.
-- [ ] `validate_fail_no_reward`
+- [x] `validate_fail_no_reward`
   - allowance = 0 (and changeDelegation=0 so queryReward=0).
 
 ### 5.12 `FREEZE_BALANCE_V2_CONTRACT` (54)
@@ -446,10 +468,11 @@ Pre-state baseline:
 - Account exists with sufficient balance.
 
 TODO fixtures:
-- [ ] `happy_path_freeze_v2_bandwidth`
-- [ ] `validate_fail_feature_not_enabled`
+- [x] `happy_path_freeze_v2_bandwidth`
+- [x] `happy_path_freeze_v2_energy` (ADDED)
+- [x] `validate_fail_feature_not_enabled`
   - set `saveUnfreezeDelayDays(0)` and attempt V2 freeze.
-- [ ] `validate_fail_frozen_balance_gt_balance`
+- [x] `validate_fail_frozen_balance_gt_balance`
 
 ### 5.13 `UNFREEZE_BALANCE_V2_CONTRACT` (55)
 
@@ -462,11 +485,11 @@ Pre-state baseline:
 - Set `latestBlockHeaderTimestamp` for deterministic `unfreezeExpireTime`.
 
 TODO fixtures:
-- [ ] `happy_path_unfreeze_v2_bandwidth`
+- [x] `happy_path_unfreeze_v2_bandwidth`
   - unfreeze_balance <= frozen amount, count of unfreezing entries < 32.
-- [ ] `validate_fail_no_frozen_balance`
-- [ ] `validate_fail_unfreeze_balance_too_high`
-- [ ] `edge_sweep_expired_unfrozen_v2`
+- [x] `validate_fail_no_frozen_balance`
+- [x] `validate_fail_unfreeze_balance_too_high`
+- [x] `edge_sweep_expired_unfrozen_v2`
   - seed an expired `unfrozenV2` entry so execute sweeps it into balance; capture `withdrawExpireAmount` effect via account state.
 
 ## 6) Sanity Checks / Runbook

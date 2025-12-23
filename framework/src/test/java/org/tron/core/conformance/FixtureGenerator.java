@@ -31,6 +31,19 @@ import org.tron.core.exception.ContractValidateException;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.Transaction;
+import org.tron.protos.contract.AccountContract.AccountCreateContract;
+import org.tron.protos.contract.AccountContract.AccountUpdateContract;
+import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
+import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
+import org.tron.protos.contract.BalanceContract.FreezeBalanceContract;
+import org.tron.protos.contract.BalanceContract.FreezeBalanceV2Contract;
+import org.tron.protos.contract.BalanceContract.TransferContract;
+import org.tron.protos.contract.BalanceContract.UnfreezeBalanceContract;
+import org.tron.protos.contract.BalanceContract.UnfreezeBalanceV2Contract;
+import org.tron.protos.contract.BalanceContract.WithdrawBalanceContract;
+import org.tron.protos.contract.WitnessContract.VoteWitnessContract;
+import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
+import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
 import tron.backend.BackendOuterClass.ExecuteTransactionRequest;
 import tron.backend.BackendOuterClass.ExecutionContext;
 import tron.backend.BackendOuterClass.TronTransaction;
@@ -212,6 +225,8 @@ public class FixtureGenerator {
       switch (dbName) {
         case "account":
           return convertIterator(chainBaseManager.getAccountStore().iterator());
+        case "account-index":
+          return convertIterator(chainBaseManager.getAccountIndexStore().iterator());
         case "accountid-index":
           return convertIterator(chainBaseManager.getAccountIdIndexStore().iterator());
         case "proposal":
@@ -295,30 +310,144 @@ public class FixtureGenerator {
 
   /**
    * Build ExecuteTransactionRequest from transaction and block.
+   *
+   * <p>This method maps contract fields to the appropriate TronTransaction fields
+   * to match the RemoteExecutionSPI mapping behavior:
+   * - TRANSFER_CONTRACT: to = to_address, value = amount, data = empty
+   * - TRANSFER_ASSET_CONTRACT: to = to_address, value = amount, asset_id = asset_name, data = empty
+   * - ACCOUNT_UPDATE_CONTRACT: data = account_name bytes
+   * - WITNESS_CREATE_CONTRACT: data = url bytes
+   * - WITNESS_UPDATE_CONTRACT: data = update_url bytes
+   * - Other system contracts: data = contract.toByteArray() (raw proto)
    */
   private ExecuteTransactionRequest buildRequest(TransactionCapsule trxCap,
                                                    BlockCapsule blockCap,
                                                    FixtureMetadata metadata) {
     Transaction transaction = trxCap.getInstance();
     Transaction.Contract contract = transaction.getRawData().getContract(0);
+    Any contractParameter = contract.getParameter();
 
     byte[] fromAddress = trxCap.getOwnerAddress();
-    byte[] toAddress = new byte[0];
+    byte[] toAddress = new byte[0]; // Empty by default for system contracts
     byte[] data = new byte[0];
+    byte[] assetId = new byte[0];
     long value = 0;
 
-    // Extract data from contract (simplified - extend as needed)
+    // Map contract fields based on contract type
     try {
-      data = contract.getParameter().toByteArray();
+      switch (contract.getType()) {
+        case TransferContract:
+          TransferContract transferContract = contractParameter.unpack(TransferContract.class);
+          toAddress = transferContract.getToAddress().toByteArray();
+          value = transferContract.getAmount();
+          // data remains empty to match RemoteExecutionSPI
+          break;
+
+        case TransferAssetContract:
+          TransferAssetContract transferAssetContract =
+              contractParameter.unpack(TransferAssetContract.class);
+          toAddress = transferAssetContract.getToAddress().toByteArray();
+          value = transferAssetContract.getAmount();
+          assetId = transferAssetContract.getAssetName().toByteArray();
+          // data remains empty
+          break;
+
+        case AccountUpdateContract:
+          AccountUpdateContract accountUpdateContract =
+              contractParameter.unpack(AccountUpdateContract.class);
+          // fromAddress already extracted from trxCap.getOwnerAddress()
+          data = accountUpdateContract.getAccountName().toByteArray();
+          // toAddress remains empty, value = 0
+          break;
+
+        case WitnessCreateContract:
+          WitnessCreateContract witnessCreateContract =
+              contractParameter.unpack(WitnessCreateContract.class);
+          data = witnessCreateContract.getUrl().toByteArray();
+          // toAddress remains empty
+          break;
+
+        case WitnessUpdateContract:
+          WitnessUpdateContract witnessUpdateContract =
+              contractParameter.unpack(WitnessUpdateContract.class);
+          data = witnessUpdateContract.getUpdateUrl().toByteArray();
+          // toAddress remains empty
+          break;
+
+        case WithdrawBalanceContract:
+          // WithdrawBalanceContract only has owner_address, no extra data needed
+          // data remains empty, toAddress remains empty, value = 0
+          break;
+
+        case AccountCreateContract:
+          AccountCreateContract accountCreateContract =
+              contractParameter.unpack(AccountCreateContract.class);
+          data = accountCreateContract.toByteArray();
+          break;
+
+        case VoteWitnessContract:
+          VoteWitnessContract voteWitnessContract =
+              contractParameter.unpack(VoteWitnessContract.class);
+          data = voteWitnessContract.toByteArray();
+          break;
+
+        case AssetIssueContract:
+          AssetIssueContract assetIssueContract =
+              contractParameter.unpack(AssetIssueContract.class);
+          data = assetIssueContract.toByteArray();
+          break;
+
+        case FreezeBalanceContract:
+          FreezeBalanceContract freezeContract =
+              contractParameter.unpack(FreezeBalanceContract.class);
+          data = freezeContract.toByteArray();
+          break;
+
+        case UnfreezeBalanceContract:
+          UnfreezeBalanceContract unfreezeContract =
+              contractParameter.unpack(UnfreezeBalanceContract.class);
+          data = unfreezeContract.toByteArray();
+          break;
+
+        case FreezeBalanceV2Contract:
+          FreezeBalanceV2Contract freezeV2Contract =
+              contractParameter.unpack(FreezeBalanceV2Contract.class);
+          data = freezeV2Contract.toByteArray();
+          break;
+
+        case UnfreezeBalanceV2Contract:
+          UnfreezeBalanceV2Contract unfreezeV2Contract =
+              contractParameter.unpack(UnfreezeBalanceV2Contract.class);
+          data = unfreezeV2Contract.toByteArray();
+          break;
+
+        default:
+          // For other contracts, fall back to the raw Any bytes
+          logger.warn("Contract type {} not explicitly mapped, using raw Any bytes",
+              contract.getType());
+          data = contractParameter.toByteArray();
+          break;
+      }
     } catch (Exception e) {
-      logger.warn("Failed to extract contract data", e);
+      logger.warn("Failed to extract contract data for type {}: {}",
+          contract.getType(), e.getMessage());
+      data = contractParameter.toByteArray();
     }
+
+    logger.debug("buildRequest: type={}, from_len={}, to_len={}, value={}, data_len={}, asset_id_len={}",
+        contract.getType().name(),
+        fromAddress.length,
+        toAddress.length,
+        value,
+        data.length,
+        assetId.length);
 
     TronTransaction tronTx = TronTransaction.newBuilder()
         .setFrom(ByteString.copyFrom(fromAddress))
         .setTo(ByteString.copyFrom(toAddress))
         .setValue(ByteString.copyFrom(longToBytes32(value)))
         .setData(ByteString.copyFrom(data))
+        .setAssetId(ByteString.copyFrom(assetId))
         .setEnergyLimit(transaction.getRawData().getFeeLimit())
         .setEnergyPrice(1)
         .setNonce(0)
