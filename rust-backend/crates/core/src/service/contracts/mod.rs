@@ -1,6 +1,7 @@
 // Contract execution handlers
 // This module contains handlers for various Tron contract types
 
+pub mod delegation;
 pub mod freeze;
 pub mod proto;
 pub mod withdraw;
