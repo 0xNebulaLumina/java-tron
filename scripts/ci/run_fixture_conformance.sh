@@ -144,7 +144,6 @@ market_cancel_order_contract|\
 proposal_approve_contract|\
 proposal_create_contract|\
 proposal_delete_contract|\
-update_brokerage_contract|\
 withdraw_expire_unfreeze_contract)
                     return 0
                     ;;

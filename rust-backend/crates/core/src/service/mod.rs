@@ -4077,12 +4077,7 @@ impl BackendService {
             return Err("Invalid brokerage".to_string());
         }
 
-        // 4. Validate owner exists in AccountStore
-        let _owner_account = storage_adapter.get_account(&owner)
-            .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or_else(|| "Account does not exist".to_string())?;
-
-        // 5. Validate owner is a witness
+        // 4. Validate owner is a witness
         // Java: WitnessCapsule witnessCapsule = witnessStore.get(ownerAddress);
         //       if (witnessCapsule == null) throw "Not existed witness"
         let is_witness = storage_adapter.is_witness(&owner)
@@ -4093,6 +4088,12 @@ impl BackendService {
             let owner_key = storage_adapter.to_tron_address_21(&owner).to_vec();
             return Err(format!("Not existed witness:{}", hex::encode(&owner_key)));
         }
+
+        // 5. Validate owner exists in AccountStore
+        let _owner_account = storage_adapter
+            .get_account(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| "Account does not exist".to_string())?;
 
         // 6. Set brokerage in DelegationStore
         // Java: delegationStore.setBrokerage(ownerAddress, brokerage)
