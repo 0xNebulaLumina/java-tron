@@ -34,6 +34,9 @@ uuid = { version = "1.0", features = ["v4"] }
 revm = { version = "14.0", features = ["std"] }
 revm-primitives = "10.0"
 
+# BigInt for delegation reward computation
+num-bigint = "0.4"
+
 [dev-dependencies]
 tempfile = "3.8"
 

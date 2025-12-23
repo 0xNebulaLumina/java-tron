@@ -121,6 +121,11 @@ pub struct RemoteExecutionConfig {
     /// Creates new accounts with proper fee charging and blackhole handling
     /// Default: false for safe rollout - falls back to Java embedded execution when disabled
     pub account_create_enabled: bool,
+    /// Enable full delegation reward computation in WithdrawBalance
+    /// When true: Computes delegation rewards from DelegationStore (MortgageService.withdrawReward)
+    /// When false: Uses only Account.allowance (Phase 1 behavior)
+    /// Default: false for safe rollout
+    pub delegation_reward_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,6 +255,7 @@ impl Config {
         builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
         builder = builder.set_default("execution.remote.vote_witness_seed_old_from_account", true)?;
         builder = builder.set_default("execution.remote.account_create_enabled", false)?;
+        builder = builder.set_default("execution.remote.delegation_reward_enabled", false)?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -275,6 +281,7 @@ impl Default for RemoteExecutionConfig {
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
             vote_witness_seed_old_from_account: true, // Default true to match embedded semantics
             account_create_enabled: false, // Default false for safe rollout
+            delegation_reward_enabled: false, // Default false for safe rollout
         }
     }
 } 

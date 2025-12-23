@@ -135,3 +135,10 @@ vote_witness_seed_old_from_account = true
 # Set to true to enable remote execution of AccountCreateContract
 # Default: false for safe rollout - falls back to Java embedded execution when disabled
 account_create_enabled = true
+
+# Delegation reward computation for WithdrawBalanceContract (Phase 2)
+# When true: Computes delegation rewards from DelegationStore (MortgageService.withdrawReward)
+#            This includes reading cycle data, computing old/new algorithm rewards, and updating delegation state
+# When false: Uses only Account.allowance (Phase 1 behavior)
+# Default: false for safe rollout - set true to enable full delegation reward computation
+delegation_reward_enabled = true

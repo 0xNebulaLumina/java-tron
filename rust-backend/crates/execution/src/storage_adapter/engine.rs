@@ -1320,6 +1320,383 @@ impl EngineBackedEvmStateStore {
     pub fn compute_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
         self.get_tron_power_in_sun(address, new_model)
     }
+
+    // =========================================================================
+    // Delegation Store Access Methods
+    // =========================================================================
+    // These methods provide access to the delegation store for reward computation.
+    // Java reference: DelegationStore.java, MortgageService.java
+
+    /// Get the database name for delegation store
+    fn delegation_database(&self) -> &str {
+        "delegation"
+    }
+
+    /// Generate key for delegation store address lookups (21-byte with 0x41 prefix)
+    fn delegation_address_key(&self, address: &Address) -> Vec<u8> {
+        let mut key = Vec::with_capacity(21);
+        key.push(0x41); // Tron address prefix
+        key.extend_from_slice(address.as_slice());
+        key
+    }
+
+    // --- Dynamic Properties for Delegation ---
+
+    /// Check if delegation changes are allowed.
+    /// Java reference: DynamicPropertiesStore.allowChangeDelegation()
+    /// Returns true if CHANGE_DELEGATION == 1
+    pub fn allow_change_delegation(&self) -> Result<bool> {
+        // java-tron stores this flag under the "CHANGE_DELEGATION" dynamic property key.
+        let key = b"CHANGE_DELEGATION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    Ok(val == 1)
+                } else if !data.is_empty() {
+                    Ok(data[0] == 1)
+                } else {
+                    Ok(false)
+                }
+            }
+            None => {
+                tracing::debug!("CHANGE_DELEGATION not found, returning false");
+                Ok(false)
+            }
+        }
+    }
+
+    /// Get the current cycle number from dynamic properties.
+    /// Java reference: DynamicPropertiesStore.getCurrentCycleNumber()
+    pub fn get_current_cycle_number(&self) -> Result<i64> {
+        let key = b"CURRENT_CYCLE_NUMBER";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    tracing::warn!("CURRENT_CYCLE_NUMBER has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("CURRENT_CYCLE_NUMBER not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get the cycle number when new reward algorithm takes effect.
+    /// Java reference: DynamicPropertiesStore.getNewRewardAlgorithmEffectiveCycle()
+    /// Returns Long.MAX_VALUE if not set (meaning old algorithm always used)
+    pub fn get_new_reward_algorithm_effective_cycle(&self) -> Result<i64> {
+        let key = b"NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    // Default to Long.MAX_VALUE (old algorithm always)
+                    Ok(i64::MAX)
+                }
+            }
+            None => {
+                // Default to Long.MAX_VALUE (old algorithm always)
+                tracing::debug!("NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE not found, returning MAX");
+                Ok(i64::MAX)
+            }
+        }
+    }
+
+    // --- Delegation Store Read Methods ---
+
+    /// Get the begin cycle for an address from delegation store.
+    /// Java reference: DelegationStore.getBeginCycle()
+    /// Returns 0 if not found.
+    pub fn get_delegation_begin_cycle(&self, address: &Address) -> Result<i64> {
+        use crate::delegation::delegation_begin_cycle_key;
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_begin_cycle_key(&tron_addr);
+
+        match self.storage_engine.get(self.delegation_database(), &key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let cycle = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("delegation begin_cycle for {:?}: {}", address, cycle);
+                    Ok(cycle)
+                } else {
+                    tracing::warn!("Invalid begin_cycle data length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("delegation begin_cycle not found for {:?}, returning 0", address);
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get the end cycle for an address from delegation store.
+    /// Java reference: DelegationStore.getEndCycle()
+    /// Returns REMARK (-1) if not found.
+    pub fn get_delegation_end_cycle(&self, address: &Address) -> Result<i64> {
+        use crate::delegation::{delegation_end_cycle_key, DELEGATION_STORE_REMARK};
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_end_cycle_key(&tron_addr);
+
+        match self.storage_engine.get(self.delegation_database(), &key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let cycle = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("delegation end_cycle for {:?}: {}", address, cycle);
+                    Ok(cycle)
+                } else {
+                    tracing::warn!("Invalid end_cycle data length: {}", data.len());
+                    Ok(DELEGATION_STORE_REMARK)
+                }
+            }
+            None => {
+                tracing::debug!("delegation end_cycle not found for {:?}, returning REMARK", address);
+                Ok(DELEGATION_STORE_REMARK)
+            }
+        }
+    }
+
+    /// Get account vote snapshot for a specific cycle.
+    /// Java reference: DelegationStore.getAccountVote()
+    /// Returns None if not found.
+    pub fn get_delegation_account_vote(
+        &self,
+        cycle: i64,
+        address: &Address,
+    ) -> Result<Option<crate::delegation::AccountVoteSnapshot>> {
+        use crate::delegation::{delegation_account_vote_key, AccountVoteSnapshot};
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_account_vote_key(cycle, &tron_addr);
+
+        match self.storage_engine.get(self.delegation_database(), &key)? {
+            Some(data) => {
+                match AccountVoteSnapshot::deserialize(&data) {
+                    Ok(snapshot) => {
+                        tracing::debug!(
+                            "delegation account_vote for {:?} cycle {}: {} votes",
+                            address, cycle, snapshot.votes.len()
+                        );
+                        Ok(Some(snapshot))
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to deserialize account_vote for {:?} cycle {}: {}",
+                            address, cycle, e
+                        );
+                        Ok(None)
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("delegation account_vote not found for {:?} cycle {}", address, cycle);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Get total reward for a witness in a cycle.
+    /// Java reference: DelegationStore.getReward()
+    /// Returns 0 if not found.
+    pub fn get_delegation_reward(&self, cycle: i64, witness_address: &Address) -> Result<i64> {
+        use crate::delegation::delegation_reward_key;
+        let tron_addr = self.delegation_address_key(witness_address);
+        let key = delegation_reward_key(cycle, &tron_addr);
+
+        match self.storage_engine.get(self.delegation_database(), &key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let reward = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!(
+                        "delegation reward for {:?} cycle {}: {}",
+                        witness_address, cycle, reward
+                    );
+                    Ok(reward)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get total witness vote count for a cycle.
+    /// Java reference: DelegationStore.getWitnessVote()
+    /// Returns REMARK (-1) if not found.
+    pub fn get_delegation_witness_vote(&self, cycle: i64, witness_address: &Address) -> Result<i64> {
+        use crate::delegation::{delegation_witness_vote_key, DELEGATION_STORE_REMARK};
+        let tron_addr = self.delegation_address_key(witness_address);
+        let key = delegation_witness_vote_key(cycle, &tron_addr);
+
+        match self.storage_engine.get(self.delegation_database(), &key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let vote = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!(
+                        "delegation witness_vote for {:?} cycle {}: {}",
+                        witness_address, cycle, vote
+                    );
+                    Ok(vote)
+                } else {
+                    Ok(DELEGATION_STORE_REMARK)
+                }
+            }
+            None => Ok(DELEGATION_STORE_REMARK),
+        }
+    }
+
+    /// Get witness Vi (vote index) for a cycle.
+    /// Java reference: DelegationStore.getWitnessVi()
+    /// Returns BigInt::ZERO if not found.
+    pub fn get_delegation_witness_vi(
+        &self,
+        cycle: i64,
+        witness_address: &Address,
+    ) -> Result<num_bigint::BigInt> {
+        use crate::delegation::delegation_witness_vi_key;
+        use num_bigint::BigInt;
+
+        let tron_addr = self.delegation_address_key(witness_address);
+        let key = delegation_witness_vi_key(cycle, &tron_addr);
+
+        match self.storage_engine.get(self.delegation_database(), &key)? {
+            Some(data) => {
+                // Java stores BigInteger as signed two's complement bytes
+                let vi = BigInt::from_signed_bytes_be(&data);
+                tracing::debug!(
+                    "delegation witness_vi for {:?} cycle {}: {}",
+                    witness_address, cycle, vi
+                );
+                Ok(vi)
+            }
+            None => Ok(BigInt::from(0)),
+        }
+    }
+
+    /// Get brokerage rate for a witness in a cycle.
+    /// Java reference: DelegationStore.getBrokerage()
+    /// Returns DEFAULT_BROKERAGE (20) if not found.
+    pub fn get_delegation_brokerage(&self, cycle: i64, witness_address: &Address) -> Result<i32> {
+        use crate::delegation::{delegation_brokerage_key, DEFAULT_BROKERAGE};
+        let tron_addr = self.delegation_address_key(witness_address);
+        let key = delegation_brokerage_key(cycle, &tron_addr);
+
+        match self.storage_engine.get(self.delegation_database(), &key)? {
+            Some(data) => {
+                if data.len() >= 4 {
+                    let brokerage = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                    tracing::debug!(
+                        "delegation brokerage for {:?} cycle {}: {}%",
+                        witness_address, cycle, brokerage
+                    );
+                    Ok(brokerage)
+                } else {
+                    Ok(DEFAULT_BROKERAGE)
+                }
+            }
+            None => Ok(DEFAULT_BROKERAGE),
+        }
+    }
+
+    // --- Delegation Store Write Methods ---
+
+    /// Set the begin cycle for an address.
+    /// Java reference: DelegationStore.setBeginCycle()
+    pub fn set_delegation_begin_cycle(&self, address: &Address, cycle: i64) -> Result<()> {
+        use crate::delegation::delegation_begin_cycle_key;
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_begin_cycle_key(&tron_addr);
+        let data = cycle.to_be_bytes();
+
+        tracing::debug!("Setting delegation begin_cycle for {:?}: {}", address, cycle);
+        self.storage_engine.put(self.delegation_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Set the end cycle for an address.
+    /// Java reference: DelegationStore.setEndCycle()
+    pub fn set_delegation_end_cycle(&self, address: &Address, cycle: i64) -> Result<()> {
+        use crate::delegation::delegation_end_cycle_key;
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_end_cycle_key(&tron_addr);
+        let data = cycle.to_be_bytes();
+
+        tracing::debug!("Setting delegation end_cycle for {:?}: {}", address, cycle);
+        self.storage_engine.put(self.delegation_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Set account vote snapshot for a cycle.
+    /// Java reference: DelegationStore.setAccountVote()
+    pub fn set_delegation_account_vote(
+        &self,
+        cycle: i64,
+        address: &Address,
+        snapshot: &crate::delegation::AccountVoteSnapshot,
+    ) -> Result<()> {
+        use crate::delegation::delegation_account_vote_key;
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_account_vote_key(cycle, &tron_addr);
+        let data = snapshot.serialize();
+
+        tracing::debug!(
+            "Setting delegation account_vote for {:?} cycle {}: {} votes",
+            address, cycle, snapshot.votes.len()
+        );
+        self.storage_engine.put(self.delegation_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Get votes list from account for delegation purposes.
+    /// Converts Account.votes to DelegationVote format.
+    /// Java reference: AccountCapsule.getVotesList()
+    pub fn get_delegation_votes_from_account(
+        &self,
+        address: &Address,
+    ) -> Result<Vec<crate::delegation::DelegationVote>> {
+        use crate::delegation::DelegationVote;
+
+        // Use existing method to get votes from Account protobuf
+        let account_votes = self.get_account_votes_list(address)?;
+
+        // Convert to DelegationVote format
+        let votes: Vec<DelegationVote> = account_votes
+            .into_iter()
+            .map(|(addr, count)| DelegationVote::new(addr, count as i64))
+            .collect();
+
+        tracing::debug!(
+            "Got {} delegation votes from account {:?}",
+            votes.len(), address
+        );
+        Ok(votes)
+    }
 }
 
 impl EvmStateStore for EngineBackedEvmStateStore {
