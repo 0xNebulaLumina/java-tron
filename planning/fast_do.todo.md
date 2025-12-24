@@ -6,7 +6,7 @@
 
 ---
 
-## 📊 当前进度总览 (Updated: 2025-12-21)
+## 📊 当前进度总览 (Updated: 2025-12-24)
 
 | Phase | 状态 | 说明 |
 |-------|------|------|
@@ -19,15 +19,16 @@
 | Phase 2.D (Resource/Delegation 56-59) | ✅ **DONE** | 全部实现并有 fixtures |
 | Phase 2.E (TRC-10 扩展 9/14/15) | ✅ **DONE** | 全部实现并有 fixtures |
 | Phase 2.F (Exchange 41-44) | ✅ **DONE** | 全部实现并有 fixtures |
-| Phase 2.G (Market 52-53) | ✅ **DONE** | 全部实现并有 fixtures (简化版) |
+| Phase 2.G (Market 52-53) | ✅ **DONE** | 全部实现并有 fixtures (含完整订单匹配) |
 | Phase 2.H (Shield 51) | ❌ 未开始 | 建议独立里程碑 (zk/merkle 依赖复杂) |
 | Phase 2.I (VM 30/31) | 🟡 部分完成 | L1 done; L2/L3 pending; 32/20 confirmed query-only |
 | Phase 3 (灰度/CI) | ✅ **DONE** | PR fixture gate + nightly CSV replay 就绪 |
 
 **已实现合约数**: 26 个系统合约类型
-**已生成 Fixtures**: 113 个测试用例
+**已生成 Fixtures**: 172 个测试用例 (Java fixture generators) + 113 个 Rust conformance fixtures
 **查询类型 (非交易)**: GetContract (32), CustomContract (20) - 确认无需 Rust 实现
-**下一优先级**: VM parity L2/L3 (30/31)、Shield 51 (独立里程碑)
+**下一优先级**: VM parity L2/L3 (30/31)
+**已推迟**: Shield 51 (独立里程碑，保持 Java fallback)
 
 ---
 
@@ -625,8 +626,8 @@ TODO：
   - Updates MarketAccountOrder count for the owner
   - Inserts order into price-sorted linked list structure
   - Sets `order_id` in receipt via `TransactionResultBuilder::with_order_id()`
-  - **NOTE**: Order matching logic is simplified (creates order without matching) - full matching would require additional work
-  - Helper functions: `create_pair_key()`, `create_pair_price_key()`, `find_gcd()`, `calculate_order_id()`
+  - **DONE (2025-12-24)**: Full order matching implemented with `match_market_sell_order()`, `market_match_single_order()`, `save_remain_market_order()`, `market_get_price_keys_list()`, `market_has_match()`, `market_price_match()`, etc.
+  - Helper functions: `create_pair_key()`, `create_pair_price_key()`, `find_gcd()`, `calculate_order_id()`, `market_multiply_and_divide()`, `market_add_trx_or_token_*()`, `market_return_sell_token_remain*()`
 - [x] Java：RemoteExecutionSPI 增加 52/53 映射
   - **DONE**: Added `MarketSellAssetContract`, `MarketCancelOrderContract` cases in `framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java`
   - All use `txKind = TxKind.NON_VM`, send full proto bytes as `data`
@@ -641,9 +642,24 @@ Java oracle：`actuator/src/main/java/org/tron/core/actuator/ShieldedTransferAct
 
 现实约束：Java 依赖 native zk lib（`JLibrustzcash`），Rust 端要做到同样验证需要引入对应实现与参数；且 store（Nullifier/Merkle/ZKProof/totalShieldedPoolValue）复杂。
 
-TODO（建议）：
-- [ ] 先决定产品策略：是否长期保持 Java path（RemoteExecutionSPI 不映射/强制 fallback）
-- [ ] 若必须实现：拆成独立 roadmap（proof 校验、merkle、nullifier、receipt fee、pool value）
+**决策 (2025-12-24)：保持 Java fallback，作为独立里程碑**
+
+理由：
+1. **复杂依赖**：需要移植 `librustzcash` ZK-SNARK 验证库，包括 Sapling 参数文件、proof 校验逻辑
+2. **多 Store 交互**：涉及 NullifierStore、MerkleTreeStore、ZKProofStore、totalShieldedPoolValue 等
+3. **低优先级**：Shielded transactions 在 mainnet 上使用频率较低，ROI 不高
+4. **风险隔离**：ZK 验证的正确性对安全至关重要，需要独立测试策略
+
+TODO（建议独立里程碑时执行）：
+- [x] 决定产品策略：**长期保持 Java path**（RemoteExecutionSPI 不映射，强制 embedded fallback）
+  - **DONE (2025-12-24)**: 决定保持 Java fallback，Shield 51 不在当前 Rust 迁移范围内
+- [ ] 若未来必须实现：拆成独立 roadmap：
+  - [ ] Phase H.1: 移植 librustzcash / bellman 库，验证 Sapling proof
+  - [ ] Phase H.2: 实现 NullifierStore、MerkleTreeStore 适配器
+  - [ ] Phase H.3: 实现 ShieldedTransfer 逻辑（透明输入/输出、shielded 输入/输出）
+  - [ ] Phase H.4: receipt fee (`shielded_transaction_fee`) 回传
+  - [ ] Phase H.5: pool value
+  - [ ] Phase H.6: 独立 conformance fixtures（需 ZK proof 生成工具）
 
 ### 2.I（VM/查询类）：CreateSmartContract 30 / TriggerSmartContract 31 / GetContract 32 / CustomContract 20
 
@@ -656,13 +672,30 @@ TODO（分三层推进）：
   - **DONE**: Fixed in `rust-backend/crates/core/src/service/grpc/conversion.rs:35-46`
   - For `tx_kind=VM && contract_type=30 (CreateSmartContract)`, all-zero addresses are now treated as `None` (contract creation) instead of `Some(Address::ZERO)`
   - Tests added: `test_create_smart_contract_zero_address_treated_as_none`, `test_trigger_smart_contract_zero_address_preserved`, `test_create_smart_contract_type_value` in `tests.rs`
-- [ ] L2：补齐“合约创建后必须落库/可查询”的状态面：
+- [ ] L2：补齐"合约创建后必须落库/可查询"的状态面：
   - [ ] contract/code/abi/contract-state 的 key/value 规则与 Java 对齐（参见 `RepositoryImpl.commit*Cache`，store 在 `chainbase/.../store/*Store.java`）
+  - **现状分析 (2025-12-24)**:
+    - ✅ code storage (bytecode): `get_code()`/`set_code()` 已实现
+    - ✅ contract-state (storage slots): `get_storage()`/`set_storage()` 已实现
+    - ❌ contract (SmartContract proto metadata): 未实现 - 合约创建后无法查询合约信息
+    - ❌ abi (ABI JSON): 完全未实现
+    - ❌ CreateSmartContract 系统合约处理器: 缺失 - 只走 EVM 但不保存元数据
+  - [ ] 实现 `put_smart_contract()` 方法保存 SmartContract protobuf 到 "contract" database
+  - [ ] 实现 `put_abi()`/`get_abi()` 方法保存 ABI 到 "abi" database
+  - [ ] 为 CreateSmartContract (30) 添加系统合约处理器：
+    - [ ] 解析 constructor bytecode 和参数
+    - [ ] 执行 EVM 获取 runtime bytecode
+    - [ ] 保存 SmartContract proto (name, version, abi, code_hash, origin_address, etc.)
+    - [ ] 保存 bytecode 到 code store
+    - [ ] 返回合约地址到 receipt
   - [ ] 远端回传 receipt/ProgramResult.ret（至少保证 `TransactionInfo.contractAddress/contractResult/fee` 正确）
+    - [ ] `contractAddress` 字段 (20 bytes)
+    - [ ] `contractResult` 字段 (SUCCESS/REVERT/OUT_OF_ENERGY/etc.)
 - [ ] L3：做 VM parity fixtures（最小合约部署 + 调用）：
   - [ ] deploy：bytecode 仅写存储/返回常量；对比：codeStore/contractStateStore/contractStore 的最终 bytes
   - [ ] trigger：调用后 storage slot 变化 + return_data
   - [ ] edge：revert/out-of-energy/invalid opcode（对比 `contractRet` 与 runtimeError）
+  - **建议**：使用简单的 Solidity 合约（如 Counter）生成 fixtures，避免复杂依赖
 - [x] GetContract（32）与 CustomContract（20）：先确认"是否真的作为交易执行路径存在"
   - **CONFIRMED (2025-12-21)**: Neither GetContract nor CustomContract have actuators in the codebase.
   - GetContract (32) is a **query-only** operation served via HTTP endpoints (`GetContractServlet.java`, `GetContractInfoServlet.java`)
@@ -703,8 +736,9 @@ TODO：
     - **DONE**: Run with `CONFORMANCE_FIXTURES_DIR=/path/to/fixtures cargo test --package tron-backend-core conformance -- --nocapture`
     - Updated conformance runner to support `CONFORMANCE_FIXTURES_DIR` env var for CI
     - All 113 fixtures pass structure validation
-  - [ ] 跑 `./gradlew :framework:test`（或按 contract 过滤）
-    - Note: Requires Java fixture generator tests to be run first
+  - [x] 跑 `./gradlew :framework:test`（或按 contract 过滤）
+    - **DONE (2025-12-24)**: All 172 fixture generator tests pass
+    - Command: `./gradlew :framework:test --tests "*FixtureGeneratorTest*" --dependency-verification=off -x checkstyleMain -x checkstyleTest`
 - [x] Nightly：
   - [x] `collect_remote_results.sh` 回放 + `scripts/compare_exec_csv.py` diff
     - **DONE**: Created `scripts/ci/run_nightly_conformance.sh` wrapper script (2025-12-21)
