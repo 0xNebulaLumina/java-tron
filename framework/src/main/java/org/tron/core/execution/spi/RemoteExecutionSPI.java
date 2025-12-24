@@ -427,8 +427,14 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           CreateSmartContract createContract = contractParameter.unpack(CreateSmartContract.class);
           if (createContract.getNewContract() != null) {
             toAddress = new byte[20]; // Contract creation uses zero address
-            data = createContract.getNewContract().getBytecode().toByteArray();
+            // Phase 2.I L2: Send full CreateSmartContract proto bytes so Rust can persist
+            // SmartContract metadata (ABI, name, origin_energy_limit, etc.) after EVM execution
+            data = createContract.toByteArray();
             value = createContract.getNewContract().getCallValue();
+            logger.debug("Mapped CreateSmartContract to remote request; owner={}, name={}, origin_energy_limit={}",
+                org.tron.common.utils.ByteArray.toHexString(fromAddress),
+                createContract.getNewContract().getName(),
+                createContract.getNewContract().getOriginEnergyLimit());
           }
           txKind = TxKind.VM; // Smart contract creation requires VM
           contractType = tron.backend.BackendOuterClass.ContractType.CREATE_SMART_CONTRACT;
@@ -1422,6 +1428,14 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       logger.debug("Parsed tron_transaction_result: {} bytes", tronTransactionResult.length);
     }
 
+    // Phase 2.I L2: Extract contract_address for CreateSmartContract receipt
+    byte[] contractAddress = null;
+    if (!protoResult.getContractAddress().isEmpty()) {
+      contractAddress = protoResult.getContractAddress().toByteArray();
+      logger.debug("Parsed contract_address: {}",
+          org.tron.common.utils.ByteArray.toHexString(contractAddress));
+    }
+
     return new ExecutionResult(
         protoResult.getStatus() == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS,
         protoResult.getReturnData().toByteArray(),
@@ -1436,7 +1450,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         trc10Changes,
         voteChanges,
         withdrawChanges,
-        tronTransactionResult);
+        tronTransactionResult,
+        contractAddress);
   }
 
   /**

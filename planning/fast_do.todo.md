@@ -21,14 +21,21 @@
 | Phase 2.F (Exchange 41-44) | ✅ **DONE** | 全部实现并有 fixtures |
 | Phase 2.G (Market 52-53) | ✅ **DONE** | 全部实现并有 fixtures (含完整订单匹配) |
 | Phase 2.H (Shield 51) | ❌ 未开始 | 建议独立里程碑 (zk/merkle 依赖复杂) |
-| Phase 2.I (VM 30/31) | 🟡 部分完成 | L1 done; L2/L3 pending; 32/20 confirmed query-only |
+| Phase 2.I (VM 30/31) | 🟡 部分完成 | L1 done; **L2 done**; L3 pending; 32/20 confirmed query-only |
 | Phase 3 (灰度/CI) | ✅ **DONE** | PR fixture gate + nightly CSV replay 就绪 |
 
 **已实现合约数**: 26 个系统合约类型
 **已生成 Fixtures**: 172 个测试用例 (Java fixture generators) + 113 个 Rust conformance fixtures
 **查询类型 (非交易)**: GetContract (32), CustomContract (20) - 确认无需 Rust 实现
-**下一优先级**: VM parity L2/L3 (30/31)
+**下一优先级**: VM parity L3 (30/31 fixtures)
 **已推迟**: Shield 51 (独立里程碑，保持 Java fallback)
+
+**Phase 2.I L2 完成 (2025-12-24)**:
+- ✅ Java 发送完整 CreateSmartContract proto
+- ✅ Rust 捕获 EVM 创建的 contract_address
+- ✅ Rust 在 EVM 成功后调用 `persist_smart_contract_metadata()` 保存 SmartContract + ABI
+- ✅ 通过 gRPC ExecutionResult.contract_address 字段回传地址到 Java
+- ✅ Java ExecutionProgramResult 设置 contractAddress 到 ProgramResult
 
 ---
 
@@ -665,32 +672,43 @@ TODO（建议独立里程碑时执行）：
 
 现状提示：
 - Java 已把 30/31 映射成 `tx_kind=VM`（`RemoteExecutionSPI.buildExecuteTransactionRequest`），Rust 侧走 `ExecutionModule.execute_transaction_with_storage(...)`。
-- 但你表里标记为 ❌ 的原因通常不是“没有入口”，而是 **TRON-TVМ 语义/落库/回执不完整**（尤其是 create 的合约元数据落库、能量/回执字段、以及 CreateSmartContract 的 toAddress 语义）。
+- 但你表里标记为 ❌ 的原因通常不是"没有入口"，而是 **TRON-TVМ 语义/落库/回执不完整**（尤其是 create 的合约元数据落库、能量/回执字段、以及 CreateSmartContract 的 toAddress 语义）。
 
 TODO（分三层推进）：
 - [x] L1：先把 **CreateSmartContract 的 toAddress 语义**修正并加测试（见 Phase 0.5），确保"创建"不会被误当"call 0 地址"。
   - **DONE**: Fixed in `rust-backend/crates/core/src/service/grpc/conversion.rs:35-46`
   - For `tx_kind=VM && contract_type=30 (CreateSmartContract)`, all-zero addresses are now treated as `None` (contract creation) instead of `Some(Address::ZERO)`
   - Tests added: `test_create_smart_contract_zero_address_treated_as_none`, `test_trigger_smart_contract_zero_address_preserved`, `test_create_smart_contract_type_value` in `tests.rs`
-- [ ] L2：补齐"合约创建后必须落库/可查询"的状态面：
-  - [ ] contract/code/abi/contract-state 的 key/value 规则与 Java 对齐（参见 `RepositoryImpl.commit*Cache`，store 在 `chainbase/.../store/*Store.java`）
-  - **现状分析 (2025-12-24)**:
+- [x] L2：补齐"合约创建后必须落库/可查询"的状态面：
+  - **DONE (2025-12-24)**: Implemented full contract metadata persistence after EVM creation
+  - [x] contract/code/abi/contract-state 的 key/value 规则与 Java 对齐
     - ✅ code storage (bytecode): `get_code()`/`set_code()` 已实现
     - ✅ contract-state (storage slots): `get_storage()`/`set_storage()` 已实现
-    - ❌ contract (SmartContract proto metadata): 未实现 - 合约创建后无法查询合约信息
-    - ❌ abi (ABI JSON): 完全未实现
-    - ❌ CreateSmartContract 系统合约处理器: 缺失 - 只走 EVM 但不保存元数据
-  - [ ] 实现 `put_smart_contract()` 方法保存 SmartContract protobuf 到 "contract" database
-  - [ ] 实现 `put_abi()`/`get_abi()` 方法保存 ABI 到 "abi" database
-  - [ ] 为 CreateSmartContract (30) 添加系统合约处理器：
-    - [ ] 解析 constructor bytecode 和参数
-    - [ ] 执行 EVM 获取 runtime bytecode
-    - [ ] 保存 SmartContract proto (name, version, abi, code_hash, origin_address, etc.)
-    - [ ] 保存 bytecode 到 code store
-    - [ ] 返回合约地址到 receipt
-  - [ ] 远端回传 receipt/ProgramResult.ret（至少保证 `TransactionInfo.contractAddress/contractResult/fee` 正确）
-    - [ ] `contractAddress` 字段 (20 bytes)
-    - [ ] `contractResult` 字段 (SUCCESS/REVERT/OUT_OF_ENERGY/etc.)
+    - ✅ contract (SmartContract proto metadata): `put_smart_contract()` now persists after EVM creation
+    - ✅ abi (ABI protobuf): `put_abi()` now persists after EVM creation
+  - [x] Java RemoteExecutionSPI 发送完整 CreateSmartContract proto（而非仅 bytecode）
+    - **DONE**: `RemoteExecutionSPI.java` now sends `createContract.toByteArray()` for CreateSmartContract case
+    - Added `CreateSmartContract` message to `rust-backend/crates/execution/protos/tron.proto`
+  - [x] 为 CreateSmartContract (30) 添加 post-EVM 元数据持久化处理器：
+    - **DONE**: `persist_smart_contract_metadata()` in `rust-backend/crates/core/src/service/mod.rs:197-263`
+    - [x] 从 transaction.data 解析 CreateSmartContract proto（包含 new_contract 字段）
+    - [x] 使用 EVM 返回的 contract_address 设置 SmartContract.contract_address (21-byte TRON format)
+    - [x] 从 owner_address 设置 SmartContract.origin_address
+    - [x] 如果 code_hash 为空则通过 Keccak256 计算
+    - [x] 调用 `put_smart_contract()` 保存到 ContractStore
+    - [x] 调用 `put_abi()` 保存 ABI 到 AbiStore（如果存在）
+  - [x] `TronExecutionResult` 添加 `contract_address` 字段捕获 EVM 创建的地址
+    - **DONE**: Added `contract_address: Option<revm::primitives::Address>` to `TronExecutionResult` in `tron_evm.rs:306`
+    - Updated `process_execution_result()` to extract address from `Output::Create(data, addr)`
+  - [x] 远端回传 contractAddress 到 Java
+    - **DONE**: Added `bytes contract_address = 16` to `ExecutionResult` in `backend.proto`
+    - Added `contractAddress` field to Java `ExecutionSPI.ExecutionResult` class
+    - Updated `RemoteExecutionSPI.convertExecuteTransactionResponse()` to extract and pass contractAddress
+    - Updated `ExecutionProgramResult.fromExecutionResult()` to call `result.setContractAddress()`
+  - [x] Rust gRPC handler 在 VM 分支添加 post-EVM 持久化调用
+    - **DONE**: In `grpc/mod.rs:1123-1139`, when `is_create_smart_contract && result.success && result.contract_address.is_some()`, calls `persist_smart_contract_metadata()`
+  - [x] 更新 Rust proto 转换包含 contract_address
+    - **DONE**: Updated `convert_execution_result_to_protobuf()` in `conversion.rs:474-477` to include `contract_address` in response
 - [ ] L3：做 VM parity fixtures（最小合约部署 + 调用）：
   - [ ] deploy：bytecode 仅写存储/返回常量；对比：codeStore/contractStateStore/contractStore 的最终 bytes
   - [ ] trigger：调用后 storage slot 变化 + return_data

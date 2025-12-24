@@ -299,6 +299,11 @@ pub struct TronExecutionResult {
     /// withdraw_expire_amount, cancel_unfreezeV2_amount, orderId, orderDetails, etc.
     /// Java deserializes this to TransactionResultCapsule and sets on ProgramResult.ret
     pub tron_transaction_result: Option<Vec<u8>>,
+    /// Phase 2.I L2: Contract address for CreateSmartContract transactions
+    /// Set when EVM creates a new contract; used for:
+    /// 1. Persisting SmartContract metadata to ContractStore
+    /// 2. Returning in receipt for Java ProgramResult.contractAddress
+    pub contract_address: Option<revm::primitives::Address>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
@@ -410,9 +415,19 @@ where
 
         match result {
             ExecutionResult::Success { reason: _, gas_used: _, gas_refunded: _, logs, output } => {
-                let return_data = match output {
-                    Output::Call(data) => data,
-                    Output::Create(data, _) => data,
+                // Phase 2.I L2: Extract return_data and contract_address from output
+                let (return_data, contract_address) = match output {
+                    Output::Call(data) => (data, None),
+                    Output::Create(data, addr) => {
+                        // addr is Option<Address> - the created contract's address
+                        if let Some(created_addr) = addr {
+                            tracing::info!("Contract created at address: {:?}", created_addr);
+                            (data, Some(created_addr))
+                        } else {
+                            tracing::warn!("Contract creation succeeded but no address returned");
+                            (data, None)
+                        }
+                    },
                 };
 
                 Ok(TronExecutionResult {
@@ -430,6 +445,7 @@ where
                     vote_changes: vec![], // Will be populated by vote contract handlers
                     withdraw_changes: vec![], // Will be populated by withdraw contract handler
                     tron_transaction_result: None, // Phase 0.4: Populated by system contract handlers when needed
+                    contract_address, // Phase 2.I L2: Set for CreateSmartContract
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -448,6 +464,7 @@ where
                     vote_changes: vec![],
                     withdraw_changes: vec![],
                     tron_transaction_result: None,
+                    contract_address: None,
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -466,6 +483,7 @@ where
                     vote_changes: vec![],
                     withdraw_changes: vec![],
                     tron_transaction_result: None,
+                    contract_address: None,
                 })
             }
         }
@@ -480,7 +498,7 @@ where
             ExecutionResult::Success { reason: _, gas_used, gas_refunded: _, logs, output } => {
                 let return_data = match output {
                     Output::Call(data) => data,
-                    Output::Create(data, _) => data,
+                    Output::Create(data, _) => data, // Call shouldn't create, but handle for completeness
                 };
 
                 Ok(TronExecutionResult {
@@ -498,6 +516,7 @@ where
                     vote_changes: vec![],
                     withdraw_changes: vec![],
                     tron_transaction_result: None,
+                    contract_address: None, // Calls don't create contracts
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -516,6 +535,7 @@ where
                     vote_changes: vec![],
                     withdraw_changes: vec![],
                     tron_transaction_result: None,
+                    contract_address: None,
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -534,6 +554,7 @@ where
                     vote_changes: vec![],
                     withdraw_changes: vec![],
                     tron_transaction_result: None,
+                    contract_address: None,
                 })
             }
         }

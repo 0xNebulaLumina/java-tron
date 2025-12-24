@@ -442,3 +442,13 @@ message SmartContract {
   bytes trx_hash = 10;
   int32 version = 11;
 }
+
+// CreateSmartContract message - matches core/contract/smart_contract.proto
+// Used for parsing the incoming request from Java
+// Phase 2.I L2: Java now sends full CreateSmartContract proto bytes
+message CreateSmartContract {
+  bytes owner_address = 1;
+  SmartContract new_contract = 2;
+  int64 call_token_value = 3;
+  int64 token_id = 4;
+}

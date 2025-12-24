@@ -471,6 +471,11 @@ impl BackendService {
 
         let error_message = result.error.unwrap_or_default();
 
+        // Phase 2.I L2: Convert contract_address to TRON 21-byte format if present
+        let contract_address_bytes = result.contract_address.map(|addr| {
+            add_tron_address_prefix(&addr)
+        }).unwrap_or_default();
+
         ExecuteTransactionResponse {
             result: Some(ExecutionResult {
                 status: status as i32,
@@ -489,6 +494,8 @@ impl BackendService {
                 withdraw_changes, // WithdrawBalanceContract: allowance/latestWithdrawTime sidecar
                 // Phase 0.4: Receipt passthrough - serialized Protocol.Transaction.Result bytes
                 tron_transaction_result: result.tron_transaction_result.clone().unwrap_or_default(),
+                // Phase 2.I L2: Contract address for CreateSmartContract receipt
+                contract_address: contract_address_bytes,
             }),
             success: result.success,
             error_message,

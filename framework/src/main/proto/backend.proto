@@ -630,6 +630,11 @@ message ExecutionResult {
   // Java should deserialize this to TransactionResultCapsule and set on ProgramResult.ret
   // If empty, Java constructs result from other fields (backward compatible)
   bytes tron_transaction_result = 15;
+
+  // === Phase 2.I L2: Contract creation address ===
+  // For CreateSmartContract transactions, this contains the 20-byte EVM address
+  // of the newly created contract. Java should set this on ProgramResult.contractAddress.
+  bytes contract_address = 16;
 }
 
 // Account information for account changes

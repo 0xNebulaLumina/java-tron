@@ -191,7 +191,73 @@ impl BackendService {
         
         Ok(())
     }
-    
+
+    /// Phase 2.I L2: Persist SmartContract metadata after successful EVM contract creation
+    /// Parses CreateSmartContract proto from transaction data and stores SmartContract to ContractStore
+    fn persist_smart_contract_metadata(
+        &self,
+        storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        _context: &TronExecutionContext,
+        created_address: &revm_primitives::Address,
+    ) -> Result<(), String> {
+        use prost::Message;
+        use tron_backend_execution::protocol::CreateSmartContract;
+
+        info!("Phase 2.I L2: Persisting SmartContract metadata for contract at {:?}", created_address);
+
+        // Parse CreateSmartContract proto from transaction data
+        let create_contract = CreateSmartContract::decode(transaction.data.as_ref())
+            .map_err(|e| format!("Failed to parse CreateSmartContract proto: {}", e))?;
+
+        let new_contract = create_contract.new_contract
+            .ok_or_else(|| "CreateSmartContract.new_contract is missing".to_string())?;
+
+        // Build the SmartContract proto with all metadata
+        let mut smart_contract = new_contract.clone();
+
+        // Set the contract_address to the EVM-created address (21-byte TRON format)
+        let mut tron_address = vec![0x41u8];
+        tron_address.extend_from_slice(created_address.as_slice());
+        smart_contract.contract_address = tron_address.clone();
+
+        // Set origin_address from the owner (21-byte TRON format)
+        if create_contract.owner_address.len() == 20 {
+            let mut origin_tron = vec![0x41u8];
+            origin_tron.extend_from_slice(&create_contract.owner_address);
+            smart_contract.origin_address = origin_tron;
+        } else {
+            // Already 21-byte format
+            smart_contract.origin_address = create_contract.owner_address.clone();
+        }
+
+        // Compute code_hash if not set
+        if smart_contract.code_hash.is_empty() && !smart_contract.bytecode.is_empty() {
+            use sha3::{Keccak256, Digest};
+            let mut hasher = Keccak256::new();
+            hasher.update(&smart_contract.bytecode);
+            smart_contract.code_hash = hasher.finalize().to_vec();
+        }
+
+        // Persist to ContractStore
+        storage_adapter.put_smart_contract(&smart_contract)
+            .map_err(|e| format!("Failed to persist SmartContract to ContractStore: {}", e))?;
+
+        info!("Successfully persisted SmartContract: name='{}', origin_energy_limit={}, consume_user_resource_percent={}",
+              smart_contract.name, smart_contract.origin_energy_limit, smart_contract.consume_user_resource_percent);
+
+        // Persist ABI if present
+        if let Some(ref abi) = smart_contract.abi {
+            if !abi.entrys.is_empty() {
+                storage_adapter.put_abi(&tron_address, abi)
+                    .map_err(|e| format!("Failed to persist ABI: {}", e))?;
+                info!("Persisted ABI with {} entries", abi.entrys.len());
+            }
+        }
+
+        Ok(())
+    }
+
     /// Execute a non-VM transaction with contract type dispatch
     /// Routes to specific handlers based on TRON contract type
     pub(crate) fn execute_non_vm_contract(
@@ -793,6 +859,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for value transfers
             withdraw_changes: vec![], // Not applicable for value transfers
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -1009,6 +1076,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for witness creation
             withdraw_changes: vec![], // Not applicable for witness creation
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -1145,6 +1213,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for witness update
             withdraw_changes: vec![], // Not applicable for witness update
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -1546,6 +1615,7 @@ impl BackendService {
             vote_changes: vec![vote_change], // VoteChange for Account.votes update
             withdraw_changes: vec![], // Not applicable for vote witness
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -1656,6 +1726,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for account update
             withdraw_changes: vec![], // Not applicable for account update
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -1905,6 +1976,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -2107,6 +2179,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -2323,6 +2396,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -2469,6 +2543,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -2597,6 +2672,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -2931,6 +3007,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: Some(tron_transaction_result),
+            contract_address: None,
         })
     }
 
@@ -3300,6 +3377,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for TRC-10 transfers
             withdraw_changes: vec![], // Not applicable for TRC-10 transfers
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -3507,6 +3585,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for asset issue
             withdraw_changes: vec![], // Not applicable for asset issue
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -3788,6 +3867,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -3948,6 +4028,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -4094,6 +4175,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -4182,6 +4264,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -4400,6 +4483,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: Some(receipt_bytes),
+            contract_address: None,
         })
     }
 
@@ -4575,6 +4659,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: Some(receipt_bytes),
+            contract_address: None,
         })
     }
 
@@ -4790,6 +4875,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -5013,6 +5099,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -5525,6 +5612,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -5646,6 +5734,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -5774,6 +5863,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -6274,6 +6364,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: Some(receipt),
+            contract_address: None,
         })
     }
 
@@ -6517,6 +6608,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: Some(receipt),
+            contract_address: None,
         })
     }
 
@@ -6713,6 +6805,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: Some(receipt),
+            contract_address: None,
         })
     }
 
@@ -6909,6 +7002,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: Some(receipt),
+            contract_address: None,
         })
     }
 
@@ -7336,6 +7430,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -7556,6 +7651,7 @@ impl BackendService {
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: Some(receipt),
+            contract_address: None,
         })
     }
 

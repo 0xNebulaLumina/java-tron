@@ -168,6 +168,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable
             withdraw_changes, // WithdrawChange sidecar for Java apply
             tron_transaction_result: Some(tron_transaction_result), // Phase 0.4: Receipt passthrough with withdraw_amount
+            contract_address: None, // Not applicable for withdraw contracts
         })
     }
 
