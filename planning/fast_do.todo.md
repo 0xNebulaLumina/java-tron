@@ -21,7 +21,7 @@
 | Phase 2.F (Exchange 41-44) | ✅ **DONE** | 全部实现并有 fixtures |
 | Phase 2.G (Market 52-53) | ✅ **DONE** | 全部实现并有 fixtures (含完整订单匹配) |
 | Phase 2.H (Shield 51) | ❌ 未开始 | 建议独立里程碑 (zk/merkle 依赖复杂) |
-| Phase 2.I (VM 30/31) | 🟡 部分完成 | L1 done; **L2 done**; L3 pending; 32/20 confirmed query-only |
+| Phase 2.I (VM 30/31) | 🟡 部分完成 | L1 done; **L2 done**; **L3 partial** (CreateSmartContract fixtures done, TriggerSmartContract requires VMTestBase); 32/20 confirmed query-only |
 | Phase 3 (灰度/CI) | ✅ **DONE** | PR fixture gate + nightly CSV replay 就绪 |
 
 **已实现合约数**: 26 个系统合约类型
@@ -36,6 +36,14 @@
 - ✅ Rust 在 EVM 成功后调用 `persist_smart_contract_metadata()` 保存 SmartContract + ABI
 - ✅ 通过 gRPC ExecutionResult.contract_address 字段回传地址到 Java
 - ✅ Java ExecutionProgramResult 设置 contractAddress 到 ProgramResult
+
+**Phase 2.I L3 部分完成 (2025-12-24)**:
+- ✅ Created `VmFixtureGeneratorTest.java` for VM parity fixtures
+- ✅ CreateSmartContract fixtures: happy_path, with_value, insufficient_balance, invalid_bytecode (4 tests passing)
+- ⏸️ TriggerSmartContract fixtures: Requires VMTestBase infrastructure (marked @Ignore)
+  - TriggerSmartContract tests need proper test isolation via VMTestBase (see StorageTest.java)
+  - Repository-based state management required for contract deployment + trigger sequence
+  - Future work: Create dedicated VmFixtureGeneratorVMTest extending VMTestBase
 
 ---
 
@@ -709,11 +717,19 @@ TODO（分三层推进）：
     - **DONE**: In `grpc/mod.rs:1123-1139`, when `is_create_smart_contract && result.success && result.contract_address.is_some()`, calls `persist_smart_contract_metadata()`
   - [x] 更新 Rust proto 转换包含 contract_address
     - **DONE**: Updated `convert_execution_result_to_protobuf()` in `conversion.rs:474-477` to include `contract_address` in response
-- [ ] L3：做 VM parity fixtures（最小合约部署 + 调用）：
-  - [ ] deploy：bytecode 仅写存储/返回常量；对比：codeStore/contractStateStore/contractStore 的最终 bytes
-  - [ ] trigger：调用后 storage slot 变化 + return_data
+- [x] L3：做 VM parity fixtures（最小合约部署 + 调用）：
+  - **DONE (2025-12-24)**: Created `VmFixtureGeneratorTest.java` in `framework/src/test/java/org/tron/core/conformance/`
+  - [x] deploy：CreateSmartContract fixtures (happy_path, with_value, insufficient_balance, invalid_bytecode)
+    - Uses StorageDemo contract bytecode with STORAGE_ABI
+    - Captures: account, contract, code, abi, contract-state, dynamic-properties databases
+  - [ ] trigger：TriggerSmartContract fixtures (PENDING - requires VMTestBase)
+    - 调用后 storage slot 变化 + return_data
+    - Tests marked @Ignore("Requires VMTestBase infrastructure")
+    - See `StorageTest.java` for reference implementation pattern
+    - Future: Create `VmFixtureGeneratorVMTest extends VMTestBase` for proper test isolation
   - [ ] edge：revert/out-of-energy/invalid opcode（对比 `contractRet` 与 runtimeError）
-  - **建议**：使用简单的 Solidity 合约（如 Counter）生成 fixtures，避免复杂依赖
+    - Partially covered by invalid_bytecode test
+    - Full edge cases require VMTestBase for proper state rollback testing
 - [x] GetContract（32）与 CustomContract（20）：先确认"是否真的作为交易执行路径存在"
   - **CONFIRMED (2025-12-21)**: Neither GetContract nor CustomContract have actuators in the codebase.
   - GetContract (32) is a **query-only** operation served via HTTP endpoints (`GetContractServlet.java`, `GetContractInfoServlet.java`)
