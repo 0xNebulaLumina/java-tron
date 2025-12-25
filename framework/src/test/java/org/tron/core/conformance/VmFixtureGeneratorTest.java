@@ -25,9 +25,9 @@ import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.TransactionTrace;
+import org.tron.core.exception.ContractValidateException;
+import org.tron.core.exception.VMIllegalException;
 import org.tron.core.store.StoreFactory;
-import org.tron.core.vm.repository.Repository;
-import org.tron.core.vm.repository.RepositoryImpl;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction;
@@ -206,6 +206,9 @@ public class VmFixtureGeneratorTest extends BaseTest {
     rawBuilder.setTimestamp(System.currentTimeMillis());
     rawBuilder.setExpiration(System.currentTimeMillis() + 3600000);
     txBuilder.setRawData(rawBuilder);
+    if (txBuilder.getRetCount() == 0) {
+      txBuilder.addRet(Transaction.Result.newBuilder().build());
+    }
     trxCap = new TransactionCapsule(txBuilder.build());
 
     BlockCapsule blockCap = createBlockContext();
@@ -250,6 +253,9 @@ public class VmFixtureGeneratorTest extends BaseTest {
     rawBuilder.setTimestamp(System.currentTimeMillis());
     rawBuilder.setExpiration(System.currentTimeMillis() + 3600000);
     txBuilder.setRawData(rawBuilder);
+    if (txBuilder.getRetCount() == 0) {
+      txBuilder.addRet(Transaction.Result.newBuilder().build());
+    }
     trxCap = new TransactionCapsule(txBuilder.build());
 
     BlockCapsule blockCap = createBlockContext();
@@ -285,7 +291,7 @@ public class VmFixtureGeneratorTest extends BaseTest {
         poorBytes,
         STORAGE_ABI,
         STORAGE_CODE,
-        0,
+        2_000L, // make validation fail deterministically: callValue > account balance
         50,
         null,
         10_000_000L
@@ -299,6 +305,9 @@ public class VmFixtureGeneratorTest extends BaseTest {
     rawBuilder.setTimestamp(System.currentTimeMillis());
     rawBuilder.setExpiration(System.currentTimeMillis() + 3600000);
     txBuilder.setRawData(rawBuilder);
+    if (txBuilder.getRetCount() == 0) {
+      txBuilder.addRet(Transaction.Result.newBuilder().build());
+    }
     trxCap = new TransactionCapsule(txBuilder.build());
 
     BlockCapsule blockCap = createBlockContext();
@@ -342,6 +351,9 @@ public class VmFixtureGeneratorTest extends BaseTest {
     rawBuilder.setTimestamp(System.currentTimeMillis());
     rawBuilder.setExpiration(System.currentTimeMillis() + 3600000);
     txBuilder.setRawData(rawBuilder);
+    if (txBuilder.getRetCount() == 0) {
+      txBuilder.addRet(Transaction.Result.newBuilder().build());
+    }
     trxCap = new TransactionCapsule(txBuilder.build());
 
     BlockCapsule blockCap = createBlockContext();
@@ -601,83 +613,94 @@ public class VmFixtureGeneratorTest extends BaseTest {
 
     VmFixtureResult result = new VmFixtureResult();
 
+    // Capture pre-execution state
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Build and save request
+    ExecuteTransactionRequest request = buildVmRequest(trxCap, blockCap, contract);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+    log.info("Saved request.pb ({} bytes)", requestFile.length());
+
+    // Execute using TransactionTrace
+    TransactionTrace trace = new TransactionTrace(
+        trxCap, StoreFactory.getInstance(), new RuntimeImpl());
+    trace.init(blockCap);
+
+    String validationError = null;
     try {
-      // Capture pre-execution state
-      File preDbDir = new File(fixtureDir, "pre_db");
-      preDbDir.mkdirs();
-      captureVmDatabases(preDbDir);
-
-      // Build and save request
-      ExecuteTransactionRequest request = buildVmRequest(trxCap, blockCap, contract);
-      File requestFile = new File(fixtureDir, "request.pb");
-      try (FileOutputStream fos = new FileOutputStream(requestFile)) {
-        request.writeTo(fos);
-      }
-      log.info("Saved request.pb ({} bytes)", requestFile.length());
-
-      // Execute using TransactionTrace
-      TransactionTrace trace = new TransactionTrace(trxCap,
-          StoreFactory.getInstance(), new RuntimeImpl());
-      trace.init(blockCap);
       trace.exec();
+      trace.setResult();
       trace.finalization();
+    } catch (ContractValidateException | VMIllegalException e) {
+      validationError = e.getMessage();
+    }
 
+    if (validationError != null) {
+      result.setSuccess(false);
+      result.setError(validationError);
+    } else {
       String runtimeError = trace.getRuntimeError();
-      if (runtimeError != null) {
+      if (runtimeError != null && !runtimeError.isEmpty()) {
         result.setSuccess(false);
         result.setError(runtimeError);
       } else {
         result.setSuccess(true);
-        if (trace.getRuntime() != null && trace.getRuntime().getResult() != null) {
-          result.setContractAddress(trace.getRuntime().getResult().getContractAddress());
-          result.setReturnData(trace.getRuntime().getResult().getHReturn());
-        }
       }
-
-      // Capture post-execution state
-      File expectedDir = new File(fixtureDir, "expected");
-      File postDbDir = new File(expectedDir, "post_db");
-      postDbDir.mkdirs();
-      captureVmDatabases(postDbDir);
-
-      // Save result
-      if (trace.getReceipt() != null) {
-        File resultFile = new File(expectedDir, "result.pb");
-        try (FileOutputStream fos = new FileOutputStream(resultFile)) {
-          trace.getReceipt().getReceipt().writeTo(fos);
-        }
+      if (trace.getRuntime() != null && trace.getRuntime().getResult() != null) {
+        result.setContractAddress(trace.getRuntime().getResult().getContractAddress());
+        result.setReturnData(trace.getRuntime().getResult().getHReturn());
       }
+    }
 
-      // Save metadata
-      FixtureMetadata metadata = FixtureMetadata.builder()
-          .contractType(contractTypeName.toUpperCase(), getContractTypeNumber(contractTypeName))
-          .caseName(caseName)
-          .caseCategory(category)
-          .description(description)
-          .database("account")
-          .database("contract")
-          .database("code")
-          .database("abi")
-          .database("contract-state")
-          .database("dynamic-properties")
-          .ownerAddress(OWNER_ADDRESS)
-          .build();
+    // Capture post-execution state (validation failures should have no changes)
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
 
-      metadata.setBlockNumber(blockCap.getNum());
-      metadata.setBlockTimestamp(blockCap.getTimeStamp());
+    // Save receipt only when execution reached trace.exec()
+    if (validationError == null && trace.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        trace.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType(contractTypeName.toUpperCase(), getContractTypeNumber(contractTypeName))
+        .caseName(caseName)
+        .caseCategory(category)
+        .description(description)
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    metadata.setBlockNumber(blockCap.getNum());
+    metadata.setBlockTimestamp(blockCap.getTimeStamp());
+    if (validationError != null) {
+      metadata.setExpectedStatus("VALIDATION_FAILED");
+      metadata.setExpectedErrorMessage(validationError);
+    } else {
       metadata.setExpectedStatus(result.isSuccess() ? "SUCCESS" : "REVERT");
       if (result.getError() != null) {
         metadata.setExpectedErrorMessage(result.getError());
       }
-
-      metadata.toFile(new File(fixtureDir, "metadata.json"));
-      log.info("Generated VM fixture: {}/{}", contractTypeName, caseName);
-
-    } catch (Exception e) {
-      log.error("Failed to generate VM fixture", e);
-      result.setSuccess(false);
-      result.setError(e.getMessage());
     }
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated VM fixture: {}/{} (status={})",
+        contractTypeName, caseName, metadata.getExpectedStatus());
 
     return result;
   }
@@ -773,6 +796,8 @@ public class VmFixtureGeneratorTest extends BaseTest {
           return convertIterator(chainBaseManager.getCodeStore().iterator());
         case "abi":
           return convertIterator(chainBaseManager.getAbiStore().iterator());
+        case "contract-state":
+          return convertIterator(chainBaseManager.getContractStateStore().iterator());
         case "dynamic-properties":
           return convertIterator(chainBaseManager.getDynamicPropertiesStore().iterator());
         default:
