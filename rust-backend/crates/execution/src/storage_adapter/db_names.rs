@@ -84,6 +84,13 @@ pub mod contract {
     pub const CONTRACT_STATE: &str = "contract-state";
 }
 
+/// EVM contract storage rows
+pub mod storage {
+    /// Contract storage row store (StorageRowStore)
+    /// Java: StorageRowStore.java - dbName = "storage-row"
+    pub const STORAGE_ROW: &str = "storage-row";
+}
+
 /// Governance database names
 pub mod governance {
     /// Proposal store (ProposalStore)

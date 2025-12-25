@@ -998,6 +998,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                         vote_changes: vec![],
                         withdraw_changes: vec![],
                         tron_transaction_result: vec![],
+                        contract_address: vec![],
                     }),
                     success: false,
                     error_message: format!("Transaction conversion error: {}", e),
@@ -1030,6 +1031,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                         vote_changes: vec![],
                         withdraw_changes: vec![],
                         tron_transaction_result: vec![],
+                        contract_address: vec![],
                     }),
                     success: false,
                     error_message: format!("Context conversion error: {}", e),
@@ -1089,29 +1091,53 @@ impl crate::backend::backend_server::Backend for BackendService {
             },
             crate::backend::TxKind::Vm => {
                 info!("Executing VM transaction via EVM");
-                
+
                 // TRON Parity Fix: Check if this is likely a non-VM transaction before execution (fallback heuristic)
                 let is_non_vm = self.is_likely_non_vm_transaction(&transaction, &storage_adapter);
-                
+
+                // Phase 2.I L2: Check if this is a CreateSmartContract for post-EVM metadata persistence
+                let is_create_smart_contract = transaction.metadata.contract_type
+                    .as_ref()
+                    .map(|ct| *ct == tron_backend_execution::TronContractType::CreateSmartContract)
+                    .unwrap_or(false);
+
                 // Execute the transaction using the database-specific storage adapter
                 match execution_module.execute_transaction_with_storage(storage_adapter, &transaction, &context) {
                     Ok(mut result) => {
                         // TRON Parity Fix: Apply non-VM heuristic to set energy_used = 0 for non-VM transactions
                         if is_non_vm {
                             debug!("Detected likely non-VM transaction (empty data, no code at 'to' address) - setting energy_used = 0");
-                            debug!("Original energy_used: {}, from: {:?}, to: {:?}, value: {}", 
+                            debug!("Original energy_used: {}, from: {:?}, to: {:?}, value: {}",
                                    result.energy_used, transaction.from, transaction.to, transaction.value);
                             result.energy_used = 0;
                         } else {
                             debug!("Detected VM transaction - keeping original energy_used: {}", result.energy_used);
                         }
-                        
+
                         // TRON Phase 2: Apply fee post-processing based on configuration
                         if let Err(e) = self.apply_fee_post_processing(&mut result, &transaction, &context, is_non_vm) {
                             warn!("Fee post-processing failed: {}, continuing with original result", e);
                             // Continue with original result
                         }
-                        
+
+                        // Phase 2.I L2: Persist SmartContract metadata after successful contract creation
+                        // Note: We need to create a new storage adapter since execute_transaction_with_storage consumes it
+                        if is_create_smart_contract && result.success && result.contract_address.is_some() {
+                            let mut persist_storage_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
+                                storage_engine.clone(),
+                            );
+                            if let Err(e) = self.persist_smart_contract_metadata(
+                                &mut persist_storage_adapter,
+                                &transaction,
+                                &context,
+                                result.contract_address.as_ref().unwrap(),
+                            ) {
+                                warn!("Failed to persist SmartContract metadata: {}", e);
+                                // Continue - contract was created, but metadata wasn't persisted
+                                // This is recoverable as Java can still access via embedded mode
+                            }
+                        }
+
                         Ok(result)
                     },
                     Err(e) => Err(e)
@@ -1187,6 +1213,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                         vote_changes: vec![],
                         withdraw_changes: vec![],
                         tron_transaction_result: vec![],
+                        contract_address: vec![],
                     }),
                     success: false,
                     error_message: format!("Execution error: {}", e),

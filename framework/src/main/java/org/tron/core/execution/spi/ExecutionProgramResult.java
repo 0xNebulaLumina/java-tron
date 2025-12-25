@@ -179,6 +179,14 @@ public class ExecutionProgramResult extends ProgramResult {
       }
     }
 
+    // Phase 2.I L2: Set contractAddress for CreateSmartContract receipt
+    byte[] contractAddress = executionResult.getContractAddress();
+    if (contractAddress != null && contractAddress.length > 0) {
+      result.setContractAddress(contractAddress);
+      log.debug("Phase 2.I L2: Set ProgramResult.contractAddress ({} bytes)",
+          contractAddress.length);
+    }
+
     return result;
   }
 

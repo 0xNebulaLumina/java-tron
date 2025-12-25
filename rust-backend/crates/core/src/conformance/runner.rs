@@ -15,9 +15,9 @@ use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig}
 use tron_backend_storage::StorageEngine;
 use tron_backend_execution::{
     EngineBackedEvmStateStore, ExecutionModule, TronTransaction, TronExecutionContext,
-    TronContractType, TxMetadata,
+    EvmStateStore, TronContractType, TxMetadata,
 };
-use revm_primitives::{Address, U256, Bytes};
+use revm_primitives::{hex, Address, B256, Bytes, U256};
 use crate::BackendService;
 
 /// Result of running a conformance test
@@ -210,6 +210,9 @@ impl ConformanceRunner {
         ExecutionConfig {
             remote: RemoteExecutionConfig {
                 system_enabled: true,
+                // Conformance runner executes against an isolated RocksDB instance, so Rust must
+                // persist VM state changes directly.
+                rust_persist_enabled: true,
                 // Enable all Phase 2 contracts for conformance testing
                 // Phase 2.A: Proposal contracts
                 proposal_create_enabled: true,
@@ -351,6 +354,9 @@ impl ConformanceRunner {
         let from = Address::from_slice(from_bytes);
 
         // Parse to address
+        //
+        // Phase 0.5 parity: Java sends a 20-byte zero array as `to` for CreateSmartContract.
+        // Treat that as contract creation (to=None), not as a call to address 0x0.
         let to = if tx.to.is_empty() {
             None
         } else {
@@ -361,7 +367,15 @@ impl ConformanceRunner {
             } else {
                 return Err(format!("Invalid to address length: {}", tx.to.len()));
             };
-            Some(Address::from_slice(to_bytes))
+            let to_address = Address::from_slice(to_bytes);
+
+            let is_vm_create = tx.tx_kind == crate::backend::TxKind::Vm as i32
+                && tx.contract_type == TronContractType::CreateSmartContract as i32;
+            if is_vm_create && to_address == Address::ZERO {
+                None
+            } else {
+                Some(to_address)
+            }
         };
 
         // Parse value
@@ -412,6 +426,16 @@ impl ConformanceRunner {
             return Err(format!("Invalid coinbase length: {}", ctx.coinbase.len()));
         };
 
+        let transaction_id = if ctx.transaction_id.is_empty() {
+            None
+        } else {
+            let trimmed = ctx.transaction_id.trim_start_matches("0x");
+            match hex::decode(trimmed) {
+                Ok(bytes) if bytes.len() == 32 => Some(B256::from_slice(&bytes)),
+                _ => None,
+            }
+        };
+
         Ok(TronExecutionContext {
             block_number: ctx.block_number as u64,
             block_timestamp: ctx.block_timestamp as u64,
@@ -427,6 +451,7 @@ impl ConformanceRunner {
             chain_id: 2494104990, // TRON mainnet chain ID
             energy_price: ctx.energy_price as u64,
             bandwidth_price: 1000, // Default TRON bandwidth price
+            transaction_id,
         })
     }
 
@@ -528,10 +553,88 @@ impl ConformanceRunner {
                 backend_service.execute_non_vm_contract(&mut storage_adapter, &transaction, &context)
             }
             crate::backend::TxKind::Vm => {
-                let storage_adapter = EngineBackedEvmStateStore::new(storage_engine.clone());
-                execution_module
-                    .execute_transaction_with_storage(storage_adapter, &transaction, &context)
-                    .map_err(|e| format!("VM execution error: {}", e))
+                (|| -> Result<tron_backend_execution::TronExecutionResult, String> {
+                    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine.clone());
+                    let mut result = execution_module
+                        .execute_transaction_with_storage(storage_adapter, &transaction, &context)
+                        .map_err(|e| {
+                            let msg = format!("VM execution error: {}", e);
+                            // Parity mapping for CreateSmartContract validate failures.
+                            if transaction.metadata.contract_type
+                                == Some(tron_backend_execution::TronContractType::CreateSmartContract)
+                                && msg.contains("LackOfFundForMaxFee")
+                            {
+                                format!(
+                                    "Validate InternalTransfer error, balance is not sufficient. ({})",
+                                    msg
+                                )
+                            } else {
+                                msg
+                            }
+                        })?;
+
+                    // Post-processing for conformance: persist VM side effects to the isolated DB.
+                    // This mirrors java-tron's fee + metadata persistence behavior.
+                    let mut post_storage_adapter =
+                        EngineBackedEvmStateStore::new(storage_engine.clone());
+
+                    // Map invalid opcode errors for CreateSmartContract to java-tron's message format.
+                    if !result.success
+                        && transaction.metadata.contract_type
+                            == Some(tron_backend_execution::TronContractType::CreateSmartContract)
+                    {
+                        if let Some(ref err) = result.error {
+                            if err.contains("OpcodeNotFound") {
+                                use prost::Message;
+                                use tron_backend_execution::protocol::CreateSmartContract;
+                                if let Ok(create_contract) =
+                                    CreateSmartContract::decode(transaction.data.as_ref())
+                                {
+                                    if let Some(new_contract) = create_contract.new_contract {
+                                        if let Some(opcode) = new_contract.bytecode.first() {
+                                            result.error = Some(format!(
+                                                "Invalid operation code: opCode[{:02x}];",
+                                                opcode
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    post_storage_adapter
+                        .apply_vm_energy_fee(
+                            &transaction.from,
+                            result.energy_used,
+                            context.energy_price,
+                        )
+                        .map_err(|e| format!("Failed to apply VM energy fee: {}", e))?;
+
+                    // Persist SmartContract metadata + ABI after successful CreateSmartContract.
+                    if transaction.metadata.contract_type
+                        == Some(tron_backend_execution::TronContractType::CreateSmartContract)
+                        && result.success
+                    {
+                        if let Some(created_address) = result.contract_address.as_ref() {
+                            backend_service
+                                .persist_smart_contract_metadata(
+                                    &mut post_storage_adapter,
+                                    &transaction,
+                                    &context,
+                                    created_address,
+                                )
+                                .map_err(|e| {
+                                    format!(
+                                        "Failed to persist SmartContract metadata: {}",
+                                        e
+                                    )
+                                })?;
+                        }
+                    }
+
+                    Ok(result)
+                })()
             }
         };
 

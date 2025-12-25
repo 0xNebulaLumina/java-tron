@@ -206,48 +206,77 @@ impl<S: EvmStateStore> Database for EvmStateDatabase<S> {
             return Ok(None);
         }
 
-        // Load from storage
+        // Load from storage.
+        //
+        // Important: return `None` for accounts that don't exist. Creating a synthetic default
+        // account here makes REVM treat the account as existing and can lead to persisting
+        // empty accounts that were only touched.
         let result = self.storage.get_account(&address)?;
-        
-        // If account doesn't exist, create a default account for Tron compatibility
-        // This ensures that REVM can proceed with execution and account creation is tracked
-        let final_result = match result {
-            Some(account) => Some(account),
-            None => {
-                let address_tron = to_tron_address(&address);
-                tracing::info!("Creating default account for non-existent address {:?} (tron: {})", address, address_tron);
-                // Create a default account with zero balance
-                let default_account = AccountInfo {
-                    balance: revm::primitives::U256::ZERO,
-                    nonce: 0,
-                    // Use canonical empty code hash keccak256("") instead of ZERO for parity
-                    code_hash: keccak256(&[]),
-                    code: None,
-                };
-                
-                // **CRITICAL FIX: Pre-register this as a new account in snapshots**
-                // This ensures that when REVM commits changes, it will detect this as account creation
-                // even if the balance remains zero
-                // Mark as "was non-existent" but don't persist yet - let commit() handle it with final balance
-                self.account_snapshots.insert(address, None);
-                
-                // **IMPORTANT: Don't record state change or persist here**
-                // The account creation will be tracked in commit() with the final balance
-                // This way Java sees the account created with its actual balance, not 0
-                tracing::info!("Marked {:?} (tron: {}) as non-existent for tracking, will persist in commit() with final balance", address, address_tron);
 
-                Some(default_account)
+        // If the account exists, also load contract code (if any) from CodeStore.
+        // TRON stores runtime bytecode keyed by address, not by code hash.
+        let final_result = match result {
+            Some(mut account) => {
+                match self.storage.get_code(&address) {
+                    Ok(Some(code)) => {
+                        account.code_hash = code.hash_slow();
+                        account.code = Some(code.clone());
+                        self.code_cache.insert(address, Some(code));
+                    }
+                    Ok(None) => {
+                        // Normalize EOAs to the canonical empty code hash.
+                        account.code_hash = keccak256(&[]);
+                        account.code = None;
+                        self.code_cache.insert(address, None);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load code for {:?}: {}", address, e);
+                        if account.code_hash == B256::ZERO {
+                            account.code_hash = keccak256(&[]);
+                        }
+                        account.code = None;
+                        self.code_cache.insert(address, None);
+                    }
+                }
+                Some(account)
             }
+            None => None,
         };
         
         self.account_cache.insert(address, final_result.clone());
         Ok(final_result)
     }
 
-    fn code_by_hash(&mut self, _code_hash: B256) -> Result<revm::primitives::Bytecode, Self::Error> {
-        // For simplicity, return empty bytecode
-        // In a real implementation, this would look up code by hash
-        Ok(Bytecode::new())
+    fn code_by_hash(&mut self, code_hash: B256) -> Result<revm::primitives::Bytecode, Self::Error> {
+        // TRON stores contract code keyed by address in CodeStore, not by code hash.
+        // We load code eagerly in `basic()`; this is a fallback.
+        let empty_hash = keccak256(&[]);
+        if code_hash == empty_hash {
+            return Ok(Bytecode::default());
+        }
+
+        // Try to find a cached code blob with matching hash.
+        for code_opt in self.code_cache.values() {
+            if let Some(code) = code_opt {
+                if code.hash_slow() == code_hash {
+                    return Ok(code.clone());
+                }
+            }
+        }
+
+        // Try to find an address in the account cache with a matching code hash.
+        if let Some((address, _)) = self
+            .account_cache
+            .iter()
+            .find(|(_, info)| info.as_ref().map(|i| i.code_hash) == Some(code_hash))
+        {
+            if let Some(code) = self.storage.get_code(address)? {
+                self.code_cache.insert(*address, Some(code.clone()));
+                return Ok(code);
+            }
+        }
+
+        Ok(Bytecode::default())
     }
 
     fn storage(&mut self, address: Address, index: U256) -> Result<U256, Self::Error> {
@@ -304,6 +333,31 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
             // Track account-level changes
             let new_account_info = account.info.clone();
             let is_account_creation = old_account_info.is_none() || was_nonexistent_in_snapshots;
+            let is_empty_created_account = is_account_creation
+                && new_account_info.balance == revm::primitives::U256::ZERO
+                && new_account_info.nonce == 0
+                && new_account_info.code.is_none()
+                && !account.is_selfdestructed()
+                && account
+                    .storage
+                    .iter()
+                    .all(|(_, slot)| slot.present_value == revm::primitives::U256::ZERO);
+
+            // TRON parity: do not persist newly-created empty/touched accounts.
+            //
+            // java-tron does not create an AccountStore entry for a failed CREATE that produced no
+            // code/balance, and conformance fixtures assert the address is absent.
+            if is_empty_created_account {
+                tracing::debug!(
+                    "Skipping persistence for empty created account {:?} (tron: {})",
+                    address,
+                    to_tron_address(&address)
+                );
+                // Ensure we don't keep an in-memory snapshot that would make the account appear.
+                self.account_snapshots.insert(address, None);
+                continue;
+            }
+
             let account_changed = match &old_account_info {
                 Some(old_info) => {
                     old_info.balance != new_account_info.balance ||
@@ -319,8 +373,7 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
             let force_track_creation = is_account_creation && (
                 new_account_info.balance > revm::primitives::U256::ZERO ||
                 new_account_info.nonce > 0 ||
-                new_account_info.code.is_some() ||
-                was_nonexistent_in_snapshots
+                new_account_info.code.is_some()
             );
 
             // Record account change if there was a change or if we're forcing account creation tracking

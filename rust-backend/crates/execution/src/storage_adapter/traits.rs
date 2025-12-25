@@ -4,7 +4,7 @@
 //! interface for account, code, and storage operations needed by the EVM execution engine.
 
 use anyhow::Result;
-use revm::primitives::{AccountInfo, Bytecode, Address, U256};
+use revm::primitives::{AccountInfo, Bytecode, Address, SpecId, U256};
 
 /// Minimal EVM-facing state interface for account, code, and storage operations.
 /// Provides the essential read/write operations needed by the EVM execution engine.
@@ -30,4 +30,24 @@ pub trait EvmStateStore: Send + Sync {
 
     /// Remove account
     fn remove_account(&mut self, address: &Address) -> Result<()>;
+
+    /// Best-effort TVM/EVM fork selection for gas accounting parity.
+    ///
+    /// Engine-backed stores can read TRON dynamic properties (e.g. `ALLOW_TVM_CONSTANTINOPLE`)
+    /// and return the matching REVM `SpecId` for the current block.
+    ///
+    /// Default: `None` (caller should fall back to config defaults).
+    fn tvm_spec_id(&self) -> Result<Option<SpecId>> {
+        Ok(None)
+    }
+
+    /// Best-effort ENERGY_FEE lookup (SUN per energy unit).
+    ///
+    /// Engine-backed stores can read TRON dynamic properties and return the effective energy fee
+    /// used to convert a transaction's `fee_limit` (SUN) into an EVM gas limit (energy units).
+    ///
+    /// Default: `None` (caller should fall back to the raw value they were given).
+    fn energy_fee_rate(&self) -> Result<Option<u64>> {
+        Ok(None)
+    }
 }

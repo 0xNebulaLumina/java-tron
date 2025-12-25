@@ -130,6 +130,9 @@ public interface ExecutionSPI {
     // Phase 0.4: Receipt passthrough - serialized Protocol.Transaction.Result bytes
     // Contains system contract-specific fields like exchange_id, withdraw_amount, etc.
     private final byte[] tronTransactionResult;
+    // Phase 2.I L2: Contract creation address (20-byte EVM address)
+    // For CreateSmartContract, this is the newly created contract's address
+    private final byte[] contractAddress;
 
     public ExecutionResult(
         boolean success,
@@ -147,10 +150,10 @@ public interface ExecutionSPI {
         List<WithdrawChange> withdrawChanges) {
       this(success, returnData, energyUsed, energyRefunded, stateChanges, logs,
            errorMessage, bandwidthUsed, freezeChanges, globalResourceChanges,
-           trc10Changes, voteChanges, withdrawChanges, null);
+           trc10Changes, voteChanges, withdrawChanges, null, null);
     }
 
-    // New constructor with tronTransactionResult
+    // Constructor with tronTransactionResult (backward compatible)
     public ExecutionResult(
         boolean success,
         byte[] returnData,
@@ -166,6 +169,28 @@ public interface ExecutionSPI {
         List<VoteChange> voteChanges,
         List<WithdrawChange> withdrawChanges,
         byte[] tronTransactionResult) {
+      this(success, returnData, energyUsed, energyRefunded, stateChanges, logs,
+           errorMessage, bandwidthUsed, freezeChanges, globalResourceChanges,
+           trc10Changes, voteChanges, withdrawChanges, tronTransactionResult, null);
+    }
+
+    // Full constructor with contractAddress (Phase 2.I L2)
+    public ExecutionResult(
+        boolean success,
+        byte[] returnData,
+        long energyUsed,
+        long energyRefunded,
+        List<StateChange> stateChanges,
+        List<LogEntry> logs,
+        String errorMessage,
+        long bandwidthUsed,
+        List<FreezeLedgerChange> freezeChanges,
+        List<GlobalResourceTotalsChange> globalResourceChanges,
+        List<Trc10Change> trc10Changes,
+        List<VoteChange> voteChanges,
+        List<WithdrawChange> withdrawChanges,
+        byte[] tronTransactionResult,
+        byte[] contractAddress) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -180,6 +205,7 @@ public interface ExecutionSPI {
       this.voteChanges = voteChanges;
       this.withdrawChanges = withdrawChanges;
       this.tronTransactionResult = tronTransactionResult;
+      this.contractAddress = contractAddress;
     }
 
     // Getters
@@ -244,6 +270,16 @@ public interface ExecutionSPI {
      */
     public byte[] getTronTransactionResult() {
       return tronTransactionResult;
+    }
+
+    /**
+     * Get the contract address for CreateSmartContract transactions.
+     * Phase 2.I L2: This is the 20-byte EVM address of the newly created contract.
+     *
+     * @return Contract address bytes, or null if this is not a contract creation
+     */
+    public byte[] getContractAddress() {
+      return contractAddress;
     }
   }
 

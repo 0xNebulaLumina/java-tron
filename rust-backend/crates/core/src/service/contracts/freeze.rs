@@ -232,6 +232,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for freeze contracts
             withdraw_changes: vec![], // Not applicable for freeze contracts
             tron_transaction_result: None, // Phase 0.4: Receipt passthrough
+            contract_address: None, // Not applicable for freeze contracts
         })
     }
 
@@ -394,6 +395,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for freeze contracts
             withdraw_changes: vec![], // Not applicable for freeze contracts
             tron_transaction_result: Some(tron_transaction_result), // Phase 0.4: Receipt passthrough with unfreeze_amount
+            contract_address: None, // Not applicable for freeze contracts
         })
     }
 
@@ -642,6 +644,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for freeze contracts
             withdraw_changes: vec![], // Not applicable for freeze contracts
             tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -847,6 +850,7 @@ impl BackendService {
             vote_changes: vec![], // Not applicable for freeze contracts
             withdraw_changes: vec![], // Not applicable for freeze contracts
             tron_transaction_result: Some(tron_transaction_result), // Phase 0.4: Receipt passthrough with unfreeze_amount
+            contract_address: None, // Not applicable for freeze contracts
         })
     }
 
