@@ -41,5 +41,7 @@ pub use types::{
 };
 pub use in_memory::InMemoryEvmStateStore;
 pub use engine::EngineBackedEvmStateStore;
-pub use database::{EvmStateDatabase, SnapshotHook};
+pub use database::EvmStateDatabase;
+#[allow(unused_imports)]
+pub use database::SnapshotHook;
 pub use resource::{ResourceTracker, BandwidthPath};

@@ -8,7 +8,7 @@
 //! - StateChangeRecord: State change tracking for debugging and verification
 
 use anyhow::Result;
-use revm::primitives::{Account, AccountInfo, Address, U256};
+use revm::primitives::{AccountInfo, Address, U256};
 
 /// TRON Witness information - equivalent to WitnessCapsule in Java
 #[derive(Debug, Clone)]

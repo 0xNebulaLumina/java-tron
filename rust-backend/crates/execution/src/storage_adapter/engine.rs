@@ -81,8 +81,8 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get the appropriate database name for contract storage
-    fn contract_state_database(&self) -> &str {
-        db_names::contract::CONTRACT_STATE
+    fn storage_row_database(&self) -> &str {
+        db_names::storage::STORAGE_ROW
     }
 
     /// Get the appropriate database name for contract metadata
@@ -115,9 +115,12 @@ impl EngineBackedEvmStateStore {
         key
     }
 
-    /// Convert Address to storage key for code (raw address, matching java-tron)
+    /// Convert Address to storage key for code (matching java-tron format).
+    ///
+    /// Java-tron stores contract code using the 21-byte TRON address key
+    /// (prefix byte + 20-byte address), consistent with AccountStore and ContractStore.
     fn code_key(&self, address: &Address) -> Vec<u8> {
-        address.as_slice().to_vec()
+        self.account_key(address)
     }
 
     /// Convert Address to storage key for witness store (21-byte address with 0x41 prefix)
@@ -161,7 +164,10 @@ impl EngineBackedEvmStateStore {
     fn contract_storage_key(&self, address: &Address, storage_key: &U256) -> Vec<u8> {
         // Match java-tron's Storage.compose() method:
         // addrHash[0:16] + storageKey[16:32] (32 bytes total)
-        let addr_hash = keccak256(address.as_slice());
+        // java-tron hashes the 21-byte TRON address (prefix + 20 bytes), not the raw 20-byte EVM
+        // address. Fixture DBs commonly use 0xa0 prefixes, mainnet uses 0x41.
+        let tron_address = self.account_key(address);
+        let addr_hash = keccak256(&tron_address);
         let storage_key_bytes = storage_key.to_be_bytes::<32>();
 
         let mut composed_key = Vec::with_capacity(32);
@@ -623,6 +629,99 @@ impl EngineBackedEvmStateStore {
                 Ok(0)
             }
         }
+    }
+
+    /// Get ENERGY_FEE dynamic property (SUN per energy unit).
+    ///
+    /// Java stores dynamic properties as big-endian i64/u64 under their string keys.
+    /// When missing or invalid, return 0 and allow callers to fall back to context values.
+    pub fn get_energy_fee(&self) -> Result<u64> {
+        let key = b"ENERGY_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    if val > 0 {
+                        Ok(val as u64)
+                    } else {
+                        Ok(0)
+                    }
+                } else if !data.is_empty() {
+                    Ok(data[0] as u64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Apply TRON VM energy fee accounting and minimal resource timestamp updates.
+    ///
+    /// For VM transactions, java-tron charges `energy_used * energy_price` from the sender's
+    /// Account.balance and, when blackhole optimization is disabled, credits the blackhole account
+    /// by the same amount.
+    ///
+    /// Additionally, when `latest_block_header_timestamp` is available (>0), java-tron updates:
+    /// - `Account.latest_opration_time = latest_block_header_timestamp`
+    /// - `Account.account_resource.latest_consume_time_for_energy = latest_block_header_timestamp / 3000`
+    ///
+    /// This helper is intentionally minimal and only touches fields required by conformance
+    /// fixtures.
+    pub fn apply_vm_energy_fee(
+        &self,
+        owner: &Address,
+        energy_used: u64,
+        energy_price: u64,
+    ) -> Result<()> {
+        // Parity: java-tron derives energy price from the dynamic property ENERGY_FEE.
+        // Fixtures may set ExecutionContext.energy_price differently, so treat it as a fallback.
+        let effective_price = match self.get_energy_fee()? {
+            0 => energy_price,
+            v => v,
+        };
+
+        let fee_sun = energy_used.saturating_mul(effective_price);
+        if fee_sun == 0 {
+            return Ok(());
+        }
+
+        let fee_i64 = fee_sun as i64; // preserve low 64 bits (two's complement) like Java
+        let now_ms = self.get_latest_block_header_timestamp()?;
+
+        // Update owner account balance and timestamps.
+        if let Some(mut owner_account) = self.get_account_proto(owner)? {
+            owner_account.balance = owner_account.balance.wrapping_sub(fee_i64);
+
+            if now_ms > 0 {
+                owner_account.latest_opration_time = now_ms;
+                let head_slot = now_ms / 3000;
+                if owner_account.account_resource.is_none() {
+                    owner_account.account_resource =
+                        Some(crate::protocol::account::AccountResource::default());
+                }
+                if let Some(ar) = owner_account.account_resource.as_mut() {
+                    ar.latest_consume_time_for_energy = head_slot;
+                }
+            }
+
+            self.put_account_proto(owner, &owner_account)?;
+        }
+
+        // Credit blackhole account when optimization is disabled (fees are not burned).
+        if !self.support_black_hole_optimization()? {
+            if let Some(blackhole_address) = self.get_blackhole_address()? {
+                if let Some(mut blackhole_account) = self.get_account_proto(&blackhole_address)? {
+                    blackhole_account.balance = blackhole_account.balance.wrapping_add(fee_i64);
+                    self.put_account_proto(&blackhole_address, &blackhole_account)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Get WITNESS_ALLOWANCE_FROZEN_TIME dynamic property
@@ -2921,7 +3020,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn get_storage(&self, address: &Address, key: &U256) -> Result<U256> {
         let storage_key = self.contract_storage_key(address, key);
-        match self.storage_engine.get(self.contract_state_database(), &storage_key)? {
+        match self.storage_engine.get(self.storage_row_database(), &storage_key)? {
             Some(data) => {
                 if data.len() == 32 {
                     Ok(U256::from_be_bytes::<32>(data.try_into().unwrap()))
@@ -2976,14 +3075,24 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         let key = self.code_key(&address);
-        self.storage_engine.put(self.code_database(), &key, &code.bytes())?;
+        // Persist the original contract bytecode (no analysis padding).
+        //
+        // REVM's analyzed legacy bytecode includes 33 bytes of zero padding for faster
+        // interpreter execution. java-tron's CodeStore stores the raw runtime bytecode,
+        // so we must persist the unpadded original bytes for conformance parity.
+        let code_bytes = code.original_byte_slice();
+        if code_bytes.is_empty() {
+            // Don't store empty code blobs; absence in CodeStore represents empty code.
+            return Ok(());
+        }
+        self.storage_engine.put(self.code_database(), &key, code_bytes)?;
         Ok(())
     }
 
     fn set_storage(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         let storage_key = self.contract_storage_key(&address, &key);
         let data = value.to_be_bytes::<32>();
-        self.storage_engine.put(self.contract_state_database(), &storage_key, &data)?;
+        self.storage_engine.put(self.storage_row_database(), &storage_key, &data)?;
         Ok(())
     }
 
@@ -3001,6 +3110,59 @@ impl EvmStateStore for EngineBackedEvmStateStore {
         // or use a different key scheme that allows prefix deletion
 
         Ok(())
+    }
+
+    fn tvm_spec_id(&self) -> Result<Option<revm::primitives::SpecId>> {
+        use revm::primitives::SpecId;
+
+        let read_flag = |key: &[u8]| -> Result<Option<i64>> {
+            match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+                Some(data) => {
+                    if data.len() >= 8 {
+                        Ok(Some(i64::from_be_bytes([
+                            data[0], data[1], data[2], data[3],
+                            data[4], data[5], data[6], data[7],
+                        ])))
+                    } else if !data.is_empty() {
+                        Ok(Some(data[0] as i64))
+                    } else {
+                        Ok(Some(0))
+                    }
+                }
+                None => Ok(None),
+            }
+        };
+
+        let london = read_flag(b"ALLOW_TVM_LONDON")?;
+        let istanbul = read_flag(b"ALLOW_TVM_ISTANBUL")?;
+        let constantinople = read_flag(b"ALLOW_TVM_CONSTANTINOPLE")?;
+
+        let has_any = london.is_some() || istanbul.is_some() || constantinople.is_some();
+        if !has_any {
+            return Ok(None);
+        }
+
+        let london_enabled = london.unwrap_or(0) != 0;
+        let istanbul_enabled = istanbul.unwrap_or(0) != 0;
+        let spec_id = if london_enabled {
+            SpecId::LONDON
+        } else if istanbul_enabled {
+            SpecId::ISTANBUL
+        } else {
+            // TVM energy accounting matches Constantinople-era net gas metering (EIP-1283).
+            SpecId::CONSTANTINOPLE
+        };
+
+        Ok(Some(spec_id))
+    }
+
+    fn energy_fee_rate(&self) -> Result<Option<u64>> {
+        let fee = self.get_energy_fee()?;
+        if fee == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(fee))
+        }
     }
 }
 

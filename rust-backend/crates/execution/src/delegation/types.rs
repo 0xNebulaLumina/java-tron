@@ -3,7 +3,6 @@
 //! These types match the java-tron DelegationStore data structures.
 
 use anyhow::Result;
-use num_bigint::BigInt;
 use revm::primitives::Address;
 
 /// REMARK value used in delegation store to indicate uninitialized/invalid state.

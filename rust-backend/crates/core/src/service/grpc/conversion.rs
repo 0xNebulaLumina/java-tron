@@ -159,6 +159,26 @@ impl BackendService {
 
         debug!("Using block_gas_limit: {}", block_gas_limit);
 
+        let transaction_id = if ctx.transaction_id.is_empty() {
+            None
+        } else {
+            let trimmed = ctx.transaction_id.trim_start_matches("0x");
+            match hex::decode(trimmed) {
+                Ok(bytes) if bytes.len() == 32 => Some(revm_primitives::B256::from_slice(&bytes)),
+                Ok(bytes) => {
+                    warn!(
+                        "Invalid transaction_id length: expected 32 bytes, got {}",
+                        bytes.len()
+                    );
+                    None
+                }
+                Err(e) => {
+                    warn!("Failed to decode transaction_id hex: {}", e);
+                    None
+                }
+            }
+        };
+
         Ok(TronExecutionContext {
             block_number: ctx.block_number as u64,
             block_timestamp: ctx.block_timestamp as u64,
@@ -168,6 +188,7 @@ impl BackendService {
             chain_id: 0x2b6653dc, // Tron mainnet chain ID
             energy_price: ctx.energy_price as u64,
             bandwidth_price: 1000, // Default bandwidth price
+            transaction_id,
         })
     }
 

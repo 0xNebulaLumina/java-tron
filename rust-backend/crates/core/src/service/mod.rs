@@ -194,7 +194,7 @@ impl BackendService {
 
     /// Phase 2.I L2: Persist SmartContract metadata after successful EVM contract creation
     /// Parses CreateSmartContract proto from transaction data and stores SmartContract to ContractStore
-    fn persist_smart_contract_metadata(
+    pub(crate) fn persist_smart_contract_metadata(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
@@ -202,7 +202,7 @@ impl BackendService {
         created_address: &revm_primitives::Address,
     ) -> Result<(), String> {
         use prost::Message;
-        use tron_backend_execution::protocol::CreateSmartContract;
+        use tron_backend_execution::protocol::{AccountType as ProtoAccountType, CreateSmartContract};
 
         info!("Phase 2.I L2: Persisting SmartContract metadata for contract at {:?}", created_address);
 
@@ -217,27 +217,43 @@ impl BackendService {
         let mut smart_contract = new_contract.clone();
 
         // Set the contract_address to the EVM-created address (21-byte TRON format)
-        let mut tron_address = vec![0x41u8];
-        tron_address.extend_from_slice(created_address.as_slice());
+        let tron_address = storage_adapter.to_tron_address_21(created_address).to_vec();
         smart_contract.contract_address = tron_address.clone();
 
         // Set origin_address from the owner (21-byte TRON format)
         if create_contract.owner_address.len() == 20 {
-            let mut origin_tron = vec![0x41u8];
-            origin_tron.extend_from_slice(&create_contract.owner_address);
-            smart_contract.origin_address = origin_tron;
+            let origin_evm = revm_primitives::Address::from_slice(&create_contract.owner_address);
+            smart_contract.origin_address = storage_adapter.to_tron_address_21(&origin_evm).to_vec();
         } else {
             // Already 21-byte format
             smart_contract.origin_address = create_contract.owner_address.clone();
         }
 
         // Compute code_hash if not set
-        if smart_contract.code_hash.is_empty() && !smart_contract.bytecode.is_empty() {
-            use sha3::{Keccak256, Digest};
-            let mut hasher = Keccak256::new();
-            hasher.update(&smart_contract.bytecode);
-            smart_contract.code_hash = hasher.finalize().to_vec();
+        if smart_contract.code_hash.is_empty() {
+            use sha3::{Digest, Keccak256};
+
+            // java-tron stores SmartContract.code_hash as keccak256(runtime_code) (CodeStore),
+            // not keccak256(deployment_bytecode) (SmartContract.bytecode).
+            let mut code_bytes: Vec<u8> = Vec::new();
+            if let Ok(Some(code)) = storage_adapter.get_code(created_address) {
+                code_bytes.extend_from_slice(code.original_byte_slice());
+            }
+
+            if code_bytes.is_empty() {
+                code_bytes = smart_contract.bytecode.clone();
+            }
+
+            if !code_bytes.is_empty() {
+                let mut hasher = Keccak256::new();
+                hasher.update(&code_bytes);
+                smart_contract.code_hash = hasher.finalize().to_vec();
+            }
         }
+
+        // ContractStore stores SmartContract metadata WITHOUT ABI; ABI is stored separately in AbiStore.
+        let abi_to_store = smart_contract.abi.clone();
+        smart_contract.abi = None;
 
         // Persist to ContractStore
         storage_adapter.put_smart_contract(&smart_contract)
@@ -246,13 +262,24 @@ impl BackendService {
         info!("Successfully persisted SmartContract: name='{}', origin_energy_limit={}, consume_user_resource_percent={}",
               smart_contract.name, smart_contract.origin_energy_limit, smart_contract.consume_user_resource_percent);
 
+        // Ensure AccountStore entry for the contract has the correct type/name (Contract account).
+        let mut contract_account = storage_adapter
+            .get_account_proto(created_address)
+            .map_err(|e| format!("Failed to load contract Account proto: {}", e))?
+            .unwrap_or_default();
+        contract_account.address = tron_address.clone();
+        contract_account.account_name = smart_contract.name.as_bytes().to_vec();
+        contract_account.r#type = ProtoAccountType::Contract as i32;
+        storage_adapter
+            .put_account_proto(created_address, &contract_account)
+            .map_err(|e| format!("Failed to persist contract Account proto: {}", e))?;
+
         // Persist ABI if present
-        if let Some(ref abi) = smart_contract.abi {
-            if !abi.entrys.is_empty() {
-                storage_adapter.put_abi(&tron_address, abi)
-                    .map_err(|e| format!("Failed to persist ABI: {}", e))?;
-                info!("Persisted ABI with {} entries", abi.entrys.len());
-            }
+        if let Some(ref abi) = abi_to_store {
+            // java-tron stores an ABI key even when the ABI message is empty (serializes to 0 bytes).
+            storage_adapter.put_abi(&tron_address, abi)
+                .map_err(|e| format!("Failed to persist ABI: {}", e))?;
+            info!("Persisted ABI with {} entries", abi.entrys.len());
         }
 
         Ok(())

@@ -72,6 +72,7 @@ async fn test_non_vm_transaction_execution() {
         chain_id: 0x2b6653dc,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Expected results:

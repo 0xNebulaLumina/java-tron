@@ -5,7 +5,6 @@
 //! - to_tron_address: Convert EVM address to TRON base58 format
 //! - from_tron_address: Convert TRON base58 back to EVM address (test-only)
 
-use anyhow::Result;
 use revm::primitives::{Address, B256};
 
 /// Compute Keccak256 hash of data
@@ -44,7 +43,7 @@ pub fn to_tron_address(address: &Address) -> String {
 
 /// Convert a Tron format address (base58 with checksum) back to EVM address for testing
 #[cfg(test)]
-pub fn from_tron_address(tron_address: &str) -> Result<Address> {
+pub fn from_tron_address(tron_address: &str) -> anyhow::Result<Address> {
     use sha2::{Digest, Sha256};
 
     // Decode base58

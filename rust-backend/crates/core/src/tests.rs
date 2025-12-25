@@ -101,6 +101,7 @@ fn test_witness_create_execution() {
         chain_id: 2494104990, // TRON mainnet chain ID
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Verify transaction structure before execution
@@ -185,6 +186,7 @@ fn test_witness_create_blackhole_mode() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -243,6 +245,7 @@ fn test_witness_create_feature_disabled() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -299,6 +302,7 @@ fn test_account_serialization_format() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -365,6 +369,7 @@ fn test_state_change_deterministic_ordering() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Execute twice with fresh execution modules and storage
@@ -435,6 +440,7 @@ fn test_vote_witness_after_freeze_v1_succeeds() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Use in-memory storage
@@ -499,6 +505,7 @@ fn test_vote_witness_after_freeze_v1_succeeds() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let result = execution_module.execute_transaction_with_storage(storage, &vote_transaction, &vote_context);
@@ -551,6 +558,7 @@ fn test_vote_witness_multi_freeze_accumulates() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -670,6 +678,7 @@ fn test_asset_issue_contract_disabled() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -730,6 +739,7 @@ fn test_asset_issue_insufficient_balance() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -799,6 +809,7 @@ fn test_asset_issue_fee_burn() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -898,6 +909,7 @@ fn test_asset_issue_fee_blackhole_credit() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -992,6 +1004,7 @@ fn test_asset_issue_aext_tracking() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -1068,6 +1081,7 @@ fn test_asset_issue_deterministic_execution() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Execute twice with fresh modules and storage
@@ -1170,6 +1184,7 @@ fn test_create_smart_contract_zero_address_treated_as_none() {
         chain_id: 2494104990,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Verify the transaction has correct semantics for contract creation

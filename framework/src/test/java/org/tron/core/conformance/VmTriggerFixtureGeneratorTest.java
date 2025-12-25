@@ -491,7 +491,15 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
   }
 
   private void captureVmDatabases(File outputDir) throws Exception {
-    String[] databases = {"account", "contract", "code", "abi", "contract-state", "dynamic-properties"};
+    String[] databases = {
+        "account",
+        "contract",
+        "code",
+        "abi",
+        "contract-state",
+        "storage-row",
+        "dynamic-properties"
+    };
 
     for (String dbName : databases) {
       Map<byte[], byte[]> kvData = new TreeMap<>(KvFileFormat.BYTE_ARRAY_COMPARATOR);
@@ -526,6 +534,10 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
           return convertIterator(manager.getCodeStore().iterator());
         case "abi":
           return convertIterator(manager.getChainBaseManager().getAbiStore().iterator());
+        case "contract-state":
+          return convertIterator(manager.getChainBaseManager().getContractStateStore().iterator());
+        case "storage-row":
+          return convertIterator(manager.getChainBaseManager().getStorageRowStore().iterator());
         case "dynamic-properties":
           return convertIterator(manager.getDynamicPropertiesStore().iterator());
         default:
