@@ -136,27 +136,27 @@ TODO（配置与开关）
 
 ### 1) Protobuf / API 合约（framework/src/main/proto/backend.proto）
 
-目标：让 Java 能明确知道 “这次调用是否成功返回” + “交易成功/失败” + “是否已落库（write_mode）” + “如果要镜像，镜像哪些 key”。
+目标：让 Java 能明确知道 "这次调用是否成功返回" + "交易成功/失败" + "是否已落库（write_mode）" + "如果要镜像，镜像哪些 key"。
 
 TODO
 - [ ] 拆分语义：区分 `rpc_ok` 与 `tx_ok`
   - [ ] `ExecuteTransactionResponse.success` 明确改成 RPC 维度（或新增字段并迁移 Java 使用）
   - [ ] 交易结果使用 `ExecutionResult.status` 或新增 `tx_success`/`tx_result_code`
-- [ ] 增加方案 B 协调字段（至少一种）
+- [x] 增加方案 B 协调字段（至少一种）
   - [ ] `bool persisted = ...`（本次执行已落库）
-  - [ ] 或 `enum WriteMode { COMPUTE_ONLY=0; PERSIST=1; }`
-- [ ] 增加 touched-keys（为 B-镜像准备；conformance 阶段也可用于 debug）
-  - [ ] 新增 `message DbKey { string db = 1; bytes key = 2; bool is_delete = 3; }`
-  - [ ] `repeated DbKey touched_keys = ...`（注意 field number 不要重排已有字段）
+  - [x] 或 `enum WriteMode { COMPUTE_ONLY=0; PERSIST=1; }` ✅ Added as `WriteMode` enum in backend.proto
+- [x] 增加 touched-keys（为 B-镜像准备；conformance 阶段也可用于 debug）
+  - [x] 新增 `message DbKey { string db = 1; bytes key = 2; bool is_delete = 3; }` ✅ Added
+  - [x] `repeated DbKey touched_keys = ...`（注意 field number 不要重排已有字段）✅ Added to ExecuteTransactionResponse
   - [ ] 可选：`repeated DbKeyValue changed_kv = ...`（若希望 Java 不二次读 remote）
 
 验收
-- [ ] Java/Rust codegen 均可编译（Gradle + Cargo）。
-- [ ] Java 不再把“交易失败”误当“RPC 失败”而丢弃 result。
+- [x] Java/Rust codegen 均可编译（Gradle + Cargo）。✅ Both compile successfully
+- [ ] Java 不再把"交易失败"误当"RPC 失败"而丢弃 result。
 
 ---
 
-### 2) Rust：执行级“成功才 commit”的写入模型（conformance-first）
+### 2) Rust：执行级"成功才 commit"的写入模型（conformance-first）
 
 目标：在 conformance / compare 阶段，实现 **进程内原子性**：失败路径 0 写入，成功路径一次性 flush。
 
@@ -167,24 +167,24 @@ TODO
   - 执行失败直接丢弃 buffer
 
 TODO（Rust）
-- [ ] 设计 `ExecutionWriteBuffer`（crate 位置自选：core/service 或 execution/storage_adapter）
-  - [ ] API：`put(db, key, value)`, `delete(db, key)`, `commit(engine)`, `touched_keys()`
-  - [ ] 记录 touched keys（为 M2 做铺垫）
-- [ ] 引入“buffered storage adapter”用于 system 合约
-  - [ ] 让 `EngineBackedEvmStateStore` 的写入路径可被替换为 buffer（避免直接 `storage_engine.put`）
-  - [ ] 覆盖：account / properties / witness / votes / proposal / exchange / market / asset-issue(v1/v2) / contract / abi / code / storage-row 等
-- [ ] VM/EVM 落库路径接入 buffer
-  - [ ] `EvmStateDatabase.commit()` 当前逐项 `storage.set_*`（`rust-backend/crates/execution/src/storage_adapter/database.rs`）
-  - [ ] 方案：让 `EvmStateStore` 的 `set_account/set_storage/set_code/remove_account` 写入 buffer
-- [ ] 统一错误处理：任何 `Err(...)` 或 validate_fail 都不触发 buffer.commit
+- [x] 设计 `ExecutionWriteBuffer`（crate 位置自选：core/service 或 execution/storage_adapter）✅ Implemented in `rust-backend/crates/execution/src/storage_adapter/write_buffer.rs`
+  - [x] API：`put(db, key, value)`, `delete(db, key)`, `commit(engine)`, `touched_keys()` ✅ Full API implemented
+  - [x] 记录 touched keys（为 M2 做铺垫）✅ `touched_keys_order: Vec<TouchedKey>` with `TouchedKey { db, key, is_delete }`
+- [x] 引入"buffered storage adapter"用于 system 合约
+  - [x] 让 `EngineBackedEvmStateStore` 的写入路径可被替换为 buffer（避免直接 `storage_engine.put`）✅ Added `write_buffer: Option<Arc<Mutex<ExecutionWriteBuffer>>>` field, `new_with_buffer()`, `set_write_buffer()`, `commit_buffer()`, `buffered_put()`, `buffered_delete()`
+  - [x] 覆盖：account / properties / witness / votes / proposal / exchange / market / asset-issue(v1/v2) / contract / abi / code / storage-row 等 ✅ All ~45 write calls converted to `buffered_put/buffered_delete`
+- [x] VM/EVM 落库路径接入 buffer
+  - [x] `EvmStateDatabase.commit()` 当前逐项 `storage.set_*`（`rust-backend/crates/execution/src/storage_adapter/database.rs`）✅ Uses `EvmStateStore` trait methods
+  - [x] 方案：让 `EvmStateStore` 的 `set_account/set_storage/set_code/remove_account` 写入 buffer ✅ All implemented with `buffered_put/buffered_delete`
+- [x] 统一错误处理：任何 `Err(...)` 或 validate_fail 都不触发 buffer.commit ✅ Conformance runner only commits on success
 
-写入点审计（Rust，必须做一次“扫雷”）
-- [ ] 找出并收敛所有“直接写 RocksDB”的路径，只允许通过 `ExecutionWriteBuffer`：
-  - [ ] `storage_engine.put/delete/batch_write`（`rust-backend/crates/storage/src/engine.rs` 的调用方）
-  - [ ] `EngineBackedEvmStateStore` 内部写方法（`rust-backend/crates/execution/src/storage_adapter/engine.rs`）
-  - [ ] system 合约 handler 中的 `storage_adapter.*` 写入（`rust-backend/crates/core/src/service/**`）
-  - [ ] VM post-processing（fee / metadata / abi）写入（conformance runner & grpc service）
-- [ ] 建议用 grep 建一个“必须为 0”的检查（不需要上 CI，至少本地/PR 评审可跑）：
+写入点审计（Rust，必须做一次"扫雷"）
+- [x] 找出并收敛所有"直接写 RocksDB"的路径，只允许通过 `ExecutionWriteBuffer`：
+  - [x] `storage_engine.put/delete/batch_write`（`rust-backend/crates/storage/src/engine.rs` 的调用方）✅ Only fallback in buffered_put/buffered_delete remains
+  - [x] `EngineBackedEvmStateStore` 内部写方法（`rust-backend/crates/execution/src/storage_adapter/engine.rs`）✅ All converted to buffered_put/buffered_delete
+  - [ ] system 合约 handler 中的 `storage_adapter.*` 写入（`rust-backend/crates/core/src/service/**`）— Uses EngineBackedEvmStateStore methods which are now buffered
+  - [x] VM post-processing（fee / metadata / abi）写入（conformance runner & grpc service）✅ Conformance runner updated to use buffered writes
+- [ ] 建议用 grep 建一个"必须为 0"的检查（不需要上 CI，至少本地/PR 评审可跑）：
   - `rg -n \"storage_engine\\.(put|delete|batch_write)\\(\" rust-backend/crates | cat`
   - `rg -n \"batchPut\\(\" rust-backend/crates | cat`
   - `rg -n \"\\.set_(account|storage|code)\\(\" rust-backend/crates/core/src/service rust-backend/crates/execution/src/storage_adapter | cat`
@@ -198,18 +198,18 @@ Notes（未来 fullnode）
 
 ---
 
-### 3) Rust：conformance runner 与真实后端路径对齐（减少“双实现”漂移）
+### 3) Rust：conformance runner 与真实后端路径对齐（减少"双实现"漂移）
 
-目标：conformance runner 尽量复用“真实 backend 执行路径”，避免 conformance 跑通但线上不一致。
+目标：conformance runner 尽量复用"真实 backend 执行路径"，避免 conformance 跑通但线上不一致。
 
 现状参考
 - conformance runner NonVm：调用 `BackendService.execute_non_vm_contract(...)`（OK）
 - conformance runner Vm：调用 `ExecutionModule.execute_transaction_with_storage(...)` + `apply_vm_energy_fee(...)` + `persist_smart_contract_metadata(...)`
 
 TODO（Rust conformance runner）
-- [ ] 将 “VM 执行 + post-processing” 也纳入同一个 `ExecutionWriteBuffer`
-  - [ ] EVM commit + energy fee + metadata/ABI 持久化：统一 success 才 commit
-- [ ] 增加针对性 conformance 测试用例（优先覆盖最容易“部分写入”的路径）
+- [x] 将 "VM 执行 + post-processing" 也纳入同一个 `ExecutionWriteBuffer`
+  - [x] EVM commit + energy fee + metadata/ABI 持久化：统一 success 才 commit ✅ Updated conformance runner at `rust-backend/crates/core/src/conformance/runner.rs` to use `new_with_buffer()` and only commit on success
+- [ ] 增加针对性 conformance 测试用例（优先覆盖最容易"部分写入"的路径）
   - [ ] VM validate_fail（例如 CreateSmartContract 余额不足/invalid opcode）：确保 0 落库
   - [ ] system 合约 validate_fail：确保 0 落库
 
@@ -286,14 +286,14 @@ Node forward-exec（M2）
 
 ### Proto / Contract
 - [ ] 明确区分 `rpc_ok` vs `tx_ok`（修复 Java 误用 success 的风险）
-- [ ] 增加 `persisted/write_mode`
-- [ ] 增加 `touched_keys`（db+key+delete）
+- [x] 增加 `persisted/write_mode` ✅ Added `WriteMode` enum and `write_mode` field
+- [x] 增加 `touched_keys`（db+key+delete）✅ Added `DbKey` message and `touched_keys` field
 
 ### Rust（conformance-first）
-- [ ] `ExecutionWriteBuffer`（只在 success 时 commit）
-- [ ] system 合约写入路径接入 buffer（替换直接 put/set）
-- [ ] VM(EVM) commit 写入路径接入 buffer（替换直接 set_account/set_storage）
-- [ ] conformance runner VM post-processing 纳入 buffer（fee + metadata/ABI）
+- [x] `ExecutionWriteBuffer`（只在 success 时 commit）✅ Implemented in `write_buffer.rs`
+- [x] system 合约写入路径接入 buffer（替换直接 put/set）✅ All 45+ write calls converted
+- [x] VM(EVM) commit 写入路径接入 buffer（替换直接 set_account/set_storage）✅ EvmStateStore trait methods use buffer
+- [x] conformance runner VM post-processing 纳入 buffer（fee + metadata/ABI）✅ Updated runner.rs
 - [ ] validate_fail 0 写入用例补齐/稳定
 
 ### Java（B-镜像，下一步）

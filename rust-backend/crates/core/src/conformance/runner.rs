@@ -15,8 +15,9 @@ use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig}
 use tron_backend_storage::StorageEngine;
 use tron_backend_execution::{
     EngineBackedEvmStateStore, ExecutionModule, TronTransaction, TronExecutionContext,
-    EvmStateStore, TronContractType, TxMetadata,
+    EvmStateStore, TronContractType, TxMetadata, ExecutionWriteBuffer,
 };
+use std::sync::{Arc, Mutex};
 use revm_primitives::{hex, Address, B256, Bytes, U256};
 use crate::BackendService;
 
@@ -547,14 +548,38 @@ impl ConformanceRunner {
             .unwrap_or(crate::backend::TxKind::NonVm);
 
         // Execute transaction using the same dispatch logic as the real backend.
+        // Use buffered writes: accumulate all writes in memory, only commit on success.
+        // This ensures validate_fail fixtures produce zero writes to post_db.
         let execution_result: Result<tron_backend_execution::TronExecutionResult, String> = match tx_kind {
             crate::backend::TxKind::NonVm => {
-                let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine.clone());
-                backend_service.execute_non_vm_contract(&mut storage_adapter, &transaction, &context)
+                // Create storage adapter with a write buffer for atomic commit/rollback
+                let (mut storage_adapter, write_buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
+
+                let result = backend_service.execute_non_vm_contract(&mut storage_adapter, &transaction, &context);
+
+                // Only commit buffered writes on successful execution
+                match &result {
+                    Ok(exec_result) if exec_result.success => {
+                        if let Err(e) = storage_adapter.commit_buffer() {
+                            return ConformanceResult::failure(
+                                metadata,
+                                format!("Failed to commit write buffer: {}", e),
+                            );
+                        }
+                    }
+                    _ => {
+                        // For validation failures or errors, drop buffer without committing
+                        // This ensures zero writes to post_db for validate_fail fixtures
+                        tracing::debug!("Dropping write buffer without commit (execution failed or reverted)");
+                    }
+                }
+
+                result
             }
             crate::backend::TxKind::Vm => {
                 (|| -> Result<tron_backend_execution::TronExecutionResult, String> {
-                    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine.clone());
+                    // Create storage adapter with write buffer for atomic commit/rollback
+                    let (storage_adapter, write_buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
                     let mut result = execution_module
                         .execute_transaction_with_storage(storage_adapter, &transaction, &context)
                         .map_err(|e| {
@@ -575,8 +600,9 @@ impl ConformanceRunner {
 
                     // Post-processing for conformance: persist VM side effects to the isolated DB.
                     // This mirrors java-tron's fee + metadata persistence behavior.
-                    let mut post_storage_adapter =
-                        EngineBackedEvmStateStore::new(storage_engine.clone());
+                    // Use a separate buffer for post-processing operations
+                    let (mut post_storage_adapter, post_write_buffer) =
+                        EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
 
                     // Map invalid opcode errors for CreateSmartContract to java-tron's message format.
                     if !result.success
@@ -631,6 +657,24 @@ impl ConformanceRunner {
                                     )
                                 })?;
                         }
+                    }
+
+                    // Commit both buffers on successful execution
+                    // The EVM buffer contains VM state changes, post buffer contains fee + metadata
+                    if result.success {
+                        // Commit main EVM write buffer
+                        write_buffer.lock()
+                            .map_err(|e| format!("Lock poisoned: {}", e))?
+                            .commit(&storage_engine)
+                            .map_err(|e| format!("Failed to commit EVM write buffer: {}", e))?;
+
+                        // Commit post-processing buffer
+                        post_storage_adapter.commit_buffer()
+                            .map_err(|e| format!("Failed to commit post-processing buffer: {}", e))?;
+                    } else {
+                        // On failure, drop buffers without committing
+                        // This ensures validate_fail fixtures produce zero writes
+                        tracing::debug!("Dropping VM write buffers without commit (execution failed)");
                     }
 
                     Ok(result)

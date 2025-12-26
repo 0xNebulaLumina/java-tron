@@ -520,6 +520,10 @@ impl BackendService {
             }),
             success: result.success,
             error_message,
+            // Phase B: Write mode and touched keys for B-镜像 support
+            // Default to COMPUTE_ONLY (0) for backward compatibility
+            write_mode: 0, // WriteMode::ComputeOnly
+            touched_keys: vec![], // Populated when rust_persist_enabled is true
         }
     }
 }

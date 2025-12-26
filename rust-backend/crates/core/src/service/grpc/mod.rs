@@ -1002,6 +1002,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                     }),
                     success: false,
                     error_message: format!("Transaction conversion error: {}", e),
+                    write_mode: 0,
+                    touched_keys: vec![],
                 }));
             }
         };
@@ -1035,6 +1037,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                     }),
                     success: false,
                     error_message: format!("Context conversion error: {}", e),
+                    write_mode: 0,
+                    touched_keys: vec![],
                 }));
             }
         };
@@ -1217,6 +1221,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                     }),
                     success: false,
                     error_message: format!("Execution error: {}", e),
+                    write_mode: 0,
+                    touched_keys: vec![],
                 }))
             }
         }
