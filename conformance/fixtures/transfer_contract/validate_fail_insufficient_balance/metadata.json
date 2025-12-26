@@ -1,0 +1,20 @@
+{
+  "contractType": "TRANSFER_CONTRACT",
+  "contractTypeNum": 1,
+  "caseName": "validate_fail_insufficient_balance",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner has insufficient balance",
+  "generatedAt": "2025-12-23T10:39:32.183Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Validate TransferContract error, balance is not sufficient.",
+  "ownerAddress": "a0706f6f725f6f776e65725f303030310000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

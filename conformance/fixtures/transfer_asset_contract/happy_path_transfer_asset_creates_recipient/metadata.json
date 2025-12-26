@@ -1,0 +1,24 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "happy_path_transfer_asset_creates_recipient",
+  "caseCategory": "happy",
+  "description": "Transfer TRC-10 asset that creates recipient account",
+  "generatedAt": "2025-12-23T10:39:32.171Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
+  "dynamicProperties": {
+    "amount": 1000,
+    "token_id": "1000001",
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000
+  },
+  "notes": []
+}

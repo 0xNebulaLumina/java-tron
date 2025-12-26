@@ -1,0 +1,22 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "happy_path_unfreeze_v2_bandwidth",
+  "caseCategory": "happy",
+  "description": "V2 unfreeze BANDWIDTH (creates pending unfrozen entry)",
+  "generatedAt": "2025-12-23T10:39:26.471Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76325f3031000000000000",
+  "dynamicProperties": {
+    "unfreeze_amount": 50000000,
+    "UNFREEZE_DELAY_DAYS": 14
+  },
+  "notes": []
+}

@@ -1,0 +1,21 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "validate_fail_insufficient_asset_balance",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner has insufficient asset balance",
+  "generatedAt": "2025-12-23T10:39:32.192Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "assetBalance must be greater than 0.",
+  "ownerAddress": "a0706f6f725f61737365745f6f776e310000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1,0 +1,24 @@
+{
+  "contractType": "MARKET_SELL_ASSET_CONTRACT",
+  "contractTypeNum": 52,
+  "caseName": "edge_max_match_num_exceeded",
+  "caseCategory": "edge",
+  "description": "MAX_MATCH_NUM boundary: exceeding limit should revert",
+  "generatedAt": "2025-12-23T14:50:32.955Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "market_order",
+    "market_account",
+    "market_pair_to_price",
+    "market_pair_price_to_order",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "REVERT",
+  "expectedErrorMessage": "Too many matches. MAX_MATCH_NUM \u003d 20",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1,0 +1,21 @@
+{
+  "contractType": "ACCOUNT_PERMISSION_UPDATE_CONTRACT",
+  "contractTypeNum": 46,
+  "caseName": "validate_fail_witness_not_sr",
+  "caseCategory": "validate_fail",
+  "description": "Fail when trying to set witness permission on non-witness account",
+  "generatedAt": "2025-12-23T10:39:15.238Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "account isn\u0027t witness can\u0027t set witness permission",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

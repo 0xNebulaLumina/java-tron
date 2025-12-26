@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_insufficient_balance",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner has insufficient balance for asset issuance fee",
+  "generatedAt": "2025-12-23T10:39:17.223Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "No enough balance for fee!",
+  "ownerAddress": "a0706f6f725f6973737565725f3030310000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

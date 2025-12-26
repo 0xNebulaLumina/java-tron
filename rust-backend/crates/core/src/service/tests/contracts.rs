@@ -73,6 +73,7 @@ fn test_account_update_contract_happy_path() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Execute the contract
@@ -136,6 +137,7 @@ fn test_account_update_contract_validations() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Test 1: Empty name should fail
@@ -235,6 +237,7 @@ fn test_account_update_contract_duplicate_set() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // First set should succeed
@@ -336,6 +339,7 @@ fn test_freeze_balance_success_basic() {
         chain_id: 1,
         energy_price: 0,
         bandwidth_price: 0,
+        transaction_id: None,
     };
 
     // Create service with freeze_balance enabled
@@ -423,6 +427,7 @@ fn test_freeze_balance_insufficient_balance() {
         chain_id: 1,
         energy_price: 0,
         bandwidth_price: 0,
+        transaction_id: None,
     };
 
     let mut module_manager = ModuleManager::new();
@@ -481,6 +486,7 @@ fn test_freeze_balance_bad_params() {
         chain_id: 1,
         energy_price: 0,
         bandwidth_price: 0,
+        transaction_id: None,
     };
 
     let mut module_manager = ModuleManager::new();
@@ -551,6 +557,7 @@ fn test_freeze_balance_emits_freeze_changes_when_enabled() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Create config with emit_freeze_ledger_changes=true
@@ -638,6 +645,7 @@ fn test_freeze_balance_no_emission_when_disabled() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Create config with emit_freeze_ledger_changes=false (Phase 1 behavior)
@@ -719,6 +727,7 @@ fn test_unfreeze_balance_emits_freeze_changes_when_enabled() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Create config with emit_freeze_ledger_changes=true
@@ -803,6 +812,7 @@ fn test_freeze_balance_v2_emits_with_v2_flag() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Create config with V2 enabled and emission enabled
@@ -890,6 +900,7 @@ fn test_unfreeze_balance_v2_partial_unfreeze() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Create config with V2 enabled and emission enabled
@@ -975,6 +986,7 @@ fn test_unfreeze_balance_v2_full_unfreeze() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Create config with V2 enabled and emission enabled
@@ -1127,6 +1139,7 @@ fn test_asset_issue_contract_trc10_change_emission() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Execute the contract
@@ -1157,6 +1170,7 @@ fn test_asset_issue_contract_trc10_change_emission() {
             assert_eq!(asset_issued.url, url.to_vec(), "URL should match");
             assert_eq!(asset_issued.token_id, None, "Token ID should be None (computed by Java)");
         }
+        _ => panic!("Expected AssetIssued change"),
     }
 }
 
@@ -1221,6 +1235,7 @@ fn test_asset_issue_contract_disabled() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Execute should fail
@@ -1315,6 +1330,7 @@ fn test_asset_issue_contract_phase2_fields() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &context).unwrap();
@@ -1328,6 +1344,7 @@ fn test_asset_issue_contract_phase2_fields() {
             assert_eq!(asset_issued.public_free_asset_net_usage, 100, "public_free_asset_net_usage should match");
             assert_eq!(asset_issued.public_latest_free_net_time, 999000, "public_latest_free_net_time should match");
         }
+        _ => panic!("Expected AssetIssued change"),
     }
 }
 
@@ -1398,6 +1415,7 @@ fn test_witness_update_contract_happy_path() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Execute the contract
@@ -1454,6 +1472,7 @@ fn test_witness_update_contract_validations() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Test 1: Empty URL should fail
@@ -1622,6 +1641,7 @@ fn test_witness_update_tracks_aext_when_enabled() {
         chain_id: 1,
         energy_price: 420,
         bandwidth_price: 1000,
+        transaction_id: None,
     };
 
     // Execute the contract

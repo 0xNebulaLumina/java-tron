@@ -7,6 +7,33 @@ pub struct Config {
     pub storage: StorageConfig,
     pub execution: ExecutionConfig,
     pub modules: HashMap<String, ModuleConfig>,
+    /// Genesis account initialization configuration
+    #[serde(default)]
+    pub genesis: GenesisConfig,
+}
+
+/// Genesis account initialization configuration.
+/// Allows pre-populating accounts with balances at startup for testing/parity.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GenesisConfig {
+    /// Whether to initialize genesis accounts at startup
+    #[serde(default)]
+    pub enabled: bool,
+    /// List of accounts to initialize with their balances
+    #[serde(default)]
+    pub accounts: Vec<GenesisAccount>,
+}
+
+/// A single genesis account entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenesisAccount {
+    /// Base58-encoded TRON address (e.g., "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy")
+    pub address: String,
+    /// Initial balance in SUN (1 TRX = 1,000,000 SUN)
+    pub balance_sun: i64,
+    /// Optional comment/description for documentation
+    #[serde(default)]
+    pub comment: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +153,259 @@ pub struct RemoteExecutionConfig {
     /// When false: Uses only Account.allowance (Phase 1 behavior)
     /// Default: false for safe rollout
     pub delegation_reward_enabled: bool,
+
+    // === Phase 0.3: Write Consistency Model ===
+    //
+    // The system has two potential write paths:
+    // 1. Rust handler directly writes to RocksDB via storage_adapter.set_*
+    // 2. Java RuntimeSpiImpl applies state_changes/sidecars to local database
+    //
+    // To ensure idempotent semantics and avoid double-writes, we adopt:
+    // **Option A (Recommended)**: Rust computes + returns changes (no persistence),
+    //                            Java apply handles persistence.
+    //
+    // This flag controls whether Rust persists state changes directly.
+    // When false (default), Rust only computes and returns changes via gRPC,
+    // and Java's RuntimeSpiImpl is responsible for all persistence.
+    //
+    // Benefits of Option A:
+    // - Single authoritative write path (Java)
+    // - Works consistently for both EMBEDDED and REMOTE storage modes
+    // - Avoids non-idempotent double-writes (e.g., TRC-10 delta semantics)
+    // - Easier transaction rollback on validation failure
+    //
+    // Set to true only for specific testing scenarios or when Java apply is disabled.
+    /// Whether Rust handlers should persist state changes directly to storage.
+    /// Default: false (Rust only computes, Java apply handles persistence)
+    /// When true: Rust writes to storage AND returns changes (legacy behavior, risk of double-write)
+    pub rust_persist_enabled: bool,
+
+    // === Phase 2.A: Proposal Contracts (16/17/18) ===
+    //
+    // Proposal contracts are governance operations for network parameter changes.
+    // They have minimal dependencies (ProposalStore, WitnessStore, DynamicPropertiesStore)
+    // and don't require complex Account field mutations, making them ideal first candidates.
+
+    /// Enable PROPOSAL_CREATE_CONTRACT (type 16) execution
+    /// Creates new proposals with parameters, expiration time, and initial state
+    /// Default: false for safe rollout
+    pub proposal_create_enabled: bool,
+
+    /// Enable PROPOSAL_APPROVE_CONTRACT (type 17) execution
+    /// Allows witnesses to add/remove their approval from proposals
+    /// Default: false for safe rollout
+    pub proposal_approve_enabled: bool,
+
+    /// Enable PROPOSAL_DELETE_CONTRACT (type 18) execution
+    /// Allows proposal creator to cancel their proposal before expiration
+    /// Default: false for safe rollout
+    pub proposal_delete_enabled: bool,
+
+    /// Proposal expiration time in milliseconds (matches CommonParameter.getProposalExpireTime())
+    /// Default: 3 days = 259200000 ms
+    pub proposal_expire_time_ms: u64,
+
+    // === Phase 2.B: Account Management Contracts (19/46) ===
+    //
+    // These contracts test the Account codec implementation by modifying
+    // account fields like account_id and permissions.
+
+    /// Enable SET_ACCOUNT_ID_CONTRACT (type 19) execution
+    /// Sets a unique, immutable account ID for an account
+    /// Requires: AccountStore (full Account proto read/write), AccountIdIndexStore
+    /// Default: false for safe rollout
+    pub set_account_id_enabled: bool,
+
+    /// Enable ACCOUNT_PERMISSION_UPDATE_CONTRACT (type 46) execution
+    /// Updates owner/witness/active permissions for multi-sig functionality
+    /// Requires: AccountStore (permissions fields), DynamicPropertiesStore (ALLOW_MULTI_SIGN, UPDATE_ACCOUNT_PERMISSION_FEE, etc.)
+    /// Default: false for safe rollout
+    pub account_permission_update_enabled: bool,
+
+    // === Phase 2.C: Contract Metadata Contracts (33/45/48) ===
+    //
+    // These contracts modify smart contract metadata fields (consume_user_resource_percent,
+    // origin_energy_limit, ABI). They require ContractStore and AbiStore access.
+
+    /// Enable UPDATE_SETTING_CONTRACT (type 33) execution
+    /// Updates consume_user_resource_percent field of a smart contract
+    /// Requires: ContractStore (SmartContract proto read/write), AccountStore (owner validation)
+    /// Default: false for safe rollout
+    pub update_setting_enabled: bool,
+
+    /// Enable UPDATE_ENERGY_LIMIT_CONTRACT (type 45) execution
+    /// Updates origin_energy_limit field of a smart contract
+    /// Requires: ContractStore (SmartContract proto read/write), AccountStore (owner validation)
+    /// Gate: checkForEnergyLimit() - block_num >= BLOCK_NUM_FOR_ENERGY_LIMIT
+    /// Default: false for safe rollout
+    pub update_energy_limit_enabled: bool,
+
+    /// Enable CLEAR_ABI_CONTRACT (type 48) execution
+    /// Clears ABI of a smart contract by writing default ABI to AbiStore
+    /// Requires: AbiStore (ABI write), ContractStore (owner validation), AccountStore
+    /// Gate: getAllowTvmConstantinople() != 0
+    /// Default: false for safe rollout
+    pub clear_abi_enabled: bool,
+
+    // === Phase 2.C2: UpdateBrokerage Contract (49) ===
+    //
+    // UpdateBrokerage allows witnesses to set their commission rate for delegation rewards.
+    // The brokerage percentage (0-100) is stored in DelegationStore.
+
+    /// Enable UPDATE_BROKERAGE_CONTRACT (type 49) execution
+    /// Updates the brokerage (commission rate) for a witness in DelegationStore
+    /// Requires: WitnessStore (witness validation), AccountStore (account validation)
+    /// Gate: allowChangeDelegation() must be true
+    /// Default: false for safe rollout
+    pub update_brokerage_enabled: bool,
+
+    // === Phase 2.D: Resource/Freeze/Delegation Contracts (56/57/58/59) ===
+    //
+    // These contracts handle the UnfreezeV2/Delegation lifecycle:
+    // - WithdrawExpireUnfreeze (56): Withdraw TRX from expired unfrozenV2 entries
+    // - DelegateResource (57): Delegate frozen resources to another account
+    // - UnDelegateResource (58): Reclaim delegated resources
+    // - CancelAllUnfreezeV2 (59): Cancel pending unfreezes and optionally withdraw expired
+
+    /// Enable WITHDRAW_EXPIRE_UNFREEZE_CONTRACT (type 56) execution
+    /// Withdraws TRX from unfrozenV2 entries whose expiration has passed
+    /// Requires: AccountStore (unfrozenV2 list access), DynamicPropertiesStore (timestamp)
+    /// Gate: supportUnfreezeDelay() must be true
+    /// Receipt: withdraw_expire_amount
+    /// Default: false for safe rollout
+    pub withdraw_expire_unfreeze_enabled: bool,
+
+    /// Enable DELEGATE_RESOURCE_CONTRACT (type 57) execution
+    /// Delegates frozen resources (bandwidth/energy) to another account
+    /// Requires: AccountStore, DelegatedResourceStore, DelegatedResourceAccountIndexStore
+    /// Gate: supportDR() and supportUnfreezeDelay() must be true
+    /// Default: false for safe rollout
+    pub delegate_resource_enabled: bool,
+
+    /// Enable UNDELEGATE_RESOURCE_CONTRACT (type 58) execution
+    /// Reclaims delegated resources from a receiver
+    /// Requires: AccountStore, DelegatedResourceStore, DelegatedResourceAccountIndexStore
+    /// Gate: supportDR() and supportUnfreezeDelay() must be true
+    /// Default: false for safe rollout
+    pub undelegate_resource_enabled: bool,
+
+    /// Enable CANCEL_ALL_UNFREEZE_V2_CONTRACT (type 59) execution
+    /// Cancels all pending unfreezeV2 entries, re-freezing unexpired and withdrawing expired
+    /// Requires: AccountStore, DynamicPropertiesStore (for weights and timestamp)
+    /// Gate: supportAllowCancelAllUnfreezeV2() must be true
+    /// Receipt: withdraw_expire_amount + cancel_unfreezeV2_amount map
+    /// Default: false for safe rollout
+    pub cancel_all_unfreeze_v2_enabled: bool,
+
+    // === Phase 2.E: TRC-10 Extension Contracts (9/14/15) ===
+    //
+    // These contracts handle TRC-10 token operations beyond basic transfer and issuance:
+    // - ParticipateAssetIssue (9): Participate in a TRC-10 token sale
+    // - UnfreezeAsset (14): Unfreeze frozen TRC-10 asset supply
+    // - UpdateAsset (15): Update TRC-10 asset metadata (url, description, limits)
+
+    /// Enable PARTICIPATE_ASSET_ISSUE_CONTRACT (type 9) execution
+    /// Allows users to participate in a TRC-10 token sale by exchanging TRX for tokens
+    /// Requires: AccountStore (balance + asset map), AssetIssueStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub participate_asset_issue_enabled: bool,
+
+    /// Enable UNFREEZE_ASSET_CONTRACT (type 14) execution
+    /// Unfreezes frozen TRC-10 supply and returns it to the asset issuer's balance
+    /// Requires: AccountStore (frozen_supply + asset map), AssetIssueStore/V2
+    /// Default: false for safe rollout
+    pub unfreeze_asset_enabled: bool,
+
+    /// Enable UPDATE_ASSET_CONTRACT (type 15) execution
+    /// Updates TRC-10 asset metadata: url, description, free_asset_net_limit, public_free_asset_net_limit
+    /// Requires: AccountStore (asset_issued_id), AssetIssueStore/V2
+    /// Default: false for safe rollout
+    pub update_asset_enabled: bool,
+
+    // === Phase 2.F: Exchange Contracts (41/42/43/44) ===
+    //
+    // These contracts handle the Bancor-style exchange (AMM) functionality:
+    // - ExchangeCreate (41): Create a new exchange pair with initial liquidity
+    // - ExchangeInject (42): Add liquidity to an existing exchange
+    // - ExchangeWithdraw (43): Remove liquidity from an exchange (creator only)
+    // - ExchangeTransaction (44): Swap tokens using the AMM
+    //
+    // Dependencies:
+    // - ExchangeStore / ExchangeV2Store (dbName: "exchange" / "exchange-v2")
+    // - AccountStore (TRX + asset balances)
+    // - AssetIssueStore (for allowSameTokenName=0 token name→id resolution)
+    // - DynamicPropertiesStore (latestExchangeNum, exchangeBalanceLimit, exchangeCreateFee,
+    //                           allowStrictMath, allowSameTokenName, supportBlackHoleOptimization)
+    //
+    // Receipt fields:
+    // - ExchangeCreate: exchange_id
+    // - ExchangeInject: exchange_inject_another_amount
+    // - ExchangeWithdraw: exchange_withdraw_another_amount
+    // - ExchangeTransaction: exchange_received_amount
+
+    /// Enable EXCHANGE_CREATE_CONTRACT (type 41) execution
+    /// Creates a new exchange pair with initial token balances
+    /// Fee: getExchangeCreateFee() from DynamicPropertiesStore
+    /// Requires: AccountStore, ExchangeStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub exchange_create_enabled: bool,
+
+    /// Enable EXCHANGE_INJECT_CONTRACT (type 42) execution
+    /// Injects additional liquidity into an existing exchange (creator only)
+    /// Calculates proportional amount of the other token
+    /// Requires: AccountStore, ExchangeStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub exchange_inject_enabled: bool,
+
+    /// Enable EXCHANGE_WITHDRAW_CONTRACT (type 43) execution
+    /// Withdraws liquidity from an exchange (creator only)
+    /// Calculates proportional amount of the other token
+    /// Requires: AccountStore, ExchangeStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub exchange_withdraw_enabled: bool,
+
+    /// Enable EXCHANGE_TRANSACTION_CONTRACT (type 44) execution
+    /// Executes a token swap using the Bancor AMM formula
+    /// Requires: AccountStore, ExchangeStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub exchange_transaction_enabled: bool,
+
+    // === Phase 2.G: Market (DEX) Contracts (52/53) ===
+    //
+    // These contracts handle the order-book DEX functionality:
+    // - MarketSellAsset (52): Create a sell order and match against existing orders
+    // - MarketCancelOrder (53): Cancel an existing active order
+    //
+    // Dependencies:
+    // - MarketAccountStore (dbName: "market_account") - per-account order tracking
+    // - MarketOrderStore (dbName: "market_order") - order storage
+    // - MarketPairToPriceStore (dbName: "market_pair_to_price") - pair→price count
+    // - MarketPairPriceToOrderStore (dbName: "market_pair_price_to_order") - price→order list
+    // - AccountStore (TRX + asset balances)
+    // - AssetIssueStore/V2 (token validation)
+    // - DynamicPropertiesStore (allowMarketTransaction, marketSellFee, marketCancelFee, marketQuantityLimit)
+    //
+    // Receipt fields:
+    // - MarketSellAsset: orderId + orderDetails[]
+    // - MarketCancelOrder: (no additional fields)
+    //
+    // Note: MarketSellAsset is complex due to order matching with price comparison,
+    // linked list management, and MAX_MATCH_NUM limit.
+
+    /// Enable MARKET_SELL_ASSET_CONTRACT (type 52) execution
+    /// Creates a sell order and matches against existing orders
+    /// Fee: getMarketSellFee() from DynamicPropertiesStore
+    /// Requires: All Market stores, AccountStore, AssetIssueStore/V2, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub market_sell_asset_enabled: bool,
+
+    /// Enable MARKET_CANCEL_ORDER_CONTRACT (type 53) execution
+    /// Cancels an existing active order and returns remaining tokens
+    /// Fee: getMarketCancelFee() from DynamicPropertiesStore
+    /// Requires: MarketOrderStore, MarketAccountStore, MarketPairToPriceStore,
+    ///           MarketPairPriceToOrderStore, AccountStore, DynamicPropertiesStore
+    /// Default: false for safe rollout
+    pub market_cancel_order_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +421,7 @@ impl Default for Config {
             storage: StorageConfig::default(),
             execution: ExecutionConfig::default(),
             modules: HashMap::new(),
+            genesis: GenesisConfig::default(),
         }
     }
 }
@@ -256,6 +537,47 @@ impl Config {
         builder = builder.set_default("execution.remote.vote_witness_seed_old_from_account", true)?;
         builder = builder.set_default("execution.remote.account_create_enabled", false)?;
         builder = builder.set_default("execution.remote.delegation_reward_enabled", false)?;
+        // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
+        builder = builder.set_default("execution.remote.rust_persist_enabled", false)?;
+
+        // Phase 2.A: Proposal contracts (16/17/18)
+        builder = builder.set_default("execution.remote.proposal_create_enabled", false)?;
+        builder = builder.set_default("execution.remote.proposal_approve_enabled", false)?;
+        builder = builder.set_default("execution.remote.proposal_delete_enabled", false)?;
+        builder = builder.set_default("execution.remote.proposal_expire_time_ms", 259200000u64)?; // 3 days
+
+        // Phase 2.B: Account management contracts (19/46)
+        builder = builder.set_default("execution.remote.set_account_id_enabled", false)?;
+        builder = builder.set_default("execution.remote.account_permission_update_enabled", false)?;
+
+        // Phase 2.C: Contract metadata contracts (33/45/48)
+        builder = builder.set_default("execution.remote.update_setting_enabled", false)?;
+        builder = builder.set_default("execution.remote.update_energy_limit_enabled", false)?;
+        builder = builder.set_default("execution.remote.clear_abi_enabled", false)?;
+
+        // Phase 2.C2: UpdateBrokerage contract (49)
+        builder = builder.set_default("execution.remote.update_brokerage_enabled", false)?;
+
+        // Phase 2.D: Resource/Freeze/Delegation contracts (56/57/58/59)
+        builder = builder.set_default("execution.remote.withdraw_expire_unfreeze_enabled", false)?;
+        builder = builder.set_default("execution.remote.delegate_resource_enabled", false)?;
+        builder = builder.set_default("execution.remote.undelegate_resource_enabled", false)?;
+        builder = builder.set_default("execution.remote.cancel_all_unfreeze_v2_enabled", false)?;
+
+        // Phase 2.E: TRC-10 Extension contracts (9/14/15)
+        builder = builder.set_default("execution.remote.participate_asset_issue_enabled", false)?;
+        builder = builder.set_default("execution.remote.unfreeze_asset_enabled", false)?;
+        builder = builder.set_default("execution.remote.update_asset_enabled", false)?;
+
+        // Phase 2.F: Exchange contracts (41/42/43/44)
+        builder = builder.set_default("execution.remote.exchange_create_enabled", false)?;
+        builder = builder.set_default("execution.remote.exchange_inject_enabled", false)?;
+        builder = builder.set_default("execution.remote.exchange_withdraw_enabled", false)?;
+        builder = builder.set_default("execution.remote.exchange_transaction_enabled", false)?;
+
+        // Phase 2.G: Market (DEX) contracts (52/53)
+        builder = builder.set_default("execution.remote.market_sell_asset_enabled", false)?;
+        builder = builder.set_default("execution.remote.market_cancel_order_enabled", false)?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -282,6 +604,39 @@ impl Default for RemoteExecutionConfig {
             vote_witness_seed_old_from_account: true, // Default true to match embedded semantics
             account_create_enabled: false, // Default false for safe rollout
             delegation_reward_enabled: false, // Default false for safe rollout
+            // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
+            rust_persist_enabled: false,
+            // Phase 2.A: Proposal contracts (16/17/18)
+            proposal_create_enabled: false,  // Default false for safe rollout
+            proposal_approve_enabled: false, // Default false for safe rollout
+            proposal_delete_enabled: false,  // Default false for safe rollout
+            proposal_expire_time_ms: 259200000, // 3 days in milliseconds
+            // Phase 2.B: Account management contracts (19/46)
+            set_account_id_enabled: false,  // Default false for safe rollout
+            account_permission_update_enabled: false, // Default false for safe rollout
+            // Phase 2.C: Contract metadata contracts (33/45/48)
+            update_setting_enabled: false, // Default false for safe rollout
+            update_energy_limit_enabled: false, // Default false for safe rollout
+            clear_abi_enabled: false, // Default false for safe rollout
+            // Phase 2.C2: UpdateBrokerage contract (49)
+            update_brokerage_enabled: false, // Default false for safe rollout
+            // Phase 2.D: Resource/Freeze/Delegation contracts (56/57/58/59)
+            withdraw_expire_unfreeze_enabled: false, // Default false for safe rollout
+            delegate_resource_enabled: false, // Default false for safe rollout
+            undelegate_resource_enabled: false, // Default false for safe rollout
+            cancel_all_unfreeze_v2_enabled: false, // Default false for safe rollout
+            // Phase 2.E: TRC-10 Extension contracts (9/14/15)
+            participate_asset_issue_enabled: false, // Default false for safe rollout
+            unfreeze_asset_enabled: false, // Default false for safe rollout
+            update_asset_enabled: false, // Default false for safe rollout
+            // Phase 2.F: Exchange contracts (41/42/43/44)
+            exchange_create_enabled: false, // Default false for safe rollout
+            exchange_inject_enabled: false, // Default false for safe rollout
+            exchange_withdraw_enabled: false, // Default false for safe rollout
+            exchange_transaction_enabled: false, // Default false for safe rollout
+            // Phase 2.G: Market (DEX) contracts (52/53)
+            market_sell_asset_enabled: false, // Default false for safe rollout
+            market_cancel_order_enabled: false, // Default false for safe rollout
         }
     }
 } 

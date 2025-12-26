@@ -60,6 +60,7 @@ echo "Java-tron started with PID: $JAVA_PID"
 echo "Rust-backend started with PID: $RUST_PID"
 
 # Step 6: Wait for configured duration then stop services
+echo "Current time: $(date '+%Y-%m-%d %H:%M:%S')"
 echo "Waiting ${SLEEP_DURATION} seconds for data collection..."
 sleep $SLEEP_DURATION
 

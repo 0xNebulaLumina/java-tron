@@ -5,9 +5,14 @@ import java.util.List;
 import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.vm.DataWord;
 import org.tron.common.runtime.vm.LogInfo;
+import org.tron.core.capsule.TransactionResultCapsule;
+import org.tron.core.exception.BadItemException;
 import org.tron.core.execution.reporting.StateChangeJournalRegistry;
 import org.tron.core.execution.spi.ExecutionSPI.ExecutionResult;
 import org.tron.core.execution.spi.ExecutionSPI.LogEntry;
@@ -22,7 +27,11 @@ import org.tron.protos.Protocol.Transaction.Result.contractResult;
  * <p>This wrapper allows ExecutionSPI to return a ProgramResult-compatible type while preserving
  * all ExecutionSPI functionality including shadow verification.
  */
+@Slf4j(topic = "ExecutionProgramResult")
 public class ExecutionProgramResult extends ProgramResult {
+
+  // Explicit logger declaration (Lombok @Slf4j not working in this context)
+  private static final Logger log = LoggerFactory.getLogger("ExecutionProgramResult");
 
   // Additional ExecutionSPI-specific fields
   @Getter @Setter private List<StateChange> stateChanges;
@@ -152,6 +161,31 @@ public class ExecutionProgramResult extends ProgramResult {
     result.withdrawChanges = executionResult.getWithdrawChanges() != null
         ? new ArrayList<>(executionResult.getWithdrawChanges())
         : new ArrayList<>();
+
+    // Phase 0.4: Receipt passthrough - set ProgramResult.ret from tronTransactionResult bytes
+    // This allows system contract-specific fields (exchange_id, withdraw_amount, etc.) to flow through
+    byte[] tronTransactionResult = executionResult.getTronTransactionResult();
+    if (tronTransactionResult != null && tronTransactionResult.length > 0) {
+      try {
+        TransactionResultCapsule transactionResultCapsule =
+            new TransactionResultCapsule(tronTransactionResult);
+        result.setRet(transactionResultCapsule);
+        log.debug("Phase 0.4: Set ProgramResult.ret from tronTransactionResult ({} bytes)",
+            tronTransactionResult.length);
+      } catch (BadItemException e) {
+        log.warn("Phase 0.4: Failed to parse tronTransactionResult ({} bytes): {}",
+            tronTransactionResult.length, e.getMessage());
+        // Continue without setting ret - the result will have default empty TransactionResultCapsule
+      }
+    }
+
+    // Phase 2.I L2: Set contractAddress for CreateSmartContract receipt
+    byte[] contractAddress = executionResult.getContractAddress();
+    if (contractAddress != null && contractAddress.length > 0) {
+      result.setContractAddress(contractAddress);
+      log.debug("Phase 2.I L2: Set ProgramResult.contractAddress ({} bytes)",
+          contractAddress.length);
+    }
 
     return result;
   }

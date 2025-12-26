@@ -1,0 +1,20 @@
+{
+  "contractType": "WITNESS_UPDATE_CONTRACT",
+  "contractTypeNum": 8,
+  "caseName": "validate_fail_invalid_url",
+  "caseCategory": "validate_fail",
+  "description": "Fail when update URL is empty or invalid",
+  "generatedAt": "2025-12-23T10:39:35.114Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "witness",
+    "account"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid url",
+  "ownerAddress": "a0548794500882809695a8a687866e76d4271a1abc",
+  "dynamicProperties": {},
+  "notes": []
+}

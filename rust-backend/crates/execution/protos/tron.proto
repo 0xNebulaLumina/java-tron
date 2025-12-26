@@ -1,0 +1,465 @@
+// TRON Protocol Buffer Definitions for Rust Backend
+// This file is generated from java-tron's protocol definitions.
+// It MUST match the exact field numbers and types from protocol/src/main/protos/core/Tron.proto
+// to ensure wire-level compatibility between Java and Rust.
+
+syntax = "proto3";
+
+package protocol;
+
+// ResourceCode enum - matches core/contract/common.proto
+enum ResourceCode {
+  BANDWIDTH = 0;
+  ENERGY = 1;
+  TRON_POWER = 2;
+}
+
+// AccountType enum - matches core/Tron.proto
+enum AccountType {
+  Normal = 0;
+  AssetIssue = 1;
+  Contract = 2;
+}
+
+// Vote message - matches core/Tron.proto:27
+message Vote {
+  // the super rep address (21-byte TRON address with 0x41 prefix)
+  bytes vote_address = 1;
+  // the vote num to this super rep
+  int64 vote_count = 2;
+}
+
+// Proposal message - matches core/Tron.proto:35
+message Proposal {
+  int64 proposal_id = 1;
+  bytes proposer_address = 2;
+  map<int64, int64> parameters = 3;
+  int64 expiration_time = 4;
+  int64 create_time = 5;
+  repeated bytes approvals = 6;
+
+  enum State {
+    PENDING = 0;
+    DISAPPROVED = 1;
+    APPROVED = 2;
+    CANCELED = 3;
+  }
+  State state = 7;
+}
+
+// Exchange message - matches core/Tron.proto:52
+message Exchange {
+  int64 exchange_id = 1;
+  bytes creator_address = 2;
+  int64 create_time = 3;
+  bytes first_token_id = 6;
+  int64 first_token_balance = 7;
+  bytes second_token_id = 8;
+  int64 second_token_balance = 9;
+}
+
+// AssetIssueContractData message - matches core/contract/asset_issue_contract.proto AssetIssueContract
+// and chainbase AssetIssueCapsule (stored in AssetIssueStore / AssetIssueV2Store)
+// Renamed from "AssetIssue" to avoid conflict with AccountType.AssetIssue enum value
+message AssetIssueContractData {
+  message FrozenSupply {
+    int64 frozen_amount = 1;
+    int64 frozen_days = 2;
+  }
+
+  bytes owner_address = 1;
+  bytes name = 2;
+  bytes abbr = 3;
+  int64 total_supply = 4;
+  repeated FrozenSupply frozen_supply = 5;
+  int32 trx_num = 6;
+  int32 precision = 7;
+  int32 num = 8;
+  int64 start_time = 9;
+  int64 end_time = 10;
+  int64 order = 11;  // (deprecated)
+  int32 vote_score = 16;
+  bytes description = 20;
+  bytes url = 21;
+  int64 free_asset_net_limit = 22;
+  int64 public_free_asset_net_limit = 23;
+  int64 public_free_asset_net_usage = 24;
+  int64 public_latest_free_net_time = 25;
+  string id = 41;
+}
+
+// Key message - matches core/Tron.proto:243
+message Key {
+  bytes address = 1;
+  int64 weight = 2;
+}
+
+// Permission message - matches core/Tron.proto:262
+message Permission {
+  enum PermissionType {
+    Owner = 0;
+    Witness = 1;
+    Active = 2;
+  }
+  PermissionType type = 1;
+  int32 id = 2;  // Owner id=0, Witness id=1, Active id start by 2
+  string permission_name = 3;
+  int64 threshold = 4;
+  int32 parent_id = 5;
+  bytes operations = 6;  // 1 bit 1 contract
+  repeated Key keys = 7;
+}
+
+// Account message - matches core/Tron.proto:132
+// CRITICAL: Field numbers MUST match exactly for wire compatibility
+message Account {
+  // Frozen balance structure
+  message Frozen {
+    int64 frozen_balance = 1;  // the frozen trx balance
+    int64 expire_time = 2;     // the expire time
+  }
+
+  // AccountResource structure - matches core/Tron.proto:198
+  message AccountResource {
+    int64 energy_usage = 1;
+    Frozen frozen_balance_for_energy = 2;
+    int64 latest_consume_time_for_energy = 3;
+    int64 acquired_delegated_frozen_balance_for_energy = 4;
+    int64 delegated_frozen_balance_for_energy = 5;
+    int64 storage_limit = 6;
+    int64 storage_usage = 7;
+    int64 latest_exchange_storage_time = 8;
+    int64 energy_window_size = 9;
+    int64 delegated_frozenV2_balance_for_energy = 10;
+    int64 acquired_delegated_frozenV2_balance_for_energy = 11;
+    bool energy_window_optimized = 12;
+  }
+
+  // FreezeV2 structure - matches core/Tron.proto:227
+  message FreezeV2 {
+    ResourceCode type = 1;
+    int64 amount = 2;
+  }
+
+  // UnFreezeV2 structure - matches core/Tron.proto:231
+  message UnFreezeV2 {
+    ResourceCode type = 1;
+    int64 unfreeze_amount = 3;
+    int64 unfreeze_expire_time = 4;
+  }
+
+  // === Fields - MUST match exact field numbers from Java proto ===
+
+  // Field 1: account nick name
+  bytes account_name = 1;
+
+  // Field 2: account type
+  AccountType type = 2;
+
+  // Field 3: the create address (21-byte TRON address with 0x41 prefix)
+  bytes address = 3;
+
+  // Field 4: the TRX balance in SUN
+  int64 balance = 4;
+
+  // Field 5: the votes
+  repeated Vote votes = 5;
+
+  // Field 6: the other asset owned by this account (legacy)
+  map<string, int64> asset = 6;
+
+  // Field 7: the frozen balance for bandwidth
+  repeated Frozen frozen = 7;
+
+  // Field 8: bandwidth net_usage
+  int64 net_usage = 8;
+
+  // Field 9: this account create time (0x09 = 9)
+  int64 create_time = 9;
+
+  // Field 10: this last operation time
+  int64 latest_opration_time = 10;
+
+  // Field 11: witness block producing allowance (0x0B = 11)
+  int64 allowance = 11;
+
+  // Field 12: last withdraw time (0x0C = 12)
+  int64 latest_withdraw_time = 12;
+
+  // Field 13: not used so far (code)
+  bytes code = 13;
+
+  // Field 14: is witness flag
+  bool is_witness = 14;
+
+  // Field 15: is committee flag
+  bool is_committee = 15;
+
+  // Field 16: frozen asset (for asset issuer)
+  repeated Frozen frozen_supply = 16;
+
+  // Field 17: asset_issued_name
+  bytes asset_issued_name = 17;
+
+  // Field 18: latest asset operation time (legacy)
+  map<string, int64> latest_asset_operation_time = 18;
+
+  // Field 19: free net usage
+  int64 free_net_usage = 19;
+
+  // Field 20: free asset net usage (legacy)
+  map<string, int64> free_asset_net_usage = 20;
+
+  // Field 21: latest consume time
+  int64 latest_consume_time = 21;
+
+  // Field 22: latest consume free time
+  int64 latest_consume_free_time = 22;
+
+  // Field 23: the identity of this account (case insensitive)
+  bytes account_id = 23;
+
+  // Field 24: net window size
+  int64 net_window_size = 24;
+
+  // Field 25: net window optimized flag
+  bool net_window_optimized = 25;
+
+  // Field 26: account resource (energy, storage, etc.)
+  AccountResource account_resource = 26;
+
+  // Field 30: codeHash (for contract accounts)
+  bytes codeHash = 30;
+
+  // Field 31: owner permission
+  Permission owner_permission = 31;
+
+  // Field 32: witness permission
+  Permission witness_permission = 32;
+
+  // Field 33: active permissions
+  repeated Permission active_permission = 33;
+
+  // Field 34: frozenV2 (Stake 2.0)
+  repeated FreezeV2 frozenV2 = 34;
+
+  // Field 35: unfrozenV2 (Stake 2.0)
+  repeated UnFreezeV2 unfrozenV2 = 35;
+
+  // Field 36: delegated_frozenV2_balance_for_bandwidth
+  int64 delegated_frozenV2_balance_for_bandwidth = 36;
+
+  // Field 37: acquired_delegated_frozenV2_balance_for_bandwidth
+  int64 acquired_delegated_frozenV2_balance_for_bandwidth = 37;
+
+  // Field 41: acquired_delegated_frozen_balance_for_bandwidth
+  int64 acquired_delegated_frozen_balance_for_bandwidth = 41;
+
+  // Field 42: delegated_frozen_balance_for_bandwidth
+  int64 delegated_frozen_balance_for_bandwidth = 42;
+
+  // Field 46: old_tron_power
+  int64 old_tron_power = 46;
+
+  // Field 47: tron_power
+  Frozen tron_power = 47;
+
+  // Field 56: assetV2 (current asset format)
+  map<string, int64> assetV2 = 56;
+
+  // Field 57: asset_issued_ID
+  bytes asset_issued_ID = 57;
+
+  // Field 58: latest_asset_operation_timeV2
+  map<string, int64> latest_asset_operation_timeV2 = 58;
+
+  // Field 59: free_asset_net_usageV2
+  map<string, int64> free_asset_net_usageV2 = 59;
+
+  // Field 60: asset_optimized flag
+  bool asset_optimized = 60;
+}
+
+// Witness message is defined in witness.proto to avoid duplication
+// See witness.proto for the Witness message definition matching core/Tron.proto:278
+
+// Votes message - matches core/Tron.proto:291
+// Stored in VotesStore to track vote changes
+message Votes {
+  bytes address = 1;
+  repeated Vote old_votes = 2;
+  repeated Vote new_votes = 3;
+}
+
+// DelegatedResource message - matches core/Tron.proto:248
+message DelegatedResource {
+  bytes from = 1;
+  bytes to = 2;
+  int64 frozen_balance_for_bandwidth = 3;
+  int64 frozen_balance_for_energy = 4;
+  int64 expire_time_for_bandwidth = 5;
+  int64 expire_time_for_energy = 6;
+}
+
+// DelegatedResourceAccountIndex message - matches core/Tron.proto:653
+message DelegatedResourceAccountIndex {
+  bytes account = 1;
+  repeated bytes fromAccounts = 2;
+  repeated bytes toAccounts = 3;
+  int64 timestamp = 4;
+}
+
+// MarketOrder message - matches core/Tron.proto:63
+message MarketOrder {
+  bytes order_id = 1;
+  bytes owner_address = 2;
+  int64 create_time = 3;
+  bytes sell_token_id = 4;
+  int64 sell_token_quantity = 5;
+  bytes buy_token_id = 6;
+  int64 buy_token_quantity = 7;
+  int64 sell_token_quantity_remain = 9;
+  int64 sell_token_quantity_return = 10;
+
+  enum State {
+    ACTIVE = 0;
+    INACTIVE = 1;
+    CANCELED = 2;
+  }
+  State state = 11;
+
+  bytes prev = 12;
+  bytes next = 13;
+}
+
+// MarketAccountOrder message - matches core/Tron.proto:100
+message MarketAccountOrder {
+  bytes owner_address = 1;
+  repeated bytes orders = 2;  // order_id list
+  int64 count = 3;            // active count
+  int64 total_count = 4;
+}
+
+// MarketOrderIdList message - matches core/Tron.proto:118
+message MarketOrderIdList {
+  bytes head = 1;
+  bytes tail = 2;
+}
+
+// Transaction.Result message - subset for receipt handling
+// matches core/Tron.proto:388
+message TransactionResult {
+  enum code {
+    SUCESS = 0;
+    FAILED = 1;
+  }
+  enum contractResult {
+    DEFAULT = 0;
+    SUCCESS = 1;
+    REVERT = 2;
+    BAD_JUMP_DESTINATION = 3;
+    OUT_OF_MEMORY = 4;
+    PRECOMPILED_CONTRACT = 5;
+    STACK_TOO_SMALL = 6;
+    STACK_TOO_LARGE = 7;
+    ILLEGAL_OPERATION = 8;
+    STACK_OVERFLOW = 9;
+    OUT_OF_ENERGY = 10;
+    OUT_OF_TIME = 11;
+    JVM_STACK_OVER_FLOW = 12;
+    UNKNOWN = 13;
+    TRANSFER_FAILED = 14;
+    INVALID_CODE = 15;
+  }
+
+  int64 fee = 1;
+  code ret = 2;
+  contractResult contractRet = 3;
+
+  string assetIssueID = 14;
+  int64 withdraw_amount = 15;
+  int64 unfreeze_amount = 16;
+  int64 exchange_received_amount = 18;
+  int64 exchange_inject_another_amount = 19;
+  int64 exchange_withdraw_another_amount = 20;
+  int64 exchange_id = 21;
+  int64 shielded_transaction_fee = 22;
+
+  bytes orderId = 25;
+  // Note: orderDetails and cancel_unfreezeV2_amount require more complex handling
+  int64 withdraw_expire_amount = 27;
+  map<string, int64> cancel_unfreezeV2_amount = 28;
+}
+
+// SmartContract message - matches core/contract/smart_contract.proto
+// Used for ContractStore
+message SmartContract {
+  message ABI {
+    message Entry {
+      enum EntryType {
+        UnknownEntryType = 0;
+        Constructor = 1;
+        Function = 2;
+        Event = 3;
+        Fallback = 4;
+        Receive = 5;
+        Error = 6;
+      }
+      message Param {
+        bool indexed = 1;
+        string name = 2;
+        string type = 3;
+      }
+      enum StateMutabilityType {
+        UnknownMutabilityType = 0;
+        Pure = 1;
+        View = 2;
+        Nonpayable = 3;
+        Payable = 4;
+      }
+
+      bool anonymous = 1;
+      bool constant = 2;
+      string name = 3;
+      repeated Param inputs = 4;
+      repeated Param outputs = 5;
+      EntryType type = 6;
+      bool payable = 7;
+      StateMutabilityType stateMutability = 8;
+    }
+    repeated Entry entrys = 1;
+  }
+
+  bytes origin_address = 1;
+  bytes contract_address = 2;
+  ABI abi = 3;
+  bytes bytecode = 4;
+  int64 call_value = 5;
+  int64 consume_user_resource_percent = 6;
+  string name = 7;
+  int64 origin_energy_limit = 8;
+  bytes code_hash = 9;
+  bytes trx_hash = 10;
+  int32 version = 11;
+}
+
+// CreateSmartContract message - matches core/contract/smart_contract.proto
+// Used for parsing the incoming request from Java
+// Phase 2.I L2: Java now sends full CreateSmartContract proto bytes
+message CreateSmartContract {
+  bytes owner_address = 1;
+  SmartContract new_contract = 2;
+  int64 call_token_value = 3;
+  int64 token_id = 4;
+}
+
+// TriggerSmartContract message - matches core/contract/smart_contract.proto
+// Used for parsing the incoming request from Java
+message TriggerSmartContract {
+  bytes owner_address = 1;
+  bytes contract_address = 2;
+  int64 call_value = 3;
+  bytes data = 4;
+  int64 call_token_value = 5;
+  int64 token_id = 6;
+}

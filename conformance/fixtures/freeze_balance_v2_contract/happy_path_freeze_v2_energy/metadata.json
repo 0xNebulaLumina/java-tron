@@ -1,0 +1,22 @@
+{
+  "contractType": "FREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 54,
+  "caseName": "happy_path_freeze_v2_energy",
+  "caseCategory": "happy",
+  "description": "V2 freeze for ENERGY resource",
+  "generatedAt": "2025-12-23T10:39:26.466Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0667265657a655f76325f6f776e30320000000000",
+  "dynamicProperties": {
+    "freeze_amount": 50000000,
+    "UNFREEZE_DELAY_DAYS": 14
+  },
+  "notes": []
+}
