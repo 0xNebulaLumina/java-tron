@@ -2,7 +2,7 @@
 // V1 and V2 freeze/unfreeze balance operations
 
 use super::super::BackendService;
-use super::proto::read_varint;
+use super::proto::{read_varint, TransactionResultBuilder};
 use revm_primitives::{Address, Bytes, U256};
 use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, EvmStateStore};
 use tracing::{debug, info, error, warn};
@@ -231,6 +231,8 @@ impl BackendService {
             trc10_changes: vec![], // Not applicable for freeze contracts
             vote_changes: vec![], // Not applicable for freeze contracts
             withdraw_changes: vec![], // Not applicable for freeze contracts
+            tron_transaction_result: None, // Phase 0.4: Receipt passthrough
+            contract_address: None, // Not applicable for freeze contracts
         })
     }
 
@@ -370,8 +372,13 @@ impl BackendService {
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("UnfreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}",
-               bandwidth_used, freeze_changes.len(), global_resource_changes.len());
+        // Build Transaction.Result with unfreeze_amount for receipt passthrough
+        let tron_transaction_result = TransactionResultBuilder::new()
+            .with_unfreeze_amount(unfreeze_amount as i64)
+            .build();
+
+        debug!("UnfreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}, tron_transaction_result_len={}",
+               bandwidth_used, freeze_changes.len(), global_resource_changes.len(), tron_transaction_result.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -387,6 +394,8 @@ impl BackendService {
             trc10_changes: vec![], // Not applicable for freeze contracts
             vote_changes: vec![], // Not applicable for freeze contracts
             withdraw_changes: vec![], // Not applicable for freeze contracts
+            tron_transaction_result: Some(tron_transaction_result), // Phase 0.4: Receipt passthrough with unfreeze_amount
+            contract_address: None, // Not applicable for freeze contracts
         })
     }
 
@@ -634,6 +643,8 @@ impl BackendService {
             trc10_changes: vec![], // Not applicable for freeze contracts
             vote_changes: vec![], // Not applicable for freeze contracts
             withdraw_changes: vec![], // Not applicable for freeze contracts
+            tron_transaction_result: None,
+            contract_address: None,
         })
     }
 
@@ -816,8 +827,13 @@ impl BackendService {
         // Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("UnfreezeBalanceV2 completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}",
-               bandwidth_used, freeze_changes.len(), global_resource_changes.len());
+        // Build Transaction.Result with unfreeze_amount for receipt passthrough
+        let tron_transaction_result = TransactionResultBuilder::new()
+            .with_unfreeze_amount(unfreeze_amount as i64)
+            .build();
+
+        debug!("UnfreezeBalanceV2 completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}, tron_transaction_result_len={}",
+               bandwidth_used, freeze_changes.len(), global_resource_changes.len(), tron_transaction_result.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -833,6 +849,8 @@ impl BackendService {
             trc10_changes: vec![], // Not applicable for freeze contracts
             vote_changes: vec![], // Not applicable for freeze contracts
             withdraw_changes: vec![], // Not applicable for freeze contracts
+            tron_transaction_result: Some(tron_transaction_result), // Phase 0.4: Receipt passthrough with unfreeze_amount
+            contract_address: None, // Not applicable for freeze contracts
         })
     }
 

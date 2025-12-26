@@ -1,8 +1,10 @@
 use anyhow::{Result, anyhow};
+use prost::Message;
 use revm::{
     primitives::{
-        ExecutionResult, Output,
+        ExecutionResult, HandlerCfg, Output, SpecId,
     },
+    EvmContext, Inspector,
     Evm, Database, DatabaseCommit,
 };
 
@@ -11,6 +13,203 @@ use crate::precompiles::TronPrecompiles;
 use crate::storage_adapter::{EvmStateDatabase, EvmStateStore};
 
 // Tron-specific transaction and execution types
+
+#[derive(Debug, Clone, Default)]
+struct TronExternalContext {
+    /// Override address for the next top-level CREATE.
+    ///
+    /// TRON derives CreateSmartContract addresses from txid + owner address,
+    /// not from (caller, nonce) like Ethereum.
+    create_address_override: Option<revm::primitives::Address>,
+
+    // === Energy accounting (TRON vs Ethereum gas schedule) ===
+    //
+    // java-tron charges memory expansion/copy costs for these opcodes but does NOT include the
+    // Ethereum "very low tier" base cost (+3) for each of them. We keep executing with REVM's
+    // standard gas schedule for correctness/limits, then subtract the base-cost delta to compute
+    // TRON energy usage for receipts/fee accounting.
+    mload_count: u64,
+    mstore_count: u64,
+    mstore8_count: u64,
+    calldatacopy_count: u64,
+    codecopy_count: u64,
+    returndatacopy_count: u64,
+    sload_count: u64,
+    exp_bytes_occupied: u64,
+}
+
+impl TronExternalContext {
+    fn reset_energy_counters(&mut self) {
+        self.mload_count = 0;
+        self.mstore_count = 0;
+        self.mstore8_count = 0;
+        self.calldatacopy_count = 0;
+        self.codecopy_count = 0;
+        self.returndatacopy_count = 0;
+        self.sload_count = 0;
+        self.exp_bytes_occupied = 0;
+    }
+
+    fn tron_energy_opcode_adjustment(&self) -> u64 {
+        let ops = self.mload_count
+            + self.mstore_count
+            + self.mstore8_count
+            + self.calldatacopy_count
+            + self.codecopy_count
+            + self.returndatacopy_count;
+
+        // See java-tron: EnergyCost.getSloadCost() returns 50, while Ethereum (EIP-150+) is 200.
+        // Adjust REVM's gas metering to TRON energy by subtracting the delta per SLOAD.
+        let sload_delta = self.sload_count.saturating_mul(150);
+
+        // See java-tron: EnergyCost.getExpCost() uses EXP_BYTE_ENERGY = 10, while Ethereum uses 50.
+        // Adjust REVM's EXP metering by subtracting 40 per non-zero exponent byte.
+        let exp_delta = self.exp_bytes_occupied.saturating_mul(40);
+
+        ops.saturating_mul(3)
+            .saturating_add(sload_delta)
+            .saturating_add(exp_delta)
+    }
+}
+
+impl<DB: Database> Inspector<DB> for TronExternalContext {
+    fn step(&mut self, interp: &mut revm::interpreter::Interpreter, _context: &mut EvmContext<DB>) {
+        match interp.current_opcode() {
+            0x51 => self.mload_count += 1,         // MLOAD
+            0x52 => self.mstore_count += 1,        // MSTORE
+            0x53 => self.mstore8_count += 1,       // MSTORE8
+            0x37 => self.calldatacopy_count += 1,  // CALLDATACOPY
+            0x39 => self.codecopy_count += 1,      // CODECOPY
+            0x3e => self.returndatacopy_count += 1,// RETURNDATACOPY
+            0x54 => self.sload_count += 1,         // SLOAD
+            0x0a => {                               // EXP
+                let stack_len = interp.stack.len();
+                if stack_len >= 2 {
+                    // EVM stack order: [.., exponent, base] with base on top.
+                    let exponent = &interp.stack.data()[stack_len - 2];
+                    let exp_bytes = exponent.to_be_bytes::<32>();
+                    let first_nonzero = exp_bytes.iter().position(|b| *b != 0);
+                    let occupied = match first_nonzero {
+                        Some(idx) => (exp_bytes.len() - idx) as u64,
+                        None => 0,
+                    };
+                    self.exp_bytes_occupied = self.exp_bytes_occupied.saturating_add(occupied);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn tron_revm_handle_register<DB: Database>(
+    handler: &mut revm::handler::register::EvmHandler<'_, TronExternalContext, DB>,
+) {
+    use std::sync::Arc;
+
+    let spec_id = handler.cfg.spec_id;
+    handler.execution.create = Arc::new(move |context, inputs| {
+        tron_create_with_optional_override(context, inputs, spec_id)
+    });
+}
+
+fn tron_create_with_optional_override<DB: Database>(
+    context: &mut revm::Context<TronExternalContext, DB>,
+    inputs: Box<revm::interpreter::CreateInputs>,
+    spec_id: revm::primitives::SpecId,
+) -> Result<revm::FrameOrResult, revm::primitives::EVMError<DB::Error>> {
+    use revm::{
+        interpreter::{Contract, Gas, InstructionResult, Interpreter, InterpreterResult},
+        primitives::{Bytecode, Bytes, CreateScheme, SpecId, B256, EOF_MAGIC_BYTES, PRAGUE_EOF},
+        FrameOrResult, CALL_STACK_LIMIT,
+    };
+
+    // Only override legacy CREATE, and consume the override exactly once.
+    let created_address_override = if inputs.scheme == CreateScheme::Create {
+        context.external.create_address_override.take()
+    } else {
+        None
+    };
+
+    let Some(created_address) = created_address_override else {
+        return context.evm.make_create_frame(spec_id, &inputs);
+    };
+
+    let return_error = |e| {
+        Ok(FrameOrResult::new_create_result(
+            InterpreterResult {
+                result: e,
+                gas: Gas::new(inputs.gas_limit),
+                output: Bytes::new(),
+            },
+            None,
+        ))
+    };
+
+    // Depth check.
+    if context.evm.journaled_state.depth() > CALL_STACK_LIMIT {
+        return return_error(InstructionResult::CallTooDeep);
+    }
+
+    // Prague EOF.
+    if spec_id.is_enabled_in(PRAGUE_EOF) && inputs.init_code.starts_with(&EOF_MAGIC_BYTES) {
+        return return_error(InstructionResult::CreateInitCodeStartingEF00);
+    }
+
+    // Fetch caller balance.
+    let caller_balance = context.evm.balance(inputs.caller)?;
+
+    // Check if caller has enough balance to send to the created contract.
+    if caller_balance.data < inputs.value {
+        return return_error(InstructionResult::OutOfFunds);
+    }
+
+    // Increase nonce of caller and check overflow.
+    if context.evm.journaled_state.inc_nonce(inputs.caller).is_none() {
+        return return_error(InstructionResult::Return);
+    }
+
+    // The created address is not allowed to be a precompile.
+    if context.evm.precompiles.contains(&created_address) {
+        return return_error(InstructionResult::CreateCollision);
+    }
+
+    // Warm load created account.
+    context.evm.load_account(created_address)?;
+
+    // Create account checkpoint and transfer funds.
+    let checkpoint = match context.evm.journaled_state.create_account_checkpoint(
+        inputs.caller,
+        created_address,
+        inputs.value,
+        spec_id,
+    ) {
+        Ok(checkpoint) => checkpoint,
+        Err(e) => return return_error(e),
+    };
+
+    let init_code_hash = B256::ZERO;
+    if spec_id.is_enabled_in(SpecId::PRAGUE_EOF) && inputs.init_code.starts_with(&EOF_MAGIC_BYTES) {
+        // Defensive: should already be covered by the earlier check.
+        return return_error(InstructionResult::CreateInitCodeStartingEF00);
+    }
+
+    let bytecode = Bytecode::new_legacy(inputs.init_code.clone());
+    let contract = Contract::new(
+        Bytes::new(),
+        bytecode,
+        Some(init_code_hash),
+        created_address,
+        None,
+        inputs.caller,
+        inputs.value,
+    );
+
+    Ok(FrameOrResult::new_create_frame(
+        created_address,
+        checkpoint,
+        Interpreter::new(contract, inputs.gas_limit, false),
+    ))
+}
 
 /// TRON Contract Type enumeration - matches protobuf ContractType
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +347,9 @@ pub struct TronExecutionContext {
     pub chain_id: u64,
     pub energy_price: u64,
     pub bandwidth_price: u64,
+    /// Transaction ID (TRON txid = sha256(raw_data)), when available.
+    /// Used for CreateSmartContract address derivation.
+    pub transaction_id: Option<revm::primitives::B256>,
 }
 
 #[derive(Debug, Clone)]
@@ -294,11 +496,21 @@ pub struct TronExecutionResult {
     /// Withdraw changes (WithdrawBalanceContract: allowance/latestWithdrawTime sidecar)
     /// Rust emits the withdrawal info; Java applies allowance=0 and latestWithdrawTime update
     pub withdraw_changes: Vec<WithdrawChange>,
+    /// Phase 0.4: Receipt passthrough - serialized Protocol.Transaction.Result bytes
+    /// Contains system contract-specific fields like exchange_id, withdraw_amount,
+    /// withdraw_expire_amount, cancel_unfreezeV2_amount, orderId, orderDetails, etc.
+    /// Java deserializes this to TransactionResultCapsule and sets on ProgramResult.ret
+    pub tron_transaction_result: Option<Vec<u8>>,
+    /// Phase 2.I L2: Contract address for CreateSmartContract transactions
+    /// Set when EVM creates a new contract; used for:
+    /// 1. Persisting SmartContract metadata to ContractStore
+    /// 2. Returning in receipt for Java ProgramResult.contractAddress
+    pub contract_address: Option<revm::primitives::Address>,
 }
 
 /// TronEVM wrapper around REVM with Tron-specific configurations
 pub struct TronEvm<DB: Database + DatabaseCommit + Send + Sync + 'static> {
-    evm: Evm<'static, (), DB>,
+    evm: Evm<'static, TronExternalContext, DB>,
     config: ExecutionConfig,
     precompiles: TronPrecompiles,
     energy_accounting: EnergyAccounting,
@@ -311,16 +523,34 @@ impl<DB: Database + DatabaseCommit + Send + Sync + 'static> TronEvm<DB>
 where 
     DB::Error: std::fmt::Debug,
 {
+    pub(crate) fn spec_id_from_config(config: &ExecutionConfig) -> SpecId {
+        if config.enable_london_fork {
+            SpecId::LONDON
+        } else if config.enable_berlin_fork {
+            SpecId::BERLIN
+        } else if config.enable_istanbul_fork {
+            SpecId::ISTANBUL
+        } else {
+            SpecId::BYZANTIUM
+        }
+    }
+
     pub fn new(database: DB, config: &ExecutionConfig) -> Result<Self> {
+        let spec_id = Self::spec_id_from_config(config);
+        Self::new_with_spec_id(database, config, spec_id)
+    }
+
+    pub fn new_with_spec_id(database: DB, config: &ExecutionConfig, spec_id: SpecId) -> Result<Self> {
         let mut evm = Evm::builder()
             .with_db(database)
+            .with_external_context(TronExternalContext::default())
+            .with_handler_cfg(HandlerCfg::new(spec_id))
+            .append_handler_register(tron_revm_handle_register::<DB>)
+            .append_handler_register(revm::inspector_handle_register::<DB, TronExternalContext>)
             .build();
 
         // Configure for Tron - access through context
         evm.context.evm.inner.env.cfg.chain_id = 0x2b6653dc; // Tron mainnet chain ID
-        
-        // Note: spec_id is not directly accessible in this version of REVM
-        // The spec is typically set through the handler configuration
         
         evm.context.evm.inner.env.cfg.limit_contract_code_size = Some(24576); // 24KB limit
 
@@ -365,6 +595,7 @@ where
 
     fn setup_environment(&mut self, tx: &TronTransaction, context: &TronExecutionContext) {
         // Set transaction environment
+        self.evm.context.external.reset_energy_counters();
         self.evm.context.evm.inner.env.tx.caller = tx.from;
         self.evm.context.evm.inner.env.tx.transact_to = match tx.to {
             Some(to) => revm::primitives::TransactTo::Call(to),
@@ -379,7 +610,14 @@ where
         // Set block environment
         self.evm.context.evm.inner.env.block.number = revm::primitives::U256::from(context.block_number);
         self.evm.context.evm.inner.env.block.timestamp = revm::primitives::U256::from(context.block_timestamp);
-        self.evm.context.evm.inner.env.block.coinbase = context.block_coinbase;
+        // TRON parity: many callers omit coinbase; avoid touching address(0) by defaulting to sender.
+        self.evm.context.evm.inner.env.block.coinbase = if context.block_coinbase
+            == revm::primitives::Address::ZERO
+        {
+            tx.from
+        } else {
+            context.block_coinbase
+        };
         self.evm.context.evm.inner.env.block.difficulty = context.block_difficulty;
         self.evm.context.evm.inner.env.block.gas_limit = revm::primitives::U256::from(context.block_gas_limit);
         
@@ -392,6 +630,57 @@ where
         // Set Tron-specific configurations
         self.energy_accounting.reset();
         self.bandwidth_accounting.reset();
+
+        // TRON CreateSmartContract: Java sends CreateSmartContract proto bytes in tx.data.
+        // Extract init code for EVM execution, and override the created address to match
+        // java-tron's txid+owner derivation.
+        if tx.metadata.contract_type == Some(TronContractType::CreateSmartContract) {
+            match crate::protocol::CreateSmartContract::decode(tx.data.as_ref()) {
+                Ok(create_contract) => {
+                    if let Some(new_contract) = create_contract.new_contract.as_ref() {
+                        self.evm.context.evm.inner.env.tx.data =
+                            revm::primitives::Bytes::from(new_contract.bytecode.clone());
+                    }
+
+                    if let (Some(txid), owner_address) =
+                        (context.transaction_id, create_contract.owner_address)
+                    {
+                        if owner_address.len() == 21 {
+                            let mut combined = Vec::with_capacity(32 + owner_address.len());
+                            combined.extend_from_slice(txid.as_slice());
+                            combined.extend_from_slice(&owner_address);
+                            let hash = crate::storage_adapter::utils::keccak256(&combined);
+                            let addr_bytes = &hash.as_slice()[12..32];
+                            self.evm.context.external.create_address_override =
+                                Some(revm::primitives::Address::from_slice(addr_bytes));
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to decode CreateSmartContract proto for VM execution: {}",
+                        e
+                    );
+                }
+            }
+        }
+
+        // TRON TriggerSmartContract: Java sends TriggerSmartContract proto bytes in tx.data.
+        // Extract the call data payload for EVM execution.
+        if tx.metadata.contract_type == Some(TronContractType::TriggerSmartContract) {
+            match crate::protocol::TriggerSmartContract::decode(tx.data.as_ref()) {
+                Ok(trigger_contract) => {
+                    self.evm.context.evm.inner.env.tx.data =
+                        revm::primitives::Bytes::from(trigger_contract.data);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to decode TriggerSmartContract proto for VM execution: {}",
+                        e
+                    );
+                }
+            }
+        }
     }
 
     fn process_execution_result(
@@ -405,9 +694,19 @@ where
 
         match result {
             ExecutionResult::Success { reason: _, gas_used: _, gas_refunded: _, logs, output } => {
-                let return_data = match output {
-                    Output::Call(data) => data,
-                    Output::Create(data, _) => data,
+                // Phase 2.I L2: Extract return_data and contract_address from output
+                let (return_data, contract_address) = match output {
+                    Output::Call(data) => (data, None),
+                    Output::Create(data, addr) => {
+                        // addr is Option<Address> - the created contract's address
+                        if let Some(created_addr) = addr {
+                            tracing::info!("Contract created at address: {:?}", created_addr);
+                            (data, Some(created_addr))
+                        } else {
+                            tracing::warn!("Contract creation succeeded but no address returned");
+                            (data, None)
+                        }
+                    },
                 };
 
                 Ok(TronExecutionResult {
@@ -424,6 +723,8 @@ where
                     trc10_changes: vec![], // Will be populated by TRC-10 contract handlers
                     vote_changes: vec![], // Will be populated by vote contract handlers
                     withdraw_changes: vec![], // Will be populated by withdraw contract handler
+                    tron_transaction_result: None, // Phase 0.4: Populated by system contract handlers when needed
+                    contract_address, // Phase 2.I L2: Set for CreateSmartContract
                 })
             }
             ExecutionResult::Revert { gas_used: _, output } => {
@@ -441,6 +742,8 @@ where
                     trc10_changes: vec![],
                     vote_changes: vec![],
                     withdraw_changes: vec![],
+                    tron_transaction_result: None,
+                    contract_address: None,
                 })
             }
             ExecutionResult::Halt { reason, gas_used: _ } => {
@@ -458,6 +761,8 @@ where
                     trc10_changes: vec![],
                     vote_changes: vec![],
                     withdraw_changes: vec![],
+                    tron_transaction_result: None,
+                    contract_address: None,
                 })
             }
         }
@@ -472,7 +777,7 @@ where
             ExecutionResult::Success { reason: _, gas_used, gas_refunded: _, logs, output } => {
                 let return_data = match output {
                     Output::Call(data) => data,
-                    Output::Create(data, _) => data,
+                    Output::Create(data, _) => data, // Call shouldn't create, but handle for completeness
                 };
 
                 Ok(TronExecutionResult {
@@ -489,6 +794,8 @@ where
                     trc10_changes: vec![],
                     vote_changes: vec![],
                     withdraw_changes: vec![],
+                    tron_transaction_result: None,
+                    contract_address: None, // Calls don't create contracts
                 })
             }
             ExecutionResult::Revert { gas_used, output } => {
@@ -506,6 +813,8 @@ where
                     trc10_changes: vec![],
                     vote_changes: vec![],
                     withdraw_changes: vec![],
+                    tron_transaction_result: None,
+                    contract_address: None,
                 })
             }
             ExecutionResult::Halt { reason, gas_used } => {
@@ -523,17 +832,55 @@ where
                     trc10_changes: vec![],
                     vote_changes: vec![],
                     withdraw_changes: vec![],
+                    tron_transaction_result: None,
+                    contract_address: None,
                 })
             }
         }
     }
 
     fn calculate_energy_usage(&self, result: &ExecutionResult, _tx: &TronTransaction) -> u64 {
+        let intrinsic = self.tron_intrinsic_energy();
+        let tron_adjustment = self.evm.context.external.tron_energy_opcode_adjustment();
         match result {
-            ExecutionResult::Success { gas_used, .. } => *gas_used,
-            ExecutionResult::Revert { gas_used, .. } => *gas_used,
+            // TRON parity: energy usage counts only TVM execution, not transaction intrinsic costs
+            // (base + calldata). Bandwidth accounts for transaction bytes separately.
+            ExecutionResult::Success { gas_used, gas_refunded, .. } => gas_used
+                .saturating_add(*gas_refunded)
+                .saturating_sub(intrinsic)
+                .saturating_sub(tron_adjustment),
+            ExecutionResult::Revert { gas_used, .. } => gas_used
+                .saturating_sub(intrinsic)
+                .saturating_sub(tron_adjustment),
             ExecutionResult::Halt { gas_used, .. } => *gas_used,
         }
+    }
+
+    fn tron_intrinsic_energy(&self) -> u64 {
+        use revm::primitives::TransactTo;
+
+        // Ethereum transaction intrinsic gas costs, used here only to REMOVE them from energy
+        // accounting (TRON charges transaction bytes as bandwidth, not energy).
+        let base: u64 = match self.evm.context.evm.inner.env.tx.transact_to {
+            TransactTo::Create => 53_000,
+            TransactTo::Call(_) => 21_000,
+        };
+
+        // TRON TVM energy accounting excludes transaction intrinsic costs. Use legacy calldata
+        // pricing (4 per zero byte, 68 per non-zero) to match java-tron's internal accounting.
+        let data_cost: u64 = self
+            .evm
+            .context
+            .evm
+            .inner
+            .env
+            .tx
+            .data
+            .iter()
+            .map(|b| if *b == 0 { 4 } else { 68 })
+            .sum();
+
+        base.saturating_add(data_cost)
     }
 
     fn calculate_bandwidth_usage(&self, tx: &TronTransaction) -> u64 {

@@ -617,6 +617,24 @@ message ExecutionResult {
   repeated VoteChange vote_changes = 13;
   // WithdrawBalanceContract: allowance/latestWithdrawTime sidecar changes
   repeated WithdrawChange withdraw_changes = 14;
+
+  // === Phase 0.4: Receipt passthrough ===
+  // Serialized Protocol.Transaction.Result bytes from Rust execution.
+  // Contains system contract-specific fields like:
+  // - exchange_id (Exchange contracts)
+  // - withdraw_amount (WithdrawBalanceContract)
+  // - withdraw_expire_amount (WithdrawExpireUnfreezeContract)
+  // - exchange_received_amount, exchange_inject_another_amount, etc.
+  // - orderId, orderDetails (Market contracts)
+  // - cancel_unfreezeV2_amount (CancelAllUnfreezeV2Contract)
+  // Java should deserialize this to TransactionResultCapsule and set on ProgramResult.ret
+  // If empty, Java constructs result from other fields (backward compatible)
+  bytes tron_transaction_result = 15;
+
+  // === Phase 2.I L2: Contract creation address ===
+  // For CreateSmartContract transactions, this contains the 20-byte EVM address
+  // of the newly created contract. Java should set this on ProgramResult.contractAddress.
+  bytes contract_address = 16;
 }
 
 // Account information for account changes

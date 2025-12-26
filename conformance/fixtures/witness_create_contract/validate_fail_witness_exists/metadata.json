@@ -1,0 +1,21 @@
+{
+  "contractType": "WITNESS_CREATE_CONTRACT",
+  "contractTypeNum": 5,
+  "caseName": "validate_fail_witness_exists",
+  "caseCategory": "validate_fail",
+  "description": "Fail when witness already exists for the account",
+  "generatedAt": "2025-12-23T10:39:35.074Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Witness[a0548794500882809695a8a687866e76d4271a1abc] has existed",
+  "ownerAddress": "a0548794500882809695a8a687866e76d4271a1abc",
+  "dynamicProperties": {},
+  "notes": []
+}

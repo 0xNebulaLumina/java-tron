@@ -2,62 +2,107 @@
 //!
 //! This module provides the production storage implementation backed by the StorageEngine
 //! (RocksDB). It routes data to appropriate databases matching java-tron's organization.
+//!
+//! ## Account Serialization (Phase 0.1 - Correctness Fix)
+//!
+//! The Account protobuf serialization now uses prost-generated types that match
+//! Java's protocol definitions exactly. This ensures:
+//! - Field numbers are correct (address is field 3, not field 1)
+//! - All fields are preserved during decode→modify→encode cycles
+//! - No non-deterministic values like SystemTime::now()
+//!
+//! See planning/fast_do.todo.md for the full implementation plan.
 
-use std::collections::HashSet;
 use anyhow::Result;
+use prost::Message;
 use revm::primitives::{AccountInfo, Bytecode, Address, U256};
 use tron_backend_storage::StorageEngine;
 use super::traits::EvmStateStore;
 use super::types::{WitnessInfo, VotesRecord, FreezeRecord, AccountAext};
 use super::utils::{keccak256, to_tron_address};
+use super::db_names;
+
+// Import the generated TRON protocol types
+use crate::protocol::{Account as ProtoAccount, AccountType as ProtoAccountType};
 
 /// Persistent implementation of EVM state store backed by the storage engine.
 /// Routes data to appropriate RocksDB databases matching java-tron's organization
 /// while providing a unified interface for EVM execution.
 pub struct EngineBackedEvmStateStore {
     storage_engine: StorageEngine,
+    address_prefix: u8,
 }
 
 impl EngineBackedEvmStateStore {
     pub fn new(storage_engine: StorageEngine) -> Self {
+        let address_prefix = Self::detect_address_prefix(&storage_engine);
         Self {
             storage_engine,
+            address_prefix,
         }
+    }
+
+    /// Detect the TRON address prefix byte used by the underlying database.
+    ///
+    /// Mainnet uses `0x41`, testnets commonly use `0xa0`.
+    fn detect_address_prefix(storage_engine: &StorageEngine) -> u8 {
+        let candidate_dbs = [
+            db_names::account::ACCOUNT,
+            db_names::governance::WITNESS,
+            db_names::governance::VOTES,
+        ];
+
+        for db_name in candidate_dbs {
+            let entries = match storage_engine.get_next(db_name, &Vec::new(), 1) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if let Some(first) = entries.first() {
+                if first.key.len() == 21 {
+                    let prefix = first.key[0];
+                    if prefix == 0x41 || prefix == 0xa0 {
+                        return prefix;
+                    }
+                }
+            }
+        }
+
+        0x41
     }
 
     /// Get the appropriate database name for account data
     fn account_database(&self) -> &str {
-        "account"
+        db_names::account::ACCOUNT
     }
 
     /// Get the appropriate database name for contract code
     fn code_database(&self) -> &str {
-        "code"
+        db_names::contract::CODE
     }
 
     /// Get the appropriate database name for contract storage
-    fn contract_state_database(&self) -> &str {
-        "contract-state"
+    fn storage_row_database(&self) -> &str {
+        db_names::storage::STORAGE_ROW
     }
 
     /// Get the appropriate database name for contract metadata
     fn contract_database(&self) -> &str {
-        "contract"
+        db_names::contract::CONTRACT
     }
 
     /// Get the appropriate database name for dynamic properties
     fn dynamic_properties_database(&self) -> &str {
-        "properties"
+        db_names::system::PROPERTIES
     }
 
     /// Get the appropriate database name for witness store
     fn witness_database(&self) -> &str {
-        "witness"
+        db_names::governance::WITNESS
     }
 
     /// Get the appropriate database name for votes store
     fn votes_database(&self) -> &str {
-        "votes"
+        db_names::governance::VOTES
     }
 
     /// Convert Address to storage key for accounts (matching java-tron format)
@@ -65,20 +110,23 @@ impl EngineBackedEvmStateStore {
     /// REVM uses 20-byte addresses, so we need to add the 0x41 prefix
     fn account_key(&self, address: &Address) -> Vec<u8> {
         let mut key = Vec::with_capacity(21);
-        key.push(0x41); // Tron address prefix
+        key.push(self.address_prefix);
         key.extend_from_slice(address.as_slice()); // 20-byte address
         key
     }
 
-    /// Convert Address to storage key for code (raw address, matching java-tron)
+    /// Convert Address to storage key for code (matching java-tron format).
+    ///
+    /// Java-tron stores contract code using the 21-byte TRON address key
+    /// (prefix byte + 20-byte address), consistent with AccountStore and ContractStore.
     fn code_key(&self, address: &Address) -> Vec<u8> {
-        address.as_slice().to_vec()
+        self.account_key(address)
     }
 
     /// Convert Address to storage key for witness store (21-byte address with 0x41 prefix)
     fn witness_key(&self, address: &Address) -> Vec<u8> {
         let mut key = Vec::with_capacity(21);
-        key.push(0x41); // Tron address prefix
+        key.push(self.address_prefix);
         key.extend_from_slice(address.as_slice()); // 20-byte address
         key
     }
@@ -86,36 +134,40 @@ impl EngineBackedEvmStateStore {
     /// Convert Address to storage key for votes store (21-byte address with 0x41 prefix)
     fn votes_key(&self, address: &Address) -> Vec<u8> {
         let mut key = Vec::with_capacity(21);
-        key.push(0x41); // Tron address prefix
+        key.push(self.address_prefix);
         key.extend_from_slice(address.as_slice()); // 20-byte address
         key
     }
 
     /// Get the appropriate database name for freeze records
     fn freeze_records_database(&self) -> &str {
-        "freeze-records"
+        db_names::freeze::FREEZE_RECORDS
     }
 
     /// Convert Address and FreezeResource to storage key for freeze records
     /// Format: 21-byte tron address (0x41 + 20-byte) + 1-byte resource type
     fn freeze_record_key(&self, address: &Address, resource: u8) -> Vec<u8> {
         let mut key = Vec::with_capacity(22);
-        key.push(0x41); // Tron address prefix
+        key.push(self.address_prefix);
         key.extend_from_slice(address.as_slice()); // 20-byte address
         key.push(resource); // Resource type (0=BANDWIDTH, 1=ENERGY, 2=TRON_POWER)
         key
     }
 
-    /// Get the appropriate database name for account names
-    fn account_name_database(&self) -> &str {
-        "account-name"
+    /// Get the appropriate database name for account index (by name)
+    /// Note: Java's AccountIndexStore uses "account-index", not "account-name"
+    fn account_index_database(&self) -> &str {
+        db_names::account::ACCOUNT_INDEX
     }
 
     /// Convert Address and storage key to contract storage key (matching java-tron's Storage.compose format)
     fn contract_storage_key(&self, address: &Address, storage_key: &U256) -> Vec<u8> {
         // Match java-tron's Storage.compose() method:
         // addrHash[0:16] + storageKey[16:32] (32 bytes total)
-        let addr_hash = keccak256(address.as_slice());
+        // java-tron hashes the 21-byte TRON address (prefix + 20 bytes), not the raw 20-byte EVM
+        // address. Fixture DBs commonly use 0xa0 prefixes, mainnet uses 0x41.
+        let tron_address = self.account_key(address);
+        let addr_hash = keccak256(&tron_address);
         let storage_key_bytes = storage_key.to_be_bytes::<32>();
 
         let mut composed_key = Vec::with_capacity(32);
@@ -124,54 +176,156 @@ impl EngineBackedEvmStateStore {
         composed_key
     }
 
-    /// Serialize AccountInfo to bytes in java-tron Account protobuf format
+    /// Serialize AccountInfo to bytes in java-tron Account protobuf format.
+    ///
+    /// ## Phase 0.1 Implementation (Correctness Fix)
+    ///
+    /// This method uses prost-generated `ProtoAccount` types that match Java's
+    /// protocol definitions exactly. Key guarantees:
+    /// - Field 3 is address (not field 1 as in the old broken implementation)
+    /// - All unmodified fields are preserved during decode→modify→encode
+    /// - No non-deterministic values (no SystemTime::now())
+    ///
+    /// For new accounts (no existing data), creates a minimal Account proto.
+    /// For existing accounts, use `serialize_account_update` which preserves fields.
     fn serialize_account(&self, address: &Address, account: &AccountInfo) -> Vec<u8> {
-        // Create a protobuf Account message compatible with java-tron
-        // The Account protobuf in java-tron has the following structure:
-        // message Account {
-        //   bytes address = 1;           // field 1, length-delimited
-        //   AccountType type = 2;        // field 2, varint (0 = Normal)
-        //   int64 balance = 4;           // field 4, varint
-        //   int64 create_time = 9;       // field 9, varint
-        //   // ... other fields
-        // }
-        
-        let mut data = Vec::new();
-        
-        // Field 1: address (length-delimited)
-        // Include the full 21-byte Tron address with 0x41 prefix
-        let tron_address = self.account_key(address); // This adds 0x41 prefix
-        data.push(0x0a); // field 1, length-delimited
-        self.write_varint(&mut data, tron_address.len() as u64);
-        data.extend_from_slice(&tron_address);
-        
-        // Field 2: type (AccountType.Normal = 0)
-        data.push(0x10); // field 2, varint
-        data.push(0x00); // value = 0 (Normal)
-        
-        // Field 4: balance (varint)
-        // Convert U256 balance to u64 (TRON uses long for balance)
-        // ALWAYS include balance field, even if 0, for Java compatibility
-        let balance_u64 = account.balance.to::<u64>();
-        data.push(0x20); // field 4, varint
-        self.write_varint(&mut data, balance_u64);
-        
-        // Field 9: create_time (use current timestamp)
-        // Use current time in milliseconds
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let create_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        if create_time > 0 {
-            data.push(0x48); // field 9, varint
-            self.write_varint(&mut data, create_time);
-        }
-        
-        data
+        // Create a new ProtoAccount with only the fields we know
+        let tron_address = self.account_key(address); // 21-byte with 0x41 prefix
+
+        let proto_account = ProtoAccount {
+            address: tron_address,
+            r#type: ProtoAccountType::Normal as i32,
+            // Take low 64 bits and reinterpret as i64 (consistent with serialize_account_update)
+            balance: account.balance.as_limbs()[0] as i64,
+            // All other fields default to their proto defaults (empty/0/false)
+            // This is correct for NEW accounts only.
+            // For EXISTING accounts, use serialize_account_update() instead.
+            ..Default::default()
+        };
+
+        proto_account.encode_to_vec()
     }
-    
-    /// Write a varint to the output buffer
+
+    /// Serialize an account update using decode→modify→encode pattern.
+    ///
+    /// ## Phase 0.1 Core Implementation
+    ///
+    /// This is the key method that ensures correctness when updating existing accounts.
+    /// It reads the existing proto bytes, decodes them, modifies only the balance,
+    /// and re-encodes - preserving all other fields (permissions, votes, assets, etc.).
+    ///
+    /// ### Parameters
+    /// - `address`: The account address (for key generation and fallback)
+    /// - `account`: The new account state (only balance is used currently)
+    /// - `existing_data`: Optional existing proto bytes from storage
+    ///
+    /// ### Returns
+    /// Serialized proto bytes ready for storage
+    pub fn serialize_account_update(
+        &self,
+        address: &Address,
+        account: &AccountInfo,
+        existing_data: Option<&[u8]>,
+    ) -> Vec<u8> {
+        match existing_data {
+            Some(data) => {
+                // Decode→Modify→Encode pattern: preserve all existing fields
+                match ProtoAccount::decode(data) {
+                    Ok(mut proto_account) => {
+                        // Only update the balance field; all other fields are preserved
+                        // Take low 64 bits and reinterpret as i64 (preserves bit pattern for
+                        // values that exceed i64::MAX when treated as unsigned, like blackhole balance)
+                        proto_account.balance = account.balance.as_limbs()[0] as i64;
+
+                        tracing::debug!(
+                            "Account update (decode→modify→encode): address={}, old_balance={}, new_balance={}",
+                            hex::encode(&proto_account.address),
+                            // The old balance from the decoded proto (for logging only)
+                            data.len(), // Use data len as placeholder since we already updated
+                            proto_account.balance
+                        );
+
+                        proto_account.encode_to_vec()
+                    }
+                    Err(e) => {
+                        // If decode fails, log warning and create new account
+                        // This shouldn't happen with valid data from Java
+                        tracing::warn!(
+                            "Failed to decode existing Account proto for {:?}: {}. Creating new account.",
+                            address, e
+                        );
+                        self.serialize_account(address, account)
+                    }
+                }
+            }
+            None => {
+                // No existing data, create new account
+                self.serialize_account(address, account)
+            }
+        }
+    }
+
+    /// Deserialize AccountInfo from protobuf bytes (java-tron Account message).
+    ///
+    /// ## Phase 0.1 Implementation
+    ///
+    /// Uses prost to properly decode the Account proto, extracting the balance
+    /// and code_hash fields that REVM's AccountInfo needs.
+    fn deserialize_account(&self, data: &[u8]) -> Result<AccountInfo> {
+        let proto_account = ProtoAccount::decode(data)
+            .map_err(|e| anyhow::anyhow!("Failed to decode Account proto: {}", e))?;
+
+        // Convert balance from i64 to U256, preserving the bit pattern.
+        // Java uses i64 for balance in proto, but some addresses (like blackhole) can have
+        // balances that appear negative when interpreted as signed. We preserve the bits
+        // by casting i64 to u64, which keeps the two's complement representation intact.
+        // When Java receives the 32-byte balance in AccountInfo, it extracts the low 8 bytes
+        // and interprets them as i64, recovering the original signed value.
+        let balance = U256::from(proto_account.balance as u64);
+
+        // Extract code_hash if present (field 30)
+        let code_hash = if proto_account.code_hash.len() == 32 {
+            revm::primitives::B256::from_slice(&proto_account.code_hash)
+        } else {
+            revm::primitives::B256::ZERO
+        };
+
+        Ok(AccountInfo {
+            balance,
+            nonce: 0, // TRON doesn't use nonce
+            code_hash,
+            code: None, // Code is stored separately in "code" database
+        })
+    }
+
+    /// Get the full Account proto for an address.
+    ///
+    /// This returns the complete ProtoAccount with all fields, useful for
+    /// operations that need to inspect or modify specific fields.
+    pub fn get_account_proto(&self, address: &Address) -> Result<Option<ProtoAccount>> {
+        let key = self.account_key(address);
+        match self.storage_engine.get(self.account_database(), &key)? {
+            Some(data) => {
+                let proto_account = ProtoAccount::decode(data.as_slice())
+                    .map_err(|e| anyhow::anyhow!("Failed to decode Account proto: {}", e))?;
+                Ok(Some(proto_account))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Store a complete Account proto.
+    ///
+    /// This allows storing a fully-populated ProtoAccount, useful after
+    /// making complex modifications to multiple fields.
+    pub fn put_account_proto(&self, address: &Address, proto_account: &ProtoAccount) -> Result<()> {
+        let key = self.account_key(address);
+        let data = proto_account.encode_to_vec();
+        self.storage_engine.put(self.account_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Write a varint to the output buffer (kept for manual proto parsing elsewhere)
     fn write_varint(&self, output: &mut Vec<u8>, mut value: u64) {
         while value >= 0x80 {
             output.push(((value & 0x7F) | 0x80) as u8);
@@ -180,54 +334,17 @@ impl EngineBackedEvmStateStore {
         output.push(value as u8);
     }
 
-    /// Deserialize AccountInfo from protobuf bytes (java-tron Account message)
-    fn deserialize_account(&self, data: &[u8]) -> Result<AccountInfo> {
-        // Parse protobuf Account message
-        // For now, we'll implement a simple parser for the balance field
-        // TODO: Use proper protobuf parsing library for full compatibility
-
-        // This is a simplified parser that extracts the balance field from the protobuf
-        // The Account protobuf has balance as field 4 (varint)
-        let balance = self.extract_balance_from_protobuf(data)?;
-
-        // For now, use default values for other fields
-        // In a full implementation, we'd parse all fields from the protobuf
-        Ok(AccountInfo {
-            balance: U256::from(balance),
-            nonce: 0, // TRON doesn't use nonce, so we can use 0
-            code_hash: revm::primitives::B256::ZERO, // TODO: Extract from protobuf if needed
-            code: None,
-        })
-    }
-
-    /// Extract balance field from Account protobuf message
-    /// This is a simplified parser for the balance field (field number 4)
+    /// Extract balance field from Account protobuf message (legacy, kept for compatibility)
+    ///
+    /// Note: Prefer using deserialize_account() with prost for full proto parsing.
+    /// This manual parser is kept for cases where we only need the balance quickly.
     fn extract_balance_from_protobuf(&self, data: &[u8]) -> Result<u64> {
-        let mut pos = 0;
+        // Use prost for proper parsing
+        let proto_account = ProtoAccount::decode(data)
+            .map_err(|e| anyhow::anyhow!("Failed to decode Account proto: {}", e))?;
 
-        while pos < data.len() {
-            if pos >= data.len() {
-                break;
-            }
-
-            // Read field header (varint)
-            let (field_header, new_pos) = self.read_varint(data, pos)?;
-            pos = new_pos;
-
-            let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
-
-            if field_number == 4 && wire_type == 0 { // balance field (varint)
-                let (balance, _) = self.read_varint(data, pos)?;
-                return Ok(balance);
-            } else {
-                // Skip this field
-                pos = self.skip_field(data, pos, wire_type)?;
-            }
-        }
-
-        // If balance field not found, return 0
-        Ok(0)
+        // Convert i64 to u64, preserving bit pattern (see deserialize_account for explanation)
+        Ok(proto_account.balance as u64)
     }
 
     /// Read a varint from protobuf data
@@ -359,7 +476,15 @@ impl EngineBackedEvmStateStore {
         let key = b"ALLOW_MULTI_SIGN";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                if !data.is_empty() {
+                // Java stores dynamic properties as big-endian i64/u64.
+                // For small values (e.g. 1), the first byte is 0; so interpret as 8-byte integer.
+                if data.len() >= 8 {
+                    let val = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    Ok(val != 0)
+                } else if !data.is_empty() {
                     Ok(data[0] != 0)
                 } else {
                     Ok(true) // Default enabled
@@ -467,24 +592,14 @@ impl EngineBackedEvmStateStore {
                     addr_bytes.copy_from_slice(&data[0..20]);
                     Ok(Some(Address::from(addr_bytes)))
                 } else {
-                    // Invalid or empty value: fall back to default
-                    Ok(Self::default_blackhole_address())
+                    // Invalid or empty value: fall back to default for the detected network prefix
+                    Ok(Some(self.get_blackhole_address_evm()))
                 }
             },
             None => {
-                // Not configured in dynamic properties - use sane network default
-                Ok(Self::default_blackhole_address())
+                // Not configured in dynamic properties - use sane network default for prefix
+                Ok(Some(self.get_blackhole_address_evm()))
             }
-        }
-    }
-
-    /// Default blackhole address (mainnet): TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy
-    /// Provided as 20-byte EVM address wrapped in revm_primitives::Address.
-    fn default_blackhole_address() -> Option<Address> {
-        // Use common address utility to decode TRON Base58
-        match tron_backend_common::from_tron_address("TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy") {
-            Ok(bytes20) => Some(Address::from(bytes20)),
-            Err(_) => None,
         }
     }
 
@@ -514,6 +629,99 @@ impl EngineBackedEvmStateStore {
                 Ok(0)
             }
         }
+    }
+
+    /// Get ENERGY_FEE dynamic property (SUN per energy unit).
+    ///
+    /// Java stores dynamic properties as big-endian i64/u64 under their string keys.
+    /// When missing or invalid, return 0 and allow callers to fall back to context values.
+    pub fn get_energy_fee(&self) -> Result<u64> {
+        let key = b"ENERGY_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    if val > 0 {
+                        Ok(val as u64)
+                    } else {
+                        Ok(0)
+                    }
+                } else if !data.is_empty() {
+                    Ok(data[0] as u64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Apply TRON VM energy fee accounting and minimal resource timestamp updates.
+    ///
+    /// For VM transactions, java-tron charges `energy_used * energy_price` from the sender's
+    /// Account.balance and, when blackhole optimization is disabled, credits the blackhole account
+    /// by the same amount.
+    ///
+    /// Additionally, when `latest_block_header_timestamp` is available (>0), java-tron updates:
+    /// - `Account.latest_opration_time = latest_block_header_timestamp`
+    /// - `Account.account_resource.latest_consume_time_for_energy = latest_block_header_timestamp / 3000`
+    ///
+    /// This helper is intentionally minimal and only touches fields required by conformance
+    /// fixtures.
+    pub fn apply_vm_energy_fee(
+        &self,
+        owner: &Address,
+        energy_used: u64,
+        energy_price: u64,
+    ) -> Result<()> {
+        // Parity: java-tron derives energy price from the dynamic property ENERGY_FEE.
+        // Fixtures may set ExecutionContext.energy_price differently, so treat it as a fallback.
+        let effective_price = match self.get_energy_fee()? {
+            0 => energy_price,
+            v => v,
+        };
+
+        let fee_sun = energy_used.saturating_mul(effective_price);
+        if fee_sun == 0 {
+            return Ok(());
+        }
+
+        let fee_i64 = fee_sun as i64; // preserve low 64 bits (two's complement) like Java
+        let now_ms = self.get_latest_block_header_timestamp()?;
+
+        // Update owner account balance and timestamps.
+        if let Some(mut owner_account) = self.get_account_proto(owner)? {
+            owner_account.balance = owner_account.balance.wrapping_sub(fee_i64);
+
+            if now_ms > 0 {
+                owner_account.latest_opration_time = now_ms;
+                let head_slot = now_ms / 3000;
+                if owner_account.account_resource.is_none() {
+                    owner_account.account_resource =
+                        Some(crate::protocol::account::AccountResource::default());
+                }
+                if let Some(ar) = owner_account.account_resource.as_mut() {
+                    ar.latest_consume_time_for_energy = head_slot;
+                }
+            }
+
+            self.put_account_proto(owner, &owner_account)?;
+        }
+
+        // Credit blackhole account when optimization is disabled (fees are not burned).
+        if !self.support_black_hole_optimization()? {
+            if let Some(blackhole_address) = self.get_blackhole_address()? {
+                if let Some(mut blackhole_account) = self.get_account_proto(&blackhole_address)? {
+                    blackhole_account.balance = blackhole_account.balance.wrapping_add(fee_i64);
+                    self.put_account_proto(&blackhole_address, &blackhole_account)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Get WITNESS_ALLOWANCE_FROZEN_TIME dynamic property
@@ -753,6 +961,126 @@ impl EngineBackedEvmStateStore {
                 }
             },
             None => Ok(43_200_000_000) // Default
+        }
+    }
+
+    /// Add to TOTAL_NET_WEIGHT dynamic property
+    /// Used when canceling unfreezeV2 to re-freeze bandwidth
+    pub fn add_total_net_weight(&self, delta: i64) -> Result<()> {
+        let current = self.get_total_net_weight()?;
+        let new_value = current.checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_net_weight"))?;
+        let key = b"TOTAL_NET_WEIGHT";
+        let data = new_value.to_be_bytes();
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Get TOTAL_ENERGY_WEIGHT dynamic property
+    /// Default: 0
+    pub fn get_total_energy_weight(&self) -> Result<i64> {
+        let key = b"TOTAL_ENERGY_WEIGHT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Add to TOTAL_ENERGY_WEIGHT dynamic property
+    /// Used when canceling unfreezeV2 to re-freeze energy
+    pub fn add_total_energy_weight(&self, delta: i64) -> Result<()> {
+        let current = self.get_total_energy_weight()?;
+        let new_value = current.checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_energy_weight"))?;
+        let key = b"TOTAL_ENERGY_WEIGHT";
+        let data = new_value.to_be_bytes();
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Get TOTAL_TRON_POWER_WEIGHT dynamic property
+    /// Default: 0
+    pub fn get_total_tron_power_weight(&self) -> Result<i64> {
+        let key = b"TOTAL_TRON_POWER_WEIGHT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Add to TOTAL_TRON_POWER_WEIGHT dynamic property
+    /// Used when canceling unfreezeV2 to re-freeze tron power
+    pub fn add_total_tron_power_weight(&self, delta: i64) -> Result<()> {
+        let current = self.get_total_tron_power_weight()?;
+        let new_value = current.checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_tron_power_weight"))?;
+        let key = b"TOTAL_TRON_POWER_WEIGHT";
+        let data = new_value.to_be_bytes();
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Check ALLOW_CANCEL_ALL_UNFREEZE_V2 dynamic property
+    /// Returns true if CancelAllUnfreezeV2 is enabled
+    /// Default: false
+    pub fn support_allow_cancel_all_unfreeze_v2(&self) -> Result<bool> {
+        let key = b"ALLOW_CANCEL_ALL_UNFREEZE_V2";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val > 0)
+                } else if !data.is_empty() {
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(false)
+                }
+            },
+            None => Ok(false) // Default disabled
+        }
+    }
+
+    /// Check SUPPORT_DR dynamic property (delegate resource)
+    /// Returns true if resource delegation is enabled
+    /// Default: false
+    pub fn support_dr(&self) -> Result<bool> {
+        let key = b"ALLOW_DELEGATE_RESOURCE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val > 0)
+                } else if !data.is_empty() {
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(false)
+                }
+            },
+            None => Ok(false) // Default disabled
         }
     }
 
@@ -1040,8 +1368,8 @@ impl EngineBackedEvmStateStore {
                     let addr_bytes = &data[pos..pos + length as usize];
                     pos += length as usize;
 
-                    // Remove 0x41 prefix if present (21-byte Tron → 20-byte EVM)
-                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                    // Remove TRON address prefix if present (21-byte Tron → 20-byte EVM)
+                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
                         &addr_bytes[1..]
                     } else if addr_bytes.len() == 20 {
                         addr_bytes
@@ -1189,7 +1517,7 @@ impl EngineBackedEvmStateStore {
         tracing::debug!("Getting account name for address {:?}, key: {}",
                        address, hex::encode(&key));
 
-        match self.storage_engine.get(self.account_name_database(), &key)? {
+        match self.storage_engine.get(self.account_index_database(), &key)? {
             Some(data) => {
                 tracing::debug!("Found account name data, length: {}", data.len());
                 // Decode as UTF-8 string
@@ -1237,7 +1565,7 @@ impl EngineBackedEvmStateStore {
             }
         }
 
-        self.storage_engine.put(self.account_name_database(), &key, name)?;
+        self.storage_engine.put(self.account_index_database(), &key, name)?;
 
         tracing::info!("Successfully stored account name for address {:?}, length: {}", address, name.len());
         Ok(())
@@ -1245,7 +1573,7 @@ impl EngineBackedEvmStateStore {
 
     /// Get database name for account resource tracking (AEXT)
     fn account_aext_database(&self) -> &str {
-        "account-resource"
+        db_names::account::ACCOUNT_RESOURCE
     }
 
     /// Build storage key for account AEXT: 20-byte address
@@ -1329,13 +1657,13 @@ impl EngineBackedEvmStateStore {
 
     /// Get the database name for delegation store
     fn delegation_database(&self) -> &str {
-        "delegation"
+        db_names::delegation::DELEGATION
     }
 
     /// Generate key for delegation store address lookups (21-byte with 0x41 prefix)
     fn delegation_address_key(&self, address: &Address) -> Vec<u8> {
         let mut key = Vec::with_capacity(21);
-        key.push(0x41); // Tron address prefix
+        key.push(self.address_prefix);
         key.extend_from_slice(address.as_slice());
         key
     }
@@ -1697,6 +2025,946 @@ impl EngineBackedEvmStateStore {
         );
         Ok(votes)
     }
+
+    /// Set brokerage for a witness address.
+    /// Java reference: DelegationStore.setBrokerage(cycle, address, brokerage)
+    /// The brokerage is stored as a 4-byte big-endian integer.
+    /// For UpdateBrokerageContract, cycle is always -1 (REMARK).
+    pub fn set_delegation_brokerage(&self, cycle: i64, address: &Address, brokerage: i32) -> Result<()> {
+        use crate::delegation::delegation_brokerage_key;
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_brokerage_key(cycle, &tron_addr);
+        let data = brokerage.to_be_bytes();
+
+        tracing::debug!(
+            "Setting delegation brokerage for {:?} cycle {}: {}%",
+            address, cycle, brokerage
+        );
+        self.storage_engine.put(self.delegation_database(), &key, &data)?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Proposal Store Access Methods (Phase 2.A)
+    // =========================================================================
+    // These methods provide access to the proposal store for governance operations.
+    // Java reference: ProposalStore.java, ProposalCapsule.java
+
+    /// Get the database name for proposal store
+    fn proposal_database(&self) -> &str {
+        db_names::governance::PROPOSAL
+    }
+
+    /// Generate key for proposal store: 8-byte big-endian proposal ID
+    /// Java reference: ProposalCapsule.createDbKey() -> ByteArray.fromLong(proposalId)
+    fn proposal_key(&self, proposal_id: i64) -> Vec<u8> {
+        use super::key_helpers::proposal_key;
+        proposal_key(proposal_id)
+    }
+
+    /// Get proposal by ID
+    /// Returns the raw Proposal protobuf bytes
+    pub fn get_proposal(&self, proposal_id: i64) -> Result<Option<crate::protocol::Proposal>> {
+        use crate::protocol::Proposal;
+        let key = self.proposal_key(proposal_id);
+        tracing::debug!("Getting proposal {}, key: {}", proposal_id, hex::encode(&key));
+
+        match self.storage_engine.get(self.proposal_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found proposal data, length: {}", data.len());
+                match Proposal::decode(data.as_slice()) {
+                    Ok(proposal) => {
+                        tracing::debug!(
+                            "Decoded proposal {} - proposer: {}, state: {:?}, approvals: {}",
+                            proposal.proposal_id,
+                            hex::encode(&proposal.proposer_address),
+                            proposal.state,
+                            proposal.approvals.len()
+                        );
+                        Ok(Some(proposal))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to decode proposal {}: {}", proposal_id, e);
+                        Err(anyhow::anyhow!("Failed to decode proposal: {}", e))
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("Proposal {} not found", proposal_id);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store proposal
+    pub fn put_proposal(&self, proposal: &crate::protocol::Proposal) -> Result<()> {
+        let key = self.proposal_key(proposal.proposal_id);
+        let data = self.encode_proposal_java_compatible(proposal);
+
+        tracing::debug!(
+            "Storing proposal {} - proposer: {}, state: {:?}, approvals: {}, key: {}",
+            proposal.proposal_id,
+            hex::encode(&proposal.proposer_address),
+            proposal.state,
+            proposal.approvals.len(),
+            hex::encode(&key)
+        );
+
+        self.storage_engine.put(self.proposal_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Encode a `Proposal` exactly the way java-tron persists it.
+    ///
+    /// `prost`'s default map encoding omits map-entry keys when the key is `0`, but java-tron
+    /// includes the key field (`08 00`) in that case. Conformance fixtures assert raw DB bytes,
+    /// so proposal persistence must be byte-for-byte compatible.
+    fn encode_proposal_java_compatible(&self, proposal: &crate::protocol::Proposal) -> Vec<u8> {
+        let mut out = Vec::new();
+
+        // Field 1: proposal_id (int64, varint)
+        if proposal.proposal_id != 0 {
+            self.write_varint(&mut out, (1 << 3) | 0);
+            self.write_varint(&mut out, proposal.proposal_id as u64);
+        }
+
+        // Field 2: proposer_address (bytes)
+        if !proposal.proposer_address.is_empty() {
+            self.write_varint(&mut out, (2 << 3) | 2);
+            self.write_varint(&mut out, proposal.proposer_address.len() as u64);
+            out.extend_from_slice(&proposal.proposer_address);
+        }
+
+        // Field 3: parameters (map<int64,int64>) - entries are encoded in ascending key order.
+        if !proposal.parameters.is_empty() {
+            let mut entries: Vec<(i64, i64)> = proposal
+                .parameters
+                .iter()
+                .map(|(k, v)| (*k, *v))
+                .collect();
+            entries.sort_by_key(|(k, _)| *k);
+
+            for (key, value) in entries {
+                let mut entry_buf = Vec::new();
+                // Map entry field 1: key (int64, varint) - ALWAYS encoded (even if 0).
+                self.write_varint(&mut entry_buf, (1 << 3) | 0);
+                self.write_varint(&mut entry_buf, key as u64);
+                // Map entry field 2: value (int64, varint) - encoded for parity with java-tron.
+                self.write_varint(&mut entry_buf, (2 << 3) | 0);
+                self.write_varint(&mut entry_buf, value as u64);
+
+                self.write_varint(&mut out, (3 << 3) | 2);
+                self.write_varint(&mut out, entry_buf.len() as u64);
+                out.extend_from_slice(&entry_buf);
+            }
+        }
+
+        // Field 4: expiration_time (int64, varint)
+        if proposal.expiration_time != 0 {
+            self.write_varint(&mut out, (4 << 3) | 0);
+            self.write_varint(&mut out, proposal.expiration_time as u64);
+        }
+
+        // Field 5: create_time (int64, varint)
+        if proposal.create_time != 0 {
+            self.write_varint(&mut out, (5 << 3) | 0);
+            self.write_varint(&mut out, proposal.create_time as u64);
+        }
+
+        // Field 6: approvals (repeated bytes)
+        for approval in &proposal.approvals {
+            if approval.is_empty() {
+                continue;
+            }
+            self.write_varint(&mut out, (6 << 3) | 2);
+            self.write_varint(&mut out, approval.len() as u64);
+            out.extend_from_slice(approval);
+        }
+
+        // Field 7: state (enum, varint) - proto3 omits default 0.
+        if proposal.state != 0 {
+            self.write_varint(&mut out, (7 << 3) | 0);
+            self.write_varint(&mut out, proposal.state as u64);
+        }
+
+        out
+    }
+
+    /// Check if proposal exists
+    pub fn has_proposal(&self, proposal_id: i64) -> Result<bool> {
+        let key = self.proposal_key(proposal_id);
+        match self.storage_engine.get(self.proposal_database(), &key)? {
+            Some(_) => Ok(true),
+            None => Ok(false),
+        }
+    }
+
+    // --- Dynamic Properties for Proposals ---
+
+    /// Get LATEST_PROPOSAL_NUM dynamic property
+    /// Returns the highest proposal ID that has been created
+    /// Default: 0 if not found
+    pub fn get_latest_proposal_num(&self) -> Result<i64> {
+        let key = b"LATEST_PROPOSAL_NUM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let num = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("LATEST_PROPOSAL_NUM: {}", num);
+                    Ok(num)
+                } else {
+                    tracing::warn!("LATEST_PROPOSAL_NUM has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("LATEST_PROPOSAL_NUM not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Set LATEST_PROPOSAL_NUM dynamic property
+    pub fn set_latest_proposal_num(&self, num: i64) -> Result<()> {
+        let key = b"LATEST_PROPOSAL_NUM";
+        let data = num.to_be_bytes();
+        tracing::debug!("Setting LATEST_PROPOSAL_NUM to {}", num);
+        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        Ok(())
+    }
+
+    /// Get NEXT_MAINTENANCE_TIME dynamic property
+    /// Returns the timestamp (milliseconds) of the next maintenance period
+    /// Default: 0 if not found
+    pub fn get_next_maintenance_time(&self) -> Result<i64> {
+        let key = b"NEXT_MAINTENANCE_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let time = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("NEXT_MAINTENANCE_TIME: {}", time);
+                    Ok(time)
+                } else {
+                    tracing::warn!("NEXT_MAINTENANCE_TIME has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("NEXT_MAINTENANCE_TIME not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get MAINTENANCE_TIME_INTERVAL dynamic property
+    /// Returns the interval (milliseconds) between maintenance periods
+    /// Default: 21600000 (6 hours) if not found
+    pub fn get_maintenance_time_interval(&self) -> Result<i64> {
+        let key = b"MAINTENANCE_TIME_INTERVAL";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let interval = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("MAINTENANCE_TIME_INTERVAL: {}", interval);
+                    Ok(interval)
+                } else {
+                    tracing::warn!("MAINTENANCE_TIME_INTERVAL has invalid length: {}", data.len());
+                    Ok(21600000) // 6 hours in milliseconds
+                }
+            }
+            None => {
+                tracing::debug!("MAINTENANCE_TIME_INTERVAL not found, returning default 21600000");
+                Ok(21600000) // 6 hours in milliseconds
+            }
+        }
+    }
+
+    // ==========================================================================
+    // Phase 2.B: AccountIdIndex Store Methods
+    // ==========================================================================
+    //
+    // AccountIdIndex maps lowercase account IDs to account addresses.
+    // Used by SetAccountIdContract (type 19).
+    // Java reference: AccountIdIndexStore.java
+
+    /// Get the database name for account id index
+    fn account_id_index_database(&self) -> &str {
+        db_names::account::ACCOUNT_ID_INDEX
+    }
+
+    /// Convert account ID to lowercase key format
+    /// Java: AccountIdIndexStore.getLowerCaseAccountId() converts to lowercase UTF-8
+    fn account_id_key(&self, account_id: &[u8]) -> Vec<u8> {
+        // Convert bytes to UTF-8 string, lowercase, then back to bytes
+        if let Ok(s) = std::str::from_utf8(account_id) {
+            s.to_lowercase().into_bytes()
+        } else {
+            // If not valid UTF-8, just use the raw bytes
+            account_id.to_vec()
+        }
+    }
+
+    /// Check if an account ID already exists in the index
+    /// Returns true if the account ID is already taken
+    pub fn has_account_id(&self, account_id: &[u8]) -> Result<bool> {
+        let key = self.account_id_key(account_id);
+        tracing::debug!("Checking if account_id exists: {:?} -> key: {}",
+                       String::from_utf8_lossy(account_id), hex::encode(&key));
+
+        match self.storage_engine.get(self.account_id_index_database(), &key)? {
+            Some(_) => {
+                tracing::debug!("Account ID {} already exists", String::from_utf8_lossy(account_id));
+                Ok(true)
+            }
+            None => {
+                tracing::debug!("Account ID {} does not exist", String::from_utf8_lossy(account_id));
+                Ok(false)
+            }
+        }
+    }
+
+    /// Get the address associated with an account ID
+    /// Returns the 21-byte TRON address (with 0x41 prefix)
+    pub fn get_address_by_account_id(&self, account_id: &[u8]) -> Result<Option<Vec<u8>>> {
+        let key = self.account_id_key(account_id);
+        tracing::debug!("Getting address for account_id: {:?} -> key: {}",
+                       String::from_utf8_lossy(account_id), hex::encode(&key));
+
+        match self.storage_engine.get(self.account_id_index_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found address for account_id {}: {}",
+                               String::from_utf8_lossy(account_id), hex::encode(&data));
+                Ok(Some(data))
+            }
+            None => Ok(None)
+        }
+    }
+
+    /// Store an account ID -> address mapping
+    /// address should be the 21-byte TRON address (with 0x41 prefix)
+    pub fn put_account_id_index(&self, account_id: &[u8], address: &[u8]) -> Result<()> {
+        let key = self.account_id_key(account_id);
+        tracing::debug!("Storing account_id index: {:?} -> {} (key: {})",
+                       String::from_utf8_lossy(account_id), hex::encode(address), hex::encode(&key));
+
+        self.storage_engine.put(self.account_id_index_database(), &key, address)?;
+        Ok(())
+    }
+
+    // ==========================================================================
+    // Phase 2.B: Account Permission and Dynamic Properties (Additional)
+    // ==========================================================================
+    //
+    // Note: get_allow_multi_sign() and support_black_hole_optimization()
+    // already exist above in this file (lines ~438 and ~459).
+
+    /// Get TOTAL_SIGN_NUM dynamic property
+    /// Maximum number of keys allowed in a permission
+    /// Default: 5
+    pub fn get_total_sign_num(&self) -> Result<i64> {
+        let key = b"TOTAL_SIGN_NUM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let value = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("TOTAL_SIGN_NUM: {}", value);
+                    Ok(value)
+                } else {
+                    tracing::warn!("TOTAL_SIGN_NUM has invalid length: {}", data.len());
+                    Ok(5) // Default
+                }
+            }
+            None => {
+                tracing::debug!("TOTAL_SIGN_NUM not found, returning default 5");
+                Ok(5)
+            }
+        }
+    }
+
+    /// Get UPDATE_ACCOUNT_PERMISSION_FEE dynamic property
+    /// Fee in SUN for updating account permissions
+    /// Default: 100_000_000 (100 TRX)
+    pub fn get_update_account_permission_fee(&self) -> Result<i64> {
+        let key = b"UPDATE_ACCOUNT_PERMISSION_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let value = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE: {}", value);
+                    Ok(value)
+                } else {
+                    tracing::warn!("UPDATE_ACCOUNT_PERMISSION_FEE has invalid length: {}", data.len());
+                    Ok(100_000_000) // 100 TRX in SUN
+                }
+            }
+            None => {
+                tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE not found, returning default 100_000_000");
+                Ok(100_000_000) // 100 TRX in SUN
+            }
+        }
+    }
+
+    /// Get AVAILABLE_CONTRACT_TYPE dynamic property
+    /// Bitmap of allowed contract types (32 bytes)
+    /// Returns None if not found (all contracts allowed)
+    pub fn get_available_contract_type(&self) -> Result<Option<Vec<u8>>> {
+        let key = b"AVAILABLE_CONTRACT_TYPE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                tracing::debug!("AVAILABLE_CONTRACT_TYPE: {} bytes", data.len());
+                Ok(Some(data))
+            }
+            None => {
+                tracing::debug!("AVAILABLE_CONTRACT_TYPE not found");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Get the blackhole address as 21-byte TRON format (0x41 prefix + 20 bytes)
+    /// Java: AccountStore.getBlackhole() returns BURN_ADDRESS or HOLE_ADDRESS
+    pub fn get_blackhole_address_tron(&self) -> [u8; 21] {
+        // Mainnet default: TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy
+        // Testnet default (config-test.conf genesis): 27WtBq2KoSy5v8VnVZBZHHJcDuWNiSgjbE3
+        match self.address_prefix {
+            0xa0 => [
+                0xa0,
+                0x55, 0x9c, 0xcf, 0x55, 0xfa, 0xdf, 0xfd, 0xf8,
+                0x14, 0xa4, 0x2a, 0xff, 0x33, 0x1d, 0xe9, 0x68,
+                0x8c, 0x13, 0x26, 0x12,
+            ],
+            _ => [
+                0x41,
+                0x77, 0x94, 0x4d, 0x19, 0xc0, 0x52, 0xb7, 0x3e,
+                0xe2, 0x28, 0x68, 0x23, 0xaa, 0x83, 0xf8, 0x13,
+                0x8c, 0xb7, 0x03, 0x2f,
+            ],
+        }
+    }
+
+    /// Get the blackhole address as an EVM Address (20 bytes, no 0x41 prefix)
+    pub fn get_blackhole_address_evm(&self) -> Address {
+        let tron = self.get_blackhole_address_tron();
+        Address::from_slice(&tron[1..])
+    }
+
+    // ==========================================================================
+    // Phase 2.C: ContractStore and AbiStore Methods
+    // ==========================================================================
+    //
+    // ContractStore: Stores SmartContract metadata (origin_address, consume_user_resource_percent, etc.)
+    // AbiStore: Stores contract ABI (Application Binary Interface)
+    // Java reference: ContractStore.java, AbiStore.java, ContractCapsule.java, AbiCapsule.java
+    //
+    // Note: contract_database() already exists at line ~58
+
+    /// Get the database name for ABI store
+    fn abi_database(&self) -> &str {
+        db_names::contract::ABI
+    }
+
+    /// Get a smart contract by its address
+    /// Returns the SmartContract protobuf if found
+    /// Key: 21-byte TRON address (0x41 prefix + 20 bytes)
+    pub fn get_smart_contract(&self, contract_address: &[u8]) -> Result<Option<crate::protocol::SmartContract>> {
+        tracing::debug!("Getting smart contract for address: {}", hex::encode(contract_address));
+
+        match self.storage_engine.get(self.contract_database(), contract_address)? {
+            Some(data) => {
+                tracing::debug!("Found contract data, length: {}", data.len());
+                // Deserialize using prost
+                match crate::protocol::SmartContract::decode(&data[..]) {
+                    Ok(contract) => {
+                        tracing::debug!("Successfully deserialized SmartContract - origin_address: {}, consume_percent: {}",
+                                       hex::encode(&contract.origin_address), contract.consume_user_resource_percent);
+                        Ok(Some(contract))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to decode SmartContract: {}", e);
+                        Err(anyhow::anyhow!("Failed to decode SmartContract: {}", e))
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("Smart contract not found for address: {}", hex::encode(contract_address));
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store a smart contract
+    /// Key: contract address (21-byte TRON address)
+    pub fn put_smart_contract(&self, contract: &crate::protocol::SmartContract) -> Result<()> {
+        let key = &contract.contract_address;
+        tracing::debug!("Storing smart contract at address: {}, consume_percent: {}, origin_energy_limit: {}",
+                       hex::encode(key), contract.consume_user_resource_percent, contract.origin_energy_limit);
+
+        // Serialize using prost
+        let mut buf = Vec::new();
+        contract.encode(&mut buf).map_err(|e| anyhow::anyhow!("Failed to encode SmartContract: {}", e))?;
+
+        self.storage_engine.put(self.contract_database(), key, &buf)?;
+        Ok(())
+    }
+
+    /// Check if a smart contract exists
+    pub fn has_smart_contract(&self, contract_address: &[u8]) -> Result<bool> {
+        match self.storage_engine.get(self.contract_database(), contract_address)? {
+            Some(_) => Ok(true),
+            None => Ok(false),
+        }
+    }
+
+    /// Get ABI for a contract
+    /// Returns the SmartContract.ABI protobuf if found
+    /// Key: contract address (21-byte TRON address)
+    pub fn get_abi(&self, contract_address: &[u8]) -> Result<Option<crate::protocol::smart_contract::Abi>> {
+        tracing::debug!("Getting ABI for contract: {}", hex::encode(contract_address));
+
+        match self.storage_engine.get(self.abi_database(), contract_address)? {
+            Some(data) => {
+                tracing::debug!("Found ABI data, length: {}", data.len());
+                // Deserialize using prost
+                match crate::protocol::smart_contract::Abi::decode(&data[..]) {
+                    Ok(abi) => {
+                        tracing::debug!("Successfully deserialized ABI - entries: {}", abi.entrys.len());
+                        Ok(Some(abi))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to decode ABI: {}", e);
+                        Err(anyhow::anyhow!("Failed to decode ABI: {}", e))
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("ABI not found for contract: {}", hex::encode(contract_address));
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store ABI for a contract
+    /// Key: contract address (21-byte TRON address)
+    pub fn put_abi(&self, contract_address: &[u8], abi: &crate::protocol::smart_contract::Abi) -> Result<()> {
+        tracing::debug!("Storing ABI for contract: {}, entries: {}",
+                       hex::encode(contract_address), abi.entrys.len());
+
+        // Serialize using prost
+        let mut buf = Vec::new();
+        abi.encode(&mut buf).map_err(|e| anyhow::anyhow!("Failed to encode ABI: {}", e))?;
+
+        self.storage_engine.put(self.abi_database(), contract_address, &buf)?;
+        Ok(())
+    }
+
+    /// Clear ABI for a contract (write default empty ABI)
+    /// This is used by ClearABIContract (type 48)
+    pub fn clear_abi(&self, contract_address: &[u8]) -> Result<()> {
+        tracing::debug!("Clearing ABI for contract: {}", hex::encode(contract_address));
+
+        // Create default empty ABI
+        let default_abi = crate::protocol::smart_contract::Abi::default();
+        self.put_abi(contract_address, &default_abi)
+    }
+
+    // ==========================================================================
+    // Phase 2.D: DelegatedResource and DelegatedResourceAccountIndex Methods
+    // ==========================================================================
+    //
+    // DelegatedResourceStore: Stores delegation records between accounts
+    // DelegatedResourceAccountIndexStore: Stores index of delegation relationships
+    // Java reference: DelegatedResourceStore.java, DelegatedResourceAccountIndexStore.java
+    //
+    // Key format for DelegatedResourceStore (V2):
+    //   UNLOCK_PREFIX (0x01) + from_address (21 bytes) + to_address (21 bytes) = 43 bytes
+    //   LOCK_PREFIX   (0x02) + from_address (21 bytes) + to_address (21 bytes) = 43 bytes
+    //
+    // Key format for DelegatedResourceAccountIndexStore (V2):
+    //   FROM_PREFIX (0x03) + from_address (21 bytes) + to_address (21 bytes) = 43 bytes
+    //   TO_PREFIX   (0x04) + to_address (21 bytes) + from_address (21 bytes) = 43 bytes
+
+    /// Get the database name for DelegatedResource store
+    fn delegated_resource_database(&self) -> &str {
+        db_names::delegation::DELEGATED_RESOURCE
+    }
+
+    /// Get the database name for DelegatedResourceAccountIndex store
+    fn delegated_resource_account_index_database(&self) -> &str {
+        db_names::delegation::DELEGATED_RESOURCE_ACCOUNT_INDEX
+    }
+
+    /// Create V2 key for DelegatedResource store (from -> to).
+    /// Lock semantics match Java: lock=false uses 0x01 prefix, lock=true uses 0x02 prefix.
+    fn delegated_resource_key_v2(&self, from: &Address, to: &Address, lock: bool) -> Vec<u8> {
+        use super::key_helpers::delegated_resource;
+        let from_tron = self.to_tron_address_21(from);
+        let to_tron = self.to_tron_address_21(to);
+        delegated_resource::create_db_key_v2(&from_tron, &to_tron, lock)
+    }
+
+    /// Convert 20-byte EVM address to 21-byte TRON address
+    pub fn to_tron_address_21(&self, address: &Address) -> [u8; 21] {
+        let mut tron_addr = [0u8; 21];
+        tron_addr[0] = self.address_prefix;
+        tron_addr[1..].copy_from_slice(address.as_slice());
+        tron_addr
+    }
+
+    /// Delegate resource from owner to receiver
+    /// Updates DelegatedResourceStore with the delegation record
+    pub fn delegate_resource(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        is_bandwidth: bool,
+        balance: i64,
+        lock: bool,
+        expire_time: i64,
+    ) -> Result<()> {
+        // Java parity: unlock expired locked balances before mutating records.
+        let now = self.get_latest_block_header_timestamp()?;
+        self.unlock_expired_delegated_resource(owner, receiver, now)?;
+
+        let key = self.delegated_resource_key_v2(owner, receiver, lock);
+        tracing::debug!("Delegating resource: from={}, to={}, is_bw={}, balance={}, lock={}, expire={}",
+                       hex::encode(owner), hex::encode(receiver), is_bandwidth, balance, lock, expire_time);
+
+        // Get or create DelegatedResource
+        let mut dr = match self.storage_engine.get(self.delegated_resource_database(), &key)? {
+            Some(data) => {
+                crate::protocol::DelegatedResource::decode(&data[..])
+                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?
+            }
+            None => {
+                // Create new record
+                crate::protocol::DelegatedResource {
+                    from: self.to_tron_address_21(owner).to_vec(),
+                    to: self.to_tron_address_21(receiver).to_vec(),
+                    frozen_balance_for_bandwidth: 0,
+                    frozen_balance_for_energy: 0,
+                    expire_time_for_bandwidth: 0,
+                    expire_time_for_energy: 0,
+                }
+            }
+        };
+
+        // Update based on resource type
+        if is_bandwidth {
+            dr.frozen_balance_for_bandwidth += balance;
+            dr.expire_time_for_bandwidth = expire_time;
+        } else {
+            dr.frozen_balance_for_energy += balance;
+            dr.expire_time_for_energy = expire_time;
+        }
+
+        // Persist
+        let data = dr.encode_to_vec();
+        self.storage_engine.put(self.delegated_resource_database(), &key, &data)?;
+        Ok(())
+    }
+
+    /// Java parity: `DelegatedResourceStore.unLockExpireResource(from, to, now)`
+    /// Moves expired balances from the lock record (0x02) to the unlock record (0x01).
+    pub fn unlock_expired_delegated_resource(&self, from: &Address, to: &Address, now: i64) -> Result<()> {
+        let lock_key = self.delegated_resource_key_v2(from, to, true);
+        let unlock_key = self.delegated_resource_key_v2(from, to, false);
+
+        let Some(lock_data) = self.storage_engine.get(self.delegated_resource_database(), &lock_key)? else {
+            return Ok(());
+        };
+
+        let mut lock_resource = crate::protocol::DelegatedResource::decode(&lock_data[..])
+            .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource lock record: {}", e))?;
+
+        // If neither resource has expired, no-op.
+        if lock_resource.expire_time_for_energy >= now && lock_resource.expire_time_for_bandwidth >= now {
+            return Ok(());
+        }
+
+        let mut unlock_resource = match self.storage_engine.get(self.delegated_resource_database(), &unlock_key)? {
+            Some(data) => crate::protocol::DelegatedResource::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource unlock record: {}", e))?,
+            None => crate::protocol::DelegatedResource {
+                from: self.to_tron_address_21(from).to_vec(),
+                to: self.to_tron_address_21(to).to_vec(),
+                frozen_balance_for_bandwidth: 0,
+                frozen_balance_for_energy: 0,
+                expire_time_for_bandwidth: 0,
+                expire_time_for_energy: 0,
+            },
+        };
+
+        if lock_resource.expire_time_for_energy < now {
+            unlock_resource.frozen_balance_for_energy += lock_resource.frozen_balance_for_energy;
+            unlock_resource.expire_time_for_energy = 0;
+            lock_resource.frozen_balance_for_energy = 0;
+            lock_resource.expire_time_for_energy = 0;
+        }
+
+        if lock_resource.expire_time_for_bandwidth < now {
+            unlock_resource.frozen_balance_for_bandwidth += lock_resource.frozen_balance_for_bandwidth;
+            unlock_resource.expire_time_for_bandwidth = 0;
+            lock_resource.frozen_balance_for_bandwidth = 0;
+            lock_resource.expire_time_for_bandwidth = 0;
+        }
+
+        if lock_resource.frozen_balance_for_bandwidth == 0 && lock_resource.frozen_balance_for_energy == 0 {
+            self.storage_engine.delete(self.delegated_resource_database(), &lock_key)?;
+        } else {
+            self.storage_engine.put(
+                self.delegated_resource_database(),
+                &lock_key,
+                &lock_resource.encode_to_vec(),
+            )?;
+        }
+
+        self.storage_engine.put(
+            self.delegated_resource_database(),
+            &unlock_key,
+            &unlock_resource.encode_to_vec(),
+        )?;
+
+        Ok(())
+    }
+
+    /// Undelegate resource (reclaim from receiver back to owner)
+    pub fn undelegate_resource(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        is_bandwidth: bool,
+        balance: i64,
+        now: i64,
+    ) -> Result<()> {
+        // Java parity: transfer expired locked balances to the unlock record before mutating.
+        self.unlock_expired_delegated_resource(owner, receiver, now)?;
+
+        let key = self.delegated_resource_key_v2(owner, receiver, false);
+        tracing::debug!("Undelegating resource: from={}, to={}, is_bw={}, balance={}",
+                       hex::encode(owner), hex::encode(receiver), is_bandwidth, balance);
+
+        // Get existing DelegatedResource
+        let data = self.storage_engine.get(self.delegated_resource_database(), &key)?
+            .ok_or_else(|| anyhow::anyhow!("DelegatedResource not found"))?;
+
+        let mut dr = crate::protocol::DelegatedResource::decode(&data[..])
+            .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+
+        // Reduce balance
+        if is_bandwidth {
+            dr.frozen_balance_for_bandwidth = (dr.frozen_balance_for_bandwidth - balance).max(0);
+        } else {
+            dr.frozen_balance_for_energy = (dr.frozen_balance_for_energy - balance).max(0);
+        }
+
+        // If both balances are 0, delete the record; otherwise, persist
+        if dr.frozen_balance_for_bandwidth == 0 && dr.frozen_balance_for_energy == 0 {
+            self.storage_engine.delete(self.delegated_resource_database(), &key)?;
+        } else {
+            let data = dr.encode_to_vec();
+            self.storage_engine.put(self.delegated_resource_database(), &key, &data)?;
+        }
+
+        Ok(())
+    }
+
+    /// Get available (unlocked) delegate balance for undelegation
+    /// Returns the balance that can be undelegated (considering lock expiration)
+    pub fn get_available_delegate_balance(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        is_bandwidth: bool,
+        now: i64,
+    ) -> Result<i64> {
+        // Matches Java validate() logic:
+        // - Always include unlocked balance (prefix 0x01)
+        // - Include locked balance (prefix 0x02) only if expired for the resource type
+        let unlock_key = self.delegated_resource_key_v2(owner, receiver, false);
+        let lock_key = self.delegated_resource_key_v2(owner, receiver, true);
+
+        let mut balance = 0i64;
+
+        if let Some(data) = self.storage_engine.get(self.delegated_resource_database(), &unlock_key)? {
+            let dr = crate::protocol::DelegatedResource::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+            if is_bandwidth {
+                balance += dr.frozen_balance_for_bandwidth;
+            } else {
+                balance += dr.frozen_balance_for_energy;
+            }
+        }
+
+        if let Some(data) = self.storage_engine.get(self.delegated_resource_database(), &lock_key)? {
+            let dr = crate::protocol::DelegatedResource::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+            if is_bandwidth {
+                if dr.expire_time_for_bandwidth < now {
+                    balance += dr.frozen_balance_for_bandwidth;
+                }
+            } else if dr.expire_time_for_energy < now {
+                balance += dr.frozen_balance_for_energy;
+            }
+        }
+
+        Ok(balance)
+    }
+
+    /// Update DelegatedResourceAccountIndex for a delegation.
+    ///
+    /// Matches Java `DelegatedResourceAccountIndexStore.delegateV2()` semantics:
+    /// - 0x03 + from + to  -> { account=to, timestamp }
+    /// - 0x04 + to + from  -> { account=from, timestamp }
+    pub fn delegate_resource_account_index(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        timestamp: i64,
+    ) -> Result<()> {
+        use super::key_helpers::delegated_resource_account_index;
+
+        let owner_tron = self.to_tron_address_21(owner);
+        let receiver_tron = self.to_tron_address_21(receiver);
+
+        let from_key = delegated_resource_account_index::create_db_key_v2_from(&owner_tron, &receiver_tron);
+        let to_key = delegated_resource_account_index::create_db_key_v2_to(&owner_tron, &receiver_tron);
+
+        let to_index = crate::protocol::DelegatedResourceAccountIndex {
+            account: receiver_tron.to_vec(),
+            from_accounts: Vec::new(),
+            to_accounts: Vec::new(),
+            timestamp,
+        };
+
+        let from_index = crate::protocol::DelegatedResourceAccountIndex {
+            account: owner_tron.to_vec(),
+            from_accounts: Vec::new(),
+            to_accounts: Vec::new(),
+            timestamp,
+        };
+
+        self.storage_engine.put(
+            self.delegated_resource_account_index_database(),
+            &from_key,
+            &to_index.encode_to_vec(),
+        )?;
+        self.storage_engine.put(
+            self.delegated_resource_account_index_database(),
+            &to_key,
+            &from_index.encode_to_vec(),
+        )?;
+
+        Ok(())
+    }
+
+    /// Remove DelegatedResourceAccountIndex entries for a delegation (unDelegateV2).
+    pub fn undelegate_resource_account_index(&self, owner: &Address, receiver: &Address) -> Result<()> {
+        use super::key_helpers::delegated_resource_account_index;
+
+        let owner_tron = self.to_tron_address_21(owner);
+        let receiver_tron = self.to_tron_address_21(receiver);
+
+        let from_key = delegated_resource_account_index::create_db_key_v2_from(&owner_tron, &receiver_tron);
+        let to_key = delegated_resource_account_index::create_db_key_v2_to(&owner_tron, &receiver_tron);
+
+        self.storage_engine.delete(self.delegated_resource_account_index_database(), &from_key)?;
+        self.storage_engine.delete(self.delegated_resource_account_index_database(), &to_key)?;
+
+        Ok(())
+    }
+
+    // ==========================================================================
+    // Phase 2.C: Dynamic Properties for Contract Metadata
+    // ==========================================================================
+
+    /// Get ALLOW_TVM_CONSTANTINOPLE dynamic property
+    /// Returns 0 if Constantinople is not enabled, non-zero if enabled
+    /// Default: 0 (not enabled)
+    pub fn get_allow_tvm_constantinople(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_CONSTANTINOPLE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let value = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("ALLOW_TVM_CONSTANTINOPLE: {}", value);
+                    Ok(value)
+                } else {
+                    tracing::warn!("ALLOW_TVM_CONSTANTINOPLE has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("ALLOW_TVM_CONSTANTINOPLE not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get LATEST_BLOCK_HEADER_NUMBER dynamic property
+    /// Returns the latest block number
+    /// Default: 0
+    pub fn get_latest_block_header_number(&self) -> Result<i64> {
+        let key = b"LATEST_BLOCK_HEADER_NUMBER";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let value = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("LATEST_BLOCK_HEADER_NUMBER: {}", value);
+                    Ok(value)
+                } else {
+                    tracing::warn!("LATEST_BLOCK_HEADER_NUMBER has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("LATEST_BLOCK_HEADER_NUMBER not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get BLOCK_NUM_FOR_ENERGY_LIMIT configuration
+    /// This is typically a configuration constant, not a dynamic property
+    /// For checkForEnergyLimit(): block_num >= BLOCK_NUM_FOR_ENERGY_LIMIT
+    /// Default: 4727890 (mainnet value from CommonParameter)
+    pub fn get_block_num_for_energy_limit(&self) -> i64 {
+        // This is a constant from CommonParameter, not stored in DB
+        // Mainnet value: 4727890
+        // Testnet value might differ
+        4727890
+    }
+
+    /// Check if energy limit feature is enabled based on current block number
+    /// Equivalent to ReceiptCapsule.checkForEnergyLimit()
+    pub fn check_for_energy_limit(&self) -> Result<bool> {
+        let block_num = self.get_latest_block_header_number()?;
+        let threshold = self.get_block_num_for_energy_limit();
+        let enabled = block_num >= threshold;
+        tracing::debug!("checkForEnergyLimit: block_num={}, threshold={}, enabled={}",
+                       block_num, threshold, enabled);
+        Ok(enabled)
+    }
 }
 
 impl EvmStateStore for EngineBackedEvmStateStore {
@@ -1752,7 +3020,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn get_storage(&self, address: &Address, key: &U256) -> Result<U256> {
         let storage_key = self.contract_storage_key(address, key);
-        match self.storage_engine.get(self.contract_state_database(), &storage_key)? {
+        match self.storage_engine.get(self.storage_row_database(), &storage_key)? {
             Some(data) => {
                 if data.len() == 32 {
                     Ok(U256::from_be_bytes::<32>(data.try_into().unwrap()))
@@ -1766,37 +3034,65 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn set_account(&mut self, address: Address, account: AccountInfo) -> Result<()> {
         let key = self.account_key(&address);
-        let data = self.serialize_account(&address, &account);
         let address_tron = to_tron_address(&address);
-        tracing::info!("Setting account for address {:?} (tron: {}), balance: {}, key: {}, data_len: {}, data_hex: {}", 
-                       address, address_tron, account.balance, hex::encode(&key), 
-                       data.len(), hex::encode(&data));
+
+        // Phase 0.1: Use decode→modify→encode pattern to preserve existing fields
+        // First, try to read existing account data
+        let existing_data = self.storage_engine.get(self.account_database(), &key)?;
+
+        // Serialize using the update method that preserves existing fields
+        let data = self.serialize_account_update(
+            &address,
+            &account,
+            existing_data.as_deref(),
+        );
+
+        tracing::info!(
+            "Setting account for address {:?} (tron: {}), balance: {}, key: {}, data_len: {}, existing: {}",
+            address,
+            address_tron,
+            account.balance,
+            hex::encode(&key),
+            data.len(),
+            existing_data.is_some()
+        );
+
         self.storage_engine.put(self.account_database(), &key, &data)?;
-        
+
         // Immediately verify the write by reading it back
         if let Ok(Some(read_data)) = self.storage_engine.get(self.account_database(), &key) {
             if read_data == data {
-                tracing::info!("Verified account write for {} - data matches", address_tron);
+                tracing::debug!("Verified account write for {} - data matches", address_tron);
             } else {
                 tracing::error!("Account write verification failed for {} - data mismatch!", address_tron);
             }
         } else {
             tracing::error!("Account write verification failed for {} - could not read back!", address_tron);
         }
-        
+
         Ok(())
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         let key = self.code_key(&address);
-        self.storage_engine.put(self.code_database(), &key, &code.bytes())?;
+        // Persist the original contract bytecode (no analysis padding).
+        //
+        // REVM's analyzed legacy bytecode includes 33 bytes of zero padding for faster
+        // interpreter execution. java-tron's CodeStore stores the raw runtime bytecode,
+        // so we must persist the unpadded original bytes for conformance parity.
+        let code_bytes = code.original_byte_slice();
+        if code_bytes.is_empty() {
+            // Don't store empty code blobs; absence in CodeStore represents empty code.
+            return Ok(());
+        }
+        self.storage_engine.put(self.code_database(), &key, code_bytes)?;
         Ok(())
     }
 
     fn set_storage(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         let storage_key = self.contract_storage_key(&address, &key);
         let data = value.to_be_bytes::<32>();
-        self.storage_engine.put(self.contract_state_database(), &storage_key, &data)?;
+        self.storage_engine.put(self.storage_row_database(), &storage_key, &data)?;
         Ok(())
     }
 
@@ -1814,5 +3110,688 @@ impl EvmStateStore for EngineBackedEvmStateStore {
         // or use a different key scheme that allows prefix deletion
 
         Ok(())
+    }
+
+    fn tvm_spec_id(&self) -> Result<Option<revm::primitives::SpecId>> {
+        use revm::primitives::SpecId;
+
+        let read_flag = |key: &[u8]| -> Result<Option<i64>> {
+            match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+                Some(data) => {
+                    if data.len() >= 8 {
+                        Ok(Some(i64::from_be_bytes([
+                            data[0], data[1], data[2], data[3],
+                            data[4], data[5], data[6], data[7],
+                        ])))
+                    } else if !data.is_empty() {
+                        Ok(Some(data[0] as i64))
+                    } else {
+                        Ok(Some(0))
+                    }
+                }
+                None => Ok(None),
+            }
+        };
+
+        let london = read_flag(b"ALLOW_TVM_LONDON")?;
+        let istanbul = read_flag(b"ALLOW_TVM_ISTANBUL")?;
+        let constantinople = read_flag(b"ALLOW_TVM_CONSTANTINOPLE")?;
+
+        let has_any = london.is_some() || istanbul.is_some() || constantinople.is_some();
+        if !has_any {
+            return Ok(None);
+        }
+
+        let london_enabled = london.unwrap_or(0) != 0;
+        let istanbul_enabled = istanbul.unwrap_or(0) != 0;
+        let spec_id = if london_enabled {
+            SpecId::LONDON
+        } else if istanbul_enabled {
+            SpecId::ISTANBUL
+        } else {
+            // TVM energy accounting matches Constantinople-era net gas metering (EIP-1283).
+            SpecId::CONSTANTINOPLE
+        };
+
+        Ok(Some(spec_id))
+    }
+
+    fn energy_fee_rate(&self) -> Result<Option<u64>> {
+        let fee = self.get_energy_fee()?;
+        if fee == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(fee))
+        }
+    }
+}
+
+// ==========================================================================
+// Phase 2.E: TRC-10 Extension Storage Methods
+// ==========================================================================
+
+impl EngineBackedEvmStateStore {
+    /// Get asset issue store database name
+    fn asset_issue_database(&self) -> &str {
+        db_names::asset::ASSET_ISSUE
+    }
+
+    /// Get asset issue V2 store database name
+    fn asset_issue_v2_database(&self) -> &str {
+        db_names::asset::ASSET_ISSUE_V2
+    }
+
+    /// Get AllowSameTokenName dynamic property
+    /// If 0: use asset name as key for AssetIssueStore
+    /// If 1: use asset id as key for AssetIssueV2Store
+    /// Default: 1 (enabled) to match current mainnet
+    pub fn get_allow_same_token_name(&self) -> Result<i64> {
+        let key = b"ALLOW_SAME_TOKEN_NAME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val)
+                } else {
+                    Ok(1) // Default enabled (V2 mode)
+                }
+            },
+            None => Ok(1) // Default enabled (V2 mode)
+        }
+    }
+
+    /// Get OneDayNetLimit dynamic property
+    /// Default: 8640000000 bytes per day
+    pub fn get_one_day_net_limit(&self) -> Result<i64> {
+        let key = b"ONE_DAY_NET_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val)
+                } else {
+                    Ok(8_640_000_000) // Default value
+                }
+            },
+            None => Ok(8_640_000_000) // Default value
+        }
+    }
+
+    /// Get asset issue by key (asset name or asset id depending on allowSameTokenName)
+    pub fn get_asset_issue(&self, key: &[u8], allow_same_token_name: i64) -> Result<Option<crate::protocol::AssetIssueContractData>> {
+        let db = if allow_same_token_name == 0 {
+            self.asset_issue_database()
+        } else {
+            self.asset_issue_v2_database()
+        };
+
+        match self.storage_engine.get(db, key)? {
+            Some(data) => {
+                match crate::protocol::AssetIssueContractData::decode(&data[..]) {
+                    Ok(asset_issue) => Ok(Some(asset_issue)),
+                    Err(e) => {
+                        tracing::warn!("Failed to decode AssetIssueContractData: {}", e);
+                        Err(anyhow::anyhow!("Failed to decode AssetIssueContractData: {}", e))
+                    }
+                }
+            },
+            None => Ok(None)
+        }
+    }
+
+    /// Put asset issue by key
+    pub fn put_asset_issue(&mut self, key: &[u8], asset_issue: &crate::protocol::AssetIssueContractData, v2_store: bool) -> Result<()> {
+        use prost::Message;
+
+        let db = if v2_store {
+            self.asset_issue_v2_database()
+        } else {
+            self.asset_issue_database()
+        };
+
+        let mut buf = Vec::with_capacity(asset_issue.encoded_len());
+        asset_issue.encode(&mut buf)?;
+        self.storage_engine.put(db, key, &buf)?;
+
+        Ok(())
+    }
+
+    // ============================================================================
+    // Exchange Store Access Methods (Phase 2.F)
+    // ============================================================================
+    //
+    // These methods provide access to the Exchange stores for Bancor-style AMM operations.
+    //
+    // Database names:
+    // - ExchangeStore: "exchange" (legacy, used when allowSameTokenName=0)
+    // - ExchangeV2Store: "exchange-v2" (primary store)
+    //
+    // Key format: 8-byte big-endian exchange_id (same as ProposalStore)
+    //
+    // Java references:
+    // - ExchangeStore.java: chainbase/src/main/java/org/tron/core/store/ExchangeStore.java
+    // - ExchangeV2Store.java: chainbase/src/main/java/org/tron/core/store/ExchangeV2Store.java
+    // - ExchangeCapsule.java: chainbase/src/main/java/org/tron/core/capsule/ExchangeCapsule.java
+
+    /// Get the database name for exchange store (legacy, allowSameTokenName=0)
+    fn exchange_database(&self) -> &str {
+        db_names::exchange::EXCHANGE
+    }
+
+    /// Get the database name for exchange V2 store (primary)
+    fn exchange_v2_database(&self) -> &str {
+        db_names::exchange::EXCHANGE_V2
+    }
+
+    /// Generate key for exchange store: 8-byte big-endian exchange ID
+    /// Java reference: ExchangeCapsule.createDbKey() -> ByteArray.fromLong(exchangeId)
+    fn exchange_key(&self, exchange_id: i64) -> Vec<u8> {
+        use super::key_helpers::exchange_key;
+        exchange_key(exchange_id)
+    }
+
+    /// Get exchange by ID from V2 store (primary)
+    /// Returns the Exchange protobuf
+    pub fn get_exchange(&self, exchange_id: i64) -> Result<Option<crate::protocol::Exchange>> {
+        self.get_exchange_from_store(exchange_id, true)
+    }
+
+    /// Get exchange by ID from specific store
+    /// v2_store=true uses "exchange-v2", v2_store=false uses "exchange"
+    pub fn get_exchange_from_store(&self, exchange_id: i64, v2_store: bool) -> Result<Option<crate::protocol::Exchange>> {
+        use crate::protocol::Exchange;
+        use prost::Message;
+
+        let key = self.exchange_key(exchange_id);
+        let db = if v2_store { self.exchange_v2_database() } else { self.exchange_database() };
+
+        tracing::debug!("Getting exchange {} from {}, key: {}", exchange_id, db, hex::encode(&key));
+
+        match self.storage_engine.get(db, &key)? {
+            Some(data) => {
+                tracing::debug!("Found exchange data, length: {}", data.len());
+                match Exchange::decode(data.as_slice()) {
+                    Ok(exchange) => {
+                        tracing::debug!(
+                            "Decoded exchange {} - creator: {}, first_token: {}, second_token: {}, balances: {}/{}",
+                            exchange.exchange_id,
+                            hex::encode(&exchange.creator_address),
+                            String::from_utf8_lossy(&exchange.first_token_id),
+                            String::from_utf8_lossy(&exchange.second_token_id),
+                            exchange.first_token_balance,
+                            exchange.second_token_balance
+                        );
+                        Ok(Some(exchange))
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to decode exchange {}: {}", exchange_id, e);
+                        Err(anyhow::anyhow!("Failed to decode exchange: {}", e))
+                    }
+                }
+            },
+            None => {
+                tracing::debug!("Exchange {} not found in {}", exchange_id, db);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store exchange to V2 store (primary)
+    pub fn put_exchange(&mut self, exchange: &crate::protocol::Exchange) -> Result<()> {
+        self.put_exchange_to_store(exchange, true)
+    }
+
+    /// Store exchange to specific store
+    /// v2_store=true uses "exchange-v2", v2_store=false uses "exchange"
+    pub fn put_exchange_to_store(&mut self, exchange: &crate::protocol::Exchange, v2_store: bool) -> Result<()> {
+        use prost::Message;
+
+        let key = self.exchange_key(exchange.exchange_id);
+        let db = if v2_store { self.exchange_v2_database() } else { self.exchange_database() };
+        let data = exchange.encode_to_vec();
+
+        tracing::debug!(
+            "Storing exchange {} to {} - creator: {}, first_token: {}, second_token: {}, balances: {}/{}, key: {}",
+            exchange.exchange_id,
+            db,
+            hex::encode(&exchange.creator_address),
+            String::from_utf8_lossy(&exchange.first_token_id),
+            String::from_utf8_lossy(&exchange.second_token_id),
+            exchange.first_token_balance,
+            exchange.second_token_balance,
+            hex::encode(&key)
+        );
+
+        self.storage_engine.put(db, &key, &data)?;
+        Ok(())
+    }
+
+    /// Check if exchange exists in V2 store
+    pub fn has_exchange(&self, exchange_id: i64) -> Result<bool> {
+        self.has_exchange_in_store(exchange_id, true)
+    }
+
+    /// Check if exchange exists in specific store
+    pub fn has_exchange_in_store(&self, exchange_id: i64, v2_store: bool) -> Result<bool> {
+        let key = self.exchange_key(exchange_id);
+        let db = if v2_store { self.exchange_v2_database() } else { self.exchange_database() };
+        match self.storage_engine.get(db, &key)? {
+            Some(_) => Ok(true),
+            None => Ok(false),
+        }
+    }
+
+    // --- Dynamic Properties for Exchange ---
+
+    /// Get LATEST_EXCHANGE_NUM dynamic property
+    /// Returns the highest exchange ID that has been created
+    pub fn get_latest_exchange_num(&self) -> Result<i64> {
+        let key = b"LATEST_EXCHANGE_NUM";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    let num = i64::from_be_bytes(data.as_slice().try_into()?);
+                    tracing::debug!("LATEST_EXCHANGE_NUM: {}", num);
+                    Ok(num)
+                } else {
+                    tracing::warn!("LATEST_EXCHANGE_NUM has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            },
+            None => {
+                tracing::debug!("LATEST_EXCHANGE_NUM not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Set LATEST_EXCHANGE_NUM dynamic property
+    pub fn set_latest_exchange_num(&mut self, num: i64) -> Result<()> {
+        let key = b"LATEST_EXCHANGE_NUM";
+        let value = num.to_be_bytes();
+        tracing::debug!("Setting LATEST_EXCHANGE_NUM to {}", num);
+        self.storage_engine.put(db_names::system::PROPERTIES, key, &value)?;
+        Ok(())
+    }
+
+    /// Get EXCHANGE_BALANCE_LIMIT dynamic property
+    /// Maximum balance allowed for each token in an exchange
+    /// Default in Java: 1_000_000_000_000_000L (1 quadrillion)
+    pub fn get_exchange_balance_limit(&self) -> Result<i64> {
+        let key = b"EXCHANGE_BALANCE_LIMIT";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    let limit = i64::from_be_bytes(data.as_slice().try_into()?);
+                    tracing::debug!("EXCHANGE_BALANCE_LIMIT: {}", limit);
+                    Ok(limit)
+                } else {
+                    tracing::warn!("EXCHANGE_BALANCE_LIMIT has invalid length: {}", data.len());
+                    Ok(1_000_000_000_000_000i64) // Default
+                }
+            },
+            None => {
+                tracing::debug!("EXCHANGE_BALANCE_LIMIT not found, returning default");
+                Ok(1_000_000_000_000_000i64) // Default: 1 quadrillion
+            }
+        }
+    }
+
+    /// Get EXCHANGE_CREATE_FEE dynamic property
+    /// Fee charged to create an exchange (in SUN)
+    /// Default in Java: 1024_000_000_000L (1024 TRX)
+    pub fn get_exchange_create_fee(&self) -> Result<i64> {
+        let key = b"EXCHANGE_CREATE_FEE";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    let fee = i64::from_be_bytes(data.as_slice().try_into()?);
+                    tracing::debug!("EXCHANGE_CREATE_FEE: {}", fee);
+                    Ok(fee)
+                } else {
+                    tracing::warn!("EXCHANGE_CREATE_FEE has invalid length: {}", data.len());
+                    Ok(1024_000_000_000i64) // Default
+                }
+            },
+            None => {
+                tracing::debug!("EXCHANGE_CREATE_FEE not found, returning default");
+                Ok(1024_000_000_000i64) // Default: 1024 TRX
+            }
+        }
+    }
+
+    /// Get ALLOW_STRICT_MATH dynamic property
+    /// Controls whether strict math mode is used in AMM calculations
+    /// When true, uses StrictMath.pow; when false, uses Math.pow
+    /// Default: 0 (false)
+    pub fn allow_strict_math(&self) -> Result<bool> {
+        let key = b"ALLOW_STRICT_MATH";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    let value = i64::from_be_bytes(data.as_slice().try_into()?);
+                    Ok(value != 0)
+                } else if !data.is_empty() {
+                    // Single byte 0 or 1
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(false)
+                }
+            },
+            None => {
+                tracing::debug!("ALLOW_STRICT_MATH not found, returning false");
+                Ok(false)
+            }
+        }
+    }
+
+    // ==========================================================================
+    // Asset Balance Methods (for Exchange contracts)
+    // ==========================================================================
+
+    /// Get asset balance for an account (V2 format - allowSameTokenName=1)
+    pub fn get_asset_balance_v2(&self, address: &Address, token_id: &[u8]) -> Result<i64> {
+        // Get account and read from assetV2 map
+        if let Some(account) = self.get_account_proto(address)? {
+            // Convert token_id to string key
+            let token_key = String::from_utf8_lossy(token_id).to_string();
+            // Look up in assetV2 map
+            if let Some(&balance) = account.asset_v2.get(&token_key) {
+                return Ok(balance);
+            }
+        }
+        Ok(0)
+    }
+
+    /// Reduce asset amount from an account (V2 format)
+    pub fn reduce_asset_amount_v2(&mut self, address: &Address, token_id: &[u8], amount: i64) -> Result<()> {
+        let mut account = self.get_account_proto(address)?
+            .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+
+        let token_key = String::from_utf8_lossy(token_id).to_string();
+        let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+
+        if current < amount {
+            return Err(anyhow::anyhow!("Insufficient asset balance"));
+        }
+
+        account.asset_v2.insert(token_key, current - amount);
+        self.set_account_proto(address, &account)?;
+        Ok(())
+    }
+
+    /// Add asset amount to an account (V2 format)
+    pub fn add_asset_amount_v2(&mut self, address: &Address, token_id: &[u8], amount: i64) -> Result<()> {
+        let mut account = self.get_account_proto(address)?
+            .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+
+        let token_key = String::from_utf8_lossy(token_id).to_string();
+        let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+
+        account.asset_v2.insert(token_key, current + amount);
+        self.set_account_proto(address, &account)?;
+        Ok(())
+    }
+
+    /// Set/update account from proto
+    pub fn set_account_proto(&mut self, address: &Address, account: &crate::protocol::Account) -> Result<()> {
+        use prost::Message;
+
+        // Encode account to protobuf bytes
+        let mut buf = Vec::new();
+        account.encode(&mut buf)?;
+
+        // Write to account store using TRON 21-byte address
+        let tron_addr = self.to_tron_address_21(address);
+        self.storage_engine.put(self.account_database(), &tron_addr, &buf)?;
+
+        Ok(())
+    }
+
+    /// Add balance to an account (for crediting blackhole, etc.)
+    pub fn add_balance(&mut self, address: &Address, amount: u64) -> Result<()> {
+        let mut account = self.get_account_proto(address)?
+            .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
+
+        account.balance = account.balance.checked_add(amount as i64)
+            .ok_or_else(|| anyhow::anyhow!("Balance overflow"))?;
+
+        self.set_account_proto(address, &account)?;
+        Ok(())
+    }
+
+    // ==========================================================================
+    // Market (DEX) Store Methods - Phase 2.G
+    // ==========================================================================
+
+    /// Get database name for MarketOrderStore (dbName: "market_order")
+    fn market_order_database(&self) -> &str {
+        db_names::market::MARKET_ORDER
+    }
+
+    /// Get database name for MarketAccountStore (dbName: "market_account")
+    fn market_account_database(&self) -> &str {
+        db_names::market::MARKET_ACCOUNT
+    }
+
+    /// Get database name for MarketPairToPriceStore (dbName: "market_pair_to_price")
+    fn market_pair_to_price_database(&self) -> &str {
+        db_names::market::MARKET_PAIR_TO_PRICE
+    }
+
+    /// Get database name for MarketPairPriceToOrderStore (dbName: "market_pair_price_to_order")
+    fn market_pair_price_to_order_database(&self) -> &str {
+        db_names::market::MARKET_PAIR_PRICE_TO_ORDER
+    }
+
+    /// Get ALLOW_MARKET_TRANSACTION dynamic property
+    /// Controls whether market transactions are allowed
+    /// Default: 0 (disabled)
+    pub fn allow_market_transaction(&self) -> Result<bool> {
+        let key = b"ALLOW_MARKET_TRANSACTION";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    let value = i64::from_be_bytes(data.as_slice().try_into()?);
+                    Ok(value != 0)
+                } else if !data.is_empty() {
+                    Ok(data[0] != 0)
+                } else {
+                    Ok(false)
+                }
+            },
+            None => {
+                tracing::debug!("ALLOW_MARKET_TRANSACTION not found, returning false");
+                Ok(false)
+            }
+        }
+    }
+
+    /// Get MARKET_SELL_FEE dynamic property
+    /// Fee for placing a sell order
+    /// Default: 0
+    pub fn get_market_sell_fee(&self) -> Result<i64> {
+        let key = b"MARKET_SELL_FEE";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    Ok(i64::from_be_bytes(data.as_slice().try_into()?))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Get MARKET_CANCEL_FEE dynamic property
+    /// Fee for canceling an order
+    /// Default: 0
+    pub fn get_market_cancel_fee(&self) -> Result<i64> {
+        let key = b"MARKET_CANCEL_FEE";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    Ok(i64::from_be_bytes(data.as_slice().try_into()?))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Get MARKET_QUANTITY_LIMIT dynamic property
+    /// Maximum quantity for market orders
+    /// Default: Long.MAX_VALUE
+    pub fn get_market_quantity_limit(&self) -> Result<i64> {
+        let key = b"MARKET_QUANTITY_LIMIT";
+        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    Ok(i64::from_be_bytes(data.as_slice().try_into()?))
+                } else {
+                    Ok(i64::MAX)
+                }
+            },
+            None => Ok(i64::MAX)
+        }
+    }
+
+    /// Get a MarketOrder by order ID
+    /// Key: order_id bytes (SHA3 hash)
+    pub fn get_market_order(&self, order_id: &[u8]) -> Result<Option<crate::protocol::MarketOrder>> {
+        use prost::Message;
+        match self.storage_engine.get(self.market_order_database(), order_id)? {
+            Some(data) => {
+                let order = crate::protocol::MarketOrder::decode(data.as_slice())?;
+                Ok(Some(order))
+            },
+            None => Ok(None)
+        }
+    }
+
+    /// Put a MarketOrder
+    pub fn put_market_order(&mut self, order_id: &[u8], order: &crate::protocol::MarketOrder) -> Result<()> {
+        use prost::Message;
+        let mut buf = Vec::new();
+        order.encode(&mut buf)?;
+        self.storage_engine.put(self.market_order_database(), order_id, &buf)?;
+        Ok(())
+    }
+
+    /// Check if a MarketOrder exists
+    pub fn has_market_order(&self, order_id: &[u8]) -> Result<bool> {
+        Ok(self.get_market_order(order_id)?.is_some())
+    }
+
+    /// Get MarketAccountOrder for an account
+    /// Key: 21-byte TRON address (with 0x41 prefix)
+    pub fn get_market_account_order(&self, address: &Address) -> Result<Option<crate::protocol::MarketAccountOrder>> {
+        use prost::Message;
+        let key = self.to_tron_address_21(address);
+        match self.storage_engine.get(self.market_account_database(), &key)? {
+            Some(data) => {
+                let account_order = crate::protocol::MarketAccountOrder::decode(data.as_slice())?;
+                Ok(Some(account_order))
+            },
+            None => Ok(None)
+        }
+    }
+
+    /// Put MarketAccountOrder for an account
+    pub fn put_market_account_order(&mut self, address: &Address, account_order: &crate::protocol::MarketAccountOrder) -> Result<()> {
+        use prost::Message;
+        let key = self.to_tron_address_21(address);
+        let mut buf = Vec::new();
+        account_order.encode(&mut buf)?;
+        self.storage_engine.put(self.market_account_database(), &key, &buf)?;
+        Ok(())
+    }
+
+    /// Get price count for a token pair
+    /// Key: createPairKey(sellTokenId, buyTokenId) = 38 bytes (19 + 19)
+    pub fn get_market_pair_price_count(&self, pair_key: &[u8]) -> Result<i64> {
+        match self.storage_engine.get(self.market_pair_to_price_database(), pair_key)? {
+            Some(data) => {
+                if data.len() == 8 {
+                    Ok(i64::from_be_bytes(data.as_slice().try_into()?))
+                } else {
+                    Ok(0)
+                }
+            },
+            None => Ok(0)
+        }
+    }
+
+    /// Set price count for a token pair
+    pub fn set_market_pair_price_count(&mut self, pair_key: &[u8], count: i64) -> Result<()> {
+        let data = count.to_be_bytes();
+        self.storage_engine.put(self.market_pair_to_price_database(), pair_key, &data)?;
+        Ok(())
+    }
+
+    /// Delete a token pair from MarketPairToPriceStore
+    pub fn delete_market_pair(&mut self, pair_key: &[u8]) -> Result<()> {
+        self.storage_engine.delete(self.market_pair_to_price_database(), pair_key)?;
+        Ok(())
+    }
+
+    /// Check if a token pair exists
+    pub fn has_market_pair(&self, pair_key: &[u8]) -> Result<bool> {
+        Ok(self.storage_engine.get(self.market_pair_to_price_database(), pair_key)?.is_some())
+    }
+
+    /// Get MarketOrderIdList for a price key
+    /// Key: createPairPriceKey(sellTokenId, buyTokenId, sellQuantity, buyQuantity) = 54 bytes
+    pub fn get_market_order_id_list(&self, price_key: &[u8]) -> Result<Option<crate::protocol::MarketOrderIdList>> {
+        use prost::Message;
+        match self.storage_engine.get(self.market_pair_price_to_order_database(), price_key)? {
+            Some(data) => {
+                let list = crate::protocol::MarketOrderIdList::decode(data.as_slice())?;
+                Ok(Some(list))
+            },
+            None => Ok(None)
+        }
+    }
+
+    /// Put MarketOrderIdList for a price key
+    pub fn put_market_order_id_list(&mut self, price_key: &[u8], list: &crate::protocol::MarketOrderIdList) -> Result<()> {
+        use prost::Message;
+        let mut buf = Vec::new();
+        list.encode(&mut buf)?;
+        self.storage_engine.put(self.market_pair_price_to_order_database(), price_key, &buf)?;
+        Ok(())
+    }
+
+    /// Delete MarketOrderIdList for a price key
+    pub fn delete_market_order_id_list(&mut self, price_key: &[u8]) -> Result<()> {
+        self.storage_engine.delete(self.market_pair_price_to_order_database(), price_key)?;
+        Ok(())
+    }
+
+    /// Check if a price key exists in MarketPairPriceToOrderStore
+    pub fn has_market_price_key(&self, price_key: &[u8]) -> Result<bool> {
+        Ok(self.storage_engine.get(self.market_pair_price_to_order_database(), price_key)?.is_some())
+    }
+
+    /// List all price keys for a given token pair prefix from MarketPairPriceToOrderStore.
+    ///
+    /// This includes the special head key (price 0/0) if present.
+    /// Keys are returned in the underlying RocksDB iteration order (lexicographic).
+    /// Java-tron configures a custom comparator for this CF, so callers should
+    /// apply TRON's MarketUtils.comparePriceKey ordering when needed.
+    pub fn list_market_pair_price_keys(&self, pair_key_prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let entries = self.storage_engine.prefix_query(
+            self.market_pair_price_to_order_database(),
+            pair_key_prefix,
+        )?;
+        Ok(entries.into_iter().map(|kv| kv.key).collect())
     }
 }

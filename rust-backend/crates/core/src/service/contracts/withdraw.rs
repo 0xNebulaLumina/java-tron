@@ -3,6 +3,7 @@
 
 use super::super::BackendService;
 use super::delegation;
+use super::proto::TransactionResultBuilder;
 use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, WithdrawChange, EvmStateStore};
 use tracing::{debug, info, warn};
 
@@ -144,8 +145,13 @@ impl BackendService {
         // Step 9: Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("WithdrawBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, withdraw_changes=1",
-               bandwidth_used);
+        // Build Transaction.Result with withdraw_amount for receipt passthrough
+        let tron_transaction_result = TransactionResultBuilder::new()
+            .with_withdraw_amount(allowance)
+            .build();
+
+        debug!("WithdrawBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, withdraw_changes=1, tron_transaction_result_len={}",
+               bandwidth_used, tron_transaction_result.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -161,6 +167,8 @@ impl BackendService {
             trc10_changes: vec![], // Not applicable
             vote_changes: vec![], // Not applicable
             withdraw_changes, // WithdrawChange sidecar for Java apply
+            tron_transaction_result: Some(tron_transaction_result), // Phase 0.4: Receipt passthrough with withdraw_amount
+            contract_address: None, // Not applicable for withdraw contracts
         })
     }
 

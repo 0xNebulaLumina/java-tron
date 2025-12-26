@@ -8,6 +8,7 @@
 //! - `traits`: Core trait definitions (EvmStateStore)
 //! - `types`: Domain types (WitnessInfo, FreezeRecord, Vote, VotesRecord, AccountAext, StateChangeRecord)
 //! - `utils`: Utility functions (keccak256, address conversion)
+//! - `db_names`: Database name constants matching Java's store dbName values (Phase 0.2)
 //! - `in_memory`: In-memory storage implementation for testing
 //! - `engine`: Production storage implementation backed by StorageEngine
 //! - `database`: REVM Database wrapper with caching and state tracking
@@ -22,6 +23,8 @@
 pub mod traits;
 pub mod types;
 pub mod utils;
+pub mod db_names;
+pub mod key_helpers;
 pub mod in_memory;
 pub mod engine;
 pub mod database;
@@ -38,5 +41,7 @@ pub use types::{
 };
 pub use in_memory::InMemoryEvmStateStore;
 pub use engine::EngineBackedEvmStateStore;
-pub use database::{EvmStateDatabase, SnapshotHook};
+pub use database::EvmStateDatabase;
+#[allow(unused_imports)]
+pub use database::SnapshotHook;
 pub use resource::{ResourceTracker, BandwidthPath};

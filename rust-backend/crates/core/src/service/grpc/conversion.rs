@@ -22,11 +22,27 @@ impl BackendService {
         let from_bytes = strip_tron_address_prefix(&tx.from)?;
         let from = revm_primitives::Address::from_slice(from_bytes);
 
+        // Phase 0.5: Fix CreateSmartContract toAddress semantics
+        // When tx_kind=VM and contract_type=CREATE_SMART_CONTRACT (30), Java sends a 20-byte
+        // zero array for toAddress. Rust must treat this as None (contract creation), not
+        // Some(Address::ZERO) which would be interpreted as a call to address 0.
         let to = if tx.to.is_empty() {
-            None // Contract creation
+            None // Contract creation (empty to field)
         } else {
             let to_bytes = strip_tron_address_prefix(&tx.to)?;
-            Some(revm_primitives::Address::from_slice(to_bytes))
+            let to_address = revm_primitives::Address::from_slice(to_bytes);
+
+            // For VM contract creation, treat all-zero address as None
+            // This is needed because Java sends new byte[20] (all zeros) for CreateSmartContract
+            let is_vm_create = tx.tx_kind == crate::backend::TxKind::Vm as i32
+                && tx.contract_type == 30; // CREATE_SMART_CONTRACT = 30
+
+            if is_vm_create && to_address == revm_primitives::Address::ZERO {
+                debug!("CreateSmartContract detected: treating zero address as contract creation (to=None)");
+                None
+            } else {
+                Some(to_address)
+            }
         };
 
         // Convert bytes to U256 (32 bytes max)
@@ -143,6 +159,26 @@ impl BackendService {
 
         debug!("Using block_gas_limit: {}", block_gas_limit);
 
+        let transaction_id = if ctx.transaction_id.is_empty() {
+            None
+        } else {
+            let trimmed = ctx.transaction_id.trim_start_matches("0x");
+            match hex::decode(trimmed) {
+                Ok(bytes) if bytes.len() == 32 => Some(revm_primitives::B256::from_slice(&bytes)),
+                Ok(bytes) => {
+                    warn!(
+                        "Invalid transaction_id length: expected 32 bytes, got {}",
+                        bytes.len()
+                    );
+                    None
+                }
+                Err(e) => {
+                    warn!("Failed to decode transaction_id hex: {}", e);
+                    None
+                }
+            }
+        };
+
         Ok(TronExecutionContext {
             block_number: ctx.block_number as u64,
             block_timestamp: ctx.block_timestamp as u64,
@@ -152,6 +188,7 @@ impl BackendService {
             chain_id: 0x2b6653dc, // Tron mainnet chain ID
             energy_price: ctx.energy_price as u64,
             bandwidth_price: 1000, // Default bandwidth price
+            transaction_id,
         })
     }
 
@@ -455,6 +492,11 @@ impl BackendService {
 
         let error_message = result.error.unwrap_or_default();
 
+        // Phase 2.I L2: Convert contract_address to TRON 21-byte format if present
+        let contract_address_bytes = result.contract_address.map(|addr| {
+            add_tron_address_prefix(&addr)
+        }).unwrap_or_default();
+
         ExecuteTransactionResponse {
             result: Some(ExecutionResult {
                 status: status as i32,
@@ -471,6 +513,10 @@ impl BackendService {
                 trc10_changes, // Phase 2: Converted TRC-10 semantic changes
                 vote_changes, // Phase 2: VoteChange for Account.votes update
                 withdraw_changes, // WithdrawBalanceContract: allowance/latestWithdrawTime sidecar
+                // Phase 0.4: Receipt passthrough - serialized Protocol.Transaction.Result bytes
+                tron_transaction_result: result.tron_transaction_result.clone().unwrap_or_default(),
+                // Phase 2.I L2: Contract address for CreateSmartContract receipt
+                contract_address: contract_address_bytes,
             }),
             success: result.success,
             error_message,

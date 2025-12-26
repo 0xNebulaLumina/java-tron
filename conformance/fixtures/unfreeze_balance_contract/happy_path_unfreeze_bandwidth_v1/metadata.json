@@ -1,0 +1,23 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "happy_path_unfreeze_bandwidth_v1",
+  "caseCategory": "happy",
+  "description": "V1 unfreeze expired BANDWIDTH frozen balance",
+  "generatedAt": "2025-12-23T10:39:25.090Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76315f3031000000000000",
+  "dynamicProperties": {
+    "UNFREEZE_DELAY_DAYS": 0,
+    "CHANGE_DELEGATION": 0
+  },
+  "notes": []
+}

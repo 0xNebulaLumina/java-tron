@@ -21,8 +21,12 @@ import org.tron.core.exception.VMIllegalException;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
+import org.tron.protos.contract.BalanceContract.CancelAllUnfreezeV2Contract;
+import org.tron.protos.contract.BalanceContract.DelegateResourceContract;
 import org.tron.protos.contract.BalanceContract.FreezeBalanceContract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
+import org.tron.protos.contract.BalanceContract.UnDelegateResourceContract;
+import org.tron.protos.contract.BalanceContract.WithdrawExpireUnfreezeContract;
 import org.tron.protos.contract.Common.ResourceCode;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
@@ -350,12 +354,87 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               assetIssueContract.getTotalSupply());
           break;
 
+        // Phase 2.E: TRC-10 Extension Contracts (9/14/15)
+        case ParticipateAssetIssueContract:
+          // ParticipateAssetIssueContract: Participate in a TRC-10 token sale
+          // Gate behind the same TRC-10 feature flag
+          boolean participateAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!participateAssetRemoteEnabled) {
+            logger.debug("TRC-10 ParticipateAssetIssue remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("ParticipateAssetIssue execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+
+          org.tron.protos.contract.AssetIssueContractOuterClass.ParticipateAssetIssueContract participateAssetContract =
+              contractParameter.unpack(org.tron.protos.contract.AssetIssueContractOuterClass.ParticipateAssetIssueContract.class);
+          toAddress = new byte[0]; // System contract, receiver is in contract data
+          value = participateAssetContract.getAmount(); // TRX amount to spend
+          data = participateAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // TRC-10 participation
+          contractType = tron.backend.BackendOuterClass.ContractType.PARTICIPATE_ASSET_ISSUE_CONTRACT;
+          logger.debug(
+              "Mapped ParticipateAssetIssueContract to remote request; owner={}, to={}, asset={}, amount={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(participateAssetContract.getToAddress().toByteArray()),
+              new String(participateAssetContract.getAssetName().toByteArray()),
+              participateAssetContract.getAmount());
+          break;
+
+        case UnfreezeAssetContract:
+          // UnfreezeAssetContract: Unfreeze frozen TRC-10 asset supply
+          // Gate behind the same TRC-10 feature flag
+          boolean unfreezeAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!unfreezeAssetRemoteEnabled) {
+            logger.debug("TRC-10 UnfreezeAsset remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("UnfreezeAsset execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+
+          org.tron.protos.contract.AssetIssueContractOuterClass.UnfreezeAssetContract unfreezeAssetContract =
+              contractParameter.unpack(org.tron.protos.contract.AssetIssueContractOuterClass.UnfreezeAssetContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          value = 0; // No value transfer
+          data = unfreezeAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // TRC-10 unfreeze
+          contractType = tron.backend.BackendOuterClass.ContractType.UNFREEZE_ASSET_CONTRACT;
+          logger.debug(
+              "Mapped UnfreezeAssetContract to remote request; owner={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress));
+          break;
+
+        case UpdateAssetContract:
+          // UpdateAssetContract: Update TRC-10 asset metadata (url, description, limits)
+          // Gate behind the same TRC-10 feature flag
+          boolean updateAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
+          if (!updateAssetRemoteEnabled) {
+            logger.debug("TRC-10 UpdateAsset remote execution disabled, throwing exception to fallback to Java actuators");
+            throw new UnsupportedOperationException("UpdateAsset execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
+          }
+
+          org.tron.protos.contract.AssetIssueContractOuterClass.UpdateAssetContract updateAssetContract =
+              contractParameter.unpack(org.tron.protos.contract.AssetIssueContractOuterClass.UpdateAssetContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          value = 0; // No value transfer
+          data = updateAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // TRC-10 update
+          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_ASSET_CONTRACT;
+          logger.debug(
+              "Mapped UpdateAssetContract to remote request; owner={}, new_limit={}, new_public_limit={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              updateAssetContract.getNewLimit(),
+              updateAssetContract.getNewPublicLimit());
+          break;
+
         case CreateSmartContract:
           CreateSmartContract createContract = contractParameter.unpack(CreateSmartContract.class);
           if (createContract.getNewContract() != null) {
             toAddress = new byte[20]; // Contract creation uses zero address
-            data = createContract.getNewContract().getBytecode().toByteArray();
+            // Phase 2.I L2: Send full CreateSmartContract proto bytes so Rust can persist
+            // SmartContract metadata (ABI, name, origin_energy_limit, etc.) after EVM execution
+            data = createContract.toByteArray();
             value = createContract.getNewContract().getCallValue();
+            logger.debug("Mapped CreateSmartContract to remote request; owner={}, name={}, origin_energy_limit={}",
+                org.tron.common.utils.ByteArray.toHexString(fromAddress),
+                createContract.getNewContract().getName(),
+                createContract.getNewContract().getOriginEnergyLimit());
           }
           txKind = TxKind.VM; // Smart contract creation requires VM
           contractType = tron.backend.BackendOuterClass.ContractType.CREATE_SMART_CONTRACT;
@@ -457,6 +536,353 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           logger.debug("Mapped AccountCreateContract to remote request; owner={}, account_address={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(accountCreateContract.getAccountAddress().toByteArray()));
+          break;
+
+        // Phase 2.A: Proposal Contracts (16/17/18)
+        case ProposalCreateContract:
+          // Check JVM property gate for Proposal contracts
+          boolean proposalRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.proposal.enabled", "false"));
+          if (!proposalRemoteEnabled) {
+            throw new UnsupportedOperationException("Proposal execution via remote backend is disabled. Use -Dremote.exec.proposal.enabled=true to enable.");
+          }
+          // ProposalCreateContract creates a new governance proposal
+          org.tron.protos.contract.ProposalContract.ProposalCreateContract proposalCreateContract =
+              contractParameter.unpack(org.tron.protos.contract.ProposalContract.ProposalCreateContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = proposalCreateContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.PROPOSAL_CREATE_CONTRACT;
+          logger.debug("Mapped ProposalCreateContract to remote request; owner={}, params={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              proposalCreateContract.getParametersCount());
+          break;
+
+        case ProposalApproveContract:
+          // Check JVM property gate for Proposal contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.proposal.enabled", "false"))) {
+            throw new UnsupportedOperationException("Proposal execution via remote backend is disabled. Use -Dremote.exec.proposal.enabled=true to enable.");
+          }
+          // ProposalApproveContract adds/removes approval from a proposal
+          org.tron.protos.contract.ProposalContract.ProposalApproveContract proposalApproveContract =
+              contractParameter.unpack(org.tron.protos.contract.ProposalContract.ProposalApproveContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = proposalApproveContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.PROPOSAL_APPROVE_CONTRACT;
+          logger.debug("Mapped ProposalApproveContract to remote request; owner={}, proposal_id={}, is_add={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              proposalApproveContract.getProposalId(),
+              proposalApproveContract.getIsAddApproval());
+          break;
+
+        case ProposalDeleteContract:
+          // Check JVM property gate for Proposal contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.proposal.enabled", "false"))) {
+            throw new UnsupportedOperationException("Proposal execution via remote backend is disabled. Use -Dremote.exec.proposal.enabled=true to enable.");
+          }
+          // ProposalDeleteContract cancels a proposal (only by proposer)
+          org.tron.protos.contract.ProposalContract.ProposalDeleteContract proposalDeleteContract =
+              contractParameter.unpack(org.tron.protos.contract.ProposalContract.ProposalDeleteContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = proposalDeleteContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.PROPOSAL_DELETE_CONTRACT;
+          logger.debug("Mapped ProposalDeleteContract to remote request; owner={}, proposal_id={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              proposalDeleteContract.getProposalId());
+          break;
+
+        // Phase 2.B: Account Management Contracts (19/46)
+        case SetAccountIdContract:
+          // Check JVM property gate for Account management contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.account.enabled", "false"))) {
+            throw new UnsupportedOperationException("Account management execution via remote backend is disabled. Use -Dremote.exec.account.enabled=true to enable.");
+          }
+          // SetAccountIdContract sets a unique, immutable account ID
+          org.tron.protos.contract.AccountContract.SetAccountIdContract setAccountIdContract =
+              contractParameter.unpack(org.tron.protos.contract.AccountContract.SetAccountIdContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = setAccountIdContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.SET_ACCOUNT_ID_CONTRACT;
+          logger.debug("Mapped SetAccountIdContract to remote request; owner={}, account_id={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              new String(setAccountIdContract.getAccountId().toByteArray()));
+          break;
+
+        case AccountPermissionUpdateContract:
+          // Check JVM property gate for Account management contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.account.enabled", "false"))) {
+            throw new UnsupportedOperationException("Account management execution via remote backend is disabled. Use -Dremote.exec.account.enabled=true to enable.");
+          }
+          // AccountPermissionUpdateContract updates account permissions for multi-sig
+          org.tron.protos.contract.AccountContract.AccountPermissionUpdateContract permissionUpdateContract =
+              contractParameter.unpack(org.tron.protos.contract.AccountContract.AccountPermissionUpdateContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = permissionUpdateContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM; // System contract
+          contractType = tron.backend.BackendOuterClass.ContractType.ACCOUNT_PERMISSION_UPDATE_CONTRACT;
+          logger.debug("Mapped AccountPermissionUpdateContract to remote request; owner={}, active_count={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              permissionUpdateContract.getActivesCount());
+          break;
+
+        // Phase 2.C: Contract Metadata Contracts (33/45/48)
+        case UpdateSettingContract:
+          // Check JVM property gate for Contract metadata contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.contract.enabled", "false"))) {
+            throw new UnsupportedOperationException("Contract metadata execution via remote backend is disabled. Use -Dremote.exec.contract.enabled=true to enable.");
+          }
+          // UpdateSettingContract updates consume_user_resource_percent of a smart contract
+          org.tron.protos.contract.SmartContractOuterClass.UpdateSettingContract updateSettingContract =
+              contractParameter.unpack(org.tron.protos.contract.SmartContractOuterClass.UpdateSettingContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = updateSettingContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_SETTING_CONTRACT;
+          logger.debug("Mapped UpdateSettingContract to remote request; owner={}, contract={}, percent={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(updateSettingContract.getContractAddress().toByteArray()),
+              updateSettingContract.getConsumeUserResourcePercent());
+          break;
+
+        case UpdateEnergyLimitContract:
+          // Check JVM property gate for Contract metadata contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.contract.enabled", "false"))) {
+            throw new UnsupportedOperationException("Contract metadata execution via remote backend is disabled. Use -Dremote.exec.contract.enabled=true to enable.");
+          }
+          // UpdateEnergyLimitContract updates origin_energy_limit of a smart contract
+          org.tron.protos.contract.SmartContractOuterClass.UpdateEnergyLimitContract updateEnergyLimitContract =
+              contractParameter.unpack(org.tron.protos.contract.SmartContractOuterClass.UpdateEnergyLimitContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = updateEnergyLimitContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_ENERGY_LIMIT_CONTRACT;
+          logger.debug("Mapped UpdateEnergyLimitContract to remote request; owner={}, contract={}, limit={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(updateEnergyLimitContract.getContractAddress().toByteArray()),
+              updateEnergyLimitContract.getOriginEnergyLimit());
+          break;
+
+        case ClearABIContract:
+          // Check JVM property gate for Contract metadata contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.contract.enabled", "false"))) {
+            throw new UnsupportedOperationException("Contract metadata execution via remote backend is disabled. Use -Dremote.exec.contract.enabled=true to enable.");
+          }
+          // ClearABIContract clears the ABI of a smart contract
+          org.tron.protos.contract.SmartContractOuterClass.ClearABIContract clearAbiContract =
+              contractParameter.unpack(org.tron.protos.contract.SmartContractOuterClass.ClearABIContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = clearAbiContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.CLEAR_ABI_CONTRACT;
+          logger.debug("Mapped ClearABIContract to remote request; owner={}, contract={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(clearAbiContract.getContractAddress().toByteArray()));
+          break;
+
+        // Phase 2.C2: UpdateBrokerage Contract (49)
+        case UpdateBrokerageContract:
+          // Check JVM property gate for Brokerage contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.brokerage.enabled", "false"))) {
+            throw new UnsupportedOperationException("Brokerage execution via remote backend is disabled. Use -Dremote.exec.brokerage.enabled=true to enable.");
+          }
+          // UpdateBrokerageContract sets the brokerage (commission rate) for a witness
+          org.tron.protos.contract.StorageContract.UpdateBrokerageContract updateBrokerageContract =
+              contractParameter.unpack(org.tron.protos.contract.StorageContract.UpdateBrokerageContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = updateBrokerageContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_BROKERAGE_CONTRACT;
+          logger.debug("Mapped UpdateBrokerageContract to remote request; owner={}, brokerage={}%",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              updateBrokerageContract.getBrokerage());
+          break;
+
+        // Phase 2.D: Resource/Freeze/Delegation Contracts (56/57/58/59)
+        case WithdrawExpireUnfreezeContract:
+          // Check JVM property gate for Resource/Delegation contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.resource.enabled", "false"))) {
+            throw new UnsupportedOperationException("Resource/Delegation execution via remote backend is disabled. Use -Dremote.exec.resource.enabled=true to enable.");
+          }
+          // WithdrawExpireUnfreezeContract withdraws TRX from expired unfreezeV2 entries
+          WithdrawExpireUnfreezeContract withdrawExpireUnfreezeContract =
+              contractParameter.unpack(WithdrawExpireUnfreezeContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = withdrawExpireUnfreezeContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.WITHDRAW_EXPIRE_UNFREEZE_CONTRACT;
+          logger.debug("Mapped WithdrawExpireUnfreezeContract to remote request; owner={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress));
+          break;
+
+        case DelegateResourceContract:
+          // Check JVM property gate for Resource/Delegation contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.resource.enabled", "false"))) {
+            throw new UnsupportedOperationException("Resource/Delegation execution via remote backend is disabled. Use -Dremote.exec.resource.enabled=true to enable.");
+          }
+          // DelegateResourceContract delegates frozen resources to another account
+          DelegateResourceContract delegateResourceContract =
+              contractParameter.unpack(DelegateResourceContract.class);
+          toAddress = new byte[0]; // System contract, receiver is in contract data
+          data = delegateResourceContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.DELEGATE_RESOURCE_CONTRACT;
+          logger.debug("Mapped DelegateResourceContract to remote request; owner={}, receiver={}, resource={}, balance={}, lock={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(delegateResourceContract.getReceiverAddress().toByteArray()),
+              delegateResourceContract.getResource(),
+              delegateResourceContract.getBalance(),
+              delegateResourceContract.getLock());
+          break;
+
+        case UnDelegateResourceContract:
+          // Check JVM property gate for Resource/Delegation contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.resource.enabled", "false"))) {
+            throw new UnsupportedOperationException("Resource/Delegation execution via remote backend is disabled. Use -Dremote.exec.resource.enabled=true to enable.");
+          }
+          // UnDelegateResourceContract reclaims delegated resources
+          UnDelegateResourceContract unDelegateResourceContract =
+              contractParameter.unpack(UnDelegateResourceContract.class);
+          toAddress = new byte[0]; // System contract, receiver is in contract data
+          data = unDelegateResourceContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UNDELEGATE_RESOURCE_CONTRACT;
+          logger.debug("Mapped UnDelegateResourceContract to remote request; owner={}, receiver={}, resource={}, balance={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(unDelegateResourceContract.getReceiverAddress().toByteArray()),
+              unDelegateResourceContract.getResource(),
+              unDelegateResourceContract.getBalance());
+          break;
+
+        case CancelAllUnfreezeV2Contract:
+          // Check JVM property gate for Resource/Delegation contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.resource.enabled", "false"))) {
+            throw new UnsupportedOperationException("Resource/Delegation execution via remote backend is disabled. Use -Dremote.exec.resource.enabled=true to enable.");
+          }
+          // CancelAllUnfreezeV2Contract cancels all pending unfreezeV2 entries
+          CancelAllUnfreezeV2Contract cancelAllUnfreezeV2Contract =
+              contractParameter.unpack(CancelAllUnfreezeV2Contract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = cancelAllUnfreezeV2Contract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.CANCEL_ALL_UNFREEZE_V2_CONTRACT;
+          logger.debug("Mapped CancelAllUnfreezeV2Contract to remote request; owner={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress));
+          break;
+
+        // Phase 2.F: Exchange Contracts (41-44)
+        case ExchangeCreateContract:
+          // Check JVM property gate for Exchange contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.exchange.enabled", "false"))) {
+            throw new UnsupportedOperationException("Exchange execution via remote backend is disabled. Use -Dremote.exec.exchange.enabled=true to enable.");
+          }
+          // ExchangeCreateContract creates a new Bancor-style exchange
+          org.tron.protos.contract.ExchangeContract.ExchangeCreateContract exchangeCreateContract =
+              contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeCreateContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = exchangeCreateContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_CREATE_CONTRACT;
+          logger.debug("Mapped ExchangeCreateContract to remote request; owner={}, first_token={}, second_token={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              new String(exchangeCreateContract.getFirstTokenId().toByteArray()),
+              new String(exchangeCreateContract.getSecondTokenId().toByteArray()));
+          break;
+
+        case ExchangeInjectContract:
+          // Check JVM property gate for Exchange contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.exchange.enabled", "false"))) {
+            throw new UnsupportedOperationException("Exchange execution via remote backend is disabled. Use -Dremote.exec.exchange.enabled=true to enable.");
+          }
+          // ExchangeInjectContract injects liquidity into an exchange
+          org.tron.protos.contract.ExchangeContract.ExchangeInjectContract exchangeInjectContract =
+              contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeInjectContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = exchangeInjectContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_INJECT_CONTRACT;
+          logger.debug("Mapped ExchangeInjectContract to remote request; owner={}, exchange_id={}, token={}, quant={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              exchangeInjectContract.getExchangeId(),
+              new String(exchangeInjectContract.getTokenId().toByteArray()),
+              exchangeInjectContract.getQuant());
+          break;
+
+        case ExchangeWithdrawContract:
+          // Check JVM property gate for Exchange contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.exchange.enabled", "false"))) {
+            throw new UnsupportedOperationException("Exchange execution via remote backend is disabled. Use -Dremote.exec.exchange.enabled=true to enable.");
+          }
+          // ExchangeWithdrawContract withdraws liquidity from an exchange
+          org.tron.protos.contract.ExchangeContract.ExchangeWithdrawContract exchangeWithdrawContract =
+              contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeWithdrawContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = exchangeWithdrawContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_WITHDRAW_CONTRACT;
+          logger.debug("Mapped ExchangeWithdrawContract to remote request; owner={}, exchange_id={}, token={}, quant={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              exchangeWithdrawContract.getExchangeId(),
+              new String(exchangeWithdrawContract.getTokenId().toByteArray()),
+              exchangeWithdrawContract.getQuant());
+          break;
+
+        case ExchangeTransactionContract:
+          // Check JVM property gate for Exchange contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.exchange.enabled", "false"))) {
+            throw new UnsupportedOperationException("Exchange execution via remote backend is disabled. Use -Dremote.exec.exchange.enabled=true to enable.");
+          }
+          // ExchangeTransactionContract executes a token swap on an exchange
+          org.tron.protos.contract.ExchangeContract.ExchangeTransactionContract exchangeTransactionContract =
+              contractParameter.unpack(org.tron.protos.contract.ExchangeContract.ExchangeTransactionContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = exchangeTransactionContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_TRANSACTION_CONTRACT;
+          logger.debug("Mapped ExchangeTransactionContract to remote request; owner={}, exchange_id={}, token={}, quant={}, expected={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              exchangeTransactionContract.getExchangeId(),
+              new String(exchangeTransactionContract.getTokenId().toByteArray()),
+              exchangeTransactionContract.getQuant(),
+              exchangeTransactionContract.getExpected());
+          break;
+
+        case MarketSellAssetContract:
+          // Check JVM property gate for Market contracts
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.market.enabled", "false"))) {
+            throw new UnsupportedOperationException("Market execution via remote backend is disabled. Use -Dremote.exec.market.enabled=true to enable.");
+          }
+          // MarketSellAssetContract creates a sell order on the DEX
+          org.tron.protos.contract.MarketContract.MarketSellAssetContract marketSellAssetContract =
+              contractParameter.unpack(org.tron.protos.contract.MarketContract.MarketSellAssetContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = marketSellAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.MARKET_SELL_ASSET_CONTRACT;
+          logger.debug("Mapped MarketSellAssetContract to remote request; owner={}, sell_token={}, sell_qty={}, buy_token={}, buy_qty={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              new String(marketSellAssetContract.getSellTokenId().toByteArray()),
+              marketSellAssetContract.getSellTokenQuantity(),
+              new String(marketSellAssetContract.getBuyTokenId().toByteArray()),
+              marketSellAssetContract.getBuyTokenQuantity());
+          break;
+
+        case MarketCancelOrderContract:
+          // Check JVM property gate for Market contracts (reuse same flag)
+          if (!Boolean.parseBoolean(System.getProperty("remote.exec.market.enabled", "false"))) {
+            throw new UnsupportedOperationException("Market execution via remote backend is disabled. Use -Dremote.exec.market.enabled=true to enable.");
+          }
+          // MarketCancelOrderContract cancels an existing order on the DEX
+          org.tron.protos.contract.MarketContract.MarketCancelOrderContract marketCancelOrderContract =
+              contractParameter.unpack(org.tron.protos.contract.MarketContract.MarketCancelOrderContract.class);
+          toAddress = new byte[0]; // System contract, no recipient
+          data = marketCancelOrderContract.toByteArray(); // Send full proto bytes for Rust parsing
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.MARKET_CANCEL_ORDER_CONTRACT;
+          logger.debug("Mapped MarketCancelOrderContract to remote request; owner={}, order_id={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(marketCancelOrderContract.getOrderId().toByteArray()));
           break;
 
         default:
@@ -995,6 +1421,21 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       metricsCallback.onMetric("remote.vote_changes_count", voteChanges.size());
     }
 
+    // Phase 0.4: Extract tron_transaction_result bytes for receipt passthrough
+    byte[] tronTransactionResult = null;
+    if (!protoResult.getTronTransactionResult().isEmpty()) {
+      tronTransactionResult = protoResult.getTronTransactionResult().toByteArray();
+      logger.debug("Parsed tron_transaction_result: {} bytes", tronTransactionResult.length);
+    }
+
+    // Phase 2.I L2: Extract contract_address for CreateSmartContract receipt
+    byte[] contractAddress = null;
+    if (!protoResult.getContractAddress().isEmpty()) {
+      contractAddress = protoResult.getContractAddress().toByteArray();
+      logger.debug("Parsed contract_address: {}",
+          org.tron.common.utils.ByteArray.toHexString(contractAddress));
+    }
+
     return new ExecutionResult(
         protoResult.getStatus() == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS,
         protoResult.getReturnData().toByteArray(),
@@ -1008,7 +1449,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         globalResourceChanges,
         trc10Changes,
         voteChanges,
-        withdrawChanges);
+        withdrawChanges,
+        tronTransactionResult,
+        contractAddress);
   }
 
   /**

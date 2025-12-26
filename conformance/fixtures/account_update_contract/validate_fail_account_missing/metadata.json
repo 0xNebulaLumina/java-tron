@@ -1,0 +1,21 @@
+{
+  "contractType": "ACCOUNT_UPDATE_CONTRACT",
+  "contractTypeNum": 10,
+  "caseName": "validate_fail_account_missing",
+  "caseCategory": "validate_fail",
+  "description": "Fail when account does not exist",
+  "generatedAt": "2025-12-23T10:39:22.116Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "account-index",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Account does not exist",
+  "ownerAddress": "a06d697373696e675f7570645f6f776e3100000000",
+  "dynamicProperties": {},
+  "notes": []
+}

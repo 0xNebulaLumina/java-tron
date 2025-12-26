@@ -1,0 +1,23 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "edge_sweep_expired_unfrozen_v2",
+  "caseCategory": "edge",
+  "description": "Unfreeze V2 with existing expired unfrozenV2 entry (tests withdrawExpireAmount)",
+  "generatedAt": "2025-12-23T10:39:26.446Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76325f3034000000000000",
+  "dynamicProperties": {
+    "UNFREEZE_DELAY_DAYS": 14
+  },
+  "notes": [
+    "This case tests the sweep of expired unfrozenV2 entries during execution"
+  ]
+}

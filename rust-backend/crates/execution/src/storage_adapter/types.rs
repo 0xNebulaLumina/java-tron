@@ -8,7 +8,7 @@
 //! - StateChangeRecord: State change tracking for debugging and verification
 
 use anyhow::Result;
-use revm::primitives::{Account, AccountInfo, Address, U256};
+use revm::primitives::{AccountInfo, Address, U256};
 
 /// TRON Witness information - equivalent to WitnessCapsule in Java
 #[derive(Debug, Clone)]
@@ -69,8 +69,8 @@ impl WitnessInfo {
             .map_err(|e| anyhow::anyhow!("Protobuf decode failed: {}", e))?;
 
         // Extract and validate address
-        let address = if witness.address.len() == 21 && witness.address[0] == 0x41 {
-            // TRON format: 21 bytes with 0x41 prefix, strip prefix for 20-byte address
+        let address = if witness.address.len() == 21 && (witness.address[0] == 0x41 || witness.address[0] == 0xa0) {
+            // TRON format: 21 bytes with network prefix (0x41 mainnet / 0xa0 testnet)
             let mut addr_bytes = [0u8; 20];
             addr_bytes.copy_from_slice(&witness.address[1..21]);
             Address::from(addr_bytes)
@@ -333,8 +333,8 @@ impl Vote {
                     let addr_bytes = &data[pos..pos + length as usize];
                     pos += length as usize;
 
-                    // Remove 0x41 prefix if present
-                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                    // Remove TRON prefix if present
+                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
                         &addr_bytes[1..]
                     } else if addr_bytes.len() == 20 {
                         addr_bytes
@@ -511,8 +511,8 @@ impl VotesRecord {
                     let addr_bytes = &data[pos..pos + length as usize];
                     pos += length as usize;
 
-                    // Remove 0x41 prefix if present
-                    let evm_addr = if addr_bytes.len() == 21 && addr_bytes[0] == 0x41 {
+                    // Remove TRON prefix if present
+                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
                         &addr_bytes[1..]
                     } else if addr_bytes.len() == 20 {
                         addr_bytes

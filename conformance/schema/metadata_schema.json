@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://tron.network/conformance/metadata.schema.json",
+  "title": "Conformance Test Fixture Metadata",
+  "description": "Metadata for a single conformance test fixture",
+  "type": "object",
+  "required": [
+    "contract_type",
+    "contract_type_num",
+    "case_name",
+    "case_category",
+    "generated_at",
+    "generator_version",
+    "block_number",
+    "block_timestamp",
+    "databases_touched"
+  ],
+  "properties": {
+    "contract_type": {
+      "type": "string",
+      "description": "Contract type name matching Protocol.ContractType enum",
+      "examples": ["PROPOSAL_CREATE_CONTRACT", "TRANSFER_CONTRACT"]
+    },
+    "contract_type_num": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Numeric value of the contract type"
+    },
+    "case_name": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$",
+      "description": "Snake_case name for this test case",
+      "examples": ["happy_path_create", "validate_fail_no_permission"]
+    },
+    "case_category": {
+      "type": "string",
+      "enum": ["happy", "validate_fail", "edge"],
+      "description": "Category of test case"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this test case verifies"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when fixture was generated"
+    },
+    "generator_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of the fixture generator"
+    },
+    "block_number": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Block number used in execution context"
+    },
+    "block_timestamp": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Block timestamp in milliseconds since epoch"
+    },
+    "databases_touched": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "List of database names that are read or written by this test",
+      "examples": [["account", "proposal", "dynamic-properties"]]
+    },
+    "expected_status": {
+      "type": "string",
+      "enum": ["SUCCESS", "REVERT", "VALIDATION_FAILED"],
+      "default": "SUCCESS",
+      "description": "Expected execution status"
+    },
+    "expected_error_message": {
+      "type": "string",
+      "description": "Expected error message substring (for failure cases)"
+    },
+    "owner_address": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{42}$",
+      "description": "Hex-encoded owner address (21 bytes with 0x41 prefix)"
+    },
+    "dynamic_properties": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {"type": "integer"},
+          {"type": "string"},
+          {"type": "boolean"}
+        ]
+      },
+      "description": "Key dynamic properties set for this test"
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Additional notes or known issues with this test case"
+    }
+  },
+  "additionalProperties": false
+}

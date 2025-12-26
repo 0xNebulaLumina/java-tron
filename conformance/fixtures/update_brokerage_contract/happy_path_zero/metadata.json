@@ -1,0 +1,21 @@
+{
+  "contractType": "UPDATE_BROKERAGE_CONTRACT",
+  "contractTypeNum": 49,
+  "caseName": "happy_path_zero",
+  "caseCategory": "happy",
+  "description": "Set brokerage to 0% (witness takes no commission)",
+  "generatedAt": "2025-12-23T10:39:18.897Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "witness",
+    "delegation",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

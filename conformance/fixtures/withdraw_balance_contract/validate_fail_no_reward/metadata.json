@@ -1,0 +1,20 @@
+{
+  "contractType": "WITHDRAW_BALANCE_CONTRACT",
+  "contractTypeNum": 13,
+  "caseName": "validate_fail_no_reward",
+  "caseCategory": "validate_fail",
+  "description": "Fail when there is no allowance/reward to withdraw",
+  "generatedAt": "2025-12-23T10:39:35.083Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "witnessAccount does not have any reward",
+  "ownerAddress": "a07769746e6573735f6e6f5f726577303100000000",
+  "dynamicProperties": {},
+  "notes": []
+}

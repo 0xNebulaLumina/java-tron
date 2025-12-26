@@ -46,10 +46,22 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
-        let database = EvmStateDatabase::new(storage);
-        let mut evm = TronEvm::new(database, &self.config)?;
+        let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
+        let spec_id = storage
+            .tvm_spec_id()?
+            .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
+
+        // TRON parity: backend.proto's `energy_limit` is a fee limit in SUN. Convert to an EVM
+        // gas limit (energy units) using the dynamic property ENERGY_FEE (SUN per energy).
+        let mut adjusted_tx = tx.clone();
+        if energy_fee_rate > 0 {
+            adjusted_tx.gas_limit = std::cmp::max(1, adjusted_tx.gas_limit / energy_fee_rate);
+        }
+
+        let database = EvmStateDatabase::new_with_persist(storage, self.config.remote.rust_persist_enabled);
+        let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
         // Use the new state tracking method
-        evm.execute_transaction_with_state_tracking(tx, context)
+        evm.execute_transaction_with_state_tracking(&adjusted_tx, context)
     }
 
     /// Call a contract without state changes
@@ -59,9 +71,17 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
+        let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
+        let spec_id = storage
+            .tvm_spec_id()?
+            .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
+        let mut adjusted_tx = tx.clone();
+        if energy_fee_rate > 0 {
+            adjusted_tx.gas_limit = std::cmp::max(1, adjusted_tx.gas_limit / energy_fee_rate);
+        }
         let database = EvmStateDatabase::new(storage);
-        let mut evm = TronEvm::new(database, &self.config)?;
-        evm.call_contract(tx, context)
+        let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
+        evm.call_contract(&adjusted_tx, context)
     }
 
     /// Estimate energy usage for a transaction
@@ -71,9 +91,17 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<u64> {
+        let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
+        let spec_id = storage
+            .tvm_spec_id()?
+            .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
+        let mut adjusted_tx = tx.clone();
+        if energy_fee_rate > 0 {
+            adjusted_tx.gas_limit = std::cmp::max(1, adjusted_tx.gas_limit / energy_fee_rate);
+        }
         let database = EvmStateDatabase::new(storage);
-        let mut evm = TronEvm::new(database, &self.config)?;
-        evm.estimate_energy(tx, context)
+        let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
+        evm.estimate_energy(&adjusted_tx, context)
     }
 
     /// Execute a transaction using in-memory storage (for testing)
@@ -186,8 +214,11 @@ impl Module for ExecutionModule {
         
         // Test EVM creation with dummy storage
         let storage = InMemoryEvmStateStore::new();
+        let spec_id = storage
+            .tvm_spec_id()?
+            .unwrap_or_else(|| TronEvm::<EvmStateDatabase<InMemoryEvmStateStore>>::spec_id_from_config(&self.config));
         let database = EvmStateDatabase::new(storage);
-        let _evm = TronEvm::new(database, &self.config)?;
+        let _evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
         
         info!("Execution module started successfully");
         Ok(())
@@ -208,7 +239,8 @@ impl Module for ExecutionModule {
         // Test EVM creation
         let storage = InMemoryEvmStateStore::new();
         let database = EvmStateDatabase::new(storage);
-        match TronEvm::new(database, &self.config) {
+        let spec_id = TronEvm::<EvmStateDatabase<InMemoryEvmStateStore>>::spec_id_from_config(&self.config);
+        match TronEvm::new_with_spec_id(database, &self.config, spec_id) {
             Ok(_) => ModuleHealth::healthy(),
             Err(e) => ModuleHealth::unhealthy(&format!("EVM creation failed: {}", e)),
         }
@@ -486,6 +518,7 @@ mod witness_tests {
             chain_id: 2494104990, // TRON mainnet chain ID
             energy_price: 420, // Default TRON energy price
             bandwidth_price: 1000, // Default TRON bandwidth price
+            transaction_id: None,
         };
 
         // Execute transaction (this will use in-memory storage)

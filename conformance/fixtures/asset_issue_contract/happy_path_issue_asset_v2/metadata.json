@@ -1,0 +1,24 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "happy_path_issue_asset_v2",
+  "caseCategory": "happy",
+  "description": "Issue a new TRC-10 asset with allowSameTokenName\u003d1 (V2 mode)",
+  "generatedAt": "2025-12-23T10:39:17.230Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "End time should be greater than start time",
+  "ownerAddress": "a061737365745f6973737565725f30310000000000",
+  "dynamicProperties": {
+    "ASSET_ISSUE_FEE": 1024000000,
+    "ALLOW_SAME_TOKEN_NAME": 1
+  },
+  "notes": []
+}

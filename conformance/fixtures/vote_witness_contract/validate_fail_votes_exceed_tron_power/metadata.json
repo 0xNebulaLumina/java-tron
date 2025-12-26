@@ -1,0 +1,22 @@
+{
+  "contractType": "VOTE_WITNESS_CONTRACT",
+  "contractTypeNum": 4,
+  "caseName": "validate_fail_votes_exceed_tron_power",
+  "caseCategory": "validate_fail",
+  "description": "Fail when total votes exceed TRON power",
+  "generatedAt": "2025-12-23T10:39:35.100Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "The total number of votes[100000000] is greater than the tronPower[1000000]",
+  "ownerAddress": "a0736d616c6c5f706f7765725f3030310000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

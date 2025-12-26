@@ -1,0 +1,20 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "validate_fail_frozen_balance_lt_1_trx",
+  "caseCategory": "validate_fail",
+  "description": "Fail when freeze amount is less than 1 TRX",
+  "generatedAt": "2025-12-23T10:39:25.101Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "frozenBalance must be greater than or equal to 1 TRX",
+  "ownerAddress": "a0667265657a655f76315f6f776e30340000000000",
+  "dynamicProperties": {},
+  "notes": []
+}
