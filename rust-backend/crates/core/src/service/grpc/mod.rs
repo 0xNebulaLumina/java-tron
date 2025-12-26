@@ -1187,7 +1187,14 @@ impl crate::backend::backend_server::Backend for BackendService {
             Ok(result) => {
                 info!("Transaction executed successfully - energy_used: {}, bandwidth_used: {}",
                       result.energy_used, result.bandwidth_used);
-                let response = self.convert_execution_result_to_protobuf(result, &pre_exec_aext_map);
+                // Note: gRPC service currently uses compute-only mode (no write buffer)
+                // Future: when rust_persist_enabled is true, pass touched_keys from buffer
+                let response = self.convert_execution_result_to_protobuf(
+                    result,
+                    &pre_exec_aext_map,
+                    None,  // touched_keys: None for compute-only mode
+                    0,     // write_mode: WRITE_MODE_COMPUTE_ONLY
+                );
                 Ok(Response::new(response))
             }
             Err(e) => {

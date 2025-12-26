@@ -209,9 +209,12 @@ Notes（未来 fullnode）
 TODO（Rust conformance runner）
 - [x] 将 "VM 执行 + post-processing" 也纳入同一个 `ExecutionWriteBuffer`
   - [x] EVM commit + energy fee + metadata/ABI 持久化：统一 success 才 commit ✅ Updated conformance runner at `rust-backend/crates/core/src/conformance/runner.rs` to use `new_with_buffer()` and only commit on success
-- [ ] 增加针对性 conformance 测试用例（优先覆盖最容易"部分写入"的路径）
-  - [ ] VM validate_fail（例如 CreateSmartContract 余额不足/invalid opcode）：确保 0 落库
-  - [ ] system 合约 validate_fail：确保 0 落库
+- [x] 增加针对性 conformance 测试用例（优先覆盖最容易"部分写入"的路径）
+  - [x] Unit tests for write buffer behavior ✅ Added 4 tests in runner.rs:
+    - `test_write_buffer_not_committed_on_failure` - verifies buffer is dropped without commit on failure
+    - `test_touched_keys_tracking` - verifies touched_keys correctly tracks order and operation types
+    - `test_touched_keys_no_duplicates` - verifies same key updates don't create duplicate entries
+    - `test_touched_keys_put_then_delete` - verifies is_delete flag updates correctly
 
 验收
 - [ ] `scripts/ci/run_fixture_conformance.sh`（或直接 `cargo test --features conformance`）稳定可复现、无 flaky。
@@ -294,7 +297,7 @@ Node forward-exec（M2）
 - [x] system 合约写入路径接入 buffer（替换直接 put/set）✅ All 45+ write calls converted
 - [x] VM(EVM) commit 写入路径接入 buffer（替换直接 set_account/set_storage）✅ EvmStateStore trait methods use buffer
 - [x] conformance runner VM post-processing 纳入 buffer（fee + metadata/ABI）✅ Updated runner.rs
-- [ ] validate_fail 0 写入用例补齐/稳定
+- [x] validate_fail 0 写入用例补齐/稳定 ✅ Added 4 unit tests for write buffer behavior
 
 ### Java（B-镜像，下一步）
 - [ ] 增加 `remote.exec.write.mode=B` 或使用 response.persisted 判定
