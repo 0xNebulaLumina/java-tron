@@ -145,6 +145,32 @@ public abstract class TronStoreWithRevoking<T extends ProtoCapsule> implements I
     revokingDB.delete(key);
   }
 
+  /**
+   * Put raw bytes directly into the revoking database without capsule conversion.
+   * This is used by B-镜像 (B-mirror) for Phase B conformance alignment,
+   * allowing Java to mirror remote state to local revoking head.
+   *
+   * @param key The key bytes
+   * @param value The raw value bytes (from remote storage)
+   */
+  public void putRawBytes(byte[] key, byte[] value) {
+    if (Objects.isNull(key) || Objects.isNull(value)) {
+      return;
+    }
+    revokingDB.put(key, value);
+  }
+
+  /**
+   * Get raw bytes directly from the revoking database without capsule conversion.
+   * This is used by B-镜像 (B-mirror) for Phase B conformance alignment.
+   *
+   * @param key The key bytes
+   * @return The raw value bytes, or null if not found
+   */
+  public byte[] getRawBytes(byte[] key) {
+    return revokingDB.getUnchecked(key);
+  }
+
   @Override
   public T get(byte[] key) throws ItemNotFoundException, BadItemException {
     return of(revokingDB.get(key));

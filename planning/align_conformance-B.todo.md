@@ -268,11 +268,11 @@ TODO（Java 控制面）
   - [ ] 可选：要么 remote 使用隔离 DB（更复杂，不建议）
 
 TODO（Java 镜像实现）
-- [ ] 实现 `postExecMirror(touched_keys)`：
-  - [ ] 对每个 `(db,key)`：从 remote root 读取最终 bytes
-  - [ ] 写入本地 revoking head（put/delete）以更新 snapshot 视图
-  - [ ] 这一步必须发生在任何可能触发 flush/checkpoint 之前
-- [ ] 处理 deletes：remote 不存在则本地 delete
+- [x] 实现 `postExecMirror(touched_keys)`：✅ Implemented in RuntimeSpiImpl.java lines 1578-1656
+  - [x] 对每个 `(db,key)`：从 remote root 读取最终 bytes ✅ Uses StorageSpiFactory.createStorage(REMOTE).get()
+  - [x] 写入本地 revoking head（put/delete）以更新 snapshot 视图 ✅ Uses TronStoreWithRevoking.putRawBytes()
+  - [x] 这一步必须发生在任何可能触发 flush/checkpoint 之前 ✅ Called right after execution result
+- [x] 处理 deletes：remote 不存在则本地 delete ✅ Handles both tk.isDelete() and null values
 - [ ] 必要时记录 dirty（若后续依赖 ResourceSyncContext 的 dirty 集合）
 
 实现建议（避免 decode/encode capsule，直接写 raw bytes）
@@ -331,7 +331,10 @@ Node forward-exec（M2）
 ### Java（B-镜像，下一步）
 - [x] 增加 `remote.exec.write.mode=B` 或使用 response.persisted 判定 ✅ RuntimeSpiImpl.execute() checks result.getWriteMode()
 - [x] write_mode=B 时：跳过 `applyStateChangesToLocalDatabase` + 强制关闭 TRC-10 delta apply ✅ RuntimeSpiImpl.java lines 87-110 skip all apply methods when writeMode == PERSISTED
-- [~] 实现 `postExecMirror(touched_keys)`：remote root → local revoking head - **STUB IMPLEMENTED** (lines 1573-1616), actual mirror logic is TODO
+- [x] 实现 `postExecMirror(touched_keys)`：remote root → local revoking head ✅ FULLY IMPLEMENTED in RuntimeSpiImpl.java lines 1578-1736
+  - Added `TronStoreWithRevoking.putRawBytes()` for raw byte writes (chainbase/TronStoreWithRevoking.java lines 148-161)
+  - Added `getStoreByDbName()` helper mapping 20+ db names to stores
+  - Reads from remote StorageSPI and writes to local revoking head
 - [x] Shadow 模式禁用 B 持久化 ✅ Added warning in ShadowExecutionSPI.java when writeMode == PERSISTED (lines 107-116)
 
 ### 验收

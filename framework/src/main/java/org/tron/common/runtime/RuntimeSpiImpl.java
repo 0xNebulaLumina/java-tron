@@ -1,5 +1,7 @@
 package org.tron.common.runtime;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -8,9 +10,13 @@ import java.util.concurrent.CompletableFuture;
 import lombok.extern.slf4j.Slf4j;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.db.TransactionContext;
+import org.tron.core.db.TronStoreWithRevoking;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.ChainBaseManager;
+import org.tron.core.storage.spi.StorageSPI;
+import org.tron.core.storage.spi.StorageMode;
+import org.tron.core.storage.spi.StorageSpiFactory;
 import org.tron.core.execution.reporting.PreStateSnapshotRegistry;
 
 import org.tron.core.execution.spi.ExecutionProgramResult;
@@ -1571,9 +1577,9 @@ public class RuntimeSpiImpl implements Runtime {
    * @param context Transaction context with access to stores
    */
   private void postExecMirror(ExecutionProgramResult result, TransactionContext context) {
-    // JVM gate: default false until fully implemented
+    // JVM gate: default true for Phase B conformance
     boolean mirrorEnabled = Boolean.parseBoolean(
-        System.getProperty("remote.exec.postexec.mirror", "false"));
+        System.getProperty("remote.exec.postexec.mirror", "true"));
 
     if (!mirrorEnabled) {
       logger.debug("Post-exec mirror disabled by JVM property (-Dremote.exec.postexec.mirror=false)");
@@ -1589,29 +1595,144 @@ public class RuntimeSpiImpl implements Runtime {
     logger.info("Phase B mirror: Refreshing {} touched keys for transaction: {}",
         touchedKeys.size(), context.getTrxCap().getTransactionId());
 
-    // TODO: Implement actual mirror logic
-    // For each touched key:
-    // 1. Read the value from remote storage (via gRPC)
-    // 2. Update the local revoking store head to match
-    // This ensures Java's in-memory view stays consistent with Rust's persisted state
-    //
-    // Implementation will require:
-    // - Access to ChainBaseManager for local stores
-    // - Access to RemoteStorageSPI for remote reads
-    // - Mapping from db name to local store instance
-    //
-    // for (ExecutionSPI.TouchedKey tk : touchedKeys) {
-    //   String db = tk.getDb();
-    //   byte[] key = tk.getKey();
-    //   boolean isDelete = tk.isDelete();
-    //
-    //   if (isDelete) {
-    //     // Mark key as deleted in local revoking head
-    //   } else {
-    //     // Read value from remote and update local revoking head
-    //   }
-    // }
+    try {
+      ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
+      // Use REMOTE mode StorageSPI to read from Rust backend (where the data was persisted)
+      StorageSPI storageSPI = StorageSpiFactory.createStorage(StorageMode.REMOTE);
 
-    logger.debug("Post-exec mirror stub completed for {} keys", touchedKeys.size());
+      // Group touched keys by database name for batch processing
+      Map<String, List<ExecutionSPI.TouchedKey>> keysByDb = new HashMap<>();
+      for (ExecutionSPI.TouchedKey tk : touchedKeys) {
+        keysByDb.computeIfAbsent(tk.getDb(), k -> new ArrayList<>()).add(tk);
+      }
+
+      int successCount = 0;
+      int errorCount = 0;
+
+      // Process each database's keys
+      for (Map.Entry<String, List<ExecutionSPI.TouchedKey>> entry : keysByDb.entrySet()) {
+        String dbName = entry.getKey();
+        List<ExecutionSPI.TouchedKey> keys = entry.getValue();
+
+        // Get the local store for this database
+        TronStoreWithRevoking<?> store = getStoreByDbName(dbName, chainBaseManager);
+        if (store == null) {
+          logger.warn("Phase B mirror: Unknown database '{}', skipping {} keys", dbName, keys.size());
+          errorCount += keys.size();
+          continue;
+        }
+
+        // Process each key
+        for (ExecutionSPI.TouchedKey tk : keys) {
+          try {
+            if (tk.isDelete()) {
+              // Delete from local store
+              store.delete(tk.getKey());
+              logger.debug("Phase B mirror: Deleted key from db={}", dbName);
+            } else {
+              // Read value from remote and write to local
+              byte[] value = storageSPI.get(dbName, tk.getKey()).get();
+              if (value != null) {
+                store.putRawBytes(tk.getKey(), value);
+                logger.debug("Phase B mirror: Mirrored {} bytes to db={}", value.length, dbName);
+              } else {
+                // Key doesn't exist in remote, treat as delete
+                store.delete(tk.getKey());
+                logger.debug("Phase B mirror: Key not found in remote, deleted from db={}", dbName);
+              }
+            }
+            successCount++;
+          } catch (Exception e) {
+            logger.warn("Phase B mirror: Failed to mirror key in db={}: {}", dbName, e.getMessage());
+            errorCount++;
+          }
+        }
+      }
+
+      logger.info("Phase B mirror: Completed {} keys (success={}, errors={})",
+          touchedKeys.size(), successCount, errorCount);
+
+    } catch (Exception e) {
+      logger.error("Phase B mirror: Failed to initialize mirror: {}", e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Get the store instance for a given database name.
+   * Maps canonical db names to ChainBaseManager store instances.
+   *
+   * @param dbName The database name (from touched_keys)
+   * @param chainBaseManager The chain base manager
+   * @return The store instance, or null if not found
+   */
+  private TronStoreWithRevoking<?> getStoreByDbName(String dbName, ChainBaseManager chainBaseManager) {
+    // Map db names to stores based on db_names.rs constants
+    switch (dbName) {
+      // Account stores
+      case "account":
+        return chainBaseManager.getAccountStore();
+      case "account-index":
+        return chainBaseManager.getAccountIndexStore();
+      case "accountid-index":
+        return chainBaseManager.getAccountIdIndexStore();
+
+      // Contract/TVM stores
+      case "contract":
+        return chainBaseManager.getContractStore();
+      case "abi":
+        return chainBaseManager.getAbiStore();
+      case "code":
+        return chainBaseManager.getCodeStore();
+      case "contract-state":
+        return chainBaseManager.getContractStateStore();
+      case "storage-row":
+        return chainBaseManager.getStorageRowStore();
+
+      // Governance stores
+      case "witness":
+        return chainBaseManager.getWitnessStore();
+      case "votes":
+        return chainBaseManager.getVotesStore();
+      case "proposal":
+        return chainBaseManager.getProposalStore();
+
+      // Asset/TRC-10 stores
+      case "asset-issue":
+        return chainBaseManager.getAssetIssueStore();
+      case "asset-issue-v2":
+        return chainBaseManager.getAssetIssueV2Store();
+
+      // Delegation stores
+      case "DelegatedResource":
+        return chainBaseManager.getDelegatedResourceStore();
+      case "DelegatedResourceAccountIndex":
+        return chainBaseManager.getDelegatedResourceAccountIndexStore();
+      case "delegation":
+        return chainBaseManager.getDelegationStore();
+
+      // Exchange stores
+      case "exchange":
+        return chainBaseManager.getExchangeStore();
+      case "exchange-v2":
+        return chainBaseManager.getExchangeV2Store();
+
+      // Market stores
+      case "market_account":
+        return chainBaseManager.getMarketAccountStore();
+      case "market_order":
+        return chainBaseManager.getMarketOrderStore();
+      case "market_pair_to_price":
+        return chainBaseManager.getMarketPairToPriceStore();
+      case "market_pair_price_to_order":
+        return chainBaseManager.getMarketPairPriceToOrderStore();
+
+      // System stores
+      case "properties":
+        return chainBaseManager.getDynamicPropertiesStore();
+
+      default:
+        logger.debug("Phase B mirror: No mapping for database '{}'", dbName);
+        return null;
+    }
   }
 }
