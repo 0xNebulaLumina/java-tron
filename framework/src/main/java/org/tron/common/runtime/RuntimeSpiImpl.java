@@ -82,20 +82,32 @@ public class RuntimeSpiImpl implements Runtime {
       // Capture pre-state snapshot for CSV reporting (before applying changes)
       capturePreStateSnapshot(executionResult, context);
 
-      // Apply state changes to local database for remote execution
-      applyStateChangesToLocalDatabase(executionResult, context);
+      // Phase B conformance: Check write mode to determine if we should apply state changes
+      // When write_mode=PERSISTED, Rust has already persisted state - Java should NOT apply to avoid double-apply
+      ExecutionSPI.WriteMode writeMode = executionResult.getWriteMode();
+      boolean skipApply = (writeMode == ExecutionSPI.WriteMode.PERSISTED);
 
-      // Apply freeze ledger changes to local database (Phase 2)
-      applyFreezeLedgerChanges(executionResult, context);
+      if (skipApply) {
+        logger.info("Phase B: Skipping Java-side state apply (write_mode=PERSISTED) for transaction: {}",
+            context.getTrxCap().getTransactionId());
+        // B-镜像 (B-mirror): Refresh Java's local revoking head from remote root
+        postExecMirror(executionResult, context);
+      } else {
+        // Apply state changes to local database for remote execution
+        applyStateChangesToLocalDatabase(executionResult, context);
 
-      // Apply TRC-10 changes to local database (Phase 2)
-      applyTrc10Changes(executionResult, context);
+        // Apply freeze ledger changes to local database (Phase 2)
+        applyFreezeLedgerChanges(executionResult, context);
 
-      // Apply Vote changes to local database (Phase 2)
-      applyVoteChanges(executionResult, context);
+        // Apply TRC-10 changes to local database (Phase 2)
+        applyTrc10Changes(executionResult, context);
 
-      // Apply Withdraw changes to local database (WithdrawBalanceContract)
-      applyWithdrawChanges(executionResult, context);
+        // Apply Vote changes to local database (Phase 2)
+        applyVoteChanges(executionResult, context);
+
+        // Apply Withdraw changes to local database (WithdrawBalanceContract)
+        applyWithdrawChanges(executionResult, context);
+      }
 
       // Since ExecutionProgramResult extends ProgramResult, we can use it directly
       context.setProgramResult(executionResult);
@@ -1542,5 +1554,64 @@ public class RuntimeSpiImpl implements Runtime {
           context.getTrxCap().getTransactionId(), e.getMessage());
       // Don't fail the transaction - snapshot is for reporting only
     }
+  }
+
+  /**
+   * Post-execution mirror for B-镜像 (B-mirror) support.
+   * When Rust has persisted state changes (write_mode=PERSISTED), Java should NOT apply
+   * the state changes itself (to avoid double-apply). Instead, it should refresh its
+   * local revoking head from the remote root to keep local views consistent.
+   *
+   * <p>This method reads the touched keys from the execution result and refreshes the
+   * corresponding entries in Java's revoking stores from the remote storage.
+   *
+   * <p>Gate: Enabled when -Dremote.exec.postexec.mirror=true (default false for Phase B M2).
+   *
+   * @param result ExecutionProgramResult containing touched keys
+   * @param context Transaction context with access to stores
+   */
+  private void postExecMirror(ExecutionProgramResult result, TransactionContext context) {
+    // JVM gate: default false until fully implemented
+    boolean mirrorEnabled = Boolean.parseBoolean(
+        System.getProperty("remote.exec.postexec.mirror", "false"));
+
+    if (!mirrorEnabled) {
+      logger.debug("Post-exec mirror disabled by JVM property (-Dremote.exec.postexec.mirror=false)");
+      return;
+    }
+
+    List<ExecutionSPI.TouchedKey> touchedKeys = result.getTouchedKeys();
+    if (touchedKeys == null || touchedKeys.isEmpty()) {
+      logger.debug("No touched keys for post-exec mirror");
+      return;
+    }
+
+    logger.info("Phase B mirror: Refreshing {} touched keys for transaction: {}",
+        touchedKeys.size(), context.getTrxCap().getTransactionId());
+
+    // TODO: Implement actual mirror logic
+    // For each touched key:
+    // 1. Read the value from remote storage (via gRPC)
+    // 2. Update the local revoking store head to match
+    // This ensures Java's in-memory view stays consistent with Rust's persisted state
+    //
+    // Implementation will require:
+    // - Access to ChainBaseManager for local stores
+    // - Access to RemoteStorageSPI for remote reads
+    // - Mapping from db name to local store instance
+    //
+    // for (ExecutionSPI.TouchedKey tk : touchedKeys) {
+    //   String db = tk.getDb();
+    //   byte[] key = tk.getKey();
+    //   boolean isDelete = tk.isDelete();
+    //
+    //   if (isDelete) {
+    //     // Mark key as deleted in local revoking head
+    //   } else {
+    //     // Read value from remote and update local revoking head
+    //   }
+    // }
+
+    logger.debug("Post-exec mirror stub completed for {} keys", touchedKeys.size());
   }
 }
