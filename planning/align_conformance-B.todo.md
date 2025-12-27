@@ -304,7 +304,7 @@ Node forward-exec（M2）
 - [ ] 增加 `remote.exec.write.mode=B` 或使用 response.persisted 判定
 - [ ] write_mode=B 时：跳过 `applyStateChangesToLocalDatabase` + 强制关闭 TRC-10 delta apply
 - [ ] 实现 `postExecMirror(touched_keys)`：remote root → local revoking head
-- [ ] Shadow 模式禁用 B 持久化
+- [x] Shadow 模式禁用 B 持久化 ✅ Added warning in ShadowExecutionSPI.java when writeMode == PERSISTED (lines 107-116)
 
 ### 验收
 - [ ] Conformance：post_db byte-level 对齐；validate_fail 0 写
