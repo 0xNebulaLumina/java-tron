@@ -104,6 +104,17 @@ public class ShadowExecutionSPI implements ExecutionSPI {
             ExecutionProgramResult embeddedResult = embeddedFuture.join();
             ExecutionProgramResult remoteResult = remoteFuture.join();
 
+            // Phase B conformance: Warn if remote returned PERSISTED mode
+            // Shadow mode should NOT use rust_persist_enabled=true as it pollutes canonical state
+            if (remoteResult.getWriteMode() == ExecutionSPI.WriteMode.PERSISTED) {
+              logger.error(
+                  "CRITICAL: Remote execution returned WRITE_MODE_PERSISTED in Shadow mode! "
+                      + "This pollutes canonical state. Disable rust_persist_enabled for Shadow mode. "
+                      + "Transaction: {}",
+                  context.getTrxCap().getTransactionId());
+              // Continue with comparison but the state may already be polluted
+            }
+
             // Compare results
             boolean resultsMatch = compareExecutionResults(embeddedResult, remoteResult, context);
 
