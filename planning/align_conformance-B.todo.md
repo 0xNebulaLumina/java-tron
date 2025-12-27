@@ -258,11 +258,11 @@ TODO（Rust conformance runner）
 - Java 只把 remote 的“最终值”镜像到本地 revoking head，保证后续 tx 读取一致，且 flush 不覆写
 
 TODO（Java 控制面）
-- [ ] 增加统一开关：`remote.exec.write.mode=A|B`（或从 response.persisted/write_mode 推断）
-- [ ] 当 write_mode=B 时：
-  - [ ] 跳过 `applyStateChangesToLocalDatabase(...)`（当前没有总开关，需补）
-  - [ ] 强制关闭 delta sidecar apply：至少 `remote.exec.apply.trc10=false`
-  - [ ] 其它 sidecar（freeze/vote/withdraw）建议也统一走“镜像”而非业务 apply
+- [x] 增加统一开关：`remote.exec.write.mode=A|B`（或从 response.persisted/write_mode 推断）✅ RuntimeSpiImpl checks result.getWriteMode()
+- [x] 当 write_mode=B 时：✅ Implemented in RuntimeSpiImpl.execute() lines 87-110
+  - [x] 跳过 `applyStateChangesToLocalDatabase(...)`（当前没有总开关，需补）✅ Skipped when writeMode == PERSISTED
+  - [x] 强制关闭 delta sidecar apply：至少 `remote.exec.apply.trc10=false` ✅ All apply methods skipped
+  - [x] 其它 sidecar（freeze/vote/withdraw）建议也统一走"镜像"而非业务 apply ✅ All skipped
 - [x] ShadowExecutionSPI 禁止启用 B 持久化 ✅ Warning logged when writeMode == PERSISTED (ShadowExecutionSPI.java lines 107-116)
   - [x] 实现为警告模式：当 remote 返回 PERSISTED 时发出警告（避免硬性阻止）
   - [ ] 可选：要么 remote 使用隔离 DB（更复杂，不建议）
@@ -329,9 +329,9 @@ Node forward-exec（M2）
 - [x] validate_fail 0 写入用例补齐/稳定 ✅ Added 4 unit tests for write buffer behavior
 
 ### Java（B-镜像，下一步）
-- [ ] 增加 `remote.exec.write.mode=B` 或使用 response.persisted 判定
-- [ ] write_mode=B 时：跳过 `applyStateChangesToLocalDatabase` + 强制关闭 TRC-10 delta apply
-- [ ] 实现 `postExecMirror(touched_keys)`：remote root → local revoking head
+- [x] 增加 `remote.exec.write.mode=B` 或使用 response.persisted 判定 ✅ RuntimeSpiImpl.execute() checks result.getWriteMode()
+- [x] write_mode=B 时：跳过 `applyStateChangesToLocalDatabase` + 强制关闭 TRC-10 delta apply ✅ RuntimeSpiImpl.java lines 87-110 skip all apply methods when writeMode == PERSISTED
+- [~] 实现 `postExecMirror(touched_keys)`：remote root → local revoking head - **STUB IMPLEMENTED** (lines 1573-1616), actual mirror logic is TODO
 - [x] Shadow 模式禁用 B 持久化 ✅ Added warning in ShadowExecutionSPI.java when writeMode == PERSISTED (lines 107-116)
 
 ### 验收
