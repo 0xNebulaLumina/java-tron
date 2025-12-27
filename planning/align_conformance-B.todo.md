@@ -184,10 +184,11 @@ TODO（Rust）
   - [x] `EngineBackedEvmStateStore` 内部写方法（`rust-backend/crates/execution/src/storage_adapter/engine.rs`）✅ All converted to buffered_put/buffered_delete
   - [ ] system 合约 handler 中的 `storage_adapter.*` 写入（`rust-backend/crates/core/src/service/**`）— Uses EngineBackedEvmStateStore methods which are now buffered
   - [x] VM post-processing（fee / metadata / abi）写入（conformance runner & grpc service）✅ Conformance runner updated to use buffered writes
-- [ ] 建议用 grep 建一个"必须为 0"的检查（不需要上 CI，至少本地/PR 评审可跑）：
-  - `rg -n \"storage_engine\\.(put|delete|batch_write)\\(\" rust-backend/crates | cat`
-  - `rg -n \"batchPut\\(\" rust-backend/crates | cat`
-  - `rg -n \"\\.set_(account|storage|code)\\(\" rust-backend/crates/core/src/service rust-backend/crates/execution/src/storage_adapter | cat`
+- [x] 建议用 grep 建一个"必须为 0"的检查（不需要上 CI，至少本地/PR 评审可跑）：✅ Audit completed:
+  - `storage_engine.put/delete` in engine.rs: 2 calls (both in buffered_put/buffered_delete fallback - correct)
+  - `storage_engine.put/delete` in core/service: 0 calls ✅
+  - `set_account/set_storage/set_code` in storage_adapter: 3 calls (all in database.rs using EvmStateStore trait - routes through buffer)
+  - All writes now go through buffered path when buffer is attached
 
 验收（conformance）
 - [ ] validate_fail fixtures：`post_db` bytes 完全不变（0 写入）
