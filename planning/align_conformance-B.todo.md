@@ -222,6 +222,34 @@ TODO（Rust conformance runner）
 
 ---
 
+### 3.5) Rust：gRPC service 支持 Phase B 持久化（2025-12-27 完成）
+
+目标：当 `rust_persist_enabled=true` 时，gRPC service 使用 `ExecutionWriteBuffer` 进行原子写入，并返回 `touched_keys`。
+
+实现状态
+- [x] 在 `execute_transaction` 入口检查 `rust_persist_enabled` 配置
+  - ✅ 使用 `get_execution_config()` 读取配置
+- [x] 创建带 buffer 的 storage adapter
+  - ✅ `rust_persist_enabled=true` 时使用 `EngineBackedEvmStateStore::new_with_buffer()`
+  - ✅ `rust_persist_enabled=false` 时使用普通 `new()`
+- [x] VM 执行后的 metadata 持久化也使用同一 buffer
+  - ✅ `persist_smart_contract_metadata` 使用 `set_write_buffer()` 共享 buffer
+- [x] 成功时 commit buffer 并返回 touched_keys
+  - ✅ 执行成功时 `buffer.commit()`
+  - ✅ 从 buffer 提取 `touched_keys` 传递给 `convert_execution_result_to_protobuf`
+  - ✅ 设置 `write_mode = 1` (PERSISTED)
+- [x] 失败时丢弃 buffer（0 写入）
+  - ✅ 执行失败或 revert 时不 commit，buffer 被丢弃
+
+文件变更
+- `rust-backend/crates/core/src/service/grpc/mod.rs`:
+  - 添加 imports: `ExecutionWriteBuffer`, `TouchedKey`, `Arc`, `Mutex`
+  - 在 `execute_transaction` 中根据 `rust_persist_enabled` 创建 buffered adapter
+  - 成功时 commit 并提取 touched_keys
+  - 失败时 drop buffer
+
+---
+
 ### 4) Java：B-镜像（下一步，node forward-exec）
 
 目标：`execution.mode=REMOTE` + `storage.mode=remote` 下：
@@ -235,9 +263,9 @@ TODO（Java 控制面）
   - [ ] 跳过 `applyStateChangesToLocalDatabase(...)`（当前没有总开关，需补）
   - [ ] 强制关闭 delta sidecar apply：至少 `remote.exec.apply.trc10=false`
   - [ ] 其它 sidecar（freeze/vote/withdraw）建议也统一走“镜像”而非业务 apply
-- [ ] ShadowExecutionSPI 禁止启用 B 持久化
-  - [ ] 要么强制 rust_persist_enabled=false
-  - [ ] 要么 remote 使用隔离 DB（更复杂，不建议）
+- [x] ShadowExecutionSPI 禁止启用 B 持久化 ✅ Warning logged when writeMode == PERSISTED (ShadowExecutionSPI.java lines 107-116)
+  - [x] 实现为警告模式：当 remote 返回 PERSISTED 时发出警告（避免硬性阻止）
+  - [ ] 可选：要么 remote 使用隔离 DB（更复杂，不建议）
 
 TODO（Java 镜像实现）
 - [ ] 实现 `postExecMirror(touched_keys)`：
