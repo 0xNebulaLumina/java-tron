@@ -1220,11 +1220,13 @@ impl crate::backend::backend_server::Backend for BackendService {
                         Ok(mut locked_buffer) => {
                             // Only commit if execution was successful
                             if result.success {
+                                // Capture touched keys BEFORE commit clears the buffer.
+                                let keys = locked_buffer.touched_keys().to_vec();
+                                let op_count = locked_buffer.operation_count();
                                 match locked_buffer.commit(&storage_engine) {
                                     Ok(()) => {
-                                        let keys = locked_buffer.touched_keys().to_vec();
                                         info!("Phase B: Committed {} writes, {} touched keys",
-                                              locked_buffer.operation_count(), keys.len());
+                                              op_count, keys.len());
                                         (Some(keys), 1) // WRITE_MODE_PERSISTED
                                     }
                                     Err(e) => {
