@@ -661,43 +661,16 @@ impl BackendService {
         // For TRANSFER_CONTRACT specifically, we need the 'to' address
         let to_address = transaction.to.ok_or("TRANSFER_CONTRACT must have 'to' address")?;
 
+        // Validation parity with java-tron TransferActuator
+        if transaction.value.is_zero() {
+            return Err("Amount must be greater than 0.".to_string());
+        }
+        if to_address == transaction.from {
+            return Err("Cannot transfer TRX to yourself.".to_string());
+        }
+
         // Calculate bandwidth used based on transaction payload size
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
-
-        // Track AEXT for bandwidth if in tracked mode
-        let mut aext_map = std::collections::HashMap::new();
-        if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
-
-            // Get current AEXT for sender (or initialize with defaults)
-            let current_aext = storage_adapter.get_account_aext(&transaction.from)
-                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
-                .unwrap_or_else(|| AccountAext::with_defaults());
-
-            // Get FREE_NET_LIMIT from dynamic properties
-            let free_net_limit = storage_adapter.get_free_net_limit()
-                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
-
-            // Track bandwidth usage (returns path, before_aext, after_aext)
-            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
-                &transaction.from,
-                bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
-                &current_aext,
-                free_net_limit,
-            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
-
-            // Persist after AEXT to storage
-            storage_adapter.set_account_aext(&transaction.from, &after_aext)
-                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
-
-            // Add to aext_map
-            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
-
-            debug!("AEXT tracked for transfer: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
-                   transaction.from, path, before_aext.net_usage, after_aext.net_usage,
-                   before_aext.free_net_usage, after_aext.free_net_usage);
-        }
 
         // Start with empty state changes
         let mut state_changes = Vec::new();
@@ -713,7 +686,22 @@ impl BackendService {
             .get_account(&to_address)
             .map_err(|e| format!("Failed to load recipient account: {}", e))?;
         let recipient_account = recipient_opt.clone().unwrap_or_default();
-        
+
+        // TransferContract charges CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT when the recipient
+        // account does not exist.
+        let create_account_fee = if recipient_opt.is_none() {
+            storage_adapter
+                .get_create_new_account_fee_in_system_contract()
+                .map_err(|e| {
+                    format!(
+                        "Failed to get CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: {}",
+                        e
+                    )
+                })?
+        } else {
+            0
+        };
+
         // Phase 3 Fix: Only calculate fee if explicitly configured for non-VM transactions
         let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
             Some(flat_fee) => {
@@ -727,15 +715,64 @@ impl BackendService {
                 0
             }
         };
-        
-        // Validate sender has enough balance for value + fee (only if fee > 0)
-        let total_cost = transaction.value.checked_add(revm_primitives::U256::from(fee_amount))
-            .ok_or("Value + fee overflow")?;
-        
+
+        // Validate sender has enough balance for value + create-account-fee + optional flat fee.
+        let total_cost = transaction
+            .value
+            .checked_add(revm_primitives::U256::from(create_account_fee))
+            .ok_or("Value + create account fee overflow")?
+            .checked_add(revm_primitives::U256::from(fee_amount))
+            .ok_or("Value + fees overflow")?;
+
         if sender_account.balance < total_cost {
-            return Err(format!("Insufficient balance: need {}, have {}", total_cost, sender_account.balance));
+            return Err("Validate TransferContract error, balance is not sufficient.".to_string());
         }
-        
+
+        // Track AEXT for bandwidth if in tracked mode (after validation to ensure validate_fail has 0 writes)
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for sender (or initialize with defaults)
+            let current_aext = storage_adapter
+                .get_account_aext(&transaction.from)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(AccountAext::with_defaults);
+
+            // Get FREE_NET_LIMIT from dynamic properties
+            let free_net_limit = storage_adapter
+                .get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage (returns path, before_aext, after_aext)
+            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &transaction.from,
+                bandwidth_used as i64,
+                context.block_number as i64, // Use block number as "now"
+                &current_aext,
+                free_net_limit,
+            )
+            .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter
+                .set_account_aext(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
+
+            debug!(
+                "AEXT tracked for transfer: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                transaction.from,
+                path,
+                before_aext.net_usage,
+                after_aext.net_usage,
+                before_aext.free_net_usage,
+                after_aext.free_net_usage
+            );
+        }
+
         // Update sender account: balance -= (value + fee)
         let new_sender_balance = sender_account.balance - total_cost;
         let new_sender_account = revm_primitives::AccountInfo {
@@ -755,9 +792,12 @@ impl BackendService {
         storage_adapter
             .set_account(transaction.from, new_sender_account.clone())
             .map_err(|e| format!("Failed to persist sender account: {}", e))?;
-        
+
         // Update recipient account: balance += value
-        let new_recipient_balance = recipient_account.balance + transaction.value;
+        let new_recipient_balance = recipient_account
+            .balance
+            .checked_add(transaction.value)
+            .ok_or("Recipient balance overflow")?;
         let new_recipient_account = revm_primitives::AccountInfo {
             balance: new_recipient_balance,
             nonce: recipient_account.nonce,
@@ -778,11 +818,74 @@ impl BackendService {
             old_account: old_recipient_account,
             new_account: Some(new_recipient_account.clone()),
         });
-        // Persist recipient account update
-        storage_adapter
-            .set_account(to_address, new_recipient_account.clone())
-            .map_err(|e| format!("Failed to persist recipient account: {}", e))?;
-        
+
+        // Persist recipient account update (create_time for newly-created accounts)
+        if recipient_opt.is_none() {
+            use tron_backend_execution::protocol::Account as ProtoAccount;
+
+            // java-tron uses DynamicPropertiesStore.latest_block_header_timestamp as "now"
+            // for account creation timestamps.
+            let create_time = storage_adapter
+                .get_latest_block_header_timestamp()
+                .map_err(|e| format!("Failed to get LATEST_BLOCK_HEADER_TIMESTAMP: {}", e))?;
+            let recipient_proto = ProtoAccount {
+                address: storage_adapter.to_tron_address_21(&to_address).to_vec(),
+                balance: new_recipient_account.balance.as_limbs()[0] as i64,
+                create_time,
+                ..Default::default()
+            };
+            storage_adapter
+                .put_account_proto(&to_address, &recipient_proto)
+                .map_err(|e| format!("Failed to persist recipient Account proto: {}", e))?;
+        } else {
+            storage_adapter
+                .set_account(to_address, new_recipient_account.clone())
+                .map_err(|e| format!("Failed to persist recipient account: {}", e))?;
+        }
+
+        // Handle create-account-fee (burn or credit blackhole based on dynamic properties)
+        if create_account_fee > 0 {
+            let support_blackhole = storage_adapter
+                .support_black_hole_optimization()
+                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
+            if support_blackhole {
+                debug!(
+                    "Burning create-account-fee {} SUN (blackhole optimization)",
+                    create_account_fee
+                );
+            } else if let Some(blackhole_addr) = storage_adapter
+                .get_blackhole_address()
+                .map_err(|e| format!("Failed to get blackhole address: {}", e))?
+            {
+                let blackhole_account = storage_adapter
+                    .get_account(&blackhole_addr)
+                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
+                    .unwrap_or_default();
+
+                let fee_u256 = revm_primitives::U256::from(create_account_fee);
+                let new_blackhole_balance = blackhole_account
+                    .balance
+                    .checked_add(fee_u256)
+                    .ok_or("Blackhole balance overflow")?;
+                let new_blackhole_account = revm_primitives::AccountInfo {
+                    balance: new_blackhole_balance,
+                    nonce: blackhole_account.nonce,
+                    code_hash: blackhole_account.code_hash,
+                    code: blackhole_account.code.clone(),
+                };
+
+                state_changes.push(TronStateChange::AccountChange {
+                    address: blackhole_addr,
+                    old_account: Some(blackhole_account),
+                    new_account: Some(new_blackhole_account.clone()),
+                });
+
+                storage_adapter
+                    .set_account(blackhole_addr, new_blackhole_account)
+                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
+            }
+        }
+
         // Handle fee based on configuration (only if fee_amount > 0)
         if fee_amount > 0 {
             match fee_config.mode.as_str() {

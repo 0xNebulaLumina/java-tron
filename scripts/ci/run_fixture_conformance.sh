@@ -141,7 +141,6 @@ asset_issue_contract|\
 freeze_balance_contract|\
 freeze_balance_v2_contract|\
 transfer_asset_contract|\
-transfer_contract|\
 unfreeze_balance_contract|\
 unfreeze_balance_v2_contract|\
 vote_witness_contract|\
