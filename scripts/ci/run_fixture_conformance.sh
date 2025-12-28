@@ -137,7 +137,6 @@ if [ "$GENERATE_ONLY" = false ]; then
             case "$1" in
 account_create_contract|\
 asset_issue_contract|\
-freeze_balance_contract|\
 freeze_balance_v2_contract|\
 transfer_asset_contract|\
 unfreeze_balance_contract|\
