@@ -1351,7 +1351,7 @@ impl EngineBackedEvmStateStore {
         let mut total_sun: u128 = 0;
 
         // Scan all freeze records in the database
-        let records = self.storage_engine.prefix_query(self.freeze_records_database(), &[])?;
+        let records = self.buffered_prefix_query(self.freeze_records_database(), &[])?;
 
         for kv in records {
             // Key format: 0x41 + 20-byte address + 1-byte resource = 22 bytes
@@ -1381,7 +1381,7 @@ impl EngineBackedEvmStateStore {
         let mut total_sun: u128 = 0;
 
         // Scan all freeze records in the database
-        let records = self.storage_engine.prefix_query(self.freeze_records_database(), &[])?;
+        let records = self.buffered_prefix_query(self.freeze_records_database(), &[])?;
 
         for kv in records {
             // Key format: 0x41 + 20-byte address + 1-byte resource = 22 bytes
@@ -1647,7 +1647,7 @@ impl EngineBackedEvmStateStore {
         tracing::debug!("Getting freeze record for address {:?}, resource {}, key: {}",
                        address, resource, hex::encode(&key));
 
-        match self.storage_engine.get(self.freeze_records_database(), &key)? {
+        match self.buffered_get(self.freeze_records_database(), &key)? {
             Some(data) => {
                 let record = FreezeRecord::deserialize(&data)?;
                 tracing::debug!("Found freeze record: amount={}, expiration={}",
