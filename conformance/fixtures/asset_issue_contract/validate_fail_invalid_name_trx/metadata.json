@@ -4,7 +4,7 @@
   "caseName": "validate_fail_invalid_name_trx",
   "caseCategory": "validate_fail",
   "description": "Fail when asset name is \u0027trx\u0027 (reserved)",
-  "generatedAt": "2025-12-23T10:39:17.243Z",
+  "generatedAt": "2025-12-28T11:46:13.669Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
