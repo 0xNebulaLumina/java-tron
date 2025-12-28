@@ -1009,26 +1009,29 @@ impl BackendService {
         // Extract URL from transaction data
         // For WitnessCreateContract, the data contains the URL bytes
         let url_bytes = &transaction.data;
-        let url = String::from_utf8(url_bytes.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 in witness URL: {}", e))?;
+        // 1. Validate URL format (java-tron TransactionUtil.validUrl with allowEmpty=false)
+        if url_bytes.is_empty() || url_bytes.len() > 256 {
+            return Err("Invalid url".to_string());
+        }
+
+        // Java uses ByteString#toStringUtf8(); accept non-UTF-8 bytes lossily for parity.
+        let url = String::from_utf8_lossy(url_bytes).to_string();
 
         debug!("WitnessCreate URL: {}", url);
 
-        // 1. Validate URL format (basic check)
-        // Align with embedded: allow empty URL, enforce max length only
-        if url.len() > 256 {
-            return Err("Invalid witness URL: too long".to_string());
-        }
+        // Precompute readable owner address (21-byte TRON address hex) for parity error messages.
+        let owner_tron_21 = storage_adapter.to_tron_address_21(&transaction.from);
+        let readable_owner = revm_primitives::hex::encode(owner_tron_21);
 
         // 2. Load owner account
         let owner_account = storage_adapter.get_account(&transaction.from)
             .map_err(|e| format!("Failed to load owner account: {}", e))?
-            .ok_or("Owner account does not exist".to_string())?;
+            .ok_or_else(|| format!("account[{}] not exists", readable_owner))?;
 
         // 3. Check if owner is already a witness
         if storage_adapter.is_witness(&transaction.from)
             .map_err(|e| format!("Failed to check witness status: {}", e))? {
-            return Err("Owner is already a witness".to_string());
+            return Err(format!("Witness[{}] has existed", readable_owner));
         }
 
         // 4. Get dynamic properties
@@ -1048,8 +1051,7 @@ impl BackendService {
 
         // 5. Validate sufficient balance
         if owner_account.balance < revm_primitives::U256::from(account_upgrade_cost) {
-            return Err(format!("Insufficient balance: need {} SUN, have {}",
-                              account_upgrade_cost, owner_account.balance));
+            return Err("balance < AccountUpgradeCost".to_string());
         }
 
         // 6. Prepare state changes
@@ -1067,7 +1069,15 @@ impl BackendService {
 
         debug!("Created witness entry for address {:?}", transaction.from);
 
-        // 8. Update owner account - deduct cost and set witness flag
+        // 8. Mark owner account as witness (Account.is_witness = true)
+        let mut owner_account_proto = storage_adapter.get_account_proto(&transaction.from)
+            .map_err(|e| format!("Failed to load owner account proto: {}", e))?
+            .ok_or_else(|| format!("account[{}] not exists", readable_owner))?;
+        owner_account_proto.is_witness = true;
+        storage_adapter.put_account_proto(&transaction.from, &owner_account_proto)
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+
+        // 9. Update owner account - deduct cost
         let new_owner_account = revm_primitives::AccountInfo {
             balance: owner_account.balance - revm_primitives::U256::from(account_upgrade_cost),
             nonce: owner_account.nonce,
@@ -1086,11 +1096,13 @@ impl BackendService {
             .set_account(transaction.from, new_owner_account.clone())
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
-        // 9. Handle fee burning/crediting
+        // 10. Handle fee burning/crediting
         let fee_destination: String;
         if support_blackhole {
             // Burn mode - no additional account change needed
             info!("Burning {} SUN (blackhole optimization)", account_upgrade_cost);
+            storage_adapter.burn_trx(account_upgrade_cost)
+                .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             fee_destination = String::from("burn");
         } else {
             // Credit blackhole account
@@ -1133,7 +1145,11 @@ impl BackendService {
             }
         }
 
-        // 10. Sort state changes deterministically for CSV parity
+        // 11. Update dynamic properties (java: addTotalCreateWitnessCost)
+        storage_adapter.add_total_create_witness_cost(account_upgrade_cost)
+            .map_err(|e| format!("Failed to update TOTAL_CREATE_WITNESS_FEE: {}", e))?;
+
+        // 12. Sort state changes deterministically for CSV parity
         state_changes.sort_by(|a, b| {
             match (a, b) {
                 (TronStateChange::AccountChange { address: addr_a, .. },
@@ -1144,7 +1160,7 @@ impl BackendService {
             }
         });
 
-        // 11. Calculate bandwidth usage
+        // 13. Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
         // Track AEXT for bandwidth if in tracked mode

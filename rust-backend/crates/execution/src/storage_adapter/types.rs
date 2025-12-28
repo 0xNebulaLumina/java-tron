@@ -29,12 +29,19 @@ impl WitnessInfo {
 
     /// Serialize witness info to Java-compatible protobuf format
     pub fn serialize(&self) -> Vec<u8> {
+        self.serialize_with_prefix(0x41)
+    }
+
+    /// Serialize witness info to Java-compatible protobuf format with a specific network prefix.
+    ///
+    /// java-tron stores witness addresses as 21-byte TRON addresses (prefix + 20 bytes).
+    pub fn serialize_with_prefix(&self, address_prefix: u8) -> Vec<u8> {
         use prost::Message;
         use crate::protocol::Witness;
 
-        // Build TRON address (21 bytes: 0x41 prefix + 20-byte address)
+        // Build TRON address (21 bytes: network prefix + 20-byte address)
         let mut tron_address = Vec::with_capacity(21);
-        tron_address.push(0x41); // TRON address prefix
+        tron_address.push(address_prefix);
         tron_address.extend_from_slice(self.address.as_slice());
 
         // Convert vote_count to i64 (panic if exceeds i64::MAX)
@@ -51,7 +58,9 @@ impl WitnessInfo {
             total_missed: 0,   // Default
             latest_block_num: 0, // Default
             latest_slot_num: 0,  // Default
-            is_jobs: true, // Set to true for parity with Java genesis writes
+            // java-tron does not set this field for WitnessCreate writes (default false).
+            // Keep default for fixture parity.
+            is_jobs: false,
         };
 
         // Encode to bytes

@@ -145,7 +145,6 @@ unfreeze_balance_contract|\
 unfreeze_balance_v2_contract|\
 vote_witness_contract|\
 withdraw_balance_contract|\
-witness_create_contract|\
 witness_update_contract)
                     return 0
                     ;;

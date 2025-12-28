@@ -689,6 +689,82 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get TOTAL_CREATE_WITNESS_FEE dynamic property.
+    ///
+    /// Java stores this under key "TOTAL_CREATE_WITNESS_FEE" (constant name: TOTAL_CREATE_WITNESS_COST).
+    /// Default: 0 if not present.
+    pub fn get_total_create_witness_cost(&self) -> Result<i64> {
+        let key = b"TOTAL_CREATE_WITNESS_FEE";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3],
+                data[4], data[5], data[6], data[7],
+            ])),
+            Some(_) => Ok(0),
+            None => Ok(0),
+        }
+    }
+
+    /// Add to TOTAL_CREATE_WITNESS_FEE dynamic property (java: addTotalCreateWitnessCost()).
+    pub fn add_total_create_witness_cost(&self, fee: u64) -> Result<()> {
+        if fee == 0 {
+            return Ok(());
+        }
+
+        let delta: i64 = fee
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("fee exceeds i64::MAX"))?;
+        let current = self.get_total_create_witness_cost()?;
+        let new_value = current
+            .checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_create_witness_cost"))?;
+
+        let key = b"TOTAL_CREATE_WITNESS_FEE";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            new_value.to_be_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
+    /// Get BURN_TRX_AMOUNT dynamic property.
+    /// Default: 0 if not present.
+    pub fn get_burn_trx_amount(&self) -> Result<i64> {
+        let key = b"BURN_TRX_AMOUNT";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3],
+                data[4], data[5], data[6], data[7],
+            ])),
+            Some(_) => Ok(0),
+            None => Ok(0),
+        }
+    }
+
+    /// Burn TRX by incrementing BURN_TRX_AMOUNT (java: burnTrx()).
+    pub fn burn_trx(&self, amount: u64) -> Result<()> {
+        if amount == 0 {
+            return Ok(());
+        }
+
+        let delta: i64 = amount
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("burn amount exceeds i64::MAX"))?;
+        let current = self.get_burn_trx_amount()?;
+        let new_value = current
+            .checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in burn_trx"))?;
+
+        let key = b"BURN_TRX_AMOUNT";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            new_value.to_be_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
     /// Get AllowNewResourceModel dynamic property
     /// Determines whether to use new resource model for tron power calculation
     /// Default: true (enabled)
@@ -1359,8 +1435,8 @@ impl EngineBackedEvmStateStore {
     /// Uses protobuf encoding by default for Java compatibility
     pub fn put_witness(&self, witness: &WitnessInfo) -> Result<()> {
         let key = self.witness_key(&witness.address);
-        // Use protobuf encoding for Java compatibility
-        let data = witness.serialize();
+        // Use protobuf encoding for Java compatibility, with the detected network prefix.
+        let data = witness.serialize_with_prefix(self.address_prefix);
 
         tracing::debug!("Storing witness (protobuf format) for address {:?}, key: {}, URL: {}, votes: {}",
                        witness.address, hex::encode(&key), witness.url, witness.vote_count);
