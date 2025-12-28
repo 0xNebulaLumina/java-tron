@@ -557,21 +557,17 @@ impl ConformanceRunner {
 
                 let result = backend_service.execute_non_vm_contract(&mut storage_adapter, &transaction, &context);
 
-                // Only commit buffered writes on successful execution
-                match &result {
-                    Ok(exec_result) if exec_result.success => {
-                        if let Err(e) = storage_adapter.commit_buffer() {
-                            return ConformanceResult::failure(
-                                metadata,
-                                format!("Failed to commit write buffer: {}", e),
-                            );
-                        }
-                    }
-                    _ => {
-                        // For validation failures or errors, drop buffer without committing
-                        // This ensures zero writes to post_db for validate_fail fixtures
-                        tracing::debug!("Dropping write buffer without commit (execution failed or reverted)");
-                    }
+                // Conformance fixtures capture java-tron's persisted post_db. Some fixtures expect
+                // state changes even when the transaction result is REVERT, and the current
+                // non-VM dispatch returns `Err(String)` for those failures.
+                //
+                // For fixture parity, always commit buffered writes after execution; the contract
+                // logic itself determines whether it wrote any state.
+                if let Err(e) = storage_adapter.commit_buffer() {
+                    return ConformanceResult::failure(
+                        metadata,
+                        format!("Failed to commit write buffer: {}", e),
+                    );
                 }
 
                 result
@@ -629,23 +625,21 @@ impl ConformanceRunner {
                         }
                     }
 
-                    post_storage_adapter
-                        .apply_vm_energy_fee(
-                            &transaction.from,
-                            result.energy_used,
-                            context.energy_price,
-                        )
-                        .map_err(|e| format!("Failed to apply VM energy fee: {}", e))?;
-
                     // Persist SmartContract metadata + ABI after successful CreateSmartContract.
+                    //
+                    // IMPORTANT: use the *same* EVM write buffer so code_hash can be computed
+                    // from the uncommitted runtime code in CodeStore (matches java-tron).
                     if transaction.metadata.contract_type
                         == Some(tron_backend_execution::TronContractType::CreateSmartContract)
                         && result.success
                     {
                         if let Some(created_address) = result.contract_address.as_ref() {
+                            let mut metadata_adapter =
+                                EngineBackedEvmStateStore::new(storage_engine.clone());
+                            metadata_adapter.set_write_buffer(write_buffer.clone());
                             backend_service
                                 .persist_smart_contract_metadata(
-                                    &mut post_storage_adapter,
+                                    &mut metadata_adapter,
                                     &transaction,
                                     &context,
                                     created_address,
@@ -659,23 +653,30 @@ impl ConformanceRunner {
                         }
                     }
 
-                    // Commit both buffers on successful execution
-                    // The EVM buffer contains VM state changes, post buffer contains fee + metadata
+                    // Commit policy:
+                    // - VM state changes are only committed on SUCCESS (EVM revert must not persist).
+                    // - Post-processing (energy fee) must be committed even on REVERT for fixture parity.
                     if result.success {
-                        // Commit main EVM write buffer
-                        write_buffer.lock()
+                        write_buffer
+                            .lock()
                             .map_err(|e| format!("Lock poisoned: {}", e))?
                             .commit(&storage_engine)
                             .map_err(|e| format!("Failed to commit EVM write buffer: {}", e))?;
-
-                        // Commit post-processing buffer
-                        post_storage_adapter.commit_buffer()
-                            .map_err(|e| format!("Failed to commit post-processing buffer: {}", e))?;
-                    } else {
-                        // On failure, drop buffers without committing
-                        // This ensures validate_fail fixtures produce zero writes
-                        tracing::debug!("Dropping VM write buffers without commit (execution failed)");
                     }
+
+                    // Apply VM energy fee after committing EVM state on SUCCESS so balance deltas
+                    // (e.g., contract creation call_value transfer) are visible when charging fees.
+                    post_storage_adapter
+                        .apply_vm_energy_fee(
+                            &transaction.from,
+                            result.energy_used,
+                            context.energy_price,
+                        )
+                        .map_err(|e| format!("Failed to apply VM energy fee: {}", e))?;
+
+                    post_storage_adapter
+                        .commit_buffer()
+                        .map_err(|e| format!("Failed to commit post-processing buffer: {}", e))?;
 
                     Ok(result)
                 })()

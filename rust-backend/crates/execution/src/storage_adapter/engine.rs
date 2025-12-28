@@ -21,7 +21,8 @@ use super::traits::EvmStateStore;
 use super::types::{WitnessInfo, VotesRecord, FreezeRecord, AccountAext};
 use super::utils::{keccak256, to_tron_address};
 use super::db_names;
-use super::write_buffer::ExecutionWriteBuffer;
+use super::write_buffer::{ExecutionWriteBuffer, WriteOp};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 // Import the generated TRON protocol types
@@ -125,6 +126,68 @@ impl EngineBackedEvmStateStore {
         } else {
             self.storage_engine.put(db, &key, &value)
         }
+    }
+
+    /// Helper method to read from storage or buffer.
+    ///
+    /// When a write buffer is attached, reads consult the buffer first to
+    /// provide read-your-writes semantics within a transaction.
+    fn buffered_get(&self, db: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        if let Some(buffer) = &self.write_buffer {
+            let guard = buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+            if let Some(ops) = guard.get_operations(db) {
+                if let Some(op) = ops.get(key) {
+                    return match op {
+                        WriteOp::Put(value) => Ok(Some(value.clone())),
+                        WriteOp::Delete => Ok(None),
+                    };
+                }
+            }
+        }
+        self.storage_engine.get(db, key)
+    }
+
+    /// Helper method to prefix-query from storage with buffer overlay.
+    ///
+    /// Some system/market handlers iterate keys after writing new ones within
+    /// the same transaction; this makes those writes visible without commit.
+    fn buffered_prefix_query(
+        &self,
+        db: &str,
+        prefix: &[u8],
+    ) -> Result<Vec<tron_backend_storage::KeyValue>> {
+        let mut merged: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+        for kv in self.storage_engine.prefix_query(db, prefix)? {
+            merged.insert(kv.key, kv.value);
+        }
+
+        if let Some(buffer) = &self.write_buffer {
+            let guard = buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+            if let Some(ops) = guard.get_operations(db) {
+                for (key, op) in ops {
+                    if !key.starts_with(prefix) {
+                        continue;
+                    }
+                    match op {
+                        WriteOp::Put(value) => {
+                            merged.insert(key.clone(), value.clone());
+                        }
+                        WriteOp::Delete => {
+                            merged.remove(key);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(merged
+            .into_iter()
+            .map(|(key, value)| tron_backend_storage::KeyValue {
+                key,
+                value,
+                found: true,
+            })
+            .collect())
     }
 
     /// Helper method to delete from storage or buffer.
@@ -402,7 +465,7 @@ impl EngineBackedEvmStateStore {
     /// operations that need to inspect or modify specific fields.
     pub fn get_account_proto(&self, address: &Address) -> Result<Option<ProtoAccount>> {
         let key = self.account_key(address);
-        match self.storage_engine.get(self.account_database(), &key)? {
+        match self.buffered_get(self.account_database(), &key)? {
             Some(data) => {
                 let proto_account = ProtoAccount::decode(data.as_slice())
                     .map_err(|e| anyhow::anyhow!("Failed to decode Account proto: {}", e))?;
@@ -3073,7 +3136,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
         tracing::info!("Getting account for address {:?} (tron: {}), key: {}", 
                       address, address_tron, hex::encode(&key));
 
-        match self.storage_engine.get(self.account_database(), &key)? {
+        match self.buffered_get(self.account_database(), &key)? {
             Some(data) => {
                 tracing::debug!("Found account data, length: {}, first 32 bytes: {}",
                                data.len(), hex::encode(&data[..std::cmp::min(32, data.len())]));
@@ -3110,7 +3173,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn get_code(&self, address: &Address) -> Result<Option<Bytecode>> {
         let key = self.code_key(address);
-        match self.storage_engine.get(self.code_database(), &key)? {
+        match self.buffered_get(self.code_database(), &key)? {
             Some(data) => Ok(Some(Bytecode::new_raw(data.into()))),
             None => Ok(None),
         }
@@ -3118,7 +3181,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn get_storage(&self, address: &Address, key: &U256) -> Result<U256> {
         let storage_key = self.contract_storage_key(address, key);
-        match self.storage_engine.get(self.storage_row_database(), &storage_key)? {
+        match self.buffered_get(self.storage_row_database(), &storage_key)? {
             Some(data) => {
                 if data.len() == 32 {
                     Ok(U256::from_be_bytes::<32>(data.try_into().unwrap()))
@@ -3136,7 +3199,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
         // Phase 0.1: Use decode→modify→encode pattern to preserve existing fields
         // First, try to read existing account data
-        let existing_data = self.storage_engine.get(self.account_database(), &key)?;
+        let existing_data = self.buffered_get(self.account_database(), &key)?;
 
         // Serialize using the update method that preserves existing fields
         let data = self.serialize_account_update(
@@ -3696,7 +3759,7 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 (disabled)
     pub fn allow_market_transaction(&self) -> Result<bool> {
         let key = b"ALLOW_MARKET_TRANSACTION";
-        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+        match self.buffered_get(db_names::system::PROPERTIES, key)? {
             Some(data) => {
                 if data.len() == 8 {
                     let value = i64::from_be_bytes(data.as_slice().try_into()?);
@@ -3719,7 +3782,7 @@ impl EngineBackedEvmStateStore {
     /// Default: 0
     pub fn get_market_sell_fee(&self) -> Result<i64> {
         let key = b"MARKET_SELL_FEE";
-        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+        match self.buffered_get(db_names::system::PROPERTIES, key)? {
             Some(data) => {
                 if data.len() == 8 {
                     Ok(i64::from_be_bytes(data.as_slice().try_into()?))
@@ -3736,7 +3799,7 @@ impl EngineBackedEvmStateStore {
     /// Default: 0
     pub fn get_market_cancel_fee(&self) -> Result<i64> {
         let key = b"MARKET_CANCEL_FEE";
-        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+        match self.buffered_get(db_names::system::PROPERTIES, key)? {
             Some(data) => {
                 if data.len() == 8 {
                     Ok(i64::from_be_bytes(data.as_slice().try_into()?))
@@ -3753,7 +3816,7 @@ impl EngineBackedEvmStateStore {
     /// Default: Long.MAX_VALUE
     pub fn get_market_quantity_limit(&self) -> Result<i64> {
         let key = b"MARKET_QUANTITY_LIMIT";
-        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+        match self.buffered_get(db_names::system::PROPERTIES, key)? {
             Some(data) => {
                 if data.len() == 8 {
                     Ok(i64::from_be_bytes(data.as_slice().try_into()?))
@@ -3769,7 +3832,7 @@ impl EngineBackedEvmStateStore {
     /// Key: order_id bytes (SHA3 hash)
     pub fn get_market_order(&self, order_id: &[u8]) -> Result<Option<crate::protocol::MarketOrder>> {
         use prost::Message;
-        match self.storage_engine.get(self.market_order_database(), order_id)? {
+        match self.buffered_get(self.market_order_database(), order_id)? {
             Some(data) => {
                 let order = crate::protocol::MarketOrder::decode(data.as_slice())?;
                 Ok(Some(order))
@@ -3797,7 +3860,7 @@ impl EngineBackedEvmStateStore {
     pub fn get_market_account_order(&self, address: &Address) -> Result<Option<crate::protocol::MarketAccountOrder>> {
         use prost::Message;
         let key = self.to_tron_address_21(address);
-        match self.storage_engine.get(self.market_account_database(), &key)? {
+        match self.buffered_get(self.market_account_database(), &key)? {
             Some(data) => {
                 let account_order = crate::protocol::MarketAccountOrder::decode(data.as_slice())?;
                 Ok(Some(account_order))
@@ -3819,7 +3882,7 @@ impl EngineBackedEvmStateStore {
     /// Get price count for a token pair
     /// Key: createPairKey(sellTokenId, buyTokenId) = 38 bytes (19 + 19)
     pub fn get_market_pair_price_count(&self, pair_key: &[u8]) -> Result<i64> {
-        match self.storage_engine.get(self.market_pair_to_price_database(), pair_key)? {
+        match self.buffered_get(self.market_pair_to_price_database(), pair_key)? {
             Some(data) => {
                 if data.len() == 8 {
                     Ok(i64::from_be_bytes(data.as_slice().try_into()?))
@@ -3846,14 +3909,14 @@ impl EngineBackedEvmStateStore {
 
     /// Check if a token pair exists
     pub fn has_market_pair(&self, pair_key: &[u8]) -> Result<bool> {
-        Ok(self.storage_engine.get(self.market_pair_to_price_database(), pair_key)?.is_some())
+        Ok(self.buffered_get(self.market_pair_to_price_database(), pair_key)?.is_some())
     }
 
     /// Get MarketOrderIdList for a price key
     /// Key: createPairPriceKey(sellTokenId, buyTokenId, sellQuantity, buyQuantity) = 54 bytes
     pub fn get_market_order_id_list(&self, price_key: &[u8]) -> Result<Option<crate::protocol::MarketOrderIdList>> {
         use prost::Message;
-        match self.storage_engine.get(self.market_pair_price_to_order_database(), price_key)? {
+        match self.buffered_get(self.market_pair_price_to_order_database(), price_key)? {
             Some(data) => {
                 let list = crate::protocol::MarketOrderIdList::decode(data.as_slice())?;
                 Ok(Some(list))
@@ -3879,7 +3942,7 @@ impl EngineBackedEvmStateStore {
 
     /// Check if a price key exists in MarketPairPriceToOrderStore
     pub fn has_market_price_key(&self, price_key: &[u8]) -> Result<bool> {
-        Ok(self.storage_engine.get(self.market_pair_price_to_order_database(), price_key)?.is_some())
+        Ok(self.buffered_get(self.market_pair_price_to_order_database(), price_key)?.is_some())
     }
 
     /// List all price keys for a given token pair prefix from MarketPairPriceToOrderStore.
@@ -3889,7 +3952,7 @@ impl EngineBackedEvmStateStore {
     /// Java-tron configures a custom comparator for this CF, so callers should
     /// apply TRON's MarketUtils.comparePriceKey ordering when needed.
     pub fn list_market_pair_price_keys(&self, pair_key_prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
-        let entries = self.storage_engine.prefix_query(
+        let entries = self.buffered_prefix_query(
             self.market_pair_price_to_order_database(),
             pair_key_prefix,
         )?;
