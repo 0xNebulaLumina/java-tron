@@ -1775,73 +1775,59 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
-        info!("AccountUpdate owner={} name_len={}",
-              tron_backend_common::to_tron_address(&transaction.from),
-              transaction.data.len());
-
-        // Parse account name from transaction data
+        let owner_tron = tron_backend_common::to_tron_address(&transaction.from);
         let name_bytes = transaction.data.as_ref();
 
-        // Validation: name length constraints (1 <= len <= 32 bytes to match java-tron)
-        if name_bytes.is_empty() {
-            warn!("Account name cannot be empty");
-            return Err("Account name cannot be empty".to_string());
-        }
-        if name_bytes.len() > 32 {
-            warn!("Account name cannot exceed 32 bytes, got {}", name_bytes.len());
-            return Err(format!("Account name cannot exceed 32 bytes, got {}", name_bytes.len()));
-        }
+        info!(
+            "AccountUpdate owner={} name_len={}",
+            owner_tron,
+            name_bytes.len()
+        );
 
-        // Validation: UTF-8 encoding (recommended but not enforced)
-        let name_str = match std::str::from_utf8(name_bytes) {
-            Ok(s) => s,
-            Err(e) => {
-                debug!("Account name contains non-UTF-8 bytes: {}", e);
-                // Continue with raw bytes - allowing arbitrary bytes for compatibility
-                ""
-            }
-        };
-
-        // Validation: owner account must exist
-        let owner_account = match storage_adapter.get_account(&transaction.from) {
-            Ok(Some(account)) => account,
-            Ok(None) => {
-                warn!("Owner account does not exist");
-                return Err("Owner account does not exist".to_string());
-            },
-            Err(e) => {
-                error!("Failed to get owner account: {}", e);
-                return Err(format!("Failed to get owner account: {}", e));
-            }
-        };
-
-        // Validation: "only set once" semantics (if enforcing immutability)
-        let existing_name: Option<String> = match storage_adapter.get_account_name(&transaction.from) {
-            Ok(Some(existing_name)) => {
-                warn!("Account name is already set to '{}', rejecting duplicate set attempt", existing_name);
-                return Err("Account name is already set".to_string());
-            },
-            Ok(None) => {
-                debug!("No existing account name found, proceeding with setting");
-                None
-            },
-            Err(e) => {
-                error!("Failed to check existing account name: {}", e);
-                return Err(format!("Failed to check existing account name: {}", e));
-            }
-        };
-
-        // Apply: persist account name
-        if let Err(e) = storage_adapter.set_account_name(transaction.from, name_bytes) {
-            error!("Failed to set account name: {}", e);
-            return Err(format!("Failed to set account name: {}", e));
+        // Validation parity: TransactionUtil.validAccountName(bytes)
+        // - allow empty
+        // - max length = 200
+        if name_bytes.len() > 200 {
+            warn!(
+                "Invalid accountName: len={} owner={}",
+                name_bytes.len(),
+                owner_tron
+            );
+            return Err("Invalid accountName".to_string());
         }
 
-        // Debug: previous vs new name strings/hex
-        debug!("Successfully set account name for owner, previous: {:?}, new: {} (hex: {})",
-               existing_name,
-               if name_str.is_empty() { format!("<{} bytes>", name_bytes.len()) } else { name_str.to_string() },
-               hex::encode(name_bytes));
+        // Validation: owner account must exist (java: \"Account does not exist\")
+        let owner_account = storage_adapter
+            .get_account(&transaction.from)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| "Account does not exist".to_string())?;
+
+        // Validation: only-set-once + duplicate name checks depend on ALLOW_UPDATE_ACCOUNT_NAME
+        let owner_proto = storage_adapter
+            .get_account_proto(&transaction.from)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| "Account does not exist".to_string())?;
+
+        let allow_update_account_name = storage_adapter
+            .get_allow_update_account_name()
+            .map_err(|e| format!("Failed to get ALLOW_UPDATE_ACCOUNT_NAME: {}", e))?;
+
+        if allow_update_account_name == 0 && !owner_proto.account_name.is_empty() {
+            return Err("This account name is already existed".to_string());
+        }
+
+        if allow_update_account_name == 0
+            && storage_adapter
+                .account_index_has(name_bytes)
+                .map_err(|e| format!("Failed to check account-index: {}", e))?
+        {
+            return Err("This name is existed".to_string());
+        }
+
+        // Apply: persist account name and update account-index (name -> address).
+        storage_adapter
+            .set_account_name(transaction.from, name_bytes)
+            .map_err(|e| format!("Failed to set account name: {}", e))?;
 
         // State Changes: emit exactly one account-level change for CSV parity
         // old_account == new_account (no balance/nonce/code changes) to match embedded journaled no-op

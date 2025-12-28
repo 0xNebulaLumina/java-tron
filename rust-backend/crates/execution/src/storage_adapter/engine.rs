@@ -1750,62 +1750,67 @@ impl EngineBackedEvmStateStore {
 
     /// Get account name for an address
     pub fn get_account_name(&self, address: &Address) -> Result<Option<String>> {
-        let key = self.account_key(address); // Reuse account_key helper (21-byte with 0x41 prefix)
-        tracing::debug!("Getting account name for address {:?}, key: {}",
-                       address, hex::encode(&key));
+        let proto_account = match self.get_account_proto(address)? {
+            Some(account) => account,
+            None => return Ok(None),
+        };
 
-        match self.storage_engine.get(self.account_index_database(), &key)? {
-            Some(data) => {
-                tracing::debug!("Found account name data, length: {}", data.len());
-                // Decode as UTF-8 string
-                match String::from_utf8(data) {
-                    Ok(name) => {
-                        tracing::debug!("Successfully decoded account name: {}", name);
-                        Ok(Some(name))
-                    },
-                    Err(e) => {
-                        tracing::error!("Failed to decode account name as UTF-8: {}", e);
-                        Err(anyhow::anyhow!("Invalid UTF-8 in account name: {}", e))
-                    }
-                }
-            },
-            None => {
-                tracing::debug!("No account name found for address {:?}", address);
-                Ok(None)
-            }
+        if proto_account.account_name.is_empty() {
+            return Ok(None);
         }
+
+        String::from_utf8(proto_account.account_name)
+            .map(Some)
+            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in account name: {}", e))
     }
 
     /// Set account name for an address
     pub fn set_account_name(&mut self, address: Address, name: &[u8]) -> Result<()> {
-        let key = self.account_key(&address); // Reuse account_key helper (21-byte with 0x41 prefix)
-
-        tracing::debug!("Setting account name for address {:?}, key: {}, name_len: {}",
-                       address, hex::encode(&key), name.len());
-
-        // Validate name length (1 <= len <= 32 bytes to match java-tron constraints)
-        if name.is_empty() {
-            return Err(anyhow::anyhow!("Account name cannot be empty"));
-        }
-        if name.len() > 32 {
-            return Err(anyhow::anyhow!("Account name cannot exceed 32 bytes, got {}", name.len()));
+        const MAX_ACCOUNT_NAME_LEN: usize = 200;
+        if name.len() > MAX_ACCOUNT_NAME_LEN {
+            return Err(anyhow::anyhow!("Invalid accountName"));
         }
 
-        // Validate UTF-8 encoding (optional policy)
-        match std::str::from_utf8(name) {
-            Ok(name_str) => {
-                tracing::debug!("Account name is valid UTF-8: {}", name_str);
-            },
-            Err(e) => {
-                tracing::warn!("Account name contains invalid UTF-8: {}, allowing raw bytes", e);
-                // Continue with raw bytes - some chains may allow arbitrary bytes
-            }
-        }
+        let mut proto_account = self
+            .get_account_proto(&address)?
+            .ok_or_else(|| anyhow::anyhow!("Account does not exist"))?;
+        proto_account.account_name = name.to_vec();
+        self.put_account_proto(&address, &proto_account)?;
 
-        self.buffered_put(self.account_index_database(), key, name.to_vec())?;
+        // Java-tron AccountIndexStore is a reverse index: name -> address (21-byte TRON key).
+        let tron_address = self.account_key(&address);
+        self.buffered_put(self.account_index_database(), name.to_vec(), tron_address)?;
 
-        tracing::info!("Successfully stored account name for address {:?}, length: {}", address, name.len());
+        tracing::info!(
+            "Stored account name (len={}) and index entry for address {:?}",
+            name.len(),
+            address
+        );
         Ok(())
+    }
+
+    /// Get ALLOW_UPDATE_ACCOUNT_NAME dynamic property.
+    ///
+    /// Java reference: DynamicPropertiesStore.getAllowUpdateAccountName()
+    /// Default: 0 if missing.
+    pub fn get_allow_update_account_name(&self) -> Result<i64> {
+        let key = b"ALLOW_UPDATE_ACCOUNT_NAME";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ])),
+            Some(_) => Ok(0),
+            None => Ok(0),
+        }
+    }
+
+    /// Returns true if `account-index` contains `name` as a key.
+    ///
+    /// Java reference: AccountIndexStore.has(name_bytes)
+    pub fn account_index_has(&self, name: &[u8]) -> Result<bool> {
+        Ok(self
+            .buffered_get(self.account_index_database(), name)?
+            .is_some())
     }
 
     /// Get database name for account resource tracking (AEXT)
