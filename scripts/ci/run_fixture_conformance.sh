@@ -135,9 +135,6 @@ if [ "$GENERATE_ONLY" = false ]; then
     if [ "${FIXTURE_CONFORMANCE_INCLUDE_UNSUPPORTED:-0}" != "1" ]; then
         should_exclude_fixture_contract_dir() {
             case "$1" in
-                    witness_update_contract)
-                    return 0
-                    ;;
                 *)
                     return 1
                     ;;
