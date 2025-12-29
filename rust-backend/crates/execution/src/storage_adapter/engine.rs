@@ -991,17 +991,20 @@ impl EngineBackedEvmStateStore {
         let key = b"WITNESS_ALLOWANCE_FROZEN_TIME";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                if data.len() >= 8 {
-                    let days = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(days)
-                } else if !data.is_empty() {
-                    // Try parsing as single byte
-                    Ok(data[0] as i64)
-                } else {
-                    Ok(1) // Default: 1 day
+                match data.len() {
+                    len if len >= 8 => Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                    ])),
+                    4 => Ok(i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64),
+                    1 => Ok(data[0] as i64),
+                    0 => Ok(1), // Default: 1 day
+                    other => {
+                        tracing::warn!(
+                            "WITNESS_ALLOWANCE_FROZEN_TIME has invalid length: {}",
+                            other
+                        );
+                        Ok(1)
+                    }
                 }
             },
             None => {
