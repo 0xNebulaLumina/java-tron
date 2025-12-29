@@ -1488,7 +1488,8 @@ impl BackendService {
 
         Ok((
             vote_address.ok_or_else(|| "Missing vote_address".to_string())?,
-            vote_count.ok_or_else(|| "Missing vote_count".to_string())?,
+            // proto3 default for missing numeric fields is 0; allow validation to reject it.
+            vote_count.unwrap_or(0),
         ))
     }
 
@@ -1528,6 +1529,8 @@ impl BackendService {
 
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
+        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let readable_owner_address = hex::encode(&owner_address_bytes);
 
         info!("VoteWitness owner={} vote_count=?",
               owner_tron);
@@ -1558,42 +1561,37 @@ impl BackendService {
                 return Err("vote count must be greater than 0".to_string());
             }
 
-            // Validate vote_address is valid (21 bytes with 0x41 prefix)
-            let vote_address_tron = tron_backend_common::to_tron_address(vote_address);
-
-            // Validate account exists
-            match storage_adapter.get_account(vote_address) {
-                Ok(Some(_)) => {
-                    debug!("Account {} exists", vote_address_tron);
-                },
-                Ok(None) => {
-                    warn!("account {} not exist", vote_address_tron);
-                    return Err(format!("account {} not exist", vote_address_tron));
-                },
-                Err(e) => {
-                    error!("Failed to get account {}: {}", vote_address_tron, e);
-                    return Err(format!("Failed to get account {}: {}", vote_address_tron, e));
-                }
-            }
+            let vote_address_bytes = storage_adapter.to_tron_address_21(vote_address).to_vec();
+            let readable_vote_address = hex::encode(&vote_address_bytes);
 
             // Validate witness exists
-            match storage_adapter.get_witness(vote_address) {
-                Ok(Some(_)) => {
-                    debug!("Witness {} exists", vote_address_tron);
-                },
-                Ok(None) => {
-                    warn!("Witness {} not exist", vote_address_tron);
-                    return Err(format!("Witness {} not exist", vote_address_tron));
-                },
-                Err(e) => {
-                    error!("Failed to get witness {}: {}", vote_address_tron, e);
-                    return Err(format!("Failed to get witness {}: {}", vote_address_tron, e));
-                }
+            let account_exists = storage_adapter.get_account_proto(vote_address)
+                .map_err(|e| format!("Failed to get account: {}", e))?
+                .is_some();
+            if !account_exists {
+                warn!("Account {} not exists", readable_vote_address);
+                return Err(format!("Account[{}] not exists", readable_vote_address));
+            }
+
+            let is_witness = storage_adapter.is_witness(vote_address)
+                .map_err(|e| format!("Failed to check witness status: {}", e))?;
+            if !is_witness {
+                warn!("Witness {} not exists", readable_vote_address);
+                return Err(format!("Witness[{}] not exists", readable_vote_address));
             }
 
             // Add to sum
             sum_trx = sum_trx.checked_add(*vote_count)
                 .ok_or_else(|| "Vote count overflow".to_string())?;
+        }
+
+        // 3.5 Validate owner exists
+        let owner_exists = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .is_some();
+        if !owner_exists {
+            warn!("Account {} not exists", readable_owner_address);
+            return Err(format!("Account[{}] not exists", readable_owner_address));
         }
 
         // 4. Convert sum to SUN and check against tron power
@@ -1670,8 +1668,8 @@ impl BackendService {
 
         // 7. Clear new_votes and add new votes
         votes_record.clear_new_votes();
-        for (vote_address, vote_count) in votes {
-            votes_record.add_new_vote(vote_address, vote_count);
+        for (vote_address, vote_count) in &votes {
+            votes_record.add_new_vote(*vote_address, *vote_count);
         }
 
         // 8. Persist votes record
@@ -1680,6 +1678,26 @@ impl BackendService {
 
         info!("Successfully stored votes for {}: old_votes={}, new_votes={}",
               owner_tron, votes_record.old_votes.len(), votes_record.new_votes.len());
+
+        // 8.5 Update Account.votes list to match embedded semantics.
+        // java-tron clears the existing votes and appends the new ones on every vote.
+        let mut owner_account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| format!("Account[{}] not exists", readable_owner_address))?;
+
+        owner_account.votes.clear();
+        for (vote_address, vote_count) in &votes {
+            let vote_count_i64: i64 = (*vote_count).try_into()
+                .map_err(|_| "vote count overflow when converting to i64".to_string())?;
+            let vote_address_bytes = storage_adapter.to_tron_address_21(vote_address).to_vec();
+            owner_account.votes.push(tron_backend_execution::protocol::Vote {
+                vote_address: vote_address_bytes,
+                vote_count: vote_count_i64,
+            });
+        }
+
+        storage_adapter.put_account_proto(&owner, &owner_account)
+            .map_err(|e| format!("Failed to persist owner account votes: {}", e))?;
 
         // 9. Build result with CSV parity
         // Get owner account for state change

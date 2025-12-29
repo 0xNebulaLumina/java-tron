@@ -1484,7 +1484,7 @@ impl EngineBackedEvmStateStore {
     /// Store votes record
     pub fn set_votes(&self, address: Address, votes: &VotesRecord) -> Result<()> {
         let key = self.votes_key(&address);
-        let data = votes.serialize();
+        let data = votes.serialize_with_prefix(self.address_prefix);
 
         tracing::debug!("Storing votes for address {:?}, key: {}, old_votes: {}, new_votes: {}",
                        address, hex::encode(&key), votes.old_votes.len(), votes.new_votes.len());
@@ -1702,47 +1702,168 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get tron power for an address in SUN
-    /// Sums frozen amounts across BANDWIDTH (0), ENERGY (1), and TRON_POWER (2) resources
+    /// Matches java-tron's `AccountCapsule.getTronPower()` / `getAllTronPower()` semantics:
+    /// - `new_model=false` (ALLOW_NEW_RESOURCE_MODEL=0): `getTronPower()`
+    /// - `new_model=true`  (ALLOW_NEW_RESOURCE_MODEL=1): `getAllTronPower()`
     pub fn get_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
-        // Resource types as defined in Tron protocol
+        fn add_non_negative_i64(total: &mut i128, value: i64, label: &'static str) -> Result<()> {
+            if value < 0 {
+                return Err(anyhow::anyhow!("Negative {}: {}", label, value));
+            }
+            *total = total
+                .checked_add(value as i128)
+                .ok_or_else(|| anyhow::anyhow!("Overflow while adding {}", label))?;
+            Ok(())
+        }
+
+        fn to_u64_checked(value: i128, label: &'static str) -> Result<u64> {
+            if value < 0 {
+                return Err(anyhow::anyhow!("Negative {} total: {}", label, value));
+            }
+            u64::try_from(value).map_err(|_| anyhow::anyhow!("{} exceeds u64::MAX: {}", label, value))
+        }
+
+        const TRON_POWER: i32 = crate::protocol::ResourceCode::TronPower as i32;
+
+        // Prefer AccountStore representation (java-tron canonical) when present.
+        let account_total = match self.get_account_proto(address)? {
+            Some(account) => {
+                let mut tron_power: i128 = 0;
+
+                // bandwidth frozen balance (Account.frozen)
+                for frozen in &account.frozen {
+                    add_non_negative_i64(&mut tron_power, frozen.frozen_balance, "frozen_balance")?;
+                }
+
+                // energy frozen balance + delegated balances (Account.account_resource)
+                if let Some(resource) = account.account_resource.as_ref() {
+                    if let Some(frozen_energy) = resource.frozen_balance_for_energy.as_ref() {
+                        add_non_negative_i64(
+                            &mut tron_power,
+                            frozen_energy.frozen_balance,
+                            "frozen_balance_for_energy",
+                        )?;
+                    }
+                    add_non_negative_i64(
+                        &mut tron_power,
+                        resource.delegated_frozen_balance_for_energy,
+                        "delegated_frozen_balance_for_energy",
+                    )?;
+                    add_non_negative_i64(
+                        &mut tron_power,
+                        resource.delegated_frozen_v2_balance_for_energy,
+                        "delegated_frozen_v2_balance_for_energy",
+                    )?;
+                }
+
+                // bandwidth delegated balances (Account.delegated_frozen_balance_for_bandwidth)
+                add_non_negative_i64(
+                    &mut tron_power,
+                    account.delegated_frozen_balance_for_bandwidth,
+                    "delegated_frozen_balance_for_bandwidth",
+                )?;
+                add_non_negative_i64(
+                    &mut tron_power,
+                    account.delegated_frozen_v2_balance_for_bandwidth,
+                    "delegated_frozen_v2_balance_for_bandwidth",
+                )?;
+
+                // FreezeV2 balances for BANDWIDTH/ENERGY (exclude TRON_POWER).
+                for frozen_v2 in &account.frozen_v2 {
+                    if frozen_v2.r#type != TRON_POWER {
+                        add_non_negative_i64(&mut tron_power, frozen_v2.amount, "frozen_v2_amount")?;
+                    }
+                }
+
+                if !new_model {
+                    to_u64_checked(tron_power, "tron_power")?
+                } else {
+                    // getAllTronPower() = getTronPower() + tronPowerFrozenBalance + tronPowerFrozenV2Balance
+                    // with old_tron_power gating.
+                    let tron_power_frozen_balance = account
+                        .tron_power
+                        .as_ref()
+                        .map(|f| f.frozen_balance)
+                        .unwrap_or(0);
+
+                    let mut tron_power_frozen_v2_balance: i128 = 0;
+                    for frozen_v2 in &account.frozen_v2 {
+                        if frozen_v2.r#type == TRON_POWER {
+                            add_non_negative_i64(
+                                &mut tron_power_frozen_v2_balance,
+                                frozen_v2.amount,
+                                "tron_power_frozen_v2_amount",
+                            )?;
+                        }
+                    }
+
+                    let tp_frozen_total: i128 = {
+                        let mut tmp: i128 = 0;
+                        add_non_negative_i64(
+                            &mut tmp,
+                            tron_power_frozen_balance,
+                            "tron_power_frozen_balance",
+                        )?;
+                        tmp.checked_add(tron_power_frozen_v2_balance)
+                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing tron power frozen totals"))?
+                    };
+
+                    let old_tron_power = account.old_tron_power;
+                    let all_tron_power = if old_tron_power == -1 {
+                        tp_frozen_total
+                    } else if old_tron_power == 0 {
+                        tron_power
+                            .checked_add(tp_frozen_total)
+                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing all_tron_power"))?
+                    } else if old_tron_power > 0 {
+                        (old_tron_power as i128)
+                            .checked_add(tp_frozen_total)
+                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing all_tron_power"))?
+                    } else {
+                        return Err(anyhow::anyhow!("Invalid old_tron_power: {}", old_tron_power));
+                    };
+
+                    to_u64_checked(all_tron_power, "all_tron_power")?
+                }
+            }
+            None => 0,
+        };
+
+        if account_total > 0 {
+            tracing::info!(
+                address = ?address,
+                new_model = new_model,
+                total = account_total,
+                "Computed tron power from AccountStore"
+            );
+            return Ok(account_total);
+        }
+
+        // Fallback: compute from the freeze ledger DB (used in some unit tests / legacy paths).
+        // Resource types as defined in TRON protocol
         const BANDWIDTH: u8 = 0;
         const ENERGY: u8 = 1;
-        const TRON_POWER: u8 = 2;
+        const TRON_POWER_LEDGER: u8 = 2;
 
         let mut total: u64 = 0;
-        let mut bandwidth_amount: u64 = 0;
-        let mut energy_amount: u64 = 0;
-        let mut tron_power_amount: u64 = 0;
-
-        // Sum frozen amounts across all three resource types
-        for resource in [BANDWIDTH, ENERGY, TRON_POWER] {
+        for resource in [BANDWIDTH, ENERGY, TRON_POWER_LEDGER] {
             if let Some(record) = self.get_freeze_record(address, resource)? {
-                let amount = record.frozen_amount;
-                total = total.checked_add(amount)
-                    .ok_or_else(|| anyhow::anyhow!(
+                total = total.checked_add(record.frozen_amount).ok_or_else(|| {
+                    anyhow::anyhow!(
                         "Tron power overflow when adding resource {} amount {} to total {}",
-                        resource, amount, total
-                    ))?;
-
-                // Track per-resource amounts for logging
-                match resource {
-                    BANDWIDTH => bandwidth_amount = amount,
-                    ENERGY => energy_amount = amount,
-                    TRON_POWER => tron_power_amount = amount,
-                    _ => {}
-                }
+                        resource,
+                        record.frozen_amount,
+                        total
+                    )
+                })?;
             }
         }
 
-        // Log the computation with all relevant details
         tracing::info!(
             address = ?address,
             new_model = new_model,
-            bandwidth = bandwidth_amount,
-            energy = energy_amount,
-            tron_power_legacy = tron_power_amount,
             total = total,
-            "Computed tron power from freeze ledger"
+            "Computed tron power from freeze ledger fallback"
         );
 
         Ok(total)
