@@ -4,7 +4,10 @@
 use super::super::BackendService;
 use super::proto::{read_varint, TransactionResultBuilder};
 use revm_primitives::{Address, Bytes, U256};
-use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, EvmStateStore};
+use tron_backend_execution::{
+    EvmStateStore, TronExecutionContext, TronExecutionResult, TronStateChange, TronTransaction,
+    VotesRecord,
+};
 use tracing::{debug, info, error, warn};
 
 /// FreezeBalance contract parameters
@@ -376,7 +379,7 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         info!("Executing UNFREEZE_BALANCE_CONTRACT: owner={}, data_len={}",
               tron_backend_common::to_tron_address(&transaction.from),
@@ -387,52 +390,188 @@ impl BackendService {
 
         debug!("Parsed unfreeze params: resource={:?}", params.resource);
 
-        // Load owner account
-        let owner_account = storage_adapter.get_account(&transaction.from)
-            .map_err(|e| format!("Failed to load owner account: {}", e))?
-            .ok_or("Account not found for unfreeze operation")?;
-
-        debug!("Owner account loaded: balance={}, nonce={}",
-               owner_account.balance, owner_account.nonce);
-
-        // Get current freeze record to determine amount to unfreeze
-        let freeze_record = storage_adapter.get_freeze_record(
-            &transaction.from,
-            params.resource as u8
-        ).map_err(|e| format!("Failed to read freeze record: {}", e))?;
-
-        let freeze_record = freeze_record.ok_or("No frozen balance found for this resource")?;
-
-        let unfreeze_amount = freeze_record.frozen_amount;
-
-        // Validation: Check if frozen balance exists and can be unfrozen
-        if unfreeze_amount == 0 {
-            return Err("No frozen balance to unfreeze".to_string());
+        // === Validation (match java-tron UnfreezeBalanceActuator messages) ===
+        // V1 unfreeze is closed when V2 (unfreeze delay) is enabled.
+        if storage_adapter
+            .support_unfreeze_delay()
+            .map_err(|e| format!("Failed to read UNFREEZE_DELAY_DAYS: {}", e))?
+        {
+            warn!("freeze v2 is open, old freeze is closed");
+            return Err("freeze v2 is open, old freeze is closed".to_string());
         }
 
-        // TODO: Check expiration time and unfreeze delay (for now, assume can unfreeze)
+        // Load owner proto (we must update frozen fields for fixture parity).
+        let owner_proto = storage_adapter
+            .get_account_proto(&transaction.from)
+            .map_err(|e| format!("Failed to load owner account proto: {}", e))?
+            .ok_or("Account not found for unfreeze operation")?;
 
-        // Compute new owner account with increased balance
-        let mut new_owner = owner_account.clone();
-        let owner_balance_u64: u64 = owner_account.balance.try_into().unwrap_or(u64::MAX);
-        new_owner.balance = revm_primitives::U256::from(
-            owner_balance_u64.checked_add(unfreeze_amount)
-                .ok_or("Balance overflow")?
-        );
+        let owner_account = storage_adapter
+            .get_account(&transaction.from)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .unwrap_or_default();
 
-        debug!("Balance change: {} -> {}", owner_account.balance, new_owner.balance);
+        let resource_label = match params.resource {
+            FreezeResource::Bandwidth => "BANDWIDTH",
+            FreezeResource::Energy => "ENERGY",
+            FreezeResource::TronPower => "TRON_POWER",
+        };
 
-        // Persist new owner account
-        storage_adapter.set_account(transaction.from, new_owner.clone())
-            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+        let allow_new_resource_model = storage_adapter
+            .support_allow_new_resource_model()
+            .map_err(|e| format!("Failed to read ALLOW_NEW_RESOURCE_MODEL: {}", e))?;
 
-        // Remove freeze record (full unfreeze)
-        storage_adapter.remove_freeze_record(&transaction.from, params.resource as u8)
+        let (unfreeze_amount, expiration_timestamp) = match params.resource {
+            FreezeResource::Bandwidth => {
+                if owner_proto.frozen.len() > 1 {
+                    return Err("frozenCount must be 0 or 1".to_string());
+                }
+                owner_proto
+                    .frozen
+                    .first()
+                    .map(|f| (f.frozen_balance, f.expire_time))
+                    .unwrap_or((0, 0))
+            }
+            FreezeResource::Energy => owner_proto
+                .account_resource
+                .as_ref()
+                .and_then(|r| r.frozen_balance_for_energy.as_ref())
+                .map(|f| (f.frozen_balance, f.expire_time))
+                .unwrap_or((0, 0)),
+            FreezeResource::TronPower => {
+                if !allow_new_resource_model {
+                    return Err(
+                        "ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string(),
+                    );
+                }
+                owner_proto
+                    .tron_power
+                    .as_ref()
+                    .map(|f| (f.frozen_balance, f.expire_time))
+                    .unwrap_or((0, 0))
+            }
+        };
+
+        if unfreeze_amount <= 0 {
+            return Err(format!("no frozenBalance({})", resource_label));
+        }
+
+        let expiration_u64: u64 = expiration_timestamp.try_into().unwrap_or(0);
+        if context.block_timestamp < expiration_u64 {
+            return Err(format!("It's not time to unfreeze({}).", resource_label));
+        }
+
+        // Determine whether to use the new reward algorithm for weight deltas.
+        let allow_new_reward = storage_adapter
+            .get_current_cycle_number()
+            .and_then(|current| {
+                storage_adapter
+                    .get_new_reward_algorithm_effective_cycle()
+                    .map(|effective| current >= effective)
+            })
+            .unwrap_or(false);
+
+        let mut new_owner_proto = owner_proto.clone();
+
+        // Apply unfreeze changes to account proto and global weights.
+        match params.resource {
+            FreezeResource::Bandwidth => {
+                let old_frozen = owner_proto
+                    .frozen
+                    .first()
+                    .map(|f| f.frozen_balance)
+                    .unwrap_or(0);
+                let old_weight = old_frozen / super::super::TRX_PRECISION as i64;
+                let new_weight = 0i64;
+                let decrement = new_weight - old_weight;
+                let weight = if allow_new_reward {
+                    decrement
+                } else {
+                    -(unfreeze_amount / super::super::TRX_PRECISION as i64)
+                };
+                storage_adapter
+                    .add_total_net_weight(weight)
+                    .map_err(|e| format!("Failed to update total net weight: {}", e))?;
+
+                new_owner_proto.frozen.clear();
+            }
+            FreezeResource::Energy => {
+                let old_frozen = owner_proto
+                    .account_resource
+                    .as_ref()
+                    .and_then(|r| r.frozen_balance_for_energy.as_ref())
+                    .map(|f| f.frozen_balance)
+                    .unwrap_or(0);
+                let old_weight = old_frozen / super::super::TRX_PRECISION as i64;
+                let new_weight = 0i64;
+                let decrement = new_weight - old_weight;
+                let weight = if allow_new_reward {
+                    decrement
+                } else {
+                    -(unfreeze_amount / super::super::TRX_PRECISION as i64)
+                };
+                storage_adapter
+                    .add_total_energy_weight(weight)
+                    .map_err(|e| format!("Failed to update total energy weight: {}", e))?;
+
+                if let Some(ref mut res) = new_owner_proto.account_resource {
+                    res.frozen_balance_for_energy = None;
+                }
+            }
+            FreezeResource::TronPower => {
+                let old_frozen = owner_proto
+                    .tron_power
+                    .as_ref()
+                    .map(|f| f.frozen_balance)
+                    .unwrap_or(0);
+                let old_weight = old_frozen / super::super::TRX_PRECISION as i64;
+                let new_weight = 0i64;
+                let decrement = new_weight - old_weight;
+                let weight = if allow_new_reward {
+                    decrement
+                } else {
+                    -(unfreeze_amount / super::super::TRX_PRECISION as i64)
+                };
+                storage_adapter
+                    .add_total_tron_power_weight(weight)
+                    .map_err(|e| format!("Failed to update total tron power weight: {}", e))?;
+
+                new_owner_proto.tron_power = None;
+            }
+        }
+
+        // Compute new owner balance.
+        new_owner_proto.balance = owner_proto
+            .balance
+            .checked_add(unfreeze_amount)
+            .ok_or("Balance overflow")?;
+
+        // Persist updated owner proto.
+        storage_adapter
+            .put_account_proto(&transaction.from, &new_owner_proto)
+            .map_err(|e| format!("Failed to persist owner account proto: {}", e))?;
+
+        // Ensure a VotesRecord exists (java-tron writes an empty VotesCapsule even when no votes).
+        if storage_adapter
+            .get_votes(&transaction.from)
+            .map_err(|e| format!("Failed to load votes record: {}", e))?
+            .is_none()
+        {
+            let votes = VotesRecord::empty(transaction.from);
+            storage_adapter
+                .set_votes(transaction.from, &votes)
+                .map_err(|e| format!("Failed to persist votes record: {}", e))?;
+        }
+
+        // Keep the Rust-side freeze ledger updated (not part of Java DB layout).
+        storage_adapter
+            .remove_freeze_record(&transaction.from, params.resource as u8)
             .map_err(|e| format!("Failed to remove freeze record: {}", e))?;
 
-        debug!("Freeze record removed: amount={}, resource={:?}", unfreeze_amount, params.resource);
+        // Emit exactly one state change for CSV parity.
+        let mut new_owner = owner_account.clone();
+        new_owner.balance = U256::from(new_owner_proto.balance as u64);
 
-        // Emit exactly one state change for CSV parity
         let state_changes = vec![
             TronStateChange::AccountChange {
                 address: transaction.from,
@@ -508,7 +647,7 @@ impl BackendService {
 
         // Build Transaction.Result with unfreeze_amount for receipt passthrough
         let tron_transaction_result = TransactionResultBuilder::new()
-            .with_unfreeze_amount(unfreeze_amount as i64)
+            .with_unfreeze_amount(unfreeze_amount)
             .build();
 
         debug!("UnfreezeBalance completed successfully: state_changes=1, energy_used=0, bandwidth_used={}, freeze_ledger_updated=true, freeze_changes={}, global_changes={}, tron_transaction_result_len={}",
