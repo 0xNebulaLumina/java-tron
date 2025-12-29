@@ -3302,7 +3302,139 @@ impl BackendService {
         let amount = amount_u64 as i64;
 
         if amount <= 0 {
-            return Err("Invalid amount: must be positive".to_string());
+            return Err("Amount must be greater than 0.".to_string());
+        }
+
+        if owner == to_address {
+            return Err("Cannot transfer asset to yourself.".to_string());
+        }
+
+        // Java validate(): owner must exist, asset must exist, and owner must have balance.
+        // Only after these validations do we write any state (validate_fail must produce 0 writes).
+        let allow_same_token_name = storage_adapter
+            .get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
+
+        let mut owner_account_proto = storage_adapter
+            .get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or("No owner account!".to_string())?;
+
+        if storage_adapter
+            .get_asset_issue(&asset_id, allow_same_token_name)
+            .map_err(|e| format!("Failed to get asset issue: {}", e))?
+            .is_none()
+        {
+            return Err("No asset!".to_string());
+        }
+
+        let owner_asset_balance =
+            Self::get_asset_balance_v2(&owner_account_proto, &asset_id, allow_same_token_name);
+        if owner_asset_balance <= 0 {
+            return Err("assetBalance must be greater than 0.".to_string());
+        }
+        if amount > owner_asset_balance {
+            return Err("assetBalance is not sufficient.".to_string());
+        }
+
+        let recipient_proto_opt = storage_adapter
+            .get_account_proto(&to_address)
+            .map_err(|e| format!("Failed to get recipient account: {}", e))?;
+
+        let create_account_fee = if recipient_proto_opt.is_none() {
+            storage_adapter
+                .get_create_new_account_fee_in_system_contract()
+                .map_err(|e| {
+                    format!(
+                        "Failed to get CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: {}",
+                        e
+                    )
+                })?
+        } else {
+            0
+        };
+
+        if create_account_fee > 0 && owner_account_proto.balance < create_account_fee as i64 {
+            return Err("Validate TransferAssetActuator error, insufficient fee.".to_string());
+        }
+
+        // Java execute(): create recipient when absent, update TRC-10 balances, and apply fee.
+        let mut recipient_account_proto = match recipient_proto_opt {
+            Some(acc) => acc,
+            None => {
+                use tron_backend_execution::protocol::{Account as ProtoAccount, AccountType as ProtoAccountType};
+                let create_time = storage_adapter
+                    .get_latest_block_header_timestamp()
+                    .map_err(|e| format!("Failed to get LATEST_BLOCK_HEADER_TIMESTAMP: {}", e))?;
+                ProtoAccount {
+                    address: storage_adapter.to_tron_address_21(&to_address).to_vec(),
+                    create_time,
+                    r#type: ProtoAccountType::Normal as i32,
+                    ..Default::default()
+                }
+            }
+        };
+
+        Self::reduce_asset_amount_v2(
+            &mut owner_account_proto,
+            &asset_id,
+            amount,
+            allow_same_token_name,
+        )?;
+        Self::add_asset_amount_v2(
+            &mut recipient_account_proto,
+            &asset_id,
+            amount,
+            allow_same_token_name,
+        );
+
+        if create_account_fee > 0 {
+            owner_account_proto.balance = owner_account_proto
+                .balance
+                .checked_sub(create_account_fee as i64)
+                .ok_or("Validate TransferAssetActuator error, insufficient fee.".to_string())?;
+        }
+
+        storage_adapter
+            .put_account_proto(&owner, &owner_account_proto)
+            .map_err(|e| format!("Failed to persist owner Account proto: {}", e))?;
+        storage_adapter
+            .put_account_proto(&to_address, &recipient_account_proto)
+            .map_err(|e| format!("Failed to persist recipient Account proto: {}", e))?;
+
+        if create_account_fee > 0 {
+            let support_blackhole = storage_adapter
+                .support_black_hole_optimization()
+                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
+            if support_blackhole {
+                storage_adapter
+                    .burn_trx(create_account_fee)
+                    .map_err(|e| format!("Failed to burn TRX: {}", e))?;
+            } else if let Some(blackhole_addr) = storage_adapter
+                .get_blackhole_address()
+                .map_err(|e| format!("Failed to get blackhole address: {}", e))?
+            {
+                let blackhole_account = storage_adapter
+                    .get_account(&blackhole_addr)
+                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
+                    .unwrap_or_default();
+
+                let fee_u256 = revm_primitives::U256::from(create_account_fee);
+                let new_blackhole_balance = blackhole_account
+                    .balance
+                    .checked_add(fee_u256)
+                    .ok_or("Blackhole balance overflow")?;
+                let new_blackhole_account = revm_primitives::AccountInfo {
+                    balance: new_blackhole_balance,
+                    nonce: blackhole_account.nonce,
+                    code_hash: blackhole_account.code_hash,
+                    code: blackhole_account.code.clone(),
+                };
+
+                storage_adapter
+                    .set_account(blackhole_addr, new_blackhole_account)
+                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
+            }
         }
 
         info!(
