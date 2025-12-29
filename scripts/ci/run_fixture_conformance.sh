@@ -136,7 +136,6 @@ if [ "$GENERATE_ONLY" = false ]; then
         should_exclude_fixture_contract_dir() {
             case "$1" in
 account_create_contract|\
-asset_issue_contract|\
 freeze_balance_v2_contract|\
 transfer_asset_contract|\
 unfreeze_balance_contract|\

@@ -1347,5 +1347,11 @@ fn create_test_asset_issue_protobuf() -> Bytes {
     write_varint(&mut buf, (10 << 3) | 0);
     write_varint(&mut buf, 1000086400);
 
+    // Field 21: url (length-delimited string)
+    let url = b"https://example.com";
+    write_varint(&mut buf, (21 << 3) | 2);
+    write_varint(&mut buf, url.len() as u64);
+    buf.extend_from_slice(url);
+
     Bytes::from(buf)
 }

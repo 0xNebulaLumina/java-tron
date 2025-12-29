@@ -3557,10 +3557,109 @@ impl BackendService {
         let execution_config = self.get_execution_config()?;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
-        // 3. Load owner account
-        let owner_account = storage_adapter.get_account(&owner)
-            .map_err(|e| format!("Failed to load owner account: {}", e))?
-            .ok_or("Owner account does not exist".to_string())?;
+        if !execution_config.remote.trc10_enabled {
+            return Err("ASSET_ISSUE_CONTRACT execution is disabled - falling back to Java".to_string());
+        }
+
+        // 3. Contract validation (match java-tron's AssetIssueActuator.validate ordering)
+        let allow_same_token_name = storage_adapter
+            .get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
+
+        if !Self::valid_asset_name(asset_info.name.as_bytes()) {
+            return Err("Invalid assetName".to_string());
+        }
+
+        if allow_same_token_name != 0 && asset_info.name.to_lowercase() == "trx" {
+            return Err("assetName can't be trx".to_string());
+        }
+
+        if asset_info.precision != 0
+            && allow_same_token_name != 0
+            && (asset_info.precision < 0 || asset_info.precision > 6)
+        {
+            return Err("precision cannot exceed 6".to_string());
+        }
+
+        if !asset_info.abbr.is_empty() && !Self::valid_asset_name(asset_info.abbr.as_bytes()) {
+            return Err("Invalid abbreviation for token".to_string());
+        }
+
+        if !Self::valid_url(asset_info.url.as_bytes()) {
+            return Err("Invalid url".to_string());
+        }
+
+        if !Self::valid_asset_description(asset_info.description.as_bytes()) {
+            return Err("Invalid description".to_string());
+        }
+
+        if asset_info.start_time == 0 {
+            return Err("Start time should be not empty".to_string());
+        }
+
+        if asset_info.end_time == 0 {
+            return Err("End time should be not empty".to_string());
+        }
+
+        if asset_info.end_time <= asset_info.start_time {
+            return Err("End time should be greater than start time".to_string());
+        }
+
+        let head_block_time = storage_adapter
+            .get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?;
+
+        if asset_info.start_time <= head_block_time {
+            return Err("Start time should be greater than HeadBlockTime".to_string());
+        }
+
+        if allow_same_token_name == 0
+            && storage_adapter
+                .get_asset_issue(asset_info.name.as_bytes(), allow_same_token_name)
+                .map_err(|e| format!("Failed to query AssetIssueStore: {}", e))?
+                .is_some()
+        {
+            return Err("Token exists".to_string());
+        }
+
+        if asset_info.total_supply <= 0 {
+            return Err("TotalSupply must greater than 0!".to_string());
+        }
+
+        if asset_info.trx_num <= 0 {
+            return Err("TrxNum must greater than 0!".to_string());
+        }
+
+        if asset_info.num <= 0 {
+            return Err("Num must greater than 0!".to_string());
+        }
+
+        if asset_info.public_free_asset_net_usage != 0 {
+            return Err("PublicFreeAssetNetUsage must be 0!".to_string());
+        }
+
+        let one_day_net_limit = storage_adapter
+            .get_one_day_net_limit()
+            .map_err(|e| format!("Failed to get ONE_DAY_NET_LIMIT: {}", e))?;
+
+        if asset_info.free_asset_net_limit < 0 || asset_info.free_asset_net_limit >= one_day_net_limit {
+            return Err("Invalid FreeAssetNetLimit".to_string());
+        }
+
+        if asset_info.public_free_asset_net_limit < 0
+            || asset_info.public_free_asset_net_limit >= one_day_net_limit
+        {
+            return Err("Invalid PublicFreeAssetNetLimit".to_string());
+        }
+
+        let owner_account_proto = storage_adapter
+            .get_account_proto(&owner)
+            .map_err(|e| format!("Failed to load owner account proto: {}", e))?
+            .ok_or_else(|| "Account not exists".to_string())?;
+
+        if !owner_account_proto.asset_issued_name.is_empty() {
+            return Err("An account can only issue one asset".to_string());
+        }
 
         // 4. Get asset issue fee from dynamic properties
         let asset_issue_fee = storage_adapter.get_asset_issue_fee()
@@ -3568,18 +3667,21 @@ impl BackendService {
 
         debug!("AssetIssueFee: {} SUN", asset_issue_fee);
 
-        // 5. Validate owner balance >= fee
-        let owner_balance_u256 = owner_account.balance;
-        let fee_u256 = revm_primitives::U256::from(asset_issue_fee);
-
-        if owner_balance_u256 < fee_u256 {
-            return Err(format!(
-                "Insufficient balance for asset issue fee: owner has {} SUN, fee is {} SUN",
-                owner_balance_u256, asset_issue_fee
-            ));
+        let fee_i64 = i64::try_from(asset_issue_fee)
+            .map_err(|_| "AssetIssueFee overflow".to_string())?;
+        if owner_account_proto.balance < fee_i64 {
+            return Err("No enough balance for fee!".to_string());
         }
 
+        // 5. Load owner account
+        let owner_account = storage_adapter
+            .get_account(&owner)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or_else(|| "Account not exists".to_string())?;
+
         // 6. Deduct fee from owner
+        let owner_balance_u256 = owner_account.balance;
+        let fee_u256 = revm_primitives::U256::from(asset_issue_fee);
         let new_owner_balance = owner_balance_u256 - fee_u256;
         let new_owner_account = revm_primitives::AccountInfo {
             balance: new_owner_balance,
@@ -6255,6 +6357,19 @@ impl BackendService {
         }
 
         Ok(())
+    }
+
+    fn valid_readable_bytes(bytes: &[u8], max_length: usize) -> bool {
+        if bytes.is_empty() || bytes.len() > max_length {
+            return false;
+        }
+
+        bytes.iter().all(|b| matches!(*b, 0x21..=0x7e))
+    }
+
+    /// Validate asset name (matches Java's TransactionUtil.validAssetName)
+    fn valid_asset_name(asset_name: &[u8]) -> bool {
+        Self::valid_readable_bytes(asset_name, 32)
     }
 
     /// Validate URL (simplified version of Java's TransactionUtil.validUrl)
