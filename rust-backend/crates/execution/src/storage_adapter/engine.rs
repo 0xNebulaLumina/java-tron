@@ -815,6 +815,28 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get UNFREEZE_DELAY_DAYS dynamic property value.
+    ///
+    /// Returns the configured unfreeze delay in days, or 0 when missing/invalid.
+    pub fn get_unfreeze_delay_days(&self) -> Result<i64> {
+        let key = b"UNFREEZE_DELAY_DAYS";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]))
+                } else if !data.is_empty() {
+                    Ok(data[0] as i64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
     /// Get blackhole address (if crediting instead of burning)
     /// Returns:
     /// - The configured dynamic property value when present (20 raw bytes)
