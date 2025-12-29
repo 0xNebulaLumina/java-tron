@@ -1,3 +1,0 @@
-fix `./scripts/ci/run_fixture_conformance.sh --rust-only`, don't fix by skipping `account_create_contract`.
-
-after fixing, git commit the changes then push.
