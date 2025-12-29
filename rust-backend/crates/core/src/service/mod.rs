@@ -1895,10 +1895,11 @@ impl BackendService {
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
-        use crate::service::grpc::address::strip_tron_address_prefix;
 
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
+        let owner_tron_21 = storage_adapter.to_tron_address_21(&owner);
+        let readable_owner_address = revm_primitives::hex::encode(owner_tron_21);
 
         info!("AccountCreate owner={}", owner_tron);
 
@@ -1919,7 +1920,7 @@ impl BackendService {
         let owner_account = storage_adapter.get_account(&owner)
             .map_err(|e| format!("Failed to load owner account: {}", e))?
             .ok_or_else(|| {
-                let msg = format!("Account {} does not exist", owner_tron);
+                let msg = format!("Account[{}] not exists", readable_owner_address);
                 warn!("{}", msg);
                 msg
             })?;
@@ -1999,10 +2000,19 @@ impl BackendService {
             new_account: Some(new_target_account.clone()),
         });
 
-        // Persist new account
+        // Persist new account (include create_time for fixture parity).
+        use tron_backend_execution::protocol::Account as ProtoAccount;
+        let create_time = storage_adapter
+            .get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?;
+        let target_proto = ProtoAccount {
+            address: storage_adapter.to_tron_address_21(&target_address).to_vec(),
+            create_time,
+            ..Default::default()
+        };
         storage_adapter
-            .set_account(target_address, new_target_account)
-            .map_err(|e| format!("Failed to persist new account: {}", e))?;
+            .put_account_proto(&target_address, &target_proto)
+            .map_err(|e| format!("Failed to persist new account proto: {}", e))?;
 
         // 10. Handle fee burning/crediting (only if fee > 0)
         let fee_destination: String;
