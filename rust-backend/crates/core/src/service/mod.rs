@@ -3794,7 +3794,7 @@ impl BackendService {
             return Err("Invalid PublicFreeAssetNetLimit".to_string());
         }
 
-        let owner_account_proto = storage_adapter
+        let mut owner_account_proto = storage_adapter
             .get_account_proto(&owner)
             .map_err(|e| format!("Failed to load owner account proto: {}", e))?
             .ok_or_else(|| "Account not exists".to_string())?;
@@ -3821,7 +3821,52 @@ impl BackendService {
             .map_err(|e| format!("Failed to load owner account: {}", e))?
             .ok_or_else(|| "Account not exists".to_string())?;
 
-        // 6. Deduct fee from owner
+        // 6. Allocate token id and persist asset metadata (TRC-10 issuance)
+        let token_id_num = storage_adapter
+            .get_token_id_num()
+            .map_err(|e| format!("Failed to get TOKEN_ID_NUM: {}", e))?;
+        let new_token_id_num = token_id_num
+            .checked_add(1)
+            .ok_or_else(|| "TOKEN_ID_NUM overflow".to_string())?;
+        storage_adapter
+            .save_token_id_num(new_token_id_num)
+            .map_err(|e| format!("Failed to save TOKEN_ID_NUM: {}", e))?;
+        let token_id_str = new_token_id_num.to_string();
+
+        // Decode full AssetIssueContractData for persistence (includes frozen_supply list).
+        // Note: transaction.data is the unpacked contract bytes (Any.value), matching AssetIssueContractData.
+        use prost::Message;
+        let mut asset_proto = tron_backend_execution::protocol::AssetIssueContractData::decode(
+            transaction.data.as_ref(),
+        )
+        .map_err(|e| format!("Failed to decode AssetIssueContractData: {}", e))?;
+
+        // Ensure owner_address is present (some tests omit it); use tx.from as canonical.
+        if asset_proto.owner_address.is_empty() {
+            asset_proto.owner_address = storage_adapter.to_tron_address_21(&owner).to_vec();
+        }
+        asset_proto.id = token_id_str.clone();
+
+        // Persist AssetIssueStore (V1) and AssetIssueV2Store (V2) entries.
+        if allow_same_token_name == 0 {
+            // V1 store by name (no precision override)
+            storage_adapter
+                .put_asset_issue(&asset_proto.name, &asset_proto, false)
+                .map_err(|e| format!("Failed to persist AssetIssue (V1): {}", e))?;
+
+            // V2 store by token id; java-tron stores precision=0 in legacy mode
+            let mut asset_v2 = asset_proto.clone();
+            asset_v2.precision = 0;
+            storage_adapter
+                .put_asset_issue(token_id_str.as_bytes(), &asset_v2, true)
+                .map_err(|e| format!("Failed to persist AssetIssue (V2): {}", e))?;
+        } else {
+            storage_adapter
+                .put_asset_issue(token_id_str.as_bytes(), &asset_proto, true)
+                .map_err(|e| format!("Failed to persist AssetIssue (V2): {}", e))?;
+        }
+
+        // 7. Deduct fee from owner
         let owner_balance_u256 = owner_account.balance;
         let fee_u256 = revm_primitives::U256::from(asset_issue_fee);
         let new_owner_balance = owner_balance_u256 - fee_u256;
@@ -3832,7 +3877,7 @@ impl BackendService {
             code: owner_account.code.clone(),
         };
 
-        // 7. Emit state changes (deterministic ordering by address)
+        // 8. Emit state changes (deterministic ordering by address)
         let mut state_changes = Vec::new();
 
         // Always emit owner account change
@@ -3842,12 +3887,38 @@ impl BackendService {
             new_account: Some(new_owner_account.clone()),
         });
 
-        // Persist owner account update
-        storage_adapter
-            .set_account(owner, new_owner_account.clone())
-            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
+        // Persist owner account update (balance + TRC-10 issuer fields)
+        owner_account_proto.balance = owner_account_proto
+            .balance
+            .checked_sub(fee_i64)
+            .ok_or_else(|| "No enough balance for fee!".to_string())?;
 
-        // 8. Handle fee burning/crediting
+        // Convert frozen_supply schedule (AssetIssueContractData::FrozenSupply) to
+        // Account.frozen_supply entries (frozenBalance + expireTime).
+        const FROZEN_PERIOD_MS: i64 = 86_400_000;
+        let mut remain_supply = asset_proto.total_supply;
+        for fs in &asset_proto.frozen_supply {
+            let expire_time = asset_proto.start_time + fs.frozen_days * FROZEN_PERIOD_MS;
+            owner_account_proto.frozen_supply.push(tron_backend_execution::protocol::account::Frozen {
+                frozen_balance: fs.frozen_amount,
+                expire_time,
+            });
+            remain_supply -= fs.frozen_amount;
+        }
+
+        if allow_same_token_name == 0 {
+            // Legacy map keyed by asset name string
+            owner_account_proto.asset.insert(asset_info.name.clone(), remain_supply);
+        }
+        owner_account_proto.asset_issued_name = asset_proto.name.clone();
+        owner_account_proto.asset_issued_id = token_id_str.as_bytes().to_vec();
+        owner_account_proto.asset_v2.insert(token_id_str.clone(), remain_supply);
+
+        storage_adapter
+            .put_account_proto(&owner, &owner_account_proto)
+            .map_err(|e| format!("Failed to persist owner account proto: {}", e))?;
+
+        // 9. Handle fee burning/crediting
         let support_blackhole = storage_adapter.support_black_hole_optimization()
             .map_err(|e| format!("Failed to get blackhole optimization flag: {}", e))?;
 
@@ -3964,6 +4035,12 @@ impl BackendService {
             }
         );
 
+        // Receipt passthrough: include fee + assetIssueID (matches java-tron Transaction.Result.assetIssueID)
+        let receipt_bytes = TransactionResultBuilder::new()
+            .with_fee(fee_i64)
+            .with_asset_issue_id(&token_id_str)
+            .build();
+
         Ok(TronExecutionResult {
             success: true,
             return_data: revm_primitives::Bytes::new(), // No return data for asset issue
@@ -3978,7 +4055,7 @@ impl BackendService {
             trc10_changes: vec![trc10_change], // Phase 2: emit TRC-10 semantic change
             vote_changes: vec![], // Not applicable for asset issue
             withdraw_changes: vec![], // Not applicable for asset issue
-            tron_transaction_result: None,
+            tron_transaction_result: Some(receipt_bytes),
             contract_address: None,
         })
     }

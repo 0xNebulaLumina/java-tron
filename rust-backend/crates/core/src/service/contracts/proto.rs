@@ -86,6 +86,8 @@ pub struct TransactionResultBuilder {
     pub withdraw_amount: Option<i64>,
     pub unfreeze_amount: Option<i64>,
     pub withdraw_expire_amount: Option<i64>,
+    /// string assetIssueID = 14
+    pub asset_issue_id: Option<String>,
     pub exchange_id: Option<i64>,
     pub exchange_received_amount: Option<i64>,
     pub exchange_inject_another_amount: Option<i64>,
@@ -129,6 +131,12 @@ impl TransactionResultBuilder {
 
     pub fn with_withdraw_expire_amount(mut self, amount: i64) -> Self {
         self.withdraw_expire_amount = Some(amount);
+        self
+    }
+
+    /// Set assetIssueID (field 14)
+    pub fn with_asset_issue_id(mut self, asset_issue_id: &str) -> Self {
+        self.asset_issue_id = Some(asset_issue_id.to_string());
         self
     }
 
@@ -201,6 +209,13 @@ impl TransactionResultBuilder {
         if let Some(ret) = self.ret {
             write_tag(&mut buf, 2, WIRE_TYPE_VARINT);
             write_varint(&mut buf, ret as u64);
+        }
+
+        // Field 14: assetIssueID (string, wire type 2 = length-delimited)
+        if let Some(ref asset_issue_id) = self.asset_issue_id {
+            write_tag(&mut buf, 14, 2);
+            write_varint(&mut buf, asset_issue_id.len() as u64);
+            buf.extend_from_slice(asset_issue_id.as_bytes());
         }
 
         // Field 15: withdraw_amount
@@ -337,5 +352,18 @@ mod tests {
 
         // Should contain both fields
         assert!(result.len() > 4);
+    }
+
+    #[test]
+    fn test_transaction_result_builder_asset_issue_id() {
+        let asset_issue_id = "1000001";
+        let result = TransactionResultBuilder::new()
+            .with_asset_issue_id(asset_issue_id)
+            .build();
+
+        // Field 14, wire type 2: tag = (14 << 3) | 2 = 114 = 0x72
+        assert!(!result.is_empty());
+        assert_eq!(result[0], 0x72);
+        assert!(result.windows(asset_issue_id.len()).any(|w| w == asset_issue_id.as_bytes()));
     }
 }
