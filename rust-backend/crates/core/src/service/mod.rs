@@ -3323,12 +3323,21 @@ impl BackendService {
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or("No owner account!".to_string())?;
 
-        if storage_adapter
+        let asset_issue = storage_adapter
             .get_asset_issue(&asset_id, allow_same_token_name)
             .map_err(|e| format!("Failed to get asset issue: {}", e))?
-            .is_none()
-        {
-            return Err("No asset!".to_string());
+            .ok_or("No asset!".to_string())?;
+
+        // Java stores legacy TRC-10 balances in `asset[name]` and also mirrors them into
+        // `assetV2[token_id]` for the eventual allowSameTokenName=1 transition.
+        // We need the numeric token id to update `asset_v2` correctly in legacy mode.
+        let token_id_str = if !asset_issue.id.is_empty() {
+            asset_issue.id.clone()
+        } else {
+            String::from_utf8_lossy(&asset_id).to_string()
+        };
+        if token_id_str.is_empty() {
+            return Err("token_id cannot be empty".to_string());
         }
 
         let owner_asset_balance =
@@ -3381,15 +3390,17 @@ impl BackendService {
         Self::reduce_asset_amount_v2(
             &mut owner_account_proto,
             &asset_id,
+            &token_id_str,
             amount,
             allow_same_token_name,
         )?;
         Self::add_asset_amount_v2(
             &mut recipient_account_proto,
             &asset_id,
+            &token_id_str,
             amount,
             allow_same_token_name,
-        );
+        )?;
 
         if create_account_fee > 0 {
             owner_account_proto.balance = owner_account_proto
@@ -3631,15 +3642,8 @@ impl BackendService {
             _ => Address::ZERO,
         });
 
-        // 8. Determine token_id if asset_id bytes are ASCII digits (V2 path)
-        let token_id = if asset_id.iter().all(|&b| b.is_ascii_digit()) {
-            match String::from_utf8(asset_id.clone()) {
-                Ok(id_str) => Some(id_str),
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
+        // 8. Determine token_id (numeric string); in legacy mode this comes from AssetIssueStore.
+        let token_id = Some(token_id_str.clone());
 
         // 9. Build TRC-10 Asset Transferred change for Phase 2
         let trc10_change = tron_backend_execution::Trc10Change::AssetTransferred(
@@ -6000,6 +6004,15 @@ impl BackendService {
             return Err("Asset balance is not enough !".to_string());
         }
 
+        let token_id_str = if !asset_issue.id.is_empty() {
+            asset_issue.id.clone()
+        } else {
+            String::from_utf8_lossy(&participate_info.asset_name).to_string()
+        };
+        if token_id_str.is_empty() {
+            return Err("token_id cannot be empty".to_string());
+        }
+
         // 11. Execute the exchange
         let mut updated_owner = owner_account.clone();
         let mut updated_to = to_account.clone();
@@ -6013,10 +6026,22 @@ impl BackendService {
             .ok_or("Balance overflow")?;
 
         // Add tokens to owner
-        Self::add_asset_amount_v2(&mut updated_owner, &participate_info.asset_name, exchange_amount, allow_same_token_name);
+        Self::add_asset_amount_v2(
+            &mut updated_owner,
+            &participate_info.asset_name,
+            &token_id_str,
+            exchange_amount,
+            allow_same_token_name,
+        )?;
 
         // Subtract tokens from issuer
-        Self::reduce_asset_amount_v2(&mut updated_to, &participate_info.asset_name, exchange_amount, allow_same_token_name)?;
+        Self::reduce_asset_amount_v2(
+            &mut updated_to,
+            &participate_info.asset_name,
+            &token_id_str,
+            exchange_amount,
+            allow_same_token_name,
+        )?;
 
         // 12. Persist updated accounts
         storage_adapter.put_account_proto(&owner, &updated_owner)
@@ -6132,6 +6157,18 @@ impl BackendService {
             }
             account.asset_issued_id.clone()
         };
+        let asset_issue = storage_adapter
+            .get_asset_issue(&asset_key, allow_same_token_name)
+            .map_err(|e| format!("Failed to get asset issue: {}", e))?
+            .ok_or("No asset!".to_string())?;
+        let token_id_str = if !asset_issue.id.is_empty() {
+            asset_issue.id
+        } else {
+            String::from_utf8_lossy(&asset_key).to_string()
+        };
+        if token_id_str.is_empty() {
+            return Err("token_id cannot be empty".to_string());
+        }
 
         // 4. Get current timestamp
         let now = storage_adapter.get_latest_block_header_timestamp()
@@ -6165,7 +6202,13 @@ impl BackendService {
         updated_account.frozen_supply = remaining_frozen;
 
         // Add unfrozen assets back to balance
-        Self::add_asset_amount_v2(&mut updated_account, &asset_key, unfreeze_asset, allow_same_token_name);
+        Self::add_asset_amount_v2(
+            &mut updated_account,
+            &asset_key,
+            &token_id_str,
+            unfreeze_asset,
+            allow_same_token_name,
+        )?;
 
         // 8. Persist updated account
         storage_adapter.put_account_proto(&owner, &updated_account)
@@ -6524,62 +6567,92 @@ impl BackendService {
         Ok(result)
     }
 
-    /// Get asset balance from account (V2 style)
-    fn get_asset_balance_v2(account: &tron_backend_execution::protocol::Account, asset_key: &[u8], allow_same_token_name: i64) -> i64 {
+    /// Get asset balance from account (TRC-10; matches java-tron AccountCapsule.getAsset)
+    ///
+    /// - `allowSameTokenName == 0`: `asset_key` is the asset name, balance lives in `Account.asset`
+    /// - `allowSameTokenName == 1`: `asset_key` is the token id, balance lives in `Account.asset_v2`
+    fn get_asset_balance_v2(
+        account: &tron_backend_execution::protocol::Account,
+        asset_key: &[u8],
+        allow_same_token_name: i64,
+    ) -> i64 {
         let key_str = String::from_utf8_lossy(asset_key).to_string();
 
         if allow_same_token_name == 0 {
-            // Check assetV2 first, fall back to asset
-            if let Some(balance) = account.asset_v2.get(&key_str) {
-                return *balance;
-            }
-            if let Some(balance) = account.asset.get(&key_str) {
-                return *balance;
-            }
-        } else {
-            // Only check assetV2
-            if let Some(balance) = account.asset_v2.get(&key_str) {
-                return *balance;
-            }
+            return *account.asset.get(&key_str).unwrap_or(&0);
         }
-        0
+
+        *account.asset_v2.get(&key_str).unwrap_or(&0)
     }
 
-    /// Add asset amount to account (V2 style)
-    fn add_asset_amount_v2(account: &mut tron_backend_execution::protocol::Account, asset_key: &[u8], amount: i64, allow_same_token_name: i64) {
-        let key_str = String::from_utf8_lossy(asset_key).to_string();
-
-        let entry = account.asset_v2.entry(key_str.clone()).or_insert(0);
-        *entry += amount;
-
-        // Also update asset map if allowSameTokenName == 0
+    /// Add asset amount to account (TRC-10; matches java-tron addAssetAmountV2)
+    ///
+    /// `asset_key` is the raw contract key:
+    /// - `allowSameTokenName == 0`: asset name bytes (updates `asset[name]` and `asset_v2[token_id]`)
+    /// - `allowSameTokenName == 1`: token id bytes (updates `asset_v2[token_id]` only)
+    fn add_asset_amount_v2(
+        account: &mut tron_backend_execution::protocol::Account,
+        asset_key: &[u8],
+        token_id: &str,
+        amount: i64,
+        allow_same_token_name: i64,
+    ) -> Result<(), String> {
         if allow_same_token_name == 0 {
-            let entry = account.asset.entry(key_str).or_insert(0);
-            *entry += amount;
+            let name_key = String::from_utf8_lossy(asset_key).to_string();
+            let current = *account.asset.get(&name_key).unwrap_or(&0);
+            let new_amount = current
+                .checked_add(amount)
+                .ok_or("Asset balance overflow".to_string())?;
+
+            account.asset.insert(name_key, new_amount);
+            account.asset_v2.insert(token_id.to_string(), new_amount);
+            return Ok(());
         }
+
+        let current = *account.asset_v2.get(token_id).unwrap_or(&0);
+        let new_amount = current
+            .checked_add(amount)
+            .ok_or("Asset balance overflow".to_string())?;
+        account.asset_v2.insert(token_id.to_string(), new_amount);
+        Ok(())
     }
 
-    /// Reduce asset amount from account (V2 style)
-    fn reduce_asset_amount_v2(account: &mut tron_backend_execution::protocol::Account, asset_key: &[u8], amount: i64, allow_same_token_name: i64) -> Result<(), String> {
-        let key_str = String::from_utf8_lossy(asset_key).to_string();
+    /// Reduce asset amount from account (TRC-10; matches java-tron reduceAssetAmountV2)
+    ///
+    /// `token_id` must be the numeric token id string. In legacy mode (`allowSameTokenName == 0`),
+    /// the contract key is the asset name, but `asset_v2` must be updated under `token_id`.
+    fn reduce_asset_amount_v2(
+        account: &mut tron_backend_execution::protocol::Account,
+        asset_key: &[u8],
+        token_id: &str,
+        amount: i64,
+        allow_same_token_name: i64,
+    ) -> Result<(), String> {
+        if allow_same_token_name == 0 {
+            let name_key = String::from_utf8_lossy(asset_key).to_string();
+            let current = *account.asset.get(&name_key).unwrap_or(&0);
+            if current < amount {
+                return Err("Insufficient asset balance".to_string());
+            }
 
-        // Check if has enough balance
-        let current = *account.asset_v2.get(&key_str).unwrap_or(&0);
+            let new_amount = current
+                .checked_sub(amount)
+                .ok_or("Asset balance underflow".to_string())?;
+
+            account.asset.insert(name_key, new_amount);
+            account.asset_v2.insert(token_id.to_string(), new_amount);
+            return Ok(());
+        }
+
+        let current = *account.asset_v2.get(token_id).unwrap_or(&0);
         if current < amount {
             return Err("Insufficient asset balance".to_string());
         }
 
-        // Reduce from assetV2
-        let entry = account.asset_v2.entry(key_str.clone()).or_insert(0);
-        *entry -= amount;
-
-        // Also reduce from asset map if allowSameTokenName == 0
-        if allow_same_token_name == 0 {
-            if let Some(entry) = account.asset.get_mut(&key_str) {
-                *entry -= amount;
-            }
-        }
-
+        let new_amount = current
+            .checked_sub(amount)
+            .ok_or("Asset balance underflow".to_string())?;
+        account.asset_v2.insert(token_id.to_string(), new_amount);
         Ok(())
     }
 
@@ -6711,6 +6784,30 @@ impl BackendService {
         // 5. Execute
         let mut updated_account = account.clone();
 
+        let first_token_id_str = if is_trx(&create_info.first_token_id) {
+            String::new()
+        } else if allow_same_token_name == 0 {
+            storage_adapter
+                .get_asset_issue(&create_info.first_token_id, 0)
+                .map_err(|e| format!("Failed to get first token asset issue: {}", e))?
+                .ok_or("No asset!".to_string())?
+                .id
+        } else {
+            String::from_utf8_lossy(&create_info.first_token_id).to_string()
+        };
+
+        let second_token_id_str = if is_trx(&create_info.second_token_id) {
+            String::new()
+        } else if allow_same_token_name == 0 {
+            storage_adapter
+                .get_asset_issue(&create_info.second_token_id, 0)
+                .map_err(|e| format!("Failed to get second token asset issue: {}", e))?
+                .ok_or("No asset!".to_string())?
+                .id
+        } else {
+            String::from_utf8_lossy(&create_info.second_token_id).to_string()
+        };
+
         // Deduct fee
         updated_account.balance -= exchange_create_fee;
 
@@ -6721,6 +6818,7 @@ impl BackendService {
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &create_info.first_token_id,
+                &first_token_id_str,
                 create_info.first_token_balance,
                 allow_same_token_name,
             )?;
@@ -6733,6 +6831,7 @@ impl BackendService {
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &create_info.second_token_id,
+                &second_token_id_str,
                 create_info.second_token_balance,
                 allow_same_token_name,
             )?;
@@ -7018,6 +7117,28 @@ impl BackendService {
 
         let mut updated_account = account.clone();
 
+        let token_id_str = if is_trx(&inject_info.token_id) {
+            String::new()
+        } else if allow_same_token_name == 0 {
+            match storage_adapter.get_asset_issue(&inject_info.token_id, 0) {
+                Ok(Some(asset)) if !asset.id.is_empty() => asset.id,
+                _ => String::from_utf8_lossy(&inject_info.token_id).to_string(),
+            }
+        } else {
+            String::from_utf8_lossy(&inject_info.token_id).to_string()
+        };
+
+        let another_token_id_str = if is_trx(&another_token_id) {
+            String::new()
+        } else if allow_same_token_name == 0 {
+            match storage_adapter.get_asset_issue(&another_token_id, 0) {
+                Ok(Some(asset)) if !asset.id.is_empty() => asset.id,
+                _ => String::from_utf8_lossy(&another_token_id).to_string(),
+            }
+        } else {
+            String::from_utf8_lossy(&another_token_id).to_string()
+        };
+
         // Deduct token
         if is_trx(&inject_info.token_id) {
             updated_account.balance -= inject_info.quant;
@@ -7025,6 +7146,7 @@ impl BackendService {
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &inject_info.token_id,
+                &token_id_str,
                 inject_info.quant,
                 allow_same_token_name,
             )?;
@@ -7037,6 +7159,7 @@ impl BackendService {
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &another_token_id,
+                &another_token_id_str,
                 another_token_quant,
                 allow_same_token_name,
             )?;
@@ -7215,6 +7338,28 @@ impl BackendService {
         // 5. Execute
         let mut updated_account = account.clone();
 
+        let token_id_str = if is_trx(&withdraw_info.token_id) {
+            String::new()
+        } else if allow_same_token_name == 0 {
+            match storage_adapter.get_asset_issue(&withdraw_info.token_id, 0) {
+                Ok(Some(asset)) if !asset.id.is_empty() => asset.id,
+                _ => String::from_utf8_lossy(&withdraw_info.token_id).to_string(),
+            }
+        } else {
+            String::from_utf8_lossy(&withdraw_info.token_id).to_string()
+        };
+
+        let another_token_id_str = if is_trx(&another_token_id) {
+            String::new()
+        } else if allow_same_token_name == 0 {
+            match storage_adapter.get_asset_issue(&another_token_id, 0) {
+                Ok(Some(asset)) if !asset.id.is_empty() => asset.id,
+                _ => String::from_utf8_lossy(&another_token_id).to_string(),
+            }
+        } else {
+            String::from_utf8_lossy(&another_token_id).to_string()
+        };
+
         // Add token to account
         if is_trx(&withdraw_info.token_id) {
             updated_account.balance += withdraw_info.quant;
@@ -7222,9 +7367,10 @@ impl BackendService {
             Self::add_asset_amount_v2(
                 &mut updated_account,
                 &withdraw_info.token_id,
+                &token_id_str,
                 withdraw_info.quant,
                 allow_same_token_name,
-            );
+            )?;
         }
 
         // Add another token to account
@@ -7234,9 +7380,10 @@ impl BackendService {
             Self::add_asset_amount_v2(
                 &mut updated_account,
                 &another_token_id,
+                &another_token_id_str,
                 another_token_quant,
                 allow_same_token_name,
-            );
+            )?;
         }
 
         // Update exchange
@@ -7408,6 +7555,28 @@ impl BackendService {
         // 5. Execute
         let mut updated_account = account.clone();
 
+        let token_id_str = if is_trx(&tx_info.token_id) {
+            String::new()
+        } else if allow_same_token_name == 0 {
+            match storage_adapter.get_asset_issue(&tx_info.token_id, 0) {
+                Ok(Some(asset)) if !asset.id.is_empty() => asset.id,
+                _ => String::from_utf8_lossy(&tx_info.token_id).to_string(),
+            }
+        } else {
+            String::from_utf8_lossy(&tx_info.token_id).to_string()
+        };
+
+        let another_token_id_str = if is_trx(&another_token_id) {
+            String::new()
+        } else if allow_same_token_name == 0 {
+            match storage_adapter.get_asset_issue(&another_token_id, 0) {
+                Ok(Some(asset)) if !asset.id.is_empty() => asset.id,
+                _ => String::from_utf8_lossy(&another_token_id).to_string(),
+            }
+        } else {
+            String::from_utf8_lossy(&another_token_id).to_string()
+        };
+
         // Deduct sold token
         if is_trx(&tx_info.token_id) {
             updated_account.balance -= tx_info.quant;
@@ -7415,6 +7584,7 @@ impl BackendService {
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &tx_info.token_id,
+                &token_id_str,
                 tx_info.quant,
                 allow_same_token_name,
             )?;
@@ -7427,9 +7597,10 @@ impl BackendService {
             Self::add_asset_amount_v2(
                 &mut updated_account,
                 &another_token_id,
+                &another_token_id_str,
                 another_token_quant,
                 allow_same_token_name,
-            );
+            )?;
         }
 
         // Update exchange balances
