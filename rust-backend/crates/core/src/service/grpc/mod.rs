@@ -10,9 +10,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
 use tracing::{info, error, debug, warn};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use super::BackendService;
 use crate::backend::*;
-use tron_backend_execution::{TronTransaction, TronExecutionContext, ExecutionModule, EvmStateStore};
+use tron_backend_execution::{TronTransaction, TronExecutionContext, ExecutionModule, EvmStateStore, ExecutionWriteBuffer, TouchedKey};
 use tron_backend_common::{HealthStatus, to_tron_address};
 use self::conversion::*;
 use self::aext::parse_pre_execution_aext;
@@ -1002,6 +1003,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                     }),
                     success: false,
                     error_message: format!("Transaction conversion error: {}", e),
+                    write_mode: 0,
+                    touched_keys: vec![],
                 }));
             }
         };
@@ -1035,15 +1038,33 @@ impl crate::backend::backend_server::Backend for BackendService {
                     }),
                     success: false,
                     error_message: format!("Context conversion error: {}", e),
+                    write_mode: 0,
+                    touched_keys: vec![],
                 }));
             }
         };
 
         // Get the storage engine and create a unified storage adapter
         let storage_engine = self.get_storage_engine()?;
-        let mut storage_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
-            storage_engine.clone(),
-        );
+
+        // Phase B: Check if rust_persist_enabled to use buffered writes
+        let rust_persist_enabled = self.get_execution_config()
+            .map(|cfg| cfg.remote.rust_persist_enabled)
+            .unwrap_or(false);
+
+        // Create storage adapter with optional write buffer for Phase B conformance
+        let (mut storage_adapter, write_buffer) = if rust_persist_enabled {
+            let (adapter, buffer) = tron_backend_execution::EngineBackedEvmStateStore::new_with_buffer(
+                storage_engine.clone(),
+            );
+            info!("Phase B: Using buffered writes (rust_persist_enabled=true)");
+            (adapter, Some(buffer))
+        } else {
+            let adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
+                storage_engine.clone(),
+            );
+            (adapter, None)
+        };
 
         // Log blackhole balance before execution
         let blackhole_balance_before = if let Ok(Some(blackhole_addr)) = storage_adapter.get_blackhole_address() {
@@ -1123,9 +1144,18 @@ impl crate::backend::backend_server::Backend for BackendService {
                         // Phase 2.I L2: Persist SmartContract metadata after successful contract creation
                         // Note: We need to create a new storage adapter since execute_transaction_with_storage consumes it
                         if is_create_smart_contract && result.success && result.contract_address.is_some() {
-                            let mut persist_storage_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
-                                storage_engine.clone(),
-                            );
+                            // Phase B: Use buffered adapter if rust_persist_enabled to track metadata writes
+                            let mut persist_storage_adapter = if let Some(ref buffer) = write_buffer {
+                                let mut adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
+                                    storage_engine.clone(),
+                                );
+                                adapter.set_write_buffer(buffer.clone());
+                                adapter
+                            } else {
+                                tron_backend_execution::EngineBackedEvmStateStore::new(
+                                    storage_engine.clone(),
+                                )
+                            };
                             if let Err(e) = self.persist_smart_contract_metadata(
                                 &mut persist_storage_adapter,
                                 &transaction,
@@ -1183,7 +1213,50 @@ impl crate::backend::backend_server::Backend for BackendService {
             Ok(result) => {
                 info!("Transaction executed successfully - energy_used: {}, bandwidth_used: {}",
                       result.energy_used, result.bandwidth_used);
-                let response = self.convert_execution_result_to_protobuf(result, &pre_exec_aext_map);
+
+                // Phase B: Commit buffer and extract touched_keys if rust_persist_enabled
+                let (touched_keys, write_mode) = if let Some(ref buffer) = write_buffer {
+                    match buffer.lock() {
+                        Ok(mut locked_buffer) => {
+                            // Only commit if execution was successful
+                            if result.success {
+                                // Capture touched keys BEFORE commit clears the buffer.
+                                let keys = locked_buffer.touched_keys().to_vec();
+                                let op_count = locked_buffer.operation_count();
+                                match locked_buffer.commit(&storage_engine) {
+                                    Ok(()) => {
+                                        info!("Phase B: Committed {} writes, {} touched keys",
+                                              op_count, keys.len());
+                                        (Some(keys), 1) // WRITE_MODE_PERSISTED
+                                    }
+                                    Err(e) => {
+                                        error!("Phase B: Failed to commit buffer: {}", e);
+                                        // Fallback to compute-only mode on commit failure
+                                        (None, 0)
+                                    }
+                                }
+                            } else {
+                                // Execution failed/reverted - don't commit, drop buffer
+                                info!("Phase B: Dropping buffer without commit (execution reverted)");
+                                (None, 0)
+                            }
+                        }
+                        Err(e) => {
+                            error!("Phase B: Failed to lock buffer: {}", e);
+                            (None, 0)
+                        }
+                    }
+                } else {
+                    // No buffer (compute-only mode)
+                    (None, 0)
+                };
+
+                let response = self.convert_execution_result_to_protobuf(
+                    result,
+                    &pre_exec_aext_map,
+                    touched_keys.as_deref(),
+                    write_mode,
+                );
                 Ok(Response::new(response))
             }
             Err(e) => {
@@ -1217,6 +1290,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                     }),
                     success: false,
                     error_message: format!("Execution error: {}", e),
+                    write_mode: 0,
+                    touched_keys: vec![],
                 }))
             }
         }

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_wrong_token",
   "caseCategory": "validate_fail",
   "description": "Fail when trying to swap with a token not in the exchange",
-  "generatedAt": "2025-12-23T10:39:23.646Z",
+  "generatedAt": "2025-12-28T11:46:20.302Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

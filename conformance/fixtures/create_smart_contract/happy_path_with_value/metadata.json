@@ -4,7 +4,7 @@
   "caseName": "happy_path_with_value",
   "caseCategory": "happy",
   "description": "Deploy contract with TRX call value",
-  "generatedAt": "2025-12-25T14:10:45.701Z",
+  "generatedAt": "2025-12-28T11:46:33.387Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

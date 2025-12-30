@@ -4,7 +4,7 @@
   "caseName": "validate_fail_insufficient_balance",
   "caseCategory": "validate_fail",
   "description": "Fail when owner has insufficient balance",
-  "generatedAt": "2025-12-23T10:39:32.183Z",
+  "generatedAt": "2025-12-28T11:46:30.349Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

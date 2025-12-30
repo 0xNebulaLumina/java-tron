@@ -29,12 +29,19 @@ impl WitnessInfo {
 
     /// Serialize witness info to Java-compatible protobuf format
     pub fn serialize(&self) -> Vec<u8> {
+        self.serialize_with_prefix(0x41)
+    }
+
+    /// Serialize witness info to Java-compatible protobuf format with a specific network prefix.
+    ///
+    /// java-tron stores witness addresses as 21-byte TRON addresses (prefix + 20 bytes).
+    pub fn serialize_with_prefix(&self, address_prefix: u8) -> Vec<u8> {
         use prost::Message;
         use crate::protocol::Witness;
 
-        // Build TRON address (21 bytes: 0x41 prefix + 20-byte address)
+        // Build TRON address (21 bytes: network prefix + 20-byte address)
         let mut tron_address = Vec::with_capacity(21);
-        tron_address.push(0x41); // TRON address prefix
+        tron_address.push(address_prefix);
         tron_address.extend_from_slice(self.address.as_slice());
 
         // Convert vote_count to i64 (panic if exceeds i64::MAX)
@@ -51,7 +58,9 @@ impl WitnessInfo {
             total_missed: 0,   // Default
             latest_block_num: 0, // Default
             latest_slot_num: 0,  // Default
-            is_jobs: true, // Set to true for parity with Java genesis writes
+            // java-tron does not set this field for WitnessCreate writes (default false).
+            // Keep default for fixture parity.
+            is_jobs: false,
         };
 
         // Encode to bytes
@@ -291,11 +300,19 @@ impl Vote {
     ///   int64 vote_count = 2;    // field 2, varint
     /// }
     pub fn serialize(&self) -> Vec<u8> {
+        self.serialize_with_prefix(0x41)
+    }
+
+    /// Serialize Vote to protobuf format with a specific network prefix byte.
+    ///
+    /// java-tron stores vote addresses as 21-byte TRON addresses (prefix + 20 bytes).
+    /// Fixture DBs commonly use `0xa0` prefixes; mainnet uses `0x41`.
+    pub fn serialize_with_prefix(&self, address_prefix: u8) -> Vec<u8> {
         let mut data = Vec::new();
 
         // Field 1: vote_address (length-delimited, 21 bytes with 0x41 prefix)
         let mut tron_address = Vec::with_capacity(21);
-        tron_address.push(0x41); // Tron address prefix
+        tron_address.push(address_prefix); // Tron address prefix
         tron_address.extend_from_slice(self.vote_address.as_slice());
 
         data.push(0x0a); // field 1, wire type 2 (length-delimited)
@@ -456,11 +473,19 @@ impl VotesRecord {
     ///   repeated Vote new_votes = 3; // field 3, length-delimited
     /// }
     pub fn serialize(&self) -> Vec<u8> {
+        self.serialize_with_prefix(0x41)
+    }
+
+    /// Serialize VotesRecord to protobuf format with a specific network prefix byte.
+    ///
+    /// java-tron stores the owner address and vote addresses as 21-byte TRON addresses
+    /// (prefix + 20 bytes). Fixture DBs commonly use `0xa0` prefixes; mainnet uses `0x41`.
+    pub fn serialize_with_prefix(&self, address_prefix: u8) -> Vec<u8> {
         let mut data = Vec::new();
 
         // Field 1: address (length-delimited, 21 bytes with 0x41 prefix)
         let mut tron_address = Vec::with_capacity(21);
-        tron_address.push(0x41); // Tron address prefix
+        tron_address.push(address_prefix); // Tron address prefix
         tron_address.extend_from_slice(self.address.as_slice());
 
         data.push(0x0a); // field 1, wire type 2 (length-delimited)
@@ -469,7 +494,7 @@ impl VotesRecord {
 
         // Field 2: old_votes (repeated, each is length-delimited)
         for vote in &self.old_votes {
-            let vote_bytes = vote.serialize();
+            let vote_bytes = vote.serialize_with_prefix(address_prefix);
             data.push(0x12); // field 2, wire type 2 (length-delimited)
             Self::write_varint(&mut data, vote_bytes.len() as u64);
             data.extend_from_slice(&vote_bytes);
@@ -477,7 +502,7 @@ impl VotesRecord {
 
         // Field 3: new_votes (repeated, each is length-delimited)
         for vote in &self.new_votes {
-            let vote_bytes = vote.serialize();
+            let vote_bytes = vote.serialize_with_prefix(address_prefix);
             data.push(0x1a); // field 3, wire type 2 (length-delimited)
             Self::write_varint(&mut data, vote_bytes.len() as u64);
             data.extend_from_slice(&vote_bytes);

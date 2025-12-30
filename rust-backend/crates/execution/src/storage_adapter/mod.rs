@@ -29,6 +29,7 @@ pub mod in_memory;
 pub mod engine;
 pub mod database;
 pub mod resource;
+pub mod write_buffer;
 
 // Tests module (contains all storage_adapter tests)
 #[cfg(test)]
@@ -45,3 +46,4 @@ pub use database::EvmStateDatabase;
 #[allow(unused_imports)]
 pub use database::SnapshotHook;
 pub use resource::{ResourceTracker, BandwidthPath};
+pub use write_buffer::{ExecutionWriteBuffer, WriteBufferBuilder, WriteOp, TouchedKey};

@@ -45,6 +45,10 @@ public class ExecutionProgramResult extends ProgramResult {
   @Getter @Setter private List<ExecutionSPI.VoteChange> voteChanges;
   // WithdrawBalanceContract: allowance/latestWithdrawTime sidecar changes
   @Getter @Setter private List<ExecutionSPI.WithdrawChange> withdrawChanges;
+  // Phase B conformance: Write mode indicates whether Rust has persisted state changes
+  @Getter @Setter private ExecutionSPI.WriteMode writeMode;
+  // Phase B conformance: Touched keys for B-镜像 (B-mirror) support
+  @Getter @Setter private List<ExecutionSPI.TouchedKey> touchedKeys;
 
   /** Default constructor creates an empty result. */
   public ExecutionProgramResult() {
@@ -56,6 +60,8 @@ public class ExecutionProgramResult extends ProgramResult {
     this.trc10Changes = new ArrayList<>();
     this.voteChanges = new ArrayList<>();
     this.withdrawChanges = new ArrayList<>();
+    this.writeMode = ExecutionSPI.WriteMode.COMPUTE_ONLY;
+    this.touchedKeys = new ArrayList<>();
   }
 
   /**
@@ -160,6 +166,12 @@ public class ExecutionProgramResult extends ProgramResult {
         : new ArrayList<>();
     result.withdrawChanges = executionResult.getWithdrawChanges() != null
         ? new ArrayList<>(executionResult.getWithdrawChanges())
+        : new ArrayList<>();
+    result.writeMode = executionResult.getWriteMode() != null
+        ? executionResult.getWriteMode()
+        : ExecutionSPI.WriteMode.COMPUTE_ONLY;
+    result.touchedKeys = executionResult.getTouchedKeys() != null
+        ? new ArrayList<>(executionResult.getTouchedKeys())
         : new ArrayList<>();
 
     // Phase 0.4: Receipt passthrough - set ProgramResult.ret from tronTransactionResult bytes

@@ -485,10 +485,49 @@ message ExecuteTransactionRequest {
   repeated AccountAextSnapshot pre_execution_aext = 3;
 }
 
+// Write mode for Phase B conformance alignment.
+// Determines how Java should handle state changes from remote execution.
+enum WriteMode {
+  // Compute-only mode (Phase A): Rust only computes, Java applies state changes
+  WRITE_MODE_COMPUTE_ONLY = 0;
+  // Persist mode (Phase B): Rust has already persisted state changes
+  // Java should NOT apply state changes to avoid double-apply
+  WRITE_MODE_PERSISTED = 1;
+}
+
+// Touched key record for B-镜像 (B-mirror) support.
+// Reports a database key that was modified during execution.
+// Java uses this to refresh its local revoking head from remote root.
+message DbKey {
+  string db = 1;         // Database name (canonical, from db_names constants)
+  bytes key = 2;         // The key that was touched
+  bool is_delete = 3;    // True if this was a delete operation
+}
+
 message ExecuteTransactionResponse {
   ExecutionResult result = 1;
+
+  // RPC-level success: true if the gRPC call completed without error.
+  // This does NOT indicate transaction success - check result.status for that.
+  // DEPRECATED: Use error_message presence to detect RPC errors instead.
+  // Transaction success is determined by result.status == SUCCESS.
   bool success = 2;
+
+  // RPC-level error message: non-empty if RPC failed (e.g., serialization error)
+  // If empty, the RPC succeeded and result contains valid execution data.
+  // Transaction-level errors are in result.error_message.
   string error_message = 3;
+
+  // Write mode: indicates whether Rust has already persisted state changes.
+  // - WRITE_MODE_COMPUTE_ONLY (default): Java should apply state_changes
+  // - WRITE_MODE_PERSISTED: Java should NOT apply state_changes (already done by Rust)
+  WriteMode write_mode = 4;
+
+  // Touched keys: all (db, key) pairs modified during execution.
+  // Used for B-镜像 (B-mirror) support where Java refreshes its local
+  // revoking head from remote root to prevent flush overwrites.
+  // Only populated when write_mode == WRITE_MODE_PERSISTED.
+  repeated DbKey touched_keys = 5;
 }
 
 // Transaction Kind enumeration for TRON-accurate processing

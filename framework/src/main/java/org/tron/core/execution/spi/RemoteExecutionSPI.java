@@ -1149,6 +1149,17 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
   /** Convert ExecuteTransactionResponse to ExecutionResult. */
   private ExecutionResult convertExecuteTransactionResponse(ExecuteTransactionResponse response) {
+    // Extract write mode and touched keys from the response (Phase B conformance)
+    ExecutionSPI.WriteMode writeMode = ExecutionSPI.WriteMode.fromValue(
+        response.getWriteMode().getNumber());
+    List<ExecutionSPI.TouchedKey> touchedKeys = new ArrayList<>();
+    for (tron.backend.BackendOuterClass.DbKey dbKey : response.getTouchedKeysList()) {
+      touchedKeys.add(new ExecutionSPI.TouchedKey(
+          dbKey.getDb(),
+          dbKey.getKey().toByteArray(),
+          dbKey.getIsDelete()));
+    }
+
     if (!response.getSuccess()) {
       return new ExecutionResult(
           false, // success
@@ -1163,8 +1174,11 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           new ArrayList<>(), // globalResourceChanges
           new ArrayList<>(), // trc10Changes
           new ArrayList<>(), // voteChanges
-          new ArrayList<>()  // withdrawChanges
-          );
+          new ArrayList<>(), // withdrawChanges
+          null, // tronTransactionResult
+          null, // contractAddress
+          writeMode,
+          touchedKeys);
     }
 
     tron.backend.BackendOuterClass.ExecutionResult protoResult = response.getResult();
@@ -1436,6 +1450,12 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           org.tron.common.utils.ByteArray.toHexString(contractAddress));
     }
 
+    // Log write mode for debugging
+    if (writeMode == ExecutionSPI.WriteMode.PERSISTED) {
+      logger.info("Phase B: Remote execution returned WRITE_MODE_PERSISTED with {} touched keys",
+          touchedKeys.size());
+    }
+
     return new ExecutionResult(
         protoResult.getStatus() == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS,
         protoResult.getReturnData().toByteArray(),
@@ -1451,7 +1471,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         voteChanges,
         withdrawChanges,
         tronTransactionResult,
-        contractAddress);
+        contractAddress,
+        writeMode,
+        touchedKeys);
   }
 
   /**

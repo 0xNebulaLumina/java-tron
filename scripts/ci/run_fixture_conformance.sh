@@ -135,21 +135,6 @@ if [ "$GENERATE_ONLY" = false ]; then
     if [ "${FIXTURE_CONFORMANCE_INCLUDE_UNSUPPORTED:-0}" != "1" ]; then
         should_exclude_fixture_contract_dir() {
             case "$1" in
-account_create_contract|\
-account_update_contract|\
-asset_issue_contract|\
-freeze_balance_contract|\
-freeze_balance_v2_contract|\
-transfer_asset_contract|\
-transfer_contract|\
-unfreeze_balance_contract|\
-unfreeze_balance_v2_contract|\
-vote_witness_contract|\
-withdraw_balance_contract|\
-witness_create_contract|\
-witness_update_contract)
-                    return 0
-                    ;;
                 *)
                     return 1
                     ;;

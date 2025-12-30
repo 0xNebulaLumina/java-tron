@@ -21,6 +21,9 @@ use super::traits::EvmStateStore;
 use super::types::{WitnessInfo, VotesRecord, FreezeRecord, AccountAext};
 use super::utils::{keccak256, to_tron_address};
 use super::db_names;
+use super::write_buffer::{ExecutionWriteBuffer, WriteOp};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 // Import the generated TRON protocol types
 use crate::protocol::{Account as ProtoAccount, AccountType as ProtoAccountType};
@@ -28,9 +31,23 @@ use crate::protocol::{Account as ProtoAccount, AccountType as ProtoAccountType};
 /// Persistent implementation of EVM state store backed by the storage engine.
 /// Routes data to appropriate RocksDB databases matching java-tron's organization
 /// while providing a unified interface for EVM execution.
+///
+/// ## Buffered Writes (Phase B Conformance)
+///
+/// When `write_buffer` is set, all write operations are buffered instead of
+/// being written directly to storage. This enables atomic commit/rollback:
+/// - On success: call `commit_buffer()` to persist all changes
+/// - On failure: drop the buffer (no writes occur)
+///
+/// This is essential for Phase B conformance where `validate_fail` fixtures
+/// require zero writes to post_db.
 pub struct EngineBackedEvmStateStore {
     storage_engine: StorageEngine,
     address_prefix: u8,
+    /// Optional write buffer for atomic writes.
+    /// When set, all writes go to the buffer instead of directly to storage.
+    /// Use `commit_buffer()` to flush the buffer to storage on success.
+    write_buffer: Option<Arc<Mutex<ExecutionWriteBuffer>>>,
 }
 
 impl EngineBackedEvmStateStore {
@@ -39,6 +56,150 @@ impl EngineBackedEvmStateStore {
         Self {
             storage_engine,
             address_prefix,
+            write_buffer: None,
+        }
+    }
+
+    /// Create a new store with a write buffer for atomic writes.
+    ///
+    /// When the buffer is set, all write operations go to the buffer instead
+    /// of directly to storage. Call `commit_buffer()` after successful execution
+    /// to persist all changes atomically.
+    pub fn new_with_buffer(storage_engine: StorageEngine) -> (Self, Arc<Mutex<ExecutionWriteBuffer>>) {
+        let address_prefix = Self::detect_address_prefix(&storage_engine);
+        let buffer = Arc::new(Mutex::new(ExecutionWriteBuffer::new()));
+        let store = Self {
+            storage_engine,
+            address_prefix,
+            write_buffer: Some(buffer.clone()),
+        };
+        (store, buffer)
+    }
+
+    /// Set the write buffer for this store.
+    ///
+    /// When set, all write operations go to the buffer instead of directly
+    /// to storage. This is useful for sharing a buffer across multiple stores
+    /// or for setting the buffer after construction.
+    pub fn set_write_buffer(&mut self, buffer: Arc<Mutex<ExecutionWriteBuffer>>) {
+        self.write_buffer = Some(buffer);
+    }
+
+    /// Clear the write buffer, returning to direct writes.
+    pub fn clear_write_buffer(&mut self) {
+        self.write_buffer = None;
+    }
+
+    /// Check if a write buffer is attached.
+    pub fn has_write_buffer(&self) -> bool {
+        self.write_buffer.is_some()
+    }
+
+    /// Get a reference to the write buffer if one is attached.
+    pub fn get_write_buffer(&self) -> Option<Arc<Mutex<ExecutionWriteBuffer>>> {
+        self.write_buffer.clone()
+    }
+
+    /// Commit the write buffer to storage.
+    ///
+    /// This persists all buffered writes to the storage engine atomically
+    /// (per database). Should be called after successful execution.
+    ///
+    /// Returns an error if no buffer is attached or if the commit fails.
+    pub fn commit_buffer(&mut self) -> Result<()> {
+        if let Some(buffer) = &self.write_buffer {
+            buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?.commit(&self.storage_engine)?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No write buffer attached"))
+        }
+    }
+
+    /// Helper method to write to storage or buffer.
+    ///
+    /// If a write buffer is attached, the write goes to the buffer.
+    /// Otherwise, it goes directly to the storage engine.
+    fn buffered_put(&self, db: &str, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
+        if let Some(buffer) = &self.write_buffer {
+            buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?.put(db, key, value);
+            Ok(())
+        } else {
+            self.storage_engine.put(db, &key, &value)
+        }
+    }
+
+    /// Helper method to read from storage or buffer.
+    ///
+    /// When a write buffer is attached, reads consult the buffer first to
+    /// provide read-your-writes semantics within a transaction.
+    fn buffered_get(&self, db: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        if let Some(buffer) = &self.write_buffer {
+            let guard = buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+            if let Some(ops) = guard.get_operations(db) {
+                if let Some(op) = ops.get(key) {
+                    return match op {
+                        WriteOp::Put(value) => Ok(Some(value.clone())),
+                        WriteOp::Delete => Ok(None),
+                    };
+                }
+            }
+        }
+        self.storage_engine.get(db, key)
+    }
+
+    /// Helper method to prefix-query from storage with buffer overlay.
+    ///
+    /// Some system/market handlers iterate keys after writing new ones within
+    /// the same transaction; this makes those writes visible without commit.
+    fn buffered_prefix_query(
+        &self,
+        db: &str,
+        prefix: &[u8],
+    ) -> Result<Vec<tron_backend_storage::KeyValue>> {
+        let mut merged: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+        for kv in self.storage_engine.prefix_query(db, prefix)? {
+            merged.insert(kv.key, kv.value);
+        }
+
+        if let Some(buffer) = &self.write_buffer {
+            let guard = buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+            if let Some(ops) = guard.get_operations(db) {
+                for (key, op) in ops {
+                    if !key.starts_with(prefix) {
+                        continue;
+                    }
+                    match op {
+                        WriteOp::Put(value) => {
+                            merged.insert(key.clone(), value.clone());
+                        }
+                        WriteOp::Delete => {
+                            merged.remove(key);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(merged
+            .into_iter()
+            .map(|(key, value)| tron_backend_storage::KeyValue {
+                key,
+                value,
+                found: true,
+            })
+            .collect())
+    }
+
+    /// Helper method to delete from storage or buffer.
+    ///
+    /// If a write buffer is attached, the delete goes to the buffer.
+    /// Otherwise, it goes directly to the storage engine.
+    fn buffered_delete(&self, db: &str, key: Vec<u8>) -> Result<()> {
+        if let Some(buffer) = &self.write_buffer {
+            buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?.delete(db, key);
+            Ok(())
+        } else {
+            self.storage_engine.delete(db, &key)
         }
     }
 
@@ -304,7 +465,7 @@ impl EngineBackedEvmStateStore {
     /// operations that need to inspect or modify specific fields.
     pub fn get_account_proto(&self, address: &Address) -> Result<Option<ProtoAccount>> {
         let key = self.account_key(address);
-        match self.storage_engine.get(self.account_database(), &key)? {
+        match self.buffered_get(self.account_database(), &key)? {
             Some(data) => {
                 let proto_account = ProtoAccount::decode(data.as_slice())
                     .map_err(|e| anyhow::anyhow!("Failed to decode Account proto: {}", e))?;
@@ -321,7 +482,7 @@ impl EngineBackedEvmStateStore {
     pub fn put_account_proto(&self, address: &Address, proto_account: &ProtoAccount) -> Result<()> {
         let key = self.account_key(address);
         let data = proto_account.encode_to_vec();
-        self.storage_engine.put(self.account_database(), &key, &data)?;
+        self.buffered_put(self.account_database(), key, data)?;
         Ok(())
     }
 
@@ -528,6 +689,82 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get TOTAL_CREATE_WITNESS_FEE dynamic property.
+    ///
+    /// Java stores this under key "TOTAL_CREATE_WITNESS_FEE" (constant name: TOTAL_CREATE_WITNESS_COST).
+    /// Default: 0 if not present.
+    pub fn get_total_create_witness_cost(&self) -> Result<i64> {
+        let key = b"TOTAL_CREATE_WITNESS_FEE";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3],
+                data[4], data[5], data[6], data[7],
+            ])),
+            Some(_) => Ok(0),
+            None => Ok(0),
+        }
+    }
+
+    /// Add to TOTAL_CREATE_WITNESS_FEE dynamic property (java: addTotalCreateWitnessCost()).
+    pub fn add_total_create_witness_cost(&self, fee: u64) -> Result<()> {
+        if fee == 0 {
+            return Ok(());
+        }
+
+        let delta: i64 = fee
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("fee exceeds i64::MAX"))?;
+        let current = self.get_total_create_witness_cost()?;
+        let new_value = current
+            .checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_create_witness_cost"))?;
+
+        let key = b"TOTAL_CREATE_WITNESS_FEE";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            new_value.to_be_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
+    /// Get BURN_TRX_AMOUNT dynamic property.
+    /// Default: 0 if not present.
+    pub fn get_burn_trx_amount(&self) -> Result<i64> {
+        let key = b"BURN_TRX_AMOUNT";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3],
+                data[4], data[5], data[6], data[7],
+            ])),
+            Some(_) => Ok(0),
+            None => Ok(0),
+        }
+    }
+
+    /// Burn TRX by incrementing BURN_TRX_AMOUNT (java: burnTrx()).
+    pub fn burn_trx(&self, amount: u64) -> Result<()> {
+        if amount == 0 {
+            return Ok(());
+        }
+
+        let delta: i64 = amount
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("burn amount exceeds i64::MAX"))?;
+        let current = self.get_burn_trx_amount()?;
+        let new_value = current
+            .checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in burn_trx"))?;
+
+        let key = b"BURN_TRX_AMOUNT";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            new_value.to_be_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
     /// Get AllowNewResourceModel dynamic property
     /// Determines whether to use new resource model for tron power calculation
     /// Default: true (enabled)
@@ -575,6 +812,28 @@ impl EngineBackedEvmStateStore {
             None => {
                 Ok(false) // Default no delay
             }
+        }
+    }
+
+    /// Get UNFREEZE_DELAY_DAYS dynamic property value.
+    ///
+    /// Returns the configured unfreeze delay in days, or 0 when missing/invalid.
+    pub fn get_unfreeze_delay_days(&self) -> Result<i64> {
+        let key = b"UNFREEZE_DELAY_DAYS";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]))
+                } else if !data.is_empty() {
+                    Ok(data[0] as i64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
         }
     }
 
@@ -732,17 +991,20 @@ impl EngineBackedEvmStateStore {
         let key = b"WITNESS_ALLOWANCE_FROZEN_TIME";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                if data.len() >= 8 {
-                    let days = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(days)
-                } else if !data.is_empty() {
-                    // Try parsing as single byte
-                    Ok(data[0] as i64)
-                } else {
-                    Ok(1) // Default: 1 day
+                match data.len() {
+                    len if len >= 8 => Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                    ])),
+                    4 => Ok(i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64),
+                    1 => Ok(data[0] as i64),
+                    0 => Ok(1), // Default: 1 day
+                    other => {
+                        tracing::warn!(
+                            "WITNESS_ALLOWANCE_FROZEN_TIME has invalid length: {}",
+                            other
+                        );
+                        Ok(1)
+                    }
                 }
             },
             None => {
@@ -895,7 +1157,7 @@ impl EngineBackedEvmStateStore {
     pub fn set_public_net_usage(&self, value: i64) -> Result<()> {
         let key = b"PUBLIC_NET_USAGE";
         let data = value.to_be_bytes();
-        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
         Ok(())
     }
 
@@ -922,7 +1184,7 @@ impl EngineBackedEvmStateStore {
     pub fn set_public_net_time(&self, value: i64) -> Result<()> {
         let key = b"PUBLIC_NET_TIME";
         let data = value.to_be_bytes();
-        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
         Ok(())
     }
 
@@ -972,7 +1234,7 @@ impl EngineBackedEvmStateStore {
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_net_weight"))?;
         let key = b"TOTAL_NET_WEIGHT";
         let data = new_value.to_be_bytes();
-        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
         Ok(())
     }
 
@@ -1003,7 +1265,7 @@ impl EngineBackedEvmStateStore {
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_energy_weight"))?;
         let key = b"TOTAL_ENERGY_WEIGHT";
         let data = new_value.to_be_bytes();
-        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
         Ok(())
     }
 
@@ -1034,7 +1296,7 @@ impl EngineBackedEvmStateStore {
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_tron_power_weight"))?;
         let key = b"TOTAL_TRON_POWER_WEIGHT";
         let data = new_value.to_be_bytes();
-        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
         Ok(())
     }
 
@@ -1114,7 +1376,7 @@ impl EngineBackedEvmStateStore {
         let mut total_sun: u128 = 0;
 
         // Scan all freeze records in the database
-        let records = self.storage_engine.prefix_query(self.freeze_records_database(), &[])?;
+        let records = self.buffered_prefix_query(self.freeze_records_database(), &[])?;
 
         for kv in records {
             // Key format: 0x41 + 20-byte address + 1-byte resource = 22 bytes
@@ -1144,7 +1406,7 @@ impl EngineBackedEvmStateStore {
         let mut total_sun: u128 = 0;
 
         // Scan all freeze records in the database
-        let records = self.storage_engine.prefix_query(self.freeze_records_database(), &[])?;
+        let records = self.buffered_prefix_query(self.freeze_records_database(), &[])?;
 
         for kv in records {
             // Key format: 0x41 + 20-byte address + 1-byte resource = 22 bytes
@@ -1198,13 +1460,13 @@ impl EngineBackedEvmStateStore {
     /// Uses protobuf encoding by default for Java compatibility
     pub fn put_witness(&self, witness: &WitnessInfo) -> Result<()> {
         let key = self.witness_key(&witness.address);
-        // Use protobuf encoding for Java compatibility
-        let data = witness.serialize();
+        // Use protobuf encoding for Java compatibility, with the detected network prefix.
+        let data = witness.serialize_with_prefix(self.address_prefix);
 
         tracing::debug!("Storing witness (protobuf format) for address {:?}, key: {}, URL: {}, votes: {}",
                        witness.address, hex::encode(&key), witness.url, witness.vote_count);
 
-        self.storage_engine.put(self.witness_database(), &key, &data)?;
+        self.buffered_put(self.witness_database(), key, data)?;
         Ok(())
     }
 
@@ -1247,12 +1509,12 @@ impl EngineBackedEvmStateStore {
     /// Store votes record
     pub fn set_votes(&self, address: Address, votes: &VotesRecord) -> Result<()> {
         let key = self.votes_key(&address);
-        let data = votes.serialize();
+        let data = votes.serialize_with_prefix(self.address_prefix);
 
         tracing::debug!("Storing votes for address {:?}, key: {}, old_votes: {}, new_votes: {}",
                        address, hex::encode(&key), votes.old_votes.len(), votes.new_votes.len());
 
-        self.storage_engine.put(self.votes_database(), &key, &data)?;
+        self.buffered_put(self.votes_database(), key, data)?;
         Ok(())
     }
 
@@ -1410,7 +1672,7 @@ impl EngineBackedEvmStateStore {
         tracing::debug!("Getting freeze record for address {:?}, resource {}, key: {}",
                        address, resource, hex::encode(&key));
 
-        match self.storage_engine.get(self.freeze_records_database(), &key)? {
+        match self.buffered_get(self.freeze_records_database(), &key)? {
             Some(data) => {
                 let record = FreezeRecord::deserialize(&data)?;
                 tracing::debug!("Found freeze record: amount={}, expiration={}",
@@ -1432,7 +1694,7 @@ impl EngineBackedEvmStateStore {
         tracing::debug!("Storing freeze record for address {:?}, resource {}, key: {}, amount={}, expiration={}",
                        address, resource, hex::encode(&key), record.frozen_amount, record.expiration_timestamp);
 
-        self.storage_engine.put(self.freeze_records_database(), &key, &data)?;
+        self.buffered_put(self.freeze_records_database(), key, data)?;
         Ok(())
     }
 
@@ -1460,52 +1722,173 @@ impl EngineBackedEvmStateStore {
         tracing::debug!("Removing freeze record for address {:?}, resource {}, key: {}",
                        address, resource, hex::encode(&key));
 
-        self.storage_engine.delete(self.freeze_records_database(), &key)?;
+        self.buffered_delete(self.freeze_records_database(), key)?;
         Ok(())
     }
 
     /// Get tron power for an address in SUN
-    /// Sums frozen amounts across BANDWIDTH (0), ENERGY (1), and TRON_POWER (2) resources
+    /// Matches java-tron's `AccountCapsule.getTronPower()` / `getAllTronPower()` semantics:
+    /// - `new_model=false` (ALLOW_NEW_RESOURCE_MODEL=0): `getTronPower()`
+    /// - `new_model=true`  (ALLOW_NEW_RESOURCE_MODEL=1): `getAllTronPower()`
     pub fn get_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
-        // Resource types as defined in Tron protocol
+        fn add_non_negative_i64(total: &mut i128, value: i64, label: &'static str) -> Result<()> {
+            if value < 0 {
+                return Err(anyhow::anyhow!("Negative {}: {}", label, value));
+            }
+            *total = total
+                .checked_add(value as i128)
+                .ok_or_else(|| anyhow::anyhow!("Overflow while adding {}", label))?;
+            Ok(())
+        }
+
+        fn to_u64_checked(value: i128, label: &'static str) -> Result<u64> {
+            if value < 0 {
+                return Err(anyhow::anyhow!("Negative {} total: {}", label, value));
+            }
+            u64::try_from(value).map_err(|_| anyhow::anyhow!("{} exceeds u64::MAX: {}", label, value))
+        }
+
+        const TRON_POWER: i32 = crate::protocol::ResourceCode::TronPower as i32;
+
+        // Prefer AccountStore representation (java-tron canonical) when present.
+        let account_total = match self.get_account_proto(address)? {
+            Some(account) => {
+                let mut tron_power: i128 = 0;
+
+                // bandwidth frozen balance (Account.frozen)
+                for frozen in &account.frozen {
+                    add_non_negative_i64(&mut tron_power, frozen.frozen_balance, "frozen_balance")?;
+                }
+
+                // energy frozen balance + delegated balances (Account.account_resource)
+                if let Some(resource) = account.account_resource.as_ref() {
+                    if let Some(frozen_energy) = resource.frozen_balance_for_energy.as_ref() {
+                        add_non_negative_i64(
+                            &mut tron_power,
+                            frozen_energy.frozen_balance,
+                            "frozen_balance_for_energy",
+                        )?;
+                    }
+                    add_non_negative_i64(
+                        &mut tron_power,
+                        resource.delegated_frozen_balance_for_energy,
+                        "delegated_frozen_balance_for_energy",
+                    )?;
+                    add_non_negative_i64(
+                        &mut tron_power,
+                        resource.delegated_frozen_v2_balance_for_energy,
+                        "delegated_frozen_v2_balance_for_energy",
+                    )?;
+                }
+
+                // bandwidth delegated balances (Account.delegated_frozen_balance_for_bandwidth)
+                add_non_negative_i64(
+                    &mut tron_power,
+                    account.delegated_frozen_balance_for_bandwidth,
+                    "delegated_frozen_balance_for_bandwidth",
+                )?;
+                add_non_negative_i64(
+                    &mut tron_power,
+                    account.delegated_frozen_v2_balance_for_bandwidth,
+                    "delegated_frozen_v2_balance_for_bandwidth",
+                )?;
+
+                // FreezeV2 balances for BANDWIDTH/ENERGY (exclude TRON_POWER).
+                for frozen_v2 in &account.frozen_v2 {
+                    if frozen_v2.r#type != TRON_POWER {
+                        add_non_negative_i64(&mut tron_power, frozen_v2.amount, "frozen_v2_amount")?;
+                    }
+                }
+
+                if !new_model {
+                    to_u64_checked(tron_power, "tron_power")?
+                } else {
+                    // getAllTronPower() = getTronPower() + tronPowerFrozenBalance + tronPowerFrozenV2Balance
+                    // with old_tron_power gating.
+                    let tron_power_frozen_balance = account
+                        .tron_power
+                        .as_ref()
+                        .map(|f| f.frozen_balance)
+                        .unwrap_or(0);
+
+                    let mut tron_power_frozen_v2_balance: i128 = 0;
+                    for frozen_v2 in &account.frozen_v2 {
+                        if frozen_v2.r#type == TRON_POWER {
+                            add_non_negative_i64(
+                                &mut tron_power_frozen_v2_balance,
+                                frozen_v2.amount,
+                                "tron_power_frozen_v2_amount",
+                            )?;
+                        }
+                    }
+
+                    let tp_frozen_total: i128 = {
+                        let mut tmp: i128 = 0;
+                        add_non_negative_i64(
+                            &mut tmp,
+                            tron_power_frozen_balance,
+                            "tron_power_frozen_balance",
+                        )?;
+                        tmp.checked_add(tron_power_frozen_v2_balance)
+                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing tron power frozen totals"))?
+                    };
+
+                    let old_tron_power = account.old_tron_power;
+                    let all_tron_power = if old_tron_power == -1 {
+                        tp_frozen_total
+                    } else if old_tron_power == 0 {
+                        tron_power
+                            .checked_add(tp_frozen_total)
+                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing all_tron_power"))?
+                    } else if old_tron_power > 0 {
+                        (old_tron_power as i128)
+                            .checked_add(tp_frozen_total)
+                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing all_tron_power"))?
+                    } else {
+                        return Err(anyhow::anyhow!("Invalid old_tron_power: {}", old_tron_power));
+                    };
+
+                    to_u64_checked(all_tron_power, "all_tron_power")?
+                }
+            }
+            None => 0,
+        };
+
+        if account_total > 0 {
+            tracing::info!(
+                address = ?address,
+                new_model = new_model,
+                total = account_total,
+                "Computed tron power from AccountStore"
+            );
+            return Ok(account_total);
+        }
+
+        // Fallback: compute from the freeze ledger DB (used in some unit tests / legacy paths).
+        // Resource types as defined in TRON protocol
         const BANDWIDTH: u8 = 0;
         const ENERGY: u8 = 1;
-        const TRON_POWER: u8 = 2;
+        const TRON_POWER_LEDGER: u8 = 2;
 
         let mut total: u64 = 0;
-        let mut bandwidth_amount: u64 = 0;
-        let mut energy_amount: u64 = 0;
-        let mut tron_power_amount: u64 = 0;
-
-        // Sum frozen amounts across all three resource types
-        for resource in [BANDWIDTH, ENERGY, TRON_POWER] {
+        for resource in [BANDWIDTH, ENERGY, TRON_POWER_LEDGER] {
             if let Some(record) = self.get_freeze_record(address, resource)? {
-                let amount = record.frozen_amount;
-                total = total.checked_add(amount)
-                    .ok_or_else(|| anyhow::anyhow!(
+                total = total.checked_add(record.frozen_amount).ok_or_else(|| {
+                    anyhow::anyhow!(
                         "Tron power overflow when adding resource {} amount {} to total {}",
-                        resource, amount, total
-                    ))?;
-
-                // Track per-resource amounts for logging
-                match resource {
-                    BANDWIDTH => bandwidth_amount = amount,
-                    ENERGY => energy_amount = amount,
-                    TRON_POWER => tron_power_amount = amount,
-                    _ => {}
-                }
+                        resource,
+                        record.frozen_amount,
+                        total
+                    )
+                })?;
             }
         }
 
-        // Log the computation with all relevant details
         tracing::info!(
             address = ?address,
             new_model = new_model,
-            bandwidth = bandwidth_amount,
-            energy = energy_amount,
-            tron_power_legacy = tron_power_amount,
             total = total,
-            "Computed tron power from freeze ledger"
+            "Computed tron power from freeze ledger fallback"
         );
 
         Ok(total)
@@ -1513,62 +1896,67 @@ impl EngineBackedEvmStateStore {
 
     /// Get account name for an address
     pub fn get_account_name(&self, address: &Address) -> Result<Option<String>> {
-        let key = self.account_key(address); // Reuse account_key helper (21-byte with 0x41 prefix)
-        tracing::debug!("Getting account name for address {:?}, key: {}",
-                       address, hex::encode(&key));
+        let proto_account = match self.get_account_proto(address)? {
+            Some(account) => account,
+            None => return Ok(None),
+        };
 
-        match self.storage_engine.get(self.account_index_database(), &key)? {
-            Some(data) => {
-                tracing::debug!("Found account name data, length: {}", data.len());
-                // Decode as UTF-8 string
-                match String::from_utf8(data) {
-                    Ok(name) => {
-                        tracing::debug!("Successfully decoded account name: {}", name);
-                        Ok(Some(name))
-                    },
-                    Err(e) => {
-                        tracing::error!("Failed to decode account name as UTF-8: {}", e);
-                        Err(anyhow::anyhow!("Invalid UTF-8 in account name: {}", e))
-                    }
-                }
-            },
-            None => {
-                tracing::debug!("No account name found for address {:?}", address);
-                Ok(None)
-            }
+        if proto_account.account_name.is_empty() {
+            return Ok(None);
         }
+
+        String::from_utf8(proto_account.account_name)
+            .map(Some)
+            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in account name: {}", e))
     }
 
     /// Set account name for an address
     pub fn set_account_name(&mut self, address: Address, name: &[u8]) -> Result<()> {
-        let key = self.account_key(&address); // Reuse account_key helper (21-byte with 0x41 prefix)
-
-        tracing::debug!("Setting account name for address {:?}, key: {}, name_len: {}",
-                       address, hex::encode(&key), name.len());
-
-        // Validate name length (1 <= len <= 32 bytes to match java-tron constraints)
-        if name.is_empty() {
-            return Err(anyhow::anyhow!("Account name cannot be empty"));
-        }
-        if name.len() > 32 {
-            return Err(anyhow::anyhow!("Account name cannot exceed 32 bytes, got {}", name.len()));
+        const MAX_ACCOUNT_NAME_LEN: usize = 200;
+        if name.len() > MAX_ACCOUNT_NAME_LEN {
+            return Err(anyhow::anyhow!("Invalid accountName"));
         }
 
-        // Validate UTF-8 encoding (optional policy)
-        match std::str::from_utf8(name) {
-            Ok(name_str) => {
-                tracing::debug!("Account name is valid UTF-8: {}", name_str);
-            },
-            Err(e) => {
-                tracing::warn!("Account name contains invalid UTF-8: {}, allowing raw bytes", e);
-                // Continue with raw bytes - some chains may allow arbitrary bytes
-            }
-        }
+        let mut proto_account = self
+            .get_account_proto(&address)?
+            .ok_or_else(|| anyhow::anyhow!("Account does not exist"))?;
+        proto_account.account_name = name.to_vec();
+        self.put_account_proto(&address, &proto_account)?;
 
-        self.storage_engine.put(self.account_index_database(), &key, name)?;
+        // Java-tron AccountIndexStore is a reverse index: name -> address (21-byte TRON key).
+        let tron_address = self.account_key(&address);
+        self.buffered_put(self.account_index_database(), name.to_vec(), tron_address)?;
 
-        tracing::info!("Successfully stored account name for address {:?}, length: {}", address, name.len());
+        tracing::info!(
+            "Stored account name (len={}) and index entry for address {:?}",
+            name.len(),
+            address
+        );
         Ok(())
+    }
+
+    /// Get ALLOW_UPDATE_ACCOUNT_NAME dynamic property.
+    ///
+    /// Java reference: DynamicPropertiesStore.getAllowUpdateAccountName()
+    /// Default: 0 if missing.
+    pub fn get_allow_update_account_name(&self) -> Result<i64> {
+        let key = b"ALLOW_UPDATE_ACCOUNT_NAME";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ])),
+            Some(_) => Ok(0),
+            None => Ok(0),
+        }
+    }
+
+    /// Returns true if `account-index` contains `name` as a key.
+    ///
+    /// Java reference: AccountIndexStore.has(name_bytes)
+    pub fn account_index_has(&self, name: &[u8]) -> Result<bool> {
+        Ok(self
+            .buffered_get(self.account_index_database(), name)?
+            .is_some())
     }
 
     /// Get database name for account resource tracking (AEXT)
@@ -1617,7 +2005,7 @@ impl EngineBackedEvmStateStore {
         tracing::debug!("Setting account AEXT for address {:?}, net_usage: {}, free_net_usage: {}, net_window: {}",
                        address, aext.net_usage, aext.free_net_usage, aext.net_window_size);
 
-        self.storage_engine.put(self.account_aext_database(), &key, &data)?;
+        self.buffered_put(self.account_aext_database(), key, data)?;
 
         tracing::debug!("Successfully stored account AEXT for address {:?}", address);
         Ok(())
@@ -1963,7 +2351,7 @@ impl EngineBackedEvmStateStore {
         let data = cycle.to_be_bytes();
 
         tracing::debug!("Setting delegation begin_cycle for {:?}: {}", address, cycle);
-        self.storage_engine.put(self.delegation_database(), &key, &data)?;
+        self.buffered_put(self.delegation_database(), key, data.to_vec())?;
         Ok(())
     }
 
@@ -1976,7 +2364,7 @@ impl EngineBackedEvmStateStore {
         let data = cycle.to_be_bytes();
 
         tracing::debug!("Setting delegation end_cycle for {:?}: {}", address, cycle);
-        self.storage_engine.put(self.delegation_database(), &key, &data)?;
+        self.buffered_put(self.delegation_database(), key, data.to_vec())?;
         Ok(())
     }
 
@@ -1997,7 +2385,7 @@ impl EngineBackedEvmStateStore {
             "Setting delegation account_vote for {:?} cycle {}: {} votes",
             address, cycle, snapshot.votes.len()
         );
-        self.storage_engine.put(self.delegation_database(), &key, &data)?;
+        self.buffered_put(self.delegation_database(), key, data)?;
         Ok(())
     }
 
@@ -2040,7 +2428,7 @@ impl EngineBackedEvmStateStore {
             "Setting delegation brokerage for {:?} cycle {}: {}%",
             address, cycle, brokerage
         );
-        self.storage_engine.put(self.delegation_database(), &key, &data)?;
+        self.buffered_put(self.delegation_database(), key, data.to_vec())?;
         Ok(())
     }
 
@@ -2110,7 +2498,7 @@ impl EngineBackedEvmStateStore {
             hex::encode(&key)
         );
 
-        self.storage_engine.put(self.proposal_database(), &key, &data)?;
+        self.buffered_put(self.proposal_database(), key, data)?;
         Ok(())
     }
 
@@ -2232,7 +2620,7 @@ impl EngineBackedEvmStateStore {
         let key = b"LATEST_PROPOSAL_NUM";
         let data = num.to_be_bytes();
         tracing::debug!("Setting LATEST_PROPOSAL_NUM to {}", num);
-        self.storage_engine.put(self.dynamic_properties_database(), key, &data)?;
+        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
         Ok(())
     }
 
@@ -2356,7 +2744,7 @@ impl EngineBackedEvmStateStore {
         tracing::debug!("Storing account_id index: {:?} -> {} (key: {})",
                        String::from_utf8_lossy(account_id), hex::encode(address), hex::encode(&key));
 
-        self.storage_engine.put(self.account_id_index_database(), &key, address)?;
+        self.buffered_put(self.account_id_index_database(), key, address.to_vec())?;
         Ok(())
     }
 
@@ -2518,7 +2906,7 @@ impl EngineBackedEvmStateStore {
         let mut buf = Vec::new();
         contract.encode(&mut buf).map_err(|e| anyhow::anyhow!("Failed to encode SmartContract: {}", e))?;
 
-        self.storage_engine.put(self.contract_database(), key, &buf)?;
+        self.buffered_put(self.contract_database(), key.clone(), buf)?;
         Ok(())
     }
 
@@ -2568,7 +2956,7 @@ impl EngineBackedEvmStateStore {
         let mut buf = Vec::new();
         abi.encode(&mut buf).map_err(|e| anyhow::anyhow!("Failed to encode ABI: {}", e))?;
 
-        self.storage_engine.put(self.abi_database(), contract_address, &buf)?;
+        self.buffered_put(self.abi_database(), contract_address.to_vec(), buf)?;
         Ok(())
     }
 
@@ -2674,7 +3062,7 @@ impl EngineBackedEvmStateStore {
 
         // Persist
         let data = dr.encode_to_vec();
-        self.storage_engine.put(self.delegated_resource_database(), &key, &data)?;
+        self.buffered_put(self.delegated_resource_database(), key, data)?;
         Ok(())
     }
 
@@ -2724,19 +3112,19 @@ impl EngineBackedEvmStateStore {
         }
 
         if lock_resource.frozen_balance_for_bandwidth == 0 && lock_resource.frozen_balance_for_energy == 0 {
-            self.storage_engine.delete(self.delegated_resource_database(), &lock_key)?;
+            self.buffered_delete(self.delegated_resource_database(), lock_key)?;
         } else {
-            self.storage_engine.put(
+            self.buffered_put(
                 self.delegated_resource_database(),
-                &lock_key,
-                &lock_resource.encode_to_vec(),
+                lock_key,
+                lock_resource.encode_to_vec(),
             )?;
         }
 
-        self.storage_engine.put(
+        self.buffered_put(
             self.delegated_resource_database(),
-            &unlock_key,
-            &unlock_resource.encode_to_vec(),
+            unlock_key,
+            unlock_resource.encode_to_vec(),
         )?;
 
         Ok(())
@@ -2774,10 +3162,10 @@ impl EngineBackedEvmStateStore {
 
         // If both balances are 0, delete the record; otherwise, persist
         if dr.frozen_balance_for_bandwidth == 0 && dr.frozen_balance_for_energy == 0 {
-            self.storage_engine.delete(self.delegated_resource_database(), &key)?;
+            self.buffered_delete(self.delegated_resource_database(), key)?;
         } else {
             let data = dr.encode_to_vec();
-            self.storage_engine.put(self.delegated_resource_database(), &key, &data)?;
+            self.buffered_put(self.delegated_resource_database(), key, data)?;
         }
 
         Ok(())
@@ -2858,15 +3246,15 @@ impl EngineBackedEvmStateStore {
             timestamp,
         };
 
-        self.storage_engine.put(
+        self.buffered_put(
             self.delegated_resource_account_index_database(),
-            &from_key,
-            &to_index.encode_to_vec(),
+            from_key,
+            to_index.encode_to_vec(),
         )?;
-        self.storage_engine.put(
+        self.buffered_put(
             self.delegated_resource_account_index_database(),
-            &to_key,
-            &from_index.encode_to_vec(),
+            to_key,
+            from_index.encode_to_vec(),
         )?;
 
         Ok(())
@@ -2882,8 +3270,8 @@ impl EngineBackedEvmStateStore {
         let from_key = delegated_resource_account_index::create_db_key_v2_from(&owner_tron, &receiver_tron);
         let to_key = delegated_resource_account_index::create_db_key_v2_to(&owner_tron, &receiver_tron);
 
-        self.storage_engine.delete(self.delegated_resource_account_index_database(), &from_key)?;
-        self.storage_engine.delete(self.delegated_resource_account_index_database(), &to_key)?;
+        self.buffered_delete(self.delegated_resource_account_index_database(), from_key)?;
+        self.buffered_delete(self.delegated_resource_account_index_database(), to_key)?;
 
         Ok(())
     }
@@ -2975,7 +3363,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
         tracing::info!("Getting account for address {:?} (tron: {}), key: {}", 
                       address, address_tron, hex::encode(&key));
 
-        match self.storage_engine.get(self.account_database(), &key)? {
+        match self.buffered_get(self.account_database(), &key)? {
             Some(data) => {
                 tracing::debug!("Found account data, length: {}, first 32 bytes: {}",
                                data.len(), hex::encode(&data[..std::cmp::min(32, data.len())]));
@@ -3012,7 +3400,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn get_code(&self, address: &Address) -> Result<Option<Bytecode>> {
         let key = self.code_key(address);
-        match self.storage_engine.get(self.code_database(), &key)? {
+        match self.buffered_get(self.code_database(), &key)? {
             Some(data) => Ok(Some(Bytecode::new_raw(data.into()))),
             None => Ok(None),
         }
@@ -3020,7 +3408,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn get_storage(&self, address: &Address, key: &U256) -> Result<U256> {
         let storage_key = self.contract_storage_key(address, key);
-        match self.storage_engine.get(self.storage_row_database(), &storage_key)? {
+        match self.buffered_get(self.storage_row_database(), &storage_key)? {
             Some(data) => {
                 if data.len() == 32 {
                     Ok(U256::from_be_bytes::<32>(data.try_into().unwrap()))
@@ -3038,7 +3426,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
         // Phase 0.1: Use decode→modify→encode pattern to preserve existing fields
         // First, try to read existing account data
-        let existing_data = self.storage_engine.get(self.account_database(), &key)?;
+        let existing_data = self.buffered_get(self.account_database(), &key)?;
 
         // Serialize using the update method that preserves existing fields
         let data = self.serialize_account_update(
@@ -3057,17 +3445,20 @@ impl EvmStateStore for EngineBackedEvmStateStore {
             existing_data.is_some()
         );
 
-        self.storage_engine.put(self.account_database(), &key, &data)?;
+        self.buffered_put(self.account_database(), key.clone(), data.clone())?;
 
-        // Immediately verify the write by reading it back
-        if let Ok(Some(read_data)) = self.storage_engine.get(self.account_database(), &key) {
-            if read_data == data {
-                tracing::debug!("Verified account write for {} - data matches", address_tron);
+        // Verify the write by reading it back (only when not using write buffer,
+        // since buffered writes aren't visible until commit)
+        if !self.has_write_buffer() {
+            if let Ok(Some(read_data)) = self.storage_engine.get(self.account_database(), &key) {
+                if read_data == data {
+                    tracing::debug!("Verified account write for {} - data matches", address_tron);
+                } else {
+                    tracing::error!("Account write verification failed for {} - data mismatch!", address_tron);
+                }
             } else {
-                tracing::error!("Account write verification failed for {} - data mismatch!", address_tron);
+                tracing::error!("Account write verification failed for {} - could not read back!", address_tron);
             }
-        } else {
-            tracing::error!("Account write verification failed for {} - could not read back!", address_tron);
         }
 
         Ok(())
@@ -3085,25 +3476,25 @@ impl EvmStateStore for EngineBackedEvmStateStore {
             // Don't store empty code blobs; absence in CodeStore represents empty code.
             return Ok(());
         }
-        self.storage_engine.put(self.code_database(), &key, code_bytes)?;
+        self.buffered_put(self.code_database(), key, code_bytes.to_vec())?;
         Ok(())
     }
 
     fn set_storage(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         let storage_key = self.contract_storage_key(&address, &key);
         let data = value.to_be_bytes::<32>();
-        self.storage_engine.put(self.storage_row_database(), &storage_key, &data)?;
+        self.buffered_put(self.storage_row_database(), storage_key, data.to_vec())?;
         Ok(())
     }
 
     fn remove_account(&mut self, address: &Address) -> Result<()> {
         // Remove account data
         let account_key = self.account_key(address);
-        self.storage_engine.delete(self.account_database(), &account_key)?;
+        self.buffered_delete(self.account_database(), account_key)?;
 
         // Remove code
         let code_key = self.code_key(address);
-        self.storage_engine.delete(self.code_database(), &code_key)?;
+        self.buffered_delete(self.code_database(), code_key)?;
 
         // Note: We don't remove storage slots here as it would require iteration
         // In a real implementation, we might want to track storage slots separately
@@ -3184,9 +3575,14 @@ impl EngineBackedEvmStateStore {
     /// Get AllowSameTokenName dynamic property
     /// If 0: use asset name as key for AssetIssueStore
     /// If 1: use asset id as key for AssetIssueV2Store
-    /// Default: 1 (enabled) to match current mainnet
+    ///
+    /// Java-tron requires this key to exist in DynamicPropertiesStore and will throw if missing.
+    /// For backend robustness (and historical replay parity), default to 0 when absent to avoid
+    /// enabling V2 mode prematurely.
     pub fn get_allow_same_token_name(&self) -> Result<i64> {
-        let key = b"ALLOW_SAME_TOKEN_NAME";
+        // Note: java-tron stores this under a key with a leading space:
+        //   private static final byte[] ALLOW_SAME_TOKEN_NAME = " ALLOW_SAME_TOKEN_NAME".getBytes();
+        let key = b" ALLOW_SAME_TOKEN_NAME";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
@@ -3196,11 +3592,45 @@ impl EngineBackedEvmStateStore {
                     ]);
                     Ok(val)
                 } else {
-                    Ok(1) // Default enabled (V2 mode)
+                    Ok(0) // Default disabled (legacy mode)
                 }
             },
-            None => Ok(1) // Default enabled (V2 mode)
+            None => Ok(0) // Default disabled (legacy mode)
         }
+    }
+
+    /// Get TOKEN_ID_NUM dynamic property (TRC-10 issuance counter).
+    ///
+    /// Java stores this as a big-endian i64 under key "TOKEN_ID_NUM". The value represents
+    /// the last-issued token id (java-tron increments before use).
+    ///
+    /// Default: 1_000_000 to match mainnet genesis (first issued token becomes 1_000_001).
+    pub fn get_token_id_num(&self) -> Result<i64> {
+        let key = b"TOKEN_ID_NUM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(1_000_000)
+                }
+            }
+            None => Ok(1_000_000),
+        }
+    }
+
+    /// Persist TOKEN_ID_NUM dynamic property (big-endian i64).
+    pub fn save_token_id_num(&mut self, value: i64) -> Result<()> {
+        let key = b"TOKEN_ID_NUM";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            value.to_be_bytes().to_vec(),
+        )?;
+        Ok(())
     }
 
     /// Get OneDayNetLimit dynamic property
@@ -3257,7 +3687,7 @@ impl EngineBackedEvmStateStore {
 
         let mut buf = Vec::with_capacity(asset_issue.encoded_len());
         asset_issue.encode(&mut buf)?;
-        self.storage_engine.put(db, key, &buf)?;
+        self.buffered_put(db, key.to_vec(), buf)?;
 
         Ok(())
     }
@@ -3368,7 +3798,7 @@ impl EngineBackedEvmStateStore {
             hex::encode(&key)
         );
 
-        self.storage_engine.put(db, &key, &data)?;
+        self.buffered_put(db, key, data)?;
         Ok(())
     }
 
@@ -3416,7 +3846,7 @@ impl EngineBackedEvmStateStore {
         let key = b"LATEST_EXCHANGE_NUM";
         let value = num.to_be_bytes();
         tracing::debug!("Setting LATEST_EXCHANGE_NUM to {}", num);
-        self.storage_engine.put(db_names::system::PROPERTIES, key, &value)?;
+        self.buffered_put(db_names::system::PROPERTIES, key.to_vec(), value.to_vec())?;
         Ok(())
     }
 
@@ -3549,7 +3979,7 @@ impl EngineBackedEvmStateStore {
 
         // Write to account store using TRON 21-byte address
         let tron_addr = self.to_tron_address_21(address);
-        self.storage_engine.put(self.account_database(), &tron_addr, &buf)?;
+        self.buffered_put(self.account_database(), tron_addr.to_vec(), buf)?;
 
         Ok(())
     }
@@ -3595,7 +4025,7 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 (disabled)
     pub fn allow_market_transaction(&self) -> Result<bool> {
         let key = b"ALLOW_MARKET_TRANSACTION";
-        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+        match self.buffered_get(db_names::system::PROPERTIES, key)? {
             Some(data) => {
                 if data.len() == 8 {
                     let value = i64::from_be_bytes(data.as_slice().try_into()?);
@@ -3618,7 +4048,7 @@ impl EngineBackedEvmStateStore {
     /// Default: 0
     pub fn get_market_sell_fee(&self) -> Result<i64> {
         let key = b"MARKET_SELL_FEE";
-        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+        match self.buffered_get(db_names::system::PROPERTIES, key)? {
             Some(data) => {
                 if data.len() == 8 {
                     Ok(i64::from_be_bytes(data.as_slice().try_into()?))
@@ -3635,7 +4065,7 @@ impl EngineBackedEvmStateStore {
     /// Default: 0
     pub fn get_market_cancel_fee(&self) -> Result<i64> {
         let key = b"MARKET_CANCEL_FEE";
-        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+        match self.buffered_get(db_names::system::PROPERTIES, key)? {
             Some(data) => {
                 if data.len() == 8 {
                     Ok(i64::from_be_bytes(data.as_slice().try_into()?))
@@ -3652,7 +4082,7 @@ impl EngineBackedEvmStateStore {
     /// Default: Long.MAX_VALUE
     pub fn get_market_quantity_limit(&self) -> Result<i64> {
         let key = b"MARKET_QUANTITY_LIMIT";
-        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
+        match self.buffered_get(db_names::system::PROPERTIES, key)? {
             Some(data) => {
                 if data.len() == 8 {
                     Ok(i64::from_be_bytes(data.as_slice().try_into()?))
@@ -3668,7 +4098,7 @@ impl EngineBackedEvmStateStore {
     /// Key: order_id bytes (SHA3 hash)
     pub fn get_market_order(&self, order_id: &[u8]) -> Result<Option<crate::protocol::MarketOrder>> {
         use prost::Message;
-        match self.storage_engine.get(self.market_order_database(), order_id)? {
+        match self.buffered_get(self.market_order_database(), order_id)? {
             Some(data) => {
                 let order = crate::protocol::MarketOrder::decode(data.as_slice())?;
                 Ok(Some(order))
@@ -3682,7 +4112,7 @@ impl EngineBackedEvmStateStore {
         use prost::Message;
         let mut buf = Vec::new();
         order.encode(&mut buf)?;
-        self.storage_engine.put(self.market_order_database(), order_id, &buf)?;
+        self.buffered_put(self.market_order_database(), order_id.to_vec(), buf)?;
         Ok(())
     }
 
@@ -3696,7 +4126,7 @@ impl EngineBackedEvmStateStore {
     pub fn get_market_account_order(&self, address: &Address) -> Result<Option<crate::protocol::MarketAccountOrder>> {
         use prost::Message;
         let key = self.to_tron_address_21(address);
-        match self.storage_engine.get(self.market_account_database(), &key)? {
+        match self.buffered_get(self.market_account_database(), &key)? {
             Some(data) => {
                 let account_order = crate::protocol::MarketAccountOrder::decode(data.as_slice())?;
                 Ok(Some(account_order))
@@ -3711,14 +4141,14 @@ impl EngineBackedEvmStateStore {
         let key = self.to_tron_address_21(address);
         let mut buf = Vec::new();
         account_order.encode(&mut buf)?;
-        self.storage_engine.put(self.market_account_database(), &key, &buf)?;
+        self.buffered_put(self.market_account_database(), key.to_vec(), buf)?;
         Ok(())
     }
 
     /// Get price count for a token pair
     /// Key: createPairKey(sellTokenId, buyTokenId) = 38 bytes (19 + 19)
     pub fn get_market_pair_price_count(&self, pair_key: &[u8]) -> Result<i64> {
-        match self.storage_engine.get(self.market_pair_to_price_database(), pair_key)? {
+        match self.buffered_get(self.market_pair_to_price_database(), pair_key)? {
             Some(data) => {
                 if data.len() == 8 {
                     Ok(i64::from_be_bytes(data.as_slice().try_into()?))
@@ -3733,26 +4163,26 @@ impl EngineBackedEvmStateStore {
     /// Set price count for a token pair
     pub fn set_market_pair_price_count(&mut self, pair_key: &[u8], count: i64) -> Result<()> {
         let data = count.to_be_bytes();
-        self.storage_engine.put(self.market_pair_to_price_database(), pair_key, &data)?;
+        self.buffered_put(self.market_pair_to_price_database(), pair_key.to_vec(), data.to_vec())?;
         Ok(())
     }
 
     /// Delete a token pair from MarketPairToPriceStore
     pub fn delete_market_pair(&mut self, pair_key: &[u8]) -> Result<()> {
-        self.storage_engine.delete(self.market_pair_to_price_database(), pair_key)?;
+        self.buffered_delete(self.market_pair_to_price_database(), pair_key.to_vec())?;
         Ok(())
     }
 
     /// Check if a token pair exists
     pub fn has_market_pair(&self, pair_key: &[u8]) -> Result<bool> {
-        Ok(self.storage_engine.get(self.market_pair_to_price_database(), pair_key)?.is_some())
+        Ok(self.buffered_get(self.market_pair_to_price_database(), pair_key)?.is_some())
     }
 
     /// Get MarketOrderIdList for a price key
     /// Key: createPairPriceKey(sellTokenId, buyTokenId, sellQuantity, buyQuantity) = 54 bytes
     pub fn get_market_order_id_list(&self, price_key: &[u8]) -> Result<Option<crate::protocol::MarketOrderIdList>> {
         use prost::Message;
-        match self.storage_engine.get(self.market_pair_price_to_order_database(), price_key)? {
+        match self.buffered_get(self.market_pair_price_to_order_database(), price_key)? {
             Some(data) => {
                 let list = crate::protocol::MarketOrderIdList::decode(data.as_slice())?;
                 Ok(Some(list))
@@ -3766,19 +4196,19 @@ impl EngineBackedEvmStateStore {
         use prost::Message;
         let mut buf = Vec::new();
         list.encode(&mut buf)?;
-        self.storage_engine.put(self.market_pair_price_to_order_database(), price_key, &buf)?;
+        self.buffered_put(self.market_pair_price_to_order_database(), price_key.to_vec(), buf)?;
         Ok(())
     }
 
     /// Delete MarketOrderIdList for a price key
     pub fn delete_market_order_id_list(&mut self, price_key: &[u8]) -> Result<()> {
-        self.storage_engine.delete(self.market_pair_price_to_order_database(), price_key)?;
+        self.buffered_delete(self.market_pair_price_to_order_database(), price_key.to_vec())?;
         Ok(())
     }
 
     /// Check if a price key exists in MarketPairPriceToOrderStore
     pub fn has_market_price_key(&self, price_key: &[u8]) -> Result<bool> {
-        Ok(self.storage_engine.get(self.market_pair_price_to_order_database(), price_key)?.is_some())
+        Ok(self.buffered_get(self.market_pair_price_to_order_database(), price_key)?.is_some())
     }
 
     /// List all price keys for a given token pair prefix from MarketPairPriceToOrderStore.
@@ -3788,7 +4218,7 @@ impl EngineBackedEvmStateStore {
     /// Java-tron configures a custom comparator for this CF, so callers should
     /// apply TRON's MarketUtils.comparePriceKey ordering when needed.
     pub fn list_market_pair_price_keys(&self, pair_key_prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
-        let entries = self.storage_engine.prefix_query(
+        let entries = self.buffered_prefix_query(
             self.market_pair_price_to_order_database(),
             pair_key_prefix,
         )?;

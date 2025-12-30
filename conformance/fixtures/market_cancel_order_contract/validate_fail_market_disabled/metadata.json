@@ -4,7 +4,7 @@
   "caseName": "validate_fail_market_disabled",
   "caseCategory": "validate_fail",
   "description": "Fail when market transactions are disabled",
-  "generatedAt": "2025-12-23T14:50:32.834Z",
+  "generatedAt": "2025-12-28T11:46:25.086Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
