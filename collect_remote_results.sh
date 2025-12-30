@@ -50,7 +50,7 @@ nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
      -XX:+HeapDumpOnOutOfMemoryError \
      -XX:+UseCMSInitiatingOccupancyOnly  -XX:CMSInitiatingOccupancyFraction=70 \
      -Dexec.csv.enabled=true -Dexec.csv.stateChanges.enabled=true \
-     -Dremote.exec.trc10.enabled=true \
+     -Dremote.exec.trc10.enabled=true -Dremote.exec.apply.trc10=false \
      -Dremote.resource.sync.debug=true -Dremote.resource.sync.confirm=true \
      -jar ./build/libs/FullNode.jar -c ./main_net_config_remote.conf \
      --execution-spi-enabled --execution-mode "REMOTE" >> start.log 2>&1 &

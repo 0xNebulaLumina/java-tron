@@ -1,0 +1,11 @@
+我正在按照 planning/align_conformance-B.planning.md & planning/align_conformance-B.todo.md 改成 rust 落盘 + java update cache 的方案，
+我的改动见 branch `Theseus_compare-align_conformance-B-fix` vs `Theseus_compare`
+
+但是改完之后怎么跑集成测试（`./collect_remote_results.sh`） 不通过了？显示 First mismatch at row ...
+
+我需要你修复 `./collect_remote_results.sh`，注意：
++ 暂时只需要修到 First mismatch tx，不用修后面的
++ 不要改变目前 java-side/rust-side 的 config
++ 在你进行尝试修复后进行修复结果验证时，可以调节 `./collect_remote_results.sh` 的参数来调整运行时间
+
+修复后, git commit the changes then push.

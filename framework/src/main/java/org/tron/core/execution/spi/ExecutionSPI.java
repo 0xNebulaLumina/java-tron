@@ -133,6 +133,12 @@ public interface ExecutionSPI {
     // Phase 2.I L2: Contract creation address (20-byte EVM address)
     // For CreateSmartContract, this is the newly created contract's address
     private final byte[] contractAddress;
+    // Phase B conformance: Write mode indicates whether Rust has persisted state changes
+    // When PERSISTED, Java should NOT apply state_changes to avoid double-apply
+    private final WriteMode writeMode;
+    // Phase B conformance: Touched keys for B-镜像 (B-mirror) support
+    // Only populated when writeMode == PERSISTED
+    private final List<TouchedKey> touchedKeys;
 
     public ExecutionResult(
         boolean success,
@@ -150,7 +156,8 @@ public interface ExecutionSPI {
         List<WithdrawChange> withdrawChanges) {
       this(success, returnData, energyUsed, energyRefunded, stateChanges, logs,
            errorMessage, bandwidthUsed, freezeChanges, globalResourceChanges,
-           trc10Changes, voteChanges, withdrawChanges, null, null);
+           trc10Changes, voteChanges, withdrawChanges, null, null,
+           WriteMode.COMPUTE_ONLY, new java.util.ArrayList<>());
     }
 
     // Constructor with tronTransactionResult (backward compatible)
@@ -171,10 +178,11 @@ public interface ExecutionSPI {
         byte[] tronTransactionResult) {
       this(success, returnData, energyUsed, energyRefunded, stateChanges, logs,
            errorMessage, bandwidthUsed, freezeChanges, globalResourceChanges,
-           trc10Changes, voteChanges, withdrawChanges, tronTransactionResult, null);
+           trc10Changes, voteChanges, withdrawChanges, tronTransactionResult, null,
+           WriteMode.COMPUTE_ONLY, new java.util.ArrayList<>());
     }
 
-    // Full constructor with contractAddress (Phase 2.I L2)
+    // Constructor with contractAddress (Phase 2.I L2)
     public ExecutionResult(
         boolean success,
         byte[] returnData,
@@ -191,6 +199,31 @@ public interface ExecutionSPI {
         List<WithdrawChange> withdrawChanges,
         byte[] tronTransactionResult,
         byte[] contractAddress) {
+      this(success, returnData, energyUsed, energyRefunded, stateChanges, logs,
+           errorMessage, bandwidthUsed, freezeChanges, globalResourceChanges,
+           trc10Changes, voteChanges, withdrawChanges, tronTransactionResult, contractAddress,
+           WriteMode.COMPUTE_ONLY, new java.util.ArrayList<>());
+    }
+
+    // Full constructor with writeMode and touchedKeys (Phase B conformance)
+    public ExecutionResult(
+        boolean success,
+        byte[] returnData,
+        long energyUsed,
+        long energyRefunded,
+        List<StateChange> stateChanges,
+        List<LogEntry> logs,
+        String errorMessage,
+        long bandwidthUsed,
+        List<FreezeLedgerChange> freezeChanges,
+        List<GlobalResourceTotalsChange> globalResourceChanges,
+        List<Trc10Change> trc10Changes,
+        List<VoteChange> voteChanges,
+        List<WithdrawChange> withdrawChanges,
+        byte[] tronTransactionResult,
+        byte[] contractAddress,
+        WriteMode writeMode,
+        List<TouchedKey> touchedKeys) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -206,6 +239,8 @@ public interface ExecutionSPI {
       this.withdrawChanges = withdrawChanges;
       this.tronTransactionResult = tronTransactionResult;
       this.contractAddress = contractAddress;
+      this.writeMode = writeMode;
+      this.touchedKeys = touchedKeys;
     }
 
     // Getters
@@ -280,6 +315,28 @@ public interface ExecutionSPI {
      */
     public byte[] getContractAddress() {
       return contractAddress;
+    }
+
+    /**
+     * Get the write mode for Phase B conformance alignment.
+     * - COMPUTE_ONLY (default): Java should apply state changes
+     * - PERSISTED: Rust has already persisted, Java should NOT apply to avoid double-apply
+     *
+     * @return WriteMode indicating how Java should handle state changes
+     */
+    public WriteMode getWriteMode() {
+      return writeMode;
+    }
+
+    /**
+     * Get the list of touched keys for B-镜像 (B-mirror) support.
+     * Only populated when writeMode == PERSISTED.
+     * Java can use these to refresh its local revoking head from remote root.
+     *
+     * @return List of TouchedKey records, or empty list if not applicable
+     */
+    public List<TouchedKey> getTouchedKeys() {
+      return touchedKeys;
     }
   }
 
@@ -729,5 +786,72 @@ public interface ExecutionSPI {
   /** Metrics callback interface. */
   interface MetricsCallback {
     void onMetric(String name, double value);
+  }
+
+  /**
+   * Write mode for Phase B conformance alignment.
+   * Determines how Java should handle state changes from remote execution.
+   */
+  enum WriteMode {
+    /**
+     * Compute-only mode (Phase A): Rust only computes, Java applies state changes.
+     * This is the default and current behavior.
+     */
+    COMPUTE_ONLY(0),
+
+    /**
+     * Persist mode (Phase B): Rust has already persisted state changes.
+     * Java should NOT apply state changes to avoid double-apply.
+     * Java can use touched_keys to mirror remote state to local revoking head.
+     */
+    PERSISTED(1);
+
+    private final int value;
+
+    WriteMode(int value) {
+      this.value = value;
+    }
+
+    public int getValue() {
+      return value;
+    }
+
+    public static WriteMode fromValue(int value) {
+      for (WriteMode wm : WriteMode.values()) {
+        if (wm.value == value) {
+          return wm;
+        }
+      }
+      return COMPUTE_ONLY; // Default to compute-only for unknown values
+    }
+  }
+
+  /**
+   * Touched key record for B-镜像 (B-mirror) support.
+   * Reports a database key that was modified during execution.
+   * Java uses this to refresh its local revoking head from remote root.
+   */
+  class TouchedKey {
+    private final String db;      // Database name (canonical, from db_names constants)
+    private final byte[] key;     // The key that was touched
+    private final boolean isDelete; // True if this was a delete operation
+
+    public TouchedKey(String db, byte[] key, boolean isDelete) {
+      this.db = db;
+      this.key = key;
+      this.isDelete = isDelete;
+    }
+
+    public String getDb() {
+      return db;
+    }
+
+    public byte[] getKey() {
+      return key;
+    }
+
+    public boolean isDelete() {
+      return isDelete;
+    }
   }
 }

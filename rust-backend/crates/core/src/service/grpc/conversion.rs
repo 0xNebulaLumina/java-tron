@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use tracing::{debug, warn};
 use revm_primitives::hex;
-use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, AccountAext};
+use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, AccountAext, TouchedKey};
 use crate::backend::*;
 use super::super::BackendService;
 use super::address::{strip_tron_address_prefix, add_tron_address_prefix};
@@ -212,10 +212,19 @@ impl BackendService {
         })
     }
 
+    /// Convert a TronExecutionResult to protobuf ExecuteTransactionResponse.
+    ///
+    /// # Arguments
+    /// * `result` - The execution result from Rust backend
+    /// * `pre_exec_aext` - Pre-execution AEXT values for hybrid mode
+    /// * `touched_keys` - Optional list of database keys touched during execution (for B-镜像)
+    /// * `write_mode` - The write mode: 0 = COMPUTE_ONLY, 1 = PERSISTED
     pub(super) fn convert_execution_result_to_protobuf(
         &self,
         result: TronExecutionResult,
-        pre_exec_aext: &std::collections::HashMap<revm::primitives::Address, AccountAext>
+        pre_exec_aext: &std::collections::HashMap<revm::primitives::Address, AccountAext>,
+        touched_keys: Option<&[TouchedKey]>,
+        write_mode: i32,
     ) -> ExecuteTransactionResponse {
         let status = if result.success {
             execution_result::Status::Success
@@ -520,6 +529,19 @@ impl BackendService {
             }),
             success: result.success,
             error_message,
+            // Phase B: Write mode and touched keys for B-镜像 support
+            write_mode,
+            touched_keys: touched_keys
+                .map(|keys| {
+                    keys.iter()
+                        .map(|tk| DbKey {
+                            db: tk.db.clone(),
+                            key: tk.key.clone(),
+                            is_delete: tk.is_delete,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }

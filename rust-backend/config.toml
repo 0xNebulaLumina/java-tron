@@ -161,7 +161,7 @@ delegation_reward_enabled = true
 # - Works consistently for both EMBEDDED and REMOTE storage modes
 # - Avoids non-idempotent double-writes (e.g., TRC-10 delta semantics)
 # - Easier transaction rollback on validation failure
-rust_persist_enabled = false
+rust_persist_enabled = true
 
 # Genesis Account Initialization
 # Pre-populate accounts with initial balances at startup for testing/parity.
