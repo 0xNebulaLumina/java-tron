@@ -689,6 +689,82 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get TOTAL_CREATE_WITNESS_FEE dynamic property.
+    ///
+    /// Java stores this under key "TOTAL_CREATE_WITNESS_FEE" (constant name: TOTAL_CREATE_WITNESS_COST).
+    /// Default: 0 if not present.
+    pub fn get_total_create_witness_cost(&self) -> Result<i64> {
+        let key = b"TOTAL_CREATE_WITNESS_FEE";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3],
+                data[4], data[5], data[6], data[7],
+            ])),
+            Some(_) => Ok(0),
+            None => Ok(0),
+        }
+    }
+
+    /// Add to TOTAL_CREATE_WITNESS_FEE dynamic property (java: addTotalCreateWitnessCost()).
+    pub fn add_total_create_witness_cost(&self, fee: u64) -> Result<()> {
+        if fee == 0 {
+            return Ok(());
+        }
+
+        let delta: i64 = fee
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("fee exceeds i64::MAX"))?;
+        let current = self.get_total_create_witness_cost()?;
+        let new_value = current
+            .checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_create_witness_cost"))?;
+
+        let key = b"TOTAL_CREATE_WITNESS_FEE";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            new_value.to_be_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
+    /// Get BURN_TRX_AMOUNT dynamic property.
+    /// Default: 0 if not present.
+    pub fn get_burn_trx_amount(&self) -> Result<i64> {
+        let key = b"BURN_TRX_AMOUNT";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3],
+                data[4], data[5], data[6], data[7],
+            ])),
+            Some(_) => Ok(0),
+            None => Ok(0),
+        }
+    }
+
+    /// Burn TRX by incrementing BURN_TRX_AMOUNT (java: burnTrx()).
+    pub fn burn_trx(&self, amount: u64) -> Result<()> {
+        if amount == 0 {
+            return Ok(());
+        }
+
+        let delta: i64 = amount
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("burn amount exceeds i64::MAX"))?;
+        let current = self.get_burn_trx_amount()?;
+        let new_value = current
+            .checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in burn_trx"))?;
+
+        let key = b"BURN_TRX_AMOUNT";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            new_value.to_be_bytes().to_vec(),
+        )?;
+        Ok(())
+    }
+
     /// Get AllowNewResourceModel dynamic property
     /// Determines whether to use new resource model for tron power calculation
     /// Default: true (enabled)
@@ -736,6 +812,28 @@ impl EngineBackedEvmStateStore {
             None => {
                 Ok(false) // Default no delay
             }
+        }
+    }
+
+    /// Get UNFREEZE_DELAY_DAYS dynamic property value.
+    ///
+    /// Returns the configured unfreeze delay in days, or 0 when missing/invalid.
+    pub fn get_unfreeze_delay_days(&self) -> Result<i64> {
+        let key = b"UNFREEZE_DELAY_DAYS";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]))
+                } else if !data.is_empty() {
+                    Ok(data[0] as i64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
         }
     }
 
@@ -893,17 +991,20 @@ impl EngineBackedEvmStateStore {
         let key = b"WITNESS_ALLOWANCE_FROZEN_TIME";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                if data.len() >= 8 {
-                    let days = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(days)
-                } else if !data.is_empty() {
-                    // Try parsing as single byte
-                    Ok(data[0] as i64)
-                } else {
-                    Ok(1) // Default: 1 day
+                match data.len() {
+                    len if len >= 8 => Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                    ])),
+                    4 => Ok(i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64),
+                    1 => Ok(data[0] as i64),
+                    0 => Ok(1), // Default: 1 day
+                    other => {
+                        tracing::warn!(
+                            "WITNESS_ALLOWANCE_FROZEN_TIME has invalid length: {}",
+                            other
+                        );
+                        Ok(1)
+                    }
                 }
             },
             None => {
@@ -1275,7 +1376,7 @@ impl EngineBackedEvmStateStore {
         let mut total_sun: u128 = 0;
 
         // Scan all freeze records in the database
-        let records = self.storage_engine.prefix_query(self.freeze_records_database(), &[])?;
+        let records = self.buffered_prefix_query(self.freeze_records_database(), &[])?;
 
         for kv in records {
             // Key format: 0x41 + 20-byte address + 1-byte resource = 22 bytes
@@ -1305,7 +1406,7 @@ impl EngineBackedEvmStateStore {
         let mut total_sun: u128 = 0;
 
         // Scan all freeze records in the database
-        let records = self.storage_engine.prefix_query(self.freeze_records_database(), &[])?;
+        let records = self.buffered_prefix_query(self.freeze_records_database(), &[])?;
 
         for kv in records {
             // Key format: 0x41 + 20-byte address + 1-byte resource = 22 bytes
@@ -1359,8 +1460,8 @@ impl EngineBackedEvmStateStore {
     /// Uses protobuf encoding by default for Java compatibility
     pub fn put_witness(&self, witness: &WitnessInfo) -> Result<()> {
         let key = self.witness_key(&witness.address);
-        // Use protobuf encoding for Java compatibility
-        let data = witness.serialize();
+        // Use protobuf encoding for Java compatibility, with the detected network prefix.
+        let data = witness.serialize_with_prefix(self.address_prefix);
 
         tracing::debug!("Storing witness (protobuf format) for address {:?}, key: {}, URL: {}, votes: {}",
                        witness.address, hex::encode(&key), witness.url, witness.vote_count);
@@ -1408,7 +1509,7 @@ impl EngineBackedEvmStateStore {
     /// Store votes record
     pub fn set_votes(&self, address: Address, votes: &VotesRecord) -> Result<()> {
         let key = self.votes_key(&address);
-        let data = votes.serialize();
+        let data = votes.serialize_with_prefix(self.address_prefix);
 
         tracing::debug!("Storing votes for address {:?}, key: {}, old_votes: {}, new_votes: {}",
                        address, hex::encode(&key), votes.old_votes.len(), votes.new_votes.len());
@@ -1571,7 +1672,7 @@ impl EngineBackedEvmStateStore {
         tracing::debug!("Getting freeze record for address {:?}, resource {}, key: {}",
                        address, resource, hex::encode(&key));
 
-        match self.storage_engine.get(self.freeze_records_database(), &key)? {
+        match self.buffered_get(self.freeze_records_database(), &key)? {
             Some(data) => {
                 let record = FreezeRecord::deserialize(&data)?;
                 tracing::debug!("Found freeze record: amount={}, expiration={}",
@@ -1626,47 +1727,168 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get tron power for an address in SUN
-    /// Sums frozen amounts across BANDWIDTH (0), ENERGY (1), and TRON_POWER (2) resources
+    /// Matches java-tron's `AccountCapsule.getTronPower()` / `getAllTronPower()` semantics:
+    /// - `new_model=false` (ALLOW_NEW_RESOURCE_MODEL=0): `getTronPower()`
+    /// - `new_model=true`  (ALLOW_NEW_RESOURCE_MODEL=1): `getAllTronPower()`
     pub fn get_tron_power_in_sun(&self, address: &Address, new_model: bool) -> Result<u64> {
-        // Resource types as defined in Tron protocol
+        fn add_non_negative_i64(total: &mut i128, value: i64, label: &'static str) -> Result<()> {
+            if value < 0 {
+                return Err(anyhow::anyhow!("Negative {}: {}", label, value));
+            }
+            *total = total
+                .checked_add(value as i128)
+                .ok_or_else(|| anyhow::anyhow!("Overflow while adding {}", label))?;
+            Ok(())
+        }
+
+        fn to_u64_checked(value: i128, label: &'static str) -> Result<u64> {
+            if value < 0 {
+                return Err(anyhow::anyhow!("Negative {} total: {}", label, value));
+            }
+            u64::try_from(value).map_err(|_| anyhow::anyhow!("{} exceeds u64::MAX: {}", label, value))
+        }
+
+        const TRON_POWER: i32 = crate::protocol::ResourceCode::TronPower as i32;
+
+        // Prefer AccountStore representation (java-tron canonical) when present.
+        let account_total = match self.get_account_proto(address)? {
+            Some(account) => {
+                let mut tron_power: i128 = 0;
+
+                // bandwidth frozen balance (Account.frozen)
+                for frozen in &account.frozen {
+                    add_non_negative_i64(&mut tron_power, frozen.frozen_balance, "frozen_balance")?;
+                }
+
+                // energy frozen balance + delegated balances (Account.account_resource)
+                if let Some(resource) = account.account_resource.as_ref() {
+                    if let Some(frozen_energy) = resource.frozen_balance_for_energy.as_ref() {
+                        add_non_negative_i64(
+                            &mut tron_power,
+                            frozen_energy.frozen_balance,
+                            "frozen_balance_for_energy",
+                        )?;
+                    }
+                    add_non_negative_i64(
+                        &mut tron_power,
+                        resource.delegated_frozen_balance_for_energy,
+                        "delegated_frozen_balance_for_energy",
+                    )?;
+                    add_non_negative_i64(
+                        &mut tron_power,
+                        resource.delegated_frozen_v2_balance_for_energy,
+                        "delegated_frozen_v2_balance_for_energy",
+                    )?;
+                }
+
+                // bandwidth delegated balances (Account.delegated_frozen_balance_for_bandwidth)
+                add_non_negative_i64(
+                    &mut tron_power,
+                    account.delegated_frozen_balance_for_bandwidth,
+                    "delegated_frozen_balance_for_bandwidth",
+                )?;
+                add_non_negative_i64(
+                    &mut tron_power,
+                    account.delegated_frozen_v2_balance_for_bandwidth,
+                    "delegated_frozen_v2_balance_for_bandwidth",
+                )?;
+
+                // FreezeV2 balances for BANDWIDTH/ENERGY (exclude TRON_POWER).
+                for frozen_v2 in &account.frozen_v2 {
+                    if frozen_v2.r#type != TRON_POWER {
+                        add_non_negative_i64(&mut tron_power, frozen_v2.amount, "frozen_v2_amount")?;
+                    }
+                }
+
+                if !new_model {
+                    to_u64_checked(tron_power, "tron_power")?
+                } else {
+                    // getAllTronPower() = getTronPower() + tronPowerFrozenBalance + tronPowerFrozenV2Balance
+                    // with old_tron_power gating.
+                    let tron_power_frozen_balance = account
+                        .tron_power
+                        .as_ref()
+                        .map(|f| f.frozen_balance)
+                        .unwrap_or(0);
+
+                    let mut tron_power_frozen_v2_balance: i128 = 0;
+                    for frozen_v2 in &account.frozen_v2 {
+                        if frozen_v2.r#type == TRON_POWER {
+                            add_non_negative_i64(
+                                &mut tron_power_frozen_v2_balance,
+                                frozen_v2.amount,
+                                "tron_power_frozen_v2_amount",
+                            )?;
+                        }
+                    }
+
+                    let tp_frozen_total: i128 = {
+                        let mut tmp: i128 = 0;
+                        add_non_negative_i64(
+                            &mut tmp,
+                            tron_power_frozen_balance,
+                            "tron_power_frozen_balance",
+                        )?;
+                        tmp.checked_add(tron_power_frozen_v2_balance)
+                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing tron power frozen totals"))?
+                    };
+
+                    let old_tron_power = account.old_tron_power;
+                    let all_tron_power = if old_tron_power == -1 {
+                        tp_frozen_total
+                    } else if old_tron_power == 0 {
+                        tron_power
+                            .checked_add(tp_frozen_total)
+                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing all_tron_power"))?
+                    } else if old_tron_power > 0 {
+                        (old_tron_power as i128)
+                            .checked_add(tp_frozen_total)
+                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing all_tron_power"))?
+                    } else {
+                        return Err(anyhow::anyhow!("Invalid old_tron_power: {}", old_tron_power));
+                    };
+
+                    to_u64_checked(all_tron_power, "all_tron_power")?
+                }
+            }
+            None => 0,
+        };
+
+        if account_total > 0 {
+            tracing::info!(
+                address = ?address,
+                new_model = new_model,
+                total = account_total,
+                "Computed tron power from AccountStore"
+            );
+            return Ok(account_total);
+        }
+
+        // Fallback: compute from the freeze ledger DB (used in some unit tests / legacy paths).
+        // Resource types as defined in TRON protocol
         const BANDWIDTH: u8 = 0;
         const ENERGY: u8 = 1;
-        const TRON_POWER: u8 = 2;
+        const TRON_POWER_LEDGER: u8 = 2;
 
         let mut total: u64 = 0;
-        let mut bandwidth_amount: u64 = 0;
-        let mut energy_amount: u64 = 0;
-        let mut tron_power_amount: u64 = 0;
-
-        // Sum frozen amounts across all three resource types
-        for resource in [BANDWIDTH, ENERGY, TRON_POWER] {
+        for resource in [BANDWIDTH, ENERGY, TRON_POWER_LEDGER] {
             if let Some(record) = self.get_freeze_record(address, resource)? {
-                let amount = record.frozen_amount;
-                total = total.checked_add(amount)
-                    .ok_or_else(|| anyhow::anyhow!(
+                total = total.checked_add(record.frozen_amount).ok_or_else(|| {
+                    anyhow::anyhow!(
                         "Tron power overflow when adding resource {} amount {} to total {}",
-                        resource, amount, total
-                    ))?;
-
-                // Track per-resource amounts for logging
-                match resource {
-                    BANDWIDTH => bandwidth_amount = amount,
-                    ENERGY => energy_amount = amount,
-                    TRON_POWER => tron_power_amount = amount,
-                    _ => {}
-                }
+                        resource,
+                        record.frozen_amount,
+                        total
+                    )
+                })?;
             }
         }
 
-        // Log the computation with all relevant details
         tracing::info!(
             address = ?address,
             new_model = new_model,
-            bandwidth = bandwidth_amount,
-            energy = energy_amount,
-            tron_power_legacy = tron_power_amount,
             total = total,
-            "Computed tron power from freeze ledger"
+            "Computed tron power from freeze ledger fallback"
         );
 
         Ok(total)
@@ -1674,62 +1896,67 @@ impl EngineBackedEvmStateStore {
 
     /// Get account name for an address
     pub fn get_account_name(&self, address: &Address) -> Result<Option<String>> {
-        let key = self.account_key(address); // Reuse account_key helper (21-byte with 0x41 prefix)
-        tracing::debug!("Getting account name for address {:?}, key: {}",
-                       address, hex::encode(&key));
+        let proto_account = match self.get_account_proto(address)? {
+            Some(account) => account,
+            None => return Ok(None),
+        };
 
-        match self.storage_engine.get(self.account_index_database(), &key)? {
-            Some(data) => {
-                tracing::debug!("Found account name data, length: {}", data.len());
-                // Decode as UTF-8 string
-                match String::from_utf8(data) {
-                    Ok(name) => {
-                        tracing::debug!("Successfully decoded account name: {}", name);
-                        Ok(Some(name))
-                    },
-                    Err(e) => {
-                        tracing::error!("Failed to decode account name as UTF-8: {}", e);
-                        Err(anyhow::anyhow!("Invalid UTF-8 in account name: {}", e))
-                    }
-                }
-            },
-            None => {
-                tracing::debug!("No account name found for address {:?}", address);
-                Ok(None)
-            }
+        if proto_account.account_name.is_empty() {
+            return Ok(None);
         }
+
+        String::from_utf8(proto_account.account_name)
+            .map(Some)
+            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in account name: {}", e))
     }
 
     /// Set account name for an address
     pub fn set_account_name(&mut self, address: Address, name: &[u8]) -> Result<()> {
-        let key = self.account_key(&address); // Reuse account_key helper (21-byte with 0x41 prefix)
-
-        tracing::debug!("Setting account name for address {:?}, key: {}, name_len: {}",
-                       address, hex::encode(&key), name.len());
-
-        // Validate name length (1 <= len <= 32 bytes to match java-tron constraints)
-        if name.is_empty() {
-            return Err(anyhow::anyhow!("Account name cannot be empty"));
-        }
-        if name.len() > 32 {
-            return Err(anyhow::anyhow!("Account name cannot exceed 32 bytes, got {}", name.len()));
+        const MAX_ACCOUNT_NAME_LEN: usize = 200;
+        if name.len() > MAX_ACCOUNT_NAME_LEN {
+            return Err(anyhow::anyhow!("Invalid accountName"));
         }
 
-        // Validate UTF-8 encoding (optional policy)
-        match std::str::from_utf8(name) {
-            Ok(name_str) => {
-                tracing::debug!("Account name is valid UTF-8: {}", name_str);
-            },
-            Err(e) => {
-                tracing::warn!("Account name contains invalid UTF-8: {}, allowing raw bytes", e);
-                // Continue with raw bytes - some chains may allow arbitrary bytes
-            }
-        }
+        let mut proto_account = self
+            .get_account_proto(&address)?
+            .ok_or_else(|| anyhow::anyhow!("Account does not exist"))?;
+        proto_account.account_name = name.to_vec();
+        self.put_account_proto(&address, &proto_account)?;
 
-        self.buffered_put(self.account_index_database(), key, name.to_vec())?;
+        // Java-tron AccountIndexStore is a reverse index: name -> address (21-byte TRON key).
+        let tron_address = self.account_key(&address);
+        self.buffered_put(self.account_index_database(), name.to_vec(), tron_address)?;
 
-        tracing::info!("Successfully stored account name for address {:?}, length: {}", address, name.len());
+        tracing::info!(
+            "Stored account name (len={}) and index entry for address {:?}",
+            name.len(),
+            address
+        );
         Ok(())
+    }
+
+    /// Get ALLOW_UPDATE_ACCOUNT_NAME dynamic property.
+    ///
+    /// Java reference: DynamicPropertiesStore.getAllowUpdateAccountName()
+    /// Default: 0 if missing.
+    pub fn get_allow_update_account_name(&self) -> Result<i64> {
+        let key = b"ALLOW_UPDATE_ACCOUNT_NAME";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ])),
+            Some(_) => Ok(0),
+            None => Ok(0),
+        }
+    }
+
+    /// Returns true if `account-index` contains `name` as a key.
+    ///
+    /// Java reference: AccountIndexStore.has(name_bytes)
+    pub fn account_index_has(&self, name: &[u8]) -> Result<bool> {
+        Ok(self
+            .buffered_get(self.account_index_database(), name)?
+            .is_some())
     }
 
     /// Get database name for account resource tracking (AEXT)
@@ -3348,9 +3575,14 @@ impl EngineBackedEvmStateStore {
     /// Get AllowSameTokenName dynamic property
     /// If 0: use asset name as key for AssetIssueStore
     /// If 1: use asset id as key for AssetIssueV2Store
-    /// Default: 1 (enabled) to match current mainnet
+    ///
+    /// Java-tron requires this key to exist in DynamicPropertiesStore and will throw if missing.
+    /// For backend robustness (and historical replay parity), default to 0 when absent to avoid
+    /// enabling V2 mode prematurely.
     pub fn get_allow_same_token_name(&self) -> Result<i64> {
-        let key = b"ALLOW_SAME_TOKEN_NAME";
+        // Note: java-tron stores this under a key with a leading space:
+        //   private static final byte[] ALLOW_SAME_TOKEN_NAME = " ALLOW_SAME_TOKEN_NAME".getBytes();
+        let key = b" ALLOW_SAME_TOKEN_NAME";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
@@ -3360,11 +3592,45 @@ impl EngineBackedEvmStateStore {
                     ]);
                     Ok(val)
                 } else {
-                    Ok(1) // Default enabled (V2 mode)
+                    Ok(0) // Default disabled (legacy mode)
                 }
             },
-            None => Ok(1) // Default enabled (V2 mode)
+            None => Ok(0) // Default disabled (legacy mode)
         }
+    }
+
+    /// Get TOKEN_ID_NUM dynamic property (TRC-10 issuance counter).
+    ///
+    /// Java stores this as a big-endian i64 under key "TOKEN_ID_NUM". The value represents
+    /// the last-issued token id (java-tron increments before use).
+    ///
+    /// Default: 1_000_000 to match mainnet genesis (first issued token becomes 1_000_001).
+    pub fn get_token_id_num(&self) -> Result<i64> {
+        let key = b"TOKEN_ID_NUM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(1_000_000)
+                }
+            }
+            None => Ok(1_000_000),
+        }
+    }
+
+    /// Persist TOKEN_ID_NUM dynamic property (big-endian i64).
+    pub fn save_token_id_num(&mut self, value: i64) -> Result<()> {
+        let key = b"TOKEN_ID_NUM";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            value.to_be_bytes().to_vec(),
+        )?;
+        Ok(())
     }
 
     /// Get OneDayNetLimit dynamic property

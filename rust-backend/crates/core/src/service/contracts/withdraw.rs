@@ -117,6 +117,24 @@ impl BackendService {
         storage_adapter.set_account(owner_address, new_owner.clone())
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
+        // In rust_persist_enabled mode, persist the allowance reset + latestWithdrawTime update
+        // directly to the Account proto. This matches java-tron's embedded persistence and is
+        // required for rust-only conformance fixtures (no Java apply path).
+        let config = self.get_execution_config()?;
+        if config.remote.rust_persist_enabled {
+            let mut owner_proto = storage_adapter
+                .get_account_proto(&owner_address)
+                .map_err(|e| format!("Failed to load owner account proto: {}", e))?
+                .ok_or_else(|| format!("Account {} not found", owner_tron))?;
+
+            owner_proto.allowance = 0;
+            owner_proto.latest_withdraw_time = now_ms;
+
+            storage_adapter
+                .put_account_proto(&owner_address, &owner_proto)
+                .map_err(|e| format!("Failed to persist owner account proto: {}", e))?;
+        }
+
         info!("WithdrawBalance: owner={} withdrew {} SUN, new_balance={}",
               owner_tron, allowance, new_balance_u64);
 
