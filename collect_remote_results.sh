@@ -2,8 +2,8 @@
 
 set -e
 
-# Configurable sleep duration (in seconds), default 600 (10 minutes)
-SLEEP_DURATION=${1:-600}
+# Configurable sleep duration (in seconds), default 1200 (20 minutes)
+SLEEP_DURATION=${1:-1200}
 # Configurable embedded Java log path
 EMBEDDED_JAVA_LOG=${2:-1.embedded-java.log}
 # Configurable embedded-embedded CSV path
