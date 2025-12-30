@@ -3580,7 +3580,9 @@ impl EngineBackedEvmStateStore {
     /// For backend robustness (and historical replay parity), default to 0 when absent to avoid
     /// enabling V2 mode prematurely.
     pub fn get_allow_same_token_name(&self) -> Result<i64> {
-        let key = b"ALLOW_SAME_TOKEN_NAME";
+        // Note: java-tron stores this under a key with a leading space:
+        //   private static final byte[] ALLOW_SAME_TOKEN_NAME = " ALLOW_SAME_TOKEN_NAME".getBytes();
+        let key = b" ALLOW_SAME_TOKEN_NAME";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {

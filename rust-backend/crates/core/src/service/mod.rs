@@ -4021,7 +4021,9 @@ impl BackendService {
                 abbr: asset_info.abbr.as_bytes().to_vec(),
                 total_supply: asset_info.total_supply,
                 trx_num: asset_info.trx_num,
-                precision: asset_info.precision,
+                // java-tron records issuance precision from the V2 capsule:
+                // when allowSameTokenName==0, V2 precision is forced to 0.
+                precision: if allow_same_token_name == 0 { 0 } else { asset_info.precision },
                 num: asset_info.num,
                 start_time: asset_info.start_time,
                 end_time: asset_info.end_time,

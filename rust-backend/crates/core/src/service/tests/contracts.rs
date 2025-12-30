@@ -1590,7 +1590,7 @@ fn test_asset_issue_validate_fail_invalid_name_trx() {
     // In java-tron, "assetName can't be trx" is enforced only when ALLOW_SAME_TOKEN_NAME != 0.
     storage_engine.put(
         "properties",
-        b"ALLOW_SAME_TOKEN_NAME",
+        b" ALLOW_SAME_TOKEN_NAME",
         &1i64.to_be_bytes(),
     ).unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
