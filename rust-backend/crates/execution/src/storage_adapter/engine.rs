@@ -3575,9 +3575,14 @@ impl EngineBackedEvmStateStore {
     /// Get AllowSameTokenName dynamic property
     /// If 0: use asset name as key for AssetIssueStore
     /// If 1: use asset id as key for AssetIssueV2Store
-    /// Default: 1 (enabled) to match current mainnet
+    ///
+    /// Java-tron requires this key to exist in DynamicPropertiesStore and will throw if missing.
+    /// For backend robustness (and historical replay parity), default to 0 when absent to avoid
+    /// enabling V2 mode prematurely.
     pub fn get_allow_same_token_name(&self) -> Result<i64> {
-        let key = b"ALLOW_SAME_TOKEN_NAME";
+        // Note: java-tron stores this under a key with a leading space:
+        //   private static final byte[] ALLOW_SAME_TOKEN_NAME = " ALLOW_SAME_TOKEN_NAME".getBytes();
+        let key = b" ALLOW_SAME_TOKEN_NAME";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
@@ -3587,11 +3592,45 @@ impl EngineBackedEvmStateStore {
                     ]);
                     Ok(val)
                 } else {
-                    Ok(1) // Default enabled (V2 mode)
+                    Ok(0) // Default disabled (legacy mode)
                 }
             },
-            None => Ok(1) // Default enabled (V2 mode)
+            None => Ok(0) // Default disabled (legacy mode)
         }
+    }
+
+    /// Get TOKEN_ID_NUM dynamic property (TRC-10 issuance counter).
+    ///
+    /// Java stores this as a big-endian i64 under key "TOKEN_ID_NUM". The value represents
+    /// the last-issued token id (java-tron increments before use).
+    ///
+    /// Default: 1_000_000 to match mainnet genesis (first issued token becomes 1_000_001).
+    pub fn get_token_id_num(&self) -> Result<i64> {
+        let key = b"TOKEN_ID_NUM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(1_000_000)
+                }
+            }
+            None => Ok(1_000_000),
+        }
+    }
+
+    /// Persist TOKEN_ID_NUM dynamic property (big-endian i64).
+    pub fn save_token_id_num(&mut self, value: i64) -> Result<()> {
+        let key = b"TOKEN_ID_NUM";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            value.to_be_bytes().to_vec(),
+        )?;
+        Ok(())
     }
 
     /// Get OneDayNetLimit dynamic property

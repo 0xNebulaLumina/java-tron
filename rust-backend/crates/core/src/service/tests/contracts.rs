@@ -1587,6 +1587,12 @@ fn test_asset_issue_validate_fail_total_supply_zero() {
 fn test_asset_issue_validate_fail_invalid_name_trx() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // In java-tron, "assetName can't be trx" is enforced only when ALLOW_SAME_TOKEN_NAME != 0.
+    storage_engine.put(
+        "properties",
+        b" ALLOW_SAME_TOKEN_NAME",
+        &1i64.to_be_bytes(),
+    ).unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_trc10_enabled();
 
