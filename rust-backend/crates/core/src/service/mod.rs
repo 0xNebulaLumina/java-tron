@@ -1620,6 +1620,9 @@ impl BackendService {
         info!("Skipping withdrawReward for {} (Phase 1 - delegation not yet ported)", owner_tron);
 
         // 6. Load or create VotesRecord
+        // java-tron semantics:
+        // - VoteWitness updates VotesCapsule.newVotes only
+        // - VotesCapsule.oldVotes is updated at maintenance boundaries (not on every vote)
         // When creating a new record (no existing VotesRecord), seed old_votes from Account.votes
         // to match embedded behavior. This ensures correct delta computation in maintenance.
         let seed_from_account = execution_config.remote.vote_witness_seed_old_from_account;
@@ -1628,8 +1631,8 @@ impl BackendService {
             Ok(Some(record)) => {
                 info!("Found existing votes for {}: old_votes={}, new_votes={}",
                       owner_tron, record.old_votes.len(), record.new_votes.len());
-                // Update old_votes to current new_votes
-                VotesRecord::new(owner, record.new_votes.clone(), Vec::new())
+                // Preserve old_votes (epoch baseline) and overwrite new_votes below.
+                record
             },
             Ok(None) => {
                 // No existing VotesRecord - this is the first vote for this account in this epoch

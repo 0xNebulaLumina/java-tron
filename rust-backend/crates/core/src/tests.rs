@@ -616,6 +616,129 @@ fn test_vote_witness_multi_freeze_accumulates() {
     println!("✓ VoteWitness with multi-resource freeze accumulation succeeded");
 }
 
+#[test]
+fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
+    fn write_varint(buf: &mut Vec<u8>, mut value: u64) {
+        while value >= 0x80 {
+            buf.push(((value & 0x7F) as u8) | 0x80);
+            value >>= 7;
+        }
+        buf.push(value as u8);
+    }
+
+    fn encode_vote_witness_contract_single(vote_address: &Address, vote_count: u64) -> Bytes {
+        let mut vote_msg = Vec::new();
+        vote_msg.push(0x0a);
+        let mut tron_addr = Vec::with_capacity(21);
+        tron_addr.push(0x41);
+        tron_addr.extend_from_slice(vote_address.as_slice());
+        write_varint(&mut vote_msg, tron_addr.len() as u64);
+        vote_msg.extend_from_slice(&tron_addr);
+        vote_msg.push(0x10);
+        write_varint(&mut vote_msg, vote_count);
+
+        let mut contract = Vec::new();
+        contract.push(0x12);
+        write_varint(&mut contract, vote_msg.len() as u64);
+        contract.extend_from_slice(&vote_msg);
+        Bytes::from(contract)
+    }
+
+    let mut config = ExecutionConfig::default();
+    config.remote.vote_witness_enabled = true;
+    config.remote.system_enabled = true;
+    config.remote.vote_witness_seed_old_from_account = true;
+    config.fees.mode = "burn".to_string();
+    config.fees.support_black_hole_optimization = true;
+
+    let execution_module = ExecutionModule::new(config);
+
+    let mut module_manager = tron_backend_common::ModuleManager::new();
+    module_manager.register("execution", Box::new(execution_module));
+    let backend_service = crate::BackendService::new(module_manager);
+
+    let owner_address = Address::from_slice(&[0x01; 20]);
+    let witness_address = Address::from_slice(&[0x02; 20]);
+
+    let context = TronExecutionContext {
+        block_number: 1,
+        block_timestamp: 1000000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 30000000,
+        chain_id: 2494104990,
+        energy_price: 420,
+        bandwidth_price: 1000,
+        transaction_id: None,
+    };
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    let mut storage = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine);
+
+    storage.put_account_proto(&owner_address, &tron_backend_execution::protocol::Account::default())
+        .unwrap();
+    storage.put_account_proto(&witness_address, &tron_backend_execution::protocol::Account::default())
+        .unwrap();
+    storage.put_witness(&tron_backend_execution::WitnessInfo::new(
+        witness_address,
+        "witness".to_string(),
+        0,
+    )).unwrap();
+    storage.set_freeze_record(
+        owner_address,
+        0,
+        &tron_backend_execution::FreezeRecord {
+            frozen_amount: 10_000_000_000,
+            expiration_timestamp: 1000000000 + 3 * 86400 * 1000,
+        },
+    ).unwrap();
+
+    let tx1 = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: encode_vote_witness_contract_single(&witness_address, 4754),
+        gas_limit: 10000,
+        gas_price: U256::ZERO,
+        nonce: 1,
+        metadata: TxMetadata {
+            contract_type: Some(TronContractType::VoteWitnessContract),
+            asset_id: None,
+        },
+    };
+    backend_service.execute_non_vm_contract(&mut storage, &tx1, &context)
+        .expect("First VoteWitness should succeed");
+
+    let votes_after_1 = storage.get_votes(&owner_address).unwrap().expect("VotesRecord should exist");
+    assert!(votes_after_1.old_votes.is_empty(), "old_votes should remain epoch baseline");
+    assert_eq!(votes_after_1.new_votes.len(), 1);
+    assert_eq!(votes_after_1.new_votes[0].vote_address, witness_address);
+    assert_eq!(votes_after_1.new_votes[0].vote_count, 4754);
+
+    let tx2 = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: encode_vote_witness_contract_single(&witness_address, 4838),
+        gas_limit: 10000,
+        gas_price: U256::ZERO,
+        nonce: 2,
+        metadata: TxMetadata {
+            contract_type: Some(TronContractType::VoteWitnessContract),
+            asset_id: None,
+        },
+    };
+    backend_service.execute_non_vm_contract(&mut storage, &tx2, &context)
+        .expect("Second VoteWitness should succeed");
+
+    let votes_after_2 = storage.get_votes(&owner_address).unwrap().expect("VotesRecord should exist");
+    assert!(votes_after_2.old_votes.is_empty(), "old_votes should not be shifted to prior new_votes");
+    assert_eq!(votes_after_2.new_votes.len(), 1);
+    assert_eq!(votes_after_2.new_votes[0].vote_address, witness_address);
+    assert_eq!(votes_after_2.new_votes[0].vote_count, 4838);
+}
+
 //==============================================================================
 // AssetIssueContract Tests
 //==============================================================================
