@@ -4,6 +4,8 @@ review test cases in framework/src/test/java/org/tron/core/conformance/{PLACE_HO
 
 does it miss any edge case?
 
-no need to start coding, just answer me and put it in planning/fixture_edge_case/{PLACE_HOLDER}.planning.md
+no need to start coding, just write the answer into planning/fixture_edge_case/{PLACE_HOLDER}.planning.md
+
+also give me a detailed plan with todolist/checklist in planning/fixture_edge_case/{PLACE_HOLDER}.todo.md if missing any edge case
 
 then git commit the changes and push
