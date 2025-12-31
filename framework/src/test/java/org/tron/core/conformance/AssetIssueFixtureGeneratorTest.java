@@ -79,7 +79,7 @@ public class AssetIssueFixtureGeneratorTest extends BaseTest {
     putAccount(dbManager, issuerAddress, INITIAL_BALANCE, "asset_issuer");
 
     // Asset start time must be > latestBlockHeaderTimestamp
-    long startTime = DEFAULT_BLOCK_TIMESTAMP + 1000;
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
     long endTime = startTime + 86400000 * 30; // 30 days
 
     AssetIssueContract contract = AssetIssueContract.newBuilder()
@@ -170,7 +170,7 @@ public class AssetIssueFixtureGeneratorTest extends BaseTest {
     String issuerAddress = generateAddress("asset_issuer_03");
     putAccount(dbManager, issuerAddress, INITIAL_BALANCE, "asset_issuer3");
 
-    long startTime = DEFAULT_BLOCK_TIMESTAMP + 1000;
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
     long endTime = startTime + 86400000;
 
     AssetIssueContract contract = AssetIssueContract.newBuilder()
@@ -219,7 +219,7 @@ public class AssetIssueFixtureGeneratorTest extends BaseTest {
     issuerAccount = new AccountCapsule(builder.build());
     dbManager.getAccountStore().put(issuerAccount.getAddress().toByteArray(), issuerAccount);
 
-    long startTime = DEFAULT_BLOCK_TIMESTAMP + 1000;
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
     long endTime = startTime + 86400000;
 
     AssetIssueContract contract = AssetIssueContract.newBuilder()
@@ -262,7 +262,7 @@ public class AssetIssueFixtureGeneratorTest extends BaseTest {
     String poorIssuer = generateAddress("poor_issuer_001");
     putAccount(dbManager, poorIssuer, ONE_TRX, "poor_issuer"); // Only 1 TRX
 
-    long startTime = DEFAULT_BLOCK_TIMESTAMP + 1000;
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
     long endTime = startTime + 86400000;
 
     AssetIssueContract contract = AssetIssueContract.newBuilder()
@@ -305,7 +305,7 @@ public class AssetIssueFixtureGeneratorTest extends BaseTest {
     String issuerAddress = generateAddress("asset_issuer_05");
     putAccount(dbManager, issuerAddress, INITIAL_BALANCE, "asset_issuer5");
 
-    long startTime = DEFAULT_BLOCK_TIMESTAMP + 1000;
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
     long endTime = startTime + 86400000;
 
     // Invalid name - "trx" is reserved
