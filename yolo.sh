@@ -2,26 +2,42 @@
 set -euo pipefail
 
 prompt_file="YOLO_PROMPT.txt"
+inputs_file="YOLO_PROMPT_INPUT.txt"
 
 if [[ ! -f "$prompt_file" ]]; then
     echo "Missing $prompt_file" >&2
     exit 1
 fi
 
-prev_hash="$(git rev-parse HEAD)"
+if [[ ! -f "$inputs_file" ]]; then
+    echo "Missing $inputs_file" >&2
+    exit 1
+fi
 
-while true; do
-    codex exec \
-        --model gpt-5.2 \
-        --config model_reasoning_effort="xhigh" \
-        --yolo \
-        "$(cat "$prompt_file")"
+prompt_template="$(cat "$prompt_file")"
 
-    curr_hash="$(git rev-parse HEAD)"
+while IFS= read -r input || [[ -n "$input" ]]; do
+    [[ -z "$input" ]] && continue
 
-    if [[ "$curr_hash" == "$prev_hash" ]]; then
-        break
-    fi
+    prompt="${prompt_template//\{PLACE_HOLDER\}/$input}"
 
-    prev_hash="$curr_hash"
-done
+    echo "Processing: $input"
+
+    prev_hash="$(git rev-parse HEAD)"
+
+    while true; do
+        codex exec \
+            --model gpt-5.2 \
+            --config model_reasoning_effort="xhigh" \
+            --yolo \
+            "$prompt"
+
+        curr_hash="$(git rev-parse HEAD)"
+
+        if [[ "$curr_hash" == "$prev_hash" ]]; then
+            break
+        fi
+
+        prev_hash="$curr_hash"
+    done
+done < "$inputs_file"
