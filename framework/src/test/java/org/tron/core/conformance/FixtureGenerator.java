@@ -8,32 +8,28 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.tron.common.utils.ByteArray;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.actuator.Actuator;
 import org.tron.core.actuator.ActuatorFactory;
+import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.capsule.TransactionResultCapsule;
 import org.tron.core.db.Manager;
-import org.tron.core.db.TransactionContext;
-import org.tron.core.db.TransactionTrace;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
-import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.contract.AccountContract.AccountCreateContract;
 import org.tron.protos.contract.AccountContract.AccountUpdateContract;
 import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
+import org.tron.protos.contract.AssetIssueContractOuterClass.ParticipateAssetIssueContract;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
 import org.tron.protos.contract.BalanceContract.FreezeBalanceContract;
 import org.tron.protos.contract.BalanceContract.FreezeBalanceV2Contract;
@@ -41,9 +37,12 @@ import org.tron.protos.contract.BalanceContract.TransferContract;
 import org.tron.protos.contract.BalanceContract.UnfreezeBalanceContract;
 import org.tron.protos.contract.BalanceContract.UnfreezeBalanceV2Contract;
 import org.tron.protos.contract.BalanceContract.WithdrawBalanceContract;
+import org.tron.protos.contract.Common.ResourceCode;
 import org.tron.protos.contract.WitnessContract.VoteWitnessContract;
 import org.tron.protos.contract.WitnessContract.WitnessCreateContract;
 import org.tron.protos.contract.WitnessContract.WitnessUpdateContract;
+import tron.backend.BackendOuterClass.AccountAext;
+import tron.backend.BackendOuterClass.AccountAextSnapshot;
 import tron.backend.BackendOuterClass.ExecuteTransactionRequest;
 import tron.backend.BackendOuterClass.ExecutionContext;
 import tron.backend.BackendOuterClass.TronTransaction;
@@ -302,10 +301,83 @@ public class FixtureGenerator {
           valueBytes = new byte[0];
         }
 
-        entries.add(new java.util.AbstractMap.SimpleEntry<>(key, valueBytes));
+        // Defensive copy: some store iterators may reuse backing buffers.
+        byte[] keyCopy = key == null ? new byte[0] : Arrays.copyOf(key, key.length);
+        byte[] valueCopy = valueBytes == null ? new byte[0] : Arrays.copyOf(valueBytes, valueBytes.length);
+        entries.add(new java.util.AbstractMap.SimpleEntry<>(keyCopy, valueCopy));
       }
     }
     return entries.iterator();
+  }
+
+  private List<AccountAextSnapshot> collectPreExecutionAext(
+      Transaction.Contract.ContractType contractType, byte[] fromAddress, byte[] toAddress) {
+    List<AccountAextSnapshot> snapshots = new ArrayList<>();
+
+    boolean enabled =
+        Boolean.parseBoolean(System.getProperty("remote.exec.preexec.aext.enabled", "true"));
+    if (!enabled) {
+      return snapshots;
+    }
+
+    List<byte[]> addressesToSnapshot = new ArrayList<>();
+    if (fromAddress != null && fromAddress.length > 0) {
+      addressesToSnapshot.add(fromAddress);
+    }
+
+    if (toAddress != null && toAddress.length > 0) {
+      switch (contractType) {
+        case TransferContract:
+        case TransferAssetContract:
+          if (!Arrays.equals(fromAddress, toAddress)) {
+            addressesToSnapshot.add(toAddress);
+          }
+          break;
+        default:
+          break;
+      }
+    }
+
+    try {
+      org.tron.core.store.AccountStore accountStore = chainBaseManager.getAccountStore();
+      if (accountStore == null) {
+        logger.warn("AccountStore not available for AEXT collection");
+        return snapshots;
+      }
+
+      for (byte[] address : addressesToSnapshot) {
+        try {
+          AccountCapsule account = accountStore.get(address);
+          if (account == null) {
+            continue;
+          }
+
+          AccountAext aext = AccountAext.newBuilder()
+              .setNetUsage(account.getNetUsage())
+              .setFreeNetUsage(account.getFreeNetUsage())
+              .setEnergyUsage(account.getEnergyUsage())
+              .setLatestConsumeTime(account.getLatestConsumeTime())
+              .setLatestConsumeFreeTime(account.getLatestConsumeFreeTime())
+              .setLatestConsumeTimeForEnergy(account.getLatestConsumeTimeForEnergy())
+              .setNetWindowSize(account.getWindowSize(ResourceCode.BANDWIDTH))
+              .setNetWindowOptimized(account.getWindowOptimized(ResourceCode.BANDWIDTH))
+              .setEnergyWindowSize(account.getWindowSize(ResourceCode.ENERGY))
+              .setEnergyWindowOptimized(account.getWindowOptimized(ResourceCode.ENERGY))
+              .build();
+
+          snapshots.add(AccountAextSnapshot.newBuilder()
+              .setAddress(ByteString.copyFrom(address))
+              .setAext(aext)
+              .build());
+        } catch (Exception e) {
+          logger.warn("Failed to collect AEXT for address: {}", e.getMessage());
+        }
+      }
+    } catch (Exception e) {
+      logger.warn("Failed to collect pre-execution AEXT snapshots: {}", e.getMessage());
+    }
+
+    return snapshots;
   }
 
   /**
@@ -352,10 +424,17 @@ public class FixtureGenerator {
           // data remains empty
           break;
 
+        case ParticipateAssetIssueContract:
+          ParticipateAssetIssueContract participateAssetIssueContract =
+              contractParameter.unpack(ParticipateAssetIssueContract.class);
+          value = participateAssetIssueContract.getAmount();
+          data = participateAssetIssueContract.toByteArray();
+          break;
+
         case AccountUpdateContract:
           AccountUpdateContract accountUpdateContract =
               contractParameter.unpack(AccountUpdateContract.class);
-          // fromAddress already extracted from trxCap.getOwnerAddress()
+          fromAddress = accountUpdateContract.getOwnerAddress().toByteArray();
           data = accountUpdateContract.getAccountName().toByteArray();
           // toAddress remains empty, value = 0
           break;
@@ -422,16 +501,14 @@ public class FixtureGenerator {
           break;
 
         default:
-          // For other contracts, fall back to the raw Any bytes
-          logger.warn("Contract type {} not explicitly mapped, using raw Any bytes",
-              contract.getType());
-          data = contractParameter.toByteArray();
+          // For most system contracts, RemoteExecutionSPI forwards the inner proto bytes.
+          data = contractParameter.getValue().toByteArray();
           break;
       }
     } catch (Exception e) {
       logger.warn("Failed to extract contract data for type {}: {}",
           contract.getType(), e.getMessage());
-      data = contractParameter.toByteArray();
+      data = contractParameter.getValue().toByteArray();
     }
 
     logger.debug("buildRequest: type={}, from_len={}, to_len={}, value={}, data_len={}, asset_id_len={}",
@@ -466,9 +543,12 @@ public class FixtureGenerator {
         .setTransactionId(trxCap.getTransactionId().toString())
         .build();
 
+    List<AccountAextSnapshot> preExecAext =
+        collectPreExecutionAext(contract.getType(), fromAddress, toAddress);
     return ExecuteTransactionRequest.newBuilder()
         .setTransaction(tronTx)
         .setContext(context)
+        .addAllPreExecutionAext(preExecAext)
         .build();
   }
 
