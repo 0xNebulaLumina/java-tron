@@ -4,7 +4,7 @@
   "caseName": "validate_fail_insufficient_balance",
   "caseCategory": "validate_fail",
   "description": "Fail when owner has insufficient balance for upgrade cost",
-  "generatedAt": "2025-12-28T11:46:41.108Z",
+  "generatedAt": "2025-12-31T09:11:52.011Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
@@ -14,7 +14,7 @@
     "dynamic-properties"
   ],
   "expectedStatus": "VALIDATION_FAILED",
-  "expectedErrorMessage": "balance \u003c AccountUpgradeCost",
+  "expectedErrorMessage": "balance < AccountUpgradeCost",
   "ownerAddress": "a0706f6f725f7769746e6573735f6f776e00000000",
   "dynamicProperties": {},
   "notes": []

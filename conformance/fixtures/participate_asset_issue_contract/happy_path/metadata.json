@@ -4,10 +4,10 @@
   "caseName": "happy_path",
   "caseCategory": "happy",
   "description": "Participate in asset issuance (buy tokens with TRX)",
-  "generatedAt": "2025-12-28T11:46:31.794Z",
+  "generatedAt": "2025-12-31T09:11:42.807Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1766922394791,
+  "blockTimestamp": 1767172305804,
   "databasesTouched": [
     "account",
     "asset-issue-v2",

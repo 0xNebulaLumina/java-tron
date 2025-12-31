@@ -3,8 +3,8 @@
   "contractTypeNum": 6,
   "caseName": "validate_fail_invalid_name_trx",
   "caseCategory": "validate_fail",
-  "description": "Fail when asset name is \u0027trx\u0027 (reserved)",
-  "generatedAt": "2025-12-28T11:46:13.669Z",
+  "description": "Fail when asset name is 'trx' (reserved)",
+  "generatedAt": "2025-12-31T09:11:22.324Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
@@ -14,7 +14,7 @@
     "dynamic-properties"
   ],
   "expectedStatus": "VALIDATION_FAILED",
-  "expectedErrorMessage": "assetName can\u0027t be trx",
+  "expectedErrorMessage": "assetName can't be trx",
   "ownerAddress": "a061737365745f6973737565725f30350000000000",
   "dynamicProperties": {},
   "notes": []

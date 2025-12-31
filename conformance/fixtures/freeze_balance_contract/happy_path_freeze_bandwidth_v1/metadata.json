@@ -4,7 +4,7 @@
   "caseName": "happy_path_freeze_bandwidth_v1",
   "caseCategory": "happy",
   "description": "V1 freeze for BANDWIDTH resource",
-  "generatedAt": "2025-12-28T11:46:21.897Z",
+  "generatedAt": "2025-12-31T09:11:31.974Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
@@ -15,8 +15,8 @@
   "expectedStatus": "SUCCESS",
   "ownerAddress": "a0667265657a655f76315f6f776e30310000000000",
   "dynamicProperties": {
-    "freeze_amount": 100000000,
-    "UNFREEZE_DELAY_DAYS": 0
+    "UNFREEZE_DELAY_DAYS": 0,
+    "freeze_amount": 100000000
   },
   "notes": []
 }

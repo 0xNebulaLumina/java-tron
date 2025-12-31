@@ -4,7 +4,7 @@
   "caseName": "happy_path_unfreeze_bandwidth_v1",
   "caseCategory": "happy",
   "description": "V1 unfreeze expired BANDWIDTH frozen balance",
-  "generatedAt": "2025-12-28T11:46:21.985Z",
+  "generatedAt": "2025-12-31T09:11:32.016Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
@@ -16,8 +16,8 @@
   "expectedStatus": "SUCCESS",
   "ownerAddress": "a0756e667265657a655f76315f3031000000000000",
   "dynamicProperties": {
-    "UNFREEZE_DELAY_DAYS": 0,
-    "CHANGE_DELEGATION": 0
+    "CHANGE_DELEGATION": 0,
+    "UNFREEZE_DELAY_DAYS": 0
   },
   "notes": []
 }

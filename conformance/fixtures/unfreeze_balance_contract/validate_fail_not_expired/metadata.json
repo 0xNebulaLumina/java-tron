@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_expired",
   "caseCategory": "validate_fail",
   "description": "Fail when frozen balance has not expired yet",
-  "generatedAt": "2025-12-28T11:46:21.997Z",
+  "generatedAt": "2025-12-31T09:11:32.027Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
@@ -14,7 +14,7 @@
     "dynamic-properties"
   ],
   "expectedStatus": "VALIDATION_FAILED",
-  "expectedErrorMessage": "It\u0027s not time to unfreeze(BANDWIDTH).",
+  "expectedErrorMessage": "It's not time to unfreeze(BANDWIDTH).",
   "ownerAddress": "a0756e667265657a655f76315f3032000000000000",
   "dynamicProperties": {},
   "notes": []

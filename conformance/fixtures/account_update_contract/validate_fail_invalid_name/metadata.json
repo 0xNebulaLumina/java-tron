@@ -4,7 +4,7 @@
   "caseName": "validate_fail_invalid_name",
   "caseCategory": "validate_fail",
   "description": "Fail when account name is empty or invalid",
-  "generatedAt": "2025-12-28T11:46:18.735Z",
+  "generatedAt": "2025-12-31T09:11:28.454Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
