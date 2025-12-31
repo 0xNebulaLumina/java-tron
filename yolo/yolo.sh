@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-prompt_file="YOLO_PROMPT.txt"
-inputs_file="YOLO_PROMPT_INPUT.txt"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+prompt_file="$script_dir/YOLO_PROMPT.txt"
+inputs_file="$script_dir/YOLO_PROMPT_INPUT.txt"
 
 if [[ ! -f "$prompt_file" ]]; then
     echo "Missing $prompt_file" >&2
