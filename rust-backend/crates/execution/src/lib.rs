@@ -46,6 +46,33 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
+        // TRON parity: TriggerSmartContract must target an existing smart contract account.
+        // java-tron rejects missing/non-contract targets during validation with:
+        // "No contract or not a smart contract"
+        if tx.metadata.contract_type == Some(TronContractType::TriggerSmartContract) {
+            if let Some(to) = tx.to {
+                if storage.get_code(&to)?.is_none() {
+                    return Ok(TronExecutionResult {
+                        success: false,
+                        return_data: revm::primitives::Bytes::new(),
+                        energy_used: 0,
+                        bandwidth_used: 32 + tx.data.len() as u64,
+                        logs: Vec::new(),
+                        state_changes: Vec::new(),
+                        error: Some("No contract or not a smart contract".to_string()),
+                        aext_map: HashMap::new(),
+                        freeze_changes: Vec::new(),
+                        global_resource_changes: Vec::new(),
+                        trc10_changes: Vec::new(),
+                        vote_changes: Vec::new(),
+                        withdraw_changes: Vec::new(),
+                        tron_transaction_result: None,
+                        contract_address: None,
+                    });
+                }
+            }
+        }
+
         let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
         let spec_id = storage
             .tvm_spec_id()?
