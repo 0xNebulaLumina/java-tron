@@ -3,15 +3,17 @@ package org.tron.core.conformance;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
 import java.io.IOException;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Metadata for a conformance test fixture.
@@ -21,8 +23,12 @@ import java.util.Map;
  */
 public class FixtureMetadata {
 
-  private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+  private static final Gson GSON =
+      new GsonBuilder().disableHtmlEscaping().setPrettyPrinting().create();
   private static final String GENERATOR_VERSION = "1.0.0";
+  private static final String STATUS_SUCCESS = "SUCCESS";
+  private static final String STATUS_REVERT = "REVERT";
+  private static final String STATUS_VALIDATION_FAILED = "VALIDATION_FAILED";
 
   private String contractType;
   private int contractTypeNum;
@@ -42,11 +48,11 @@ public class FixtureMetadata {
 
   public FixtureMetadata() {
     this.databasesTouched = new ArrayList<>();
-    this.dynamicProperties = new HashMap<>();
+    this.dynamicProperties = new TreeMap<>();
     this.notes = new ArrayList<>();
     this.generatorVersion = GENERATOR_VERSION;
     this.generatedAt = DateTimeFormatter.ISO_INSTANT.format(Instant.now());
-    this.expectedStatus = "SUCCESS";
+    this.expectedStatus = STATUS_SUCCESS;
   }
 
   /**
@@ -60,8 +66,26 @@ public class FixtureMetadata {
    * Load metadata from a JSON file.
    */
   public static FixtureMetadata fromFile(File file) throws IOException {
-    try (FileReader reader = new FileReader(file)) {
-      return GSON.fromJson(reader, FixtureMetadata.class);
+    try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
+      FixtureMetadata metadata = GSON.fromJson(reader, FixtureMetadata.class);
+      if (metadata == null) {
+        return null;
+      }
+      if (metadata.databasesTouched == null) {
+        metadata.databasesTouched = new ArrayList<>();
+      }
+      if (metadata.dynamicProperties == null) {
+        metadata.dynamicProperties = new TreeMap<>();
+      } else if (!(metadata.dynamicProperties instanceof TreeMap)) {
+        metadata.dynamicProperties = new TreeMap<>(metadata.dynamicProperties);
+      }
+      if (metadata.notes == null) {
+        metadata.notes = new ArrayList<>();
+      }
+      if (metadata.expectedStatus == null) {
+        metadata.expectedStatus = STATUS_SUCCESS;
+      }
+      return metadata;
     }
   }
 
@@ -69,7 +93,7 @@ public class FixtureMetadata {
    * Save metadata to a JSON file.
    */
   public void toFile(File file) throws IOException {
-    try (FileWriter writer = new FileWriter(file)) {
+    try (Writer writer = Files.newBufferedWriter(file.toPath(), StandardCharsets.UTF_8)) {
       GSON.toJson(this, writer);
     }
   }
@@ -192,7 +216,13 @@ public class FixtureMetadata {
   }
 
   public void setDynamicProperties(Map<String, Object> dynamicProperties) {
-    this.dynamicProperties = dynamicProperties;
+    if (dynamicProperties == null) {
+      this.dynamicProperties = new TreeMap<>();
+    } else if (dynamicProperties instanceof TreeMap) {
+      this.dynamicProperties = dynamicProperties;
+    } else {
+      this.dynamicProperties = new TreeMap<>(dynamicProperties);
+    }
   }
 
   public List<String> getNotes() {
@@ -259,8 +289,19 @@ public class FixtureMetadata {
       return this;
     }
 
+    public Builder expectedErrorMessage(String message) {
+      metadata.setExpectedErrorMessage(message);
+      return this;
+    }
+
     public Builder expectedError(String message) {
-      metadata.setExpectedStatus("VALIDATION_FAILED");
+      metadata.setExpectedStatus(STATUS_VALIDATION_FAILED);
+      metadata.setExpectedErrorMessage(message);
+      return this;
+    }
+
+    public Builder expectedRevert(String message) {
+      metadata.setExpectedStatus(STATUS_REVERT);
       metadata.setExpectedErrorMessage(message);
       return this;
     }
@@ -281,19 +322,62 @@ public class FixtureMetadata {
     }
 
     public FixtureMetadata build() {
-      if (metadata.getContractType() == null) {
+      if (isBlank(metadata.getContractType())) {
         throw new IllegalStateException("Contract type is required");
       }
-      if (metadata.getCaseName() == null) {
+      if (isBlank(metadata.getCaseName())) {
         throw new IllegalStateException("Case name is required");
       }
-      if (metadata.getCaseCategory() == null) {
+      if (isBlank(metadata.getCaseCategory())) {
         throw new IllegalStateException("Case category is required");
       }
-      if (metadata.getDatabasesTouched().isEmpty()) {
+      if (!isValidCaseCategory(metadata.getCaseCategory())) {
+        throw new IllegalStateException(
+            "Case category must be one of: happy, validate_fail, edge");
+      }
+      if (isBlank(metadata.getExpectedStatus())) {
+        throw new IllegalStateException("Expected status is required");
+      }
+      if (!isValidExpectedStatus(metadata.getExpectedStatus())) {
+        throw new IllegalStateException(
+            "Expected status must be one of: SUCCESS, REVERT, VALIDATION_FAILED");
+      }
+      if (metadata.getDatabasesTouched() == null || metadata.getDatabasesTouched().isEmpty()) {
         throw new IllegalStateException("At least one database must be specified");
       }
       return metadata;
+    }
+
+    private static boolean isBlank(String value) {
+      return value == null || value.trim().isEmpty();
+    }
+
+    private static boolean isValidCaseCategory(String value) {
+      if (value == null) {
+        return false;
+      }
+      switch (value) {
+        case "happy":
+        case "validate_fail":
+        case "edge":
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    private static boolean isValidExpectedStatus(String value) {
+      if (value == null) {
+        return false;
+      }
+      switch (value) {
+        case STATUS_SUCCESS:
+        case STATUS_REVERT:
+        case STATUS_VALIDATION_FAILED:
+          return true;
+        default:
+          return false;
+      }
     }
   }
 }
