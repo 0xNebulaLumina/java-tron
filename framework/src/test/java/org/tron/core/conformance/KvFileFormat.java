@@ -1,31 +1,34 @@
 package org.tron.core.conformance;
 
 import java.io.BufferedOutputStream;
-import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.BufferUnderflowException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedMap;
 import java.util.TreeMap;
 
 /**
  * Binary format for storing database key-value pairs in conformance fixtures.
  *
- * <p>Format specification:
- * - Header: 4-byte magic "KVDB" + 4-byte version (big-endian uint32)
- * - Entry count: 4-byte big-endian uint32
- * - Entries (sorted by key lexicographically):
- *   - Key length: 4-byte big-endian uint32
- *   - Key bytes
- *   - Value length: 4-byte big-endian uint32 (0 for deletion marker)
- *   - Value bytes (omitted if length is 0)
- */
+   * <p>Format specification:
+   * - Header: 4-byte magic "KVDB" + 4-byte version (big-endian uint32)
+   * - Entry count: 4-byte big-endian uint32
+   * - Entries (sorted by key lexicographically):
+   *   - Key length: 4-byte big-endian uint32
+   *   - Key bytes
+   *   - Value length: 4-byte big-endian uint32 (0 for empty value)
+   *   - Value bytes (omitted if length is 0)
+   */
 public class KvFileFormat {
 
   private static final byte[] MAGIC = {'K', 'V', 'D', 'B'};
@@ -46,14 +49,28 @@ public class KvFileFormat {
   /**
    * Write key-value pairs to a .kv file.
    *
+   * <p>Keys must be unique by bytes, and values must be non-null. To represent a deletion, omit
+   * the key entirely.
+   *
    * @param file Output file
    * @param data Key-value pairs to write
    * @throws IOException If writing fails
    */
-  public static void write(File file, Map<byte[], byte[]> data) throws IOException {
-    // Sort keys
+  public static void write(File file, SortedMap<byte[], byte[]> data) throws IOException {
+    // Sort keys (enforce canonical lexicographic ordering regardless of input map ordering).
     List<byte[]> sortedKeys = new ArrayList<>(data.keySet());
     sortedKeys.sort(BYTE_ARRAY_COMPARATOR);
+
+    // Prevent non-canonical output when duplicate keys compare equal byte-wise.
+    for (int i = 1; i < sortedKeys.size(); i++) {
+      byte[] prev = sortedKeys.get(i - 1);
+      byte[] curr = sortedKeys.get(i);
+      if (BYTE_ARRAY_COMPARATOR.compare(prev, curr) == 0) {
+        throw new IllegalArgumentException(
+            "Duplicate keys with identical bytes are not supported: "
+                + org.tron.common.utils.ByteArray.toHexString(curr));
+      }
+    }
 
     try (DataOutputStream out = new DataOutputStream(
         new BufferedOutputStream(new FileOutputStream(file)))) {
@@ -66,16 +83,19 @@ public class KvFileFormat {
 
       // Write entries
       for (byte[] key : sortedKeys) {
+        if (key == null) {
+          throw new IllegalArgumentException("Null keys are not supported");
+        }
         byte[] value = data.get(key);
+        if (value == null) {
+          throw new IllegalArgumentException(
+              "Null values are not supported; omit the key to represent deletion");
+        }
         out.writeInt(key.length);
         out.write(key);
-        if (value != null) {
-          out.writeInt(value.length);
-          if (value.length > 0) {
-            out.write(value);
-          }
-        } else {
-          out.writeInt(0); // Null value treated as deletion marker
+        out.writeInt(value.length);
+        if (value.length > 0) {
+          out.write(value);
         }
       }
     }
@@ -91,43 +111,78 @@ public class KvFileFormat {
   public static TreeMap<ByteArrayWrapper, byte[]> read(File file) throws IOException {
     TreeMap<ByteArrayWrapper, byte[]> result = new TreeMap<>();
 
-    try (DataInputStream in = new DataInputStream(new FileInputStream(file))) {
-      // Verify magic
-      byte[] magic = new byte[4];
-      in.readFully(magic);
-      if (!Arrays.equals(magic, MAGIC)) {
-        throw new IOException("Invalid KV file: bad magic bytes");
+    byte[] bytes = Files.readAllBytes(file.toPath());
+    if (bytes.length < 12) {
+      throw new IOException("Invalid KV file: file too small (" + bytes.length + " bytes)");
+    }
+
+    ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN);
+
+    // Verify magic
+    byte[] magic = new byte[4];
+    buffer.get(magic);
+    if (!Arrays.equals(magic, MAGIC)) {
+      throw new IOException("Invalid KV file: bad magic bytes");
+    }
+
+    // Verify version
+    long version = readUint32(buffer, "version");
+    if (version != VERSION) {
+      throw new IOException("Unsupported KV file version: " + version);
+    }
+
+    // Read entry count
+    long countLong = readUint32(buffer, "entry count");
+    if (countLong > Integer.MAX_VALUE) {
+      throw new IOException("Invalid KV file: entry count too large: " + countLong);
+    }
+    int count = (int) countLong;
+
+    // Read entries
+    byte[] previousKey = null;
+    for (int i = 0; i < count; i++) {
+      long keyLenLong = readUint32(buffer, "key length (entry " + i + ")");
+      if (keyLenLong > Integer.MAX_VALUE) {
+        throw new IOException(
+            "Invalid KV file: key length too large in entry " + i + ": " + keyLenLong);
       }
-
-      // Verify version
-      int version = in.readInt();
-      if (version != VERSION) {
-        throw new IOException("Unsupported KV file version: " + version);
+      int keyLen = (int) keyLenLong;
+      if (keyLen > buffer.remaining()) {
+        throw new IOException("Invalid KV file: key extends past end of file in entry " + i);
       }
+      byte[] key = new byte[keyLen];
+      buffer.get(key);
 
-      // Read entry count
-      int count = in.readInt();
-
-      // Read entries
-      for (int i = 0; i < count; i++) {
-        int keyLen = in.readInt();
-        byte[] key = new byte[keyLen];
-        in.readFully(key);
-
-        int valLen = in.readInt();
-        byte[] value;
-        if (valLen > 0) {
-          value = new byte[valLen];
-          in.readFully(value);
-        } else {
-          value = new byte[0]; // Empty value (or deletion marker)
-        }
-
-        result.put(new ByteArrayWrapper(key), value);
+      if (previousKey != null && BYTE_ARRAY_COMPARATOR.compare(previousKey, key) > 0) {
+        throw new IOException("Invalid KV file: keys are not sorted lexicographically");
       }
+      previousKey = key;
+
+      long valLenLong = readUint32(buffer, "value length (entry " + i + ")");
+      if (valLenLong > Integer.MAX_VALUE) {
+        throw new IOException(
+            "Invalid KV file: value length too large in entry " + i + ": " + valLenLong);
+      }
+      int valLen = (int) valLenLong;
+      if (valLen > buffer.remaining()) {
+        throw new IOException("Invalid KV file: value extends past end of file in entry " + i);
+      }
+      byte[] value = new byte[valLen];
+      buffer.get(value);
+
+      result.put(new ByteArrayWrapper(key, false), value);
     }
 
     return result;
+  }
+
+  private static long readUint32(ByteBuffer buffer, String fieldName) throws IOException {
+    try {
+      return Integer.toUnsignedLong(buffer.getInt());
+    } catch (BufferUnderflowException e) {
+      throw new IOException(
+          "Invalid KV file: unexpected end of file while reading " + fieldName, e);
+    }
   }
 
   /**
@@ -137,11 +192,22 @@ public class KvFileFormat {
     private final byte[] data;
 
     public ByteArrayWrapper(byte[] data) {
-      this.data = data;
+      this(data, true);
+    }
+
+    private ByteArrayWrapper(byte[] data, boolean copy) {
+      if (data == null) {
+        throw new IllegalArgumentException("data is null");
+      }
+      if (copy) {
+        this.data = Arrays.copyOf(data, data.length);
+      } else {
+        this.data = data;
+      }
     }
 
     public byte[] getData() {
-      return data;
+      return Arrays.copyOf(data, data.length);
     }
 
     @Override
@@ -232,7 +298,11 @@ public class KvFileFormat {
     // Find added keys
     for (Map.Entry<ByteArrayWrapper, byte[]> entry : actual.entrySet()) {
       if (!expected.containsKey(entry.getKey())) {
-        sb.append("+ ").append(entry.getKey()).append(": ").append(toHex(entry.getValue())).append("\n");
+        sb.append("+ ")
+            .append(entry.getKey())
+            .append(": ")
+            .append(toHex(entry.getValue()))
+            .append("\n");
         added++;
       }
     }
@@ -253,7 +323,8 @@ public class KvFileFormat {
       return "(empty)";
     }
     if (bytes.length > 64) {
-      return org.tron.common.utils.ByteArray.toHexString(Arrays.copyOf(bytes, 64)) + "... (" + bytes.length + " bytes)";
+      String prefix = org.tron.common.utils.ByteArray.toHexString(Arrays.copyOf(bytes, 64));
+      return prefix + "... (" + bytes.length + " bytes)";
     }
     return org.tron.common.utils.ByteArray.toHexString(bytes);
   }

@@ -6,7 +6,7 @@
 //! - Entries (sorted by key lexicographically):
 //!   - Key length: 4-byte big-endian u32
 //!   - Key bytes
-//!   - Value length: 4-byte big-endian u32 (0 for deletion marker)
+//!   - Value length: 4-byte big-endian u32 (0 for empty value)
 //!   - Value bytes (omitted if length is 0)
 
 use std::collections::BTreeMap;

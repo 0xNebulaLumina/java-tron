@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.SortedMap;
 import java.util.TreeMap;
 import org.bouncycastle.util.encoders.Hex;
 import org.junit.Before;
@@ -764,7 +765,7 @@ public class VmFixtureGeneratorTest extends BaseTest {
     String[] databases = {"account", "contract", "code", "abi", "contract-state", "dynamic-properties"};
 
     for (String dbName : databases) {
-      Map<byte[], byte[]> kvData = new TreeMap<>(KvFileFormat.BYTE_ARRAY_COMPARATOR);
+      SortedMap<byte[], byte[]> kvData = new TreeMap<>(KvFileFormat.BYTE_ARRAY_COMPARATOR);
 
       try {
         Iterator<Map.Entry<byte[], byte[]>> iterator = getStoreIterator(dbName);
