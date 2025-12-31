@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_creator",
   "caseCategory": "validate_fail",
   "description": "Fail when non-creator tries to inject liquidity",
-  "generatedAt": "2025-12-31T09:11:30.238Z",
+  "generatedAt": "2025-12-31T09:59:21.131Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

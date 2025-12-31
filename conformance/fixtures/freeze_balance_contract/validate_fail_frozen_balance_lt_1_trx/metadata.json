@@ -4,7 +4,7 @@
   "caseName": "validate_fail_frozen_balance_lt_1_trx",
   "caseCategory": "validate_fail",
   "description": "Fail when freeze amount is less than 1 TRX",
-  "generatedAt": "2025-12-31T09:11:32.034Z",
+  "generatedAt": "2025-12-31T09:59:22.719Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

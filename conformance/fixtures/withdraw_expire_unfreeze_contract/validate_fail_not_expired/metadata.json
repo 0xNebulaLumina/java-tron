@@ -4,10 +4,10 @@
   "caseName": "validate_fail_not_expired",
   "caseCategory": "validate_fail",
   "description": "Fail when unfrozen balance has not yet expired",
-  "generatedAt": "2025-12-31T09:11:38.861Z",
+  "generatedAt": "2025-12-31T09:59:28.824Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1767172301861,
+  "blockTimestamp": 1767175171824,
   "databasesTouched": [
     "account",
     "dynamic-properties"
