@@ -444,6 +444,196 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
     log.info("Generated TriggerSmartContract delete_storage fixture");
   }
 
+  @Test
+  public void generateTriggerSmartContract_nonexistentContract() throws Exception {
+    log.info("Generating TriggerSmartContract nonexistent contract fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Use a fake contract address that doesn't exist
+    byte[] fakeContractAddress = Hex.decode("410000000000000000000000000000000000000001");
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/edge_nonexistent_contract");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Try to call a function on non-existent contract
+    String params = "0000000000000000000000000000000000000000000000000000000000000001";
+    byte[] triggerData = TvmTestUtils.parseAbi("testDelete(uint256)", params);
+
+    String errorMessage = null;
+    TVMTestResult result = null;
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, fakeContractAddress, triggerData, 0, DEFAULT_FEE_LIMIT, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    }
+
+    log.info("Nonexistent contract trigger result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(fakeContractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt if available
+    if (result != null && result.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        result.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_nonexistent_contract")
+        .caseCategory("edge")
+        .description("Trigger a contract address that does not exist")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    if (errorMessage != null) {
+      metadata.setExpectedStatus("REVERT");
+      metadata.setExpectedErrorMessage(errorMessage);
+    } else {
+      metadata.setExpectedStatus("SUCCESS");
+    }
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+
+    log.info("Generated TriggerSmartContract edge_nonexistent_contract fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_outOfEnergy() throws Exception {
+    log.info("Generating TriggerSmartContract out of energy fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    log.info("Deployed contract at: {}", Hex.toHexString(contractAddress));
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/edge_out_of_energy");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Trigger with very low fee limit (1 unit) - should run out of energy
+    long veryLowFeeLimit = 1L;
+    String params = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000005"
+        + "68656c6c6f000000000000000000000000000000000000000000000000000000";
+    byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+    String errorMessage = null;
+    TVMTestResult result = null;
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, contractAddress, triggerData, 0, veryLowFeeLimit, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    }
+
+    log.info("Out of energy trigger result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    // Use the low fee limit in the request
+    ExecuteTransactionRequest request = buildTriggerRequestWithFeeLimit(
+        triggerContract, null, veryLowFeeLimit);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt if available
+    if (result != null && result.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        result.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_out_of_energy")
+        .caseCategory("edge")
+        .description("Trigger contract with insufficient energy/fee limit")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    if (errorMessage != null) {
+      metadata.setExpectedStatus("OUT_OF_ENERGY");
+      metadata.setExpectedErrorMessage(errorMessage);
+    } else {
+      metadata.setExpectedStatus("SUCCESS");
+    }
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+
+    log.info("Generated TriggerSmartContract edge_out_of_energy fixture");
+  }
+
   // ==========================================================================
   // Helper Methods
   // ==========================================================================
@@ -471,6 +661,50 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
 
     ExecutionContext.Builder contextBuilder = ExecutionContext.newBuilder()
         .setEnergyLimit(DEFAULT_FEE_LIMIT)
+        .setEnergyPrice(1);
+
+    if (blockCap != null) {
+      contextBuilder
+          .setBlockNumber(blockCap.getNum())
+          .setBlockTimestamp(blockCap.getTimeStamp())
+          .setBlockHash(ByteString.copyFrom(blockCap.getBlockId().getBytes()))
+          .setCoinbase(ByteString.copyFrom(blockCap.getWitnessAddress().toByteArray()));
+    } else {
+      contextBuilder
+          .setBlockNumber(1)
+          .setBlockTimestamp(System.currentTimeMillis());
+    }
+
+    return ExecuteTransactionRequest.newBuilder()
+        .setTransaction(tronTx)
+        .setContext(contextBuilder.build())
+        .build();
+  }
+
+  private ExecuteTransactionRequest buildTriggerRequestWithFeeLimit(
+      TriggerSmartContract triggerContract,
+      BlockCapsule blockCap,
+      long feeLimit) {
+
+    byte[] fromAddress = triggerContract.getOwnerAddress().toByteArray();
+    byte[] toAddress = triggerContract.getContractAddress().toByteArray();
+    byte[] data = triggerContract.toByteArray();
+    long value = triggerContract.getCallValue();
+
+    TronTransaction tronTx = TronTransaction.newBuilder()
+        .setFrom(ByteString.copyFrom(fromAddress))
+        .setTo(ByteString.copyFrom(toAddress))
+        .setValue(ByteString.copyFrom(longToBytes32(value)))
+        .setData(ByteString.copyFrom(data))
+        .setEnergyLimit(feeLimit)
+        .setEnergyPrice(1)
+        .setNonce(0)
+        .setTxKind(TxKind.VM)
+        .setContractType(ContractType.TRIGGER_SMART_CONTRACT)
+        .build();
+
+    ExecutionContext.Builder contextBuilder = ExecutionContext.newBuilder()
+        .setEnergyLimit(feeLimit)
         .setEnergyPrice(1);
 
     if (blockCap != null) {

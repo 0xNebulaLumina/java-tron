@@ -375,38 +375,15 @@ public class VmFixtureGeneratorTest extends BaseTest {
   // TriggerSmartContract (31) Fixtures
   // ==========================================================================
 
-  // NOTE: TriggerSmartContract tests require VMTestBase infrastructure for proper test isolation.
-  // The tests below are marked with @Ignore until we integrate with the full TVM test harness.
-  // CreateSmartContract fixtures are generated successfully and can be used for basic VM parity testing.
-
-  @org.junit.Ignore("Requires VMTestBase infrastructure - see StorageTest for reference")
-  @Test
-  public void generateTriggerSmartContract_happyPath() throws Exception {
-    log.info("Generating TriggerSmartContract happy path fixture - SKIPPED (requires VMTestBase)");
-    // This test is skipped because TriggerSmartContract tests require:
-    // 1. Proper test isolation using VMTestBase
-    // 2. Repository-based state management
-    // 3. Block context with proper transaction receipts
-    // See: framework/src/test/java/org/tron/common/runtime/vm/StorageTest.java for reference
-  }
-
-  @org.junit.Ignore("Requires VMTestBase infrastructure - see StorageTest for reference")
-  @Test
-  public void generateTriggerSmartContract_viewFunction() throws Exception {
-    log.info("Generating TriggerSmartContract view function fixture - SKIPPED (requires VMTestBase)");
-  }
-
-  @org.junit.Ignore("Requires VMTestBase infrastructure - see StorageTest for reference")
-  @Test
-  public void generateTriggerSmartContract_nonexistentContract() throws Exception {
-    log.info("Generating TriggerSmartContract nonexistent contract fixture - SKIPPED (requires VMTestBase)");
-  }
-
-  @org.junit.Ignore("Requires VMTestBase infrastructure - see StorageTest for reference")
-  @Test
-  public void generateTriggerSmartContract_outOfEnergy() throws Exception {
-    log.info("Generating TriggerSmartContract out of energy fixture - SKIPPED (requires VMTestBase)");
-  }
+  // NOTE: TriggerSmartContract tests are implemented in VmTriggerFixtureGeneratorTest.java
+  // which extends VMTestBase for proper test isolation and TVM infrastructure.
+  // See: VmTriggerFixtureGeneratorTest for:
+  //   - generateTriggerSmartContract_happyPath
+  //   - generateTriggerSmartContract_storageWrite
+  //   - generateTriggerSmartContract_viewFunction
+  //   - generateTriggerSmartContract_deleteStorage
+  //   - generateTriggerSmartContract_nonexistentContract
+  //   - generateTriggerSmartContract_outOfEnergy
 
   // ==========================================================================
   // Helper Methods
