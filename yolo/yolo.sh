@@ -24,21 +24,9 @@ while IFS= read -r input || [[ -n "$input" ]]; do
 
     echo "Processing: $input"
 
-    prev_hash="$(git rev-parse HEAD)"
-
-    while true; do
-        codex exec \
-            --model gpt-5.2 \
-            --config model_reasoning_effort="xhigh" \
-            --yolo \
-            "$prompt"
-
-        curr_hash="$(git rev-parse HEAD)"
-
-        if [[ "$curr_hash" == "$prev_hash" ]]; then
-            break
-        fi
-
-        prev_hash="$curr_hash"
-    done
+    codex exec \
+        --model gpt-5.2 \
+        --config model_reasoning_effort="xhigh" \
+        --yolo \
+        "$prompt"
 done < "$inputs_file"
