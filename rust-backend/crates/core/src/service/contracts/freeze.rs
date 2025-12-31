@@ -115,10 +115,10 @@ impl BackendService {
             .ok_or("Balance underflow")?;
 
         // Calculate expiration timestamp (milliseconds since epoch).
+        // Match java-tron's `DynamicPropertiesStore.getLatestBlockHeaderTimestamp()` semantics,
+        // which corresponds to the execution context's `block_timestamp` in conformance fixtures.
         let duration_millis = params.frozen_duration as u64 * 86400 * 1000; // days to milliseconds
-        const BLOCK_INTERVAL_MS: u64 = 3000; // Tron block interval (ms)
-        let base_ts = context.block_timestamp.saturating_sub(BLOCK_INTERVAL_MS);
-        let expiration_timestamp = (base_ts + duration_millis) as i64;
+        let expiration_timestamp = (context.block_timestamp + duration_millis) as i64;
 
         debug!(
             "Freeze record: amount={}, expiration={}, resource={:?}",
