@@ -44,6 +44,13 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
   private static final Logger log = LoggerFactory.getLogger(VmTriggerFixtureGeneratorTest.class);
   private static final long DEFAULT_FEE_LIMIT = 100_000_000L; // 100 TRX
 
+  // Deterministic timestamps for fixture generation
+  private static final long FIXED_BLOCK_TIMESTAMP = 1700000000000L; // 2023-11-14 22:13:20 UTC
+  private static final long FIXED_BLOCK_NUMBER = 1L;
+
+  // Known max fee limit for validation fixtures
+  private static final long KNOWN_MAX_FEE_LIMIT = 1_000_000_000L; // 1000 TRX
+
   private File outputDir;
 
   // StorageDemo contract
@@ -635,6 +642,1181 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
   }
 
   // ==========================================================================
+  // Phase 1: Validation Failure Fixtures
+  // ==========================================================================
+
+  @Test
+  public void generateTriggerSmartContract_validateFailFeeLimitNegative() throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_fee_limit_negative fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Set known max fee limit for stable error message
+    manager.getDynamicPropertiesStore().saveMaxFeeLimit(KNOWN_MAX_FEE_LIMIT);
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/validate_fail_fee_limit_negative");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Trigger with negative feeLimit
+    String params = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000005"
+        + "68656c6c6f000000000000000000000000000000000000000000000000000000";
+    byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+    long negativeFeeLimit = -1L;
+    String expectedError = "feeLimit must be >= 0 and <= " + KNOWN_MAX_FEE_LIMIT;
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    // Note: The feeLimit validation happens inside VMActuator.call() after the contract
+    // is validated to exist. With a negative feeLimit, the validation should fail.
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, contractAddress, triggerData, 0, negativeFeeLimit, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (org.tron.core.exception.ContractValidateException e) {
+      errorMessage = e.getMessage();
+      log.info("Got expected validation error: {}", errorMessage);
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+      log.warn("Got exception: {}", e.getClass().getName());
+    }
+
+    log.info("Negative feeLimit result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequestWithFeeLimit(
+        triggerContract, null, negativeFeeLimit);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state (should be unchanged)
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_fee_limit_negative")
+        .caseCategory("validate_fail")
+        .description("Trigger with negative feeLimit should fail validation")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated TriggerSmartContract validate_fail_fee_limit_negative fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailFeeLimitAboveMax() throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_fee_limit_above_max fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Set known max fee limit
+    manager.getDynamicPropertiesStore().saveMaxFeeLimit(KNOWN_MAX_FEE_LIMIT);
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/validate_fail_fee_limit_above_max");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Trigger with feeLimit > maxFeeLimit
+    String params = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000005"
+        + "68656c6c6f000000000000000000000000000000000000000000000000000000";
+    byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+    long aboveMaxFeeLimit = KNOWN_MAX_FEE_LIMIT + 1;
+    String expectedError = "feeLimit must be >= 0 and <= " + KNOWN_MAX_FEE_LIMIT;
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, contractAddress, triggerData, 0, aboveMaxFeeLimit, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (org.tron.core.exception.ContractValidateException e) {
+      errorMessage = e.getMessage();
+      log.info("Got expected validation error: {}", errorMessage);
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    }
+
+    log.info("Above-max feeLimit result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequestWithFeeLimit(
+        triggerContract, null, aboveMaxFeeLimit);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_fee_limit_above_max")
+        .caseCategory("validate_fail")
+        .description("Trigger with feeLimit > maxFeeLimit should fail validation")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated TriggerSmartContract validate_fail_fee_limit_above_max fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailContractNotSmartContract() throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_contract_not_smart_contract fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Use a valid address that exists as a normal account but has no contract
+    // (the OWNER_ADDRESS is such an address - it's in AccountStore but not ContractStore)
+    byte[] nonContractAddress = Hex.decode(OWNER_ADDRESS);
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/validate_fail_contract_not_smart_contract");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Try to trigger with a non-contract address
+    String params = "0000000000000000000000000000000000000000000000000000000000000001";
+    byte[] triggerData = TvmTestUtils.parseAbi("testDelete(uint256)", params);
+
+    String expectedError = "No contract or not a smart contract";
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, nonContractAddress, triggerData, 0, DEFAULT_FEE_LIMIT, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (org.tron.core.exception.ContractValidateException e) {
+      errorMessage = e.getMessage();
+      log.info("Got expected validation error: {}", errorMessage);
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    }
+
+    log.info("Non-contract trigger result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(nonContractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_contract_not_smart_contract")
+        .caseCategory("validate_fail")
+        .description("Trigger a valid address that exists but is not a smart contract")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated TriggerSmartContract validate_fail_contract_not_smart_contract fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailTokenValuePositiveTokenIdZero()
+      throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_token_value_positive_token_id_zero");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Enable TRC-10 transfer and multi-sign (required for checkTokenValueAndId)
+    manager.getDynamicPropertiesStore().saveAllowTvmTransferTrc10(1);
+    manager.getDynamicPropertiesStore().saveAllowMultiSign(1);
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/validate_fail_token_value_positive_token_id_zero");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Try to trigger with tokenValue > 0 and tokenId = 0
+    String params = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000005"
+        + "68656c6c6f000000000000000000000000000000000000000000000000000000";
+    byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+    long tokenValue = 100L;
+    long tokenId = 0L;
+    String expectedError = "invalid arguments with tokenValue = " + tokenValue + ", tokenId = 0";
+
+    // Build trigger contract with token args
+    // Note: The validation for tokenValue > 0 with tokenId = 0 happens in
+    // VMActuator.checkTokenValueAndId() when the trigger is executed.
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .setCallTokenValue(tokenValue)
+        .setTokenId(tokenId)
+        .build();
+
+    log.info("Token validation fixture: expected error = {}", expectedError);
+
+    // Save request
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_token_value_positive_token_id_zero")
+        .caseCategory("validate_fail")
+        .description("Trigger with callTokenValue > 0 and tokenId = 0 should fail")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated validate_fail_token_value_positive_token_id_zero fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailTokenIdTooSmall() throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_token_id_too_small fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Enable TRC-10 transfer and multi-sign
+    manager.getDynamicPropertiesStore().saveAllowTvmTransferTrc10(1);
+    manager.getDynamicPropertiesStore().saveAllowMultiSign(1);
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/validate_fail_token_id_too_small");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Try with tokenId = 1000000 (MIN_TOKEN_ID, should fail)
+    String params = "0000000000000000000000000000000000000000000000000000000000000001";
+    byte[] triggerData = TvmTestUtils.parseAbi("testDelete(uint256)", params);
+
+    long tokenValue = 100L;
+    long tokenId = 1_000_000L; // MIN_TOKEN_ID
+    String expectedError = "tokenId must be > 1000000";
+
+    // Note: The validation for tokenId <= MIN_TOKEN_ID happens in
+    // VMActuator.checkTokenValueAndId() when the trigger is executed.
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .setCallTokenValue(tokenValue)
+        .setTokenId(tokenId)
+        .build();
+
+    log.info("Token ID validation fixture: expected error = {}", expectedError);
+
+    // Save request
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_token_id_too_small")
+        .caseCategory("validate_fail")
+        .description("Trigger with tokenId <= MIN_TOKEN_ID (1000000) should fail")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated TriggerSmartContract validate_fail_token_id_too_small fixture");
+  }
+
+  // ==========================================================================
+  // Phase 2: Runtime Parity Fixtures (REVERT cases)
+  // ==========================================================================
+
+  @Test
+  public void generateTriggerSmartContract_edgeEmptyCalldataRevert() throws Exception {
+    log.info("Generating TriggerSmartContract edge_empty_calldata_revert fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/edge_empty_calldata_revert");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Trigger with empty calldata
+    byte[] emptyData = new byte[0];
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, contractAddress, emptyData, 0, DEFAULT_FEE_LIMIT, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    }
+
+    log.info("Empty calldata trigger result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.EMPTY)
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt if available
+    if (result != null && result.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        result.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata.Builder metadataBuilder = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_empty_calldata_revert")
+        .caseCategory("edge")
+        .description("Trigger contract with empty calldata (no function selector)")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS);
+
+    if (errorMessage != null) {
+      metadataBuilder.expectedRevert(errorMessage);
+    } else {
+      metadataBuilder.expectedStatus("SUCCESS");
+    }
+
+    FixtureMetadata metadata = metadataBuilder.build();
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated TriggerSmartContract edge_empty_calldata_revert fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_edgeUnknownSelectorRevert() throws Exception {
+    log.info("Generating TriggerSmartContract edge_unknown_selector_revert fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/edge_unknown_selector_revert");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Trigger with unknown function selector (0xdeadbeef)
+    byte[] unknownSelector = Hex.decode("deadbeef");
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, contractAddress, unknownSelector, 0, DEFAULT_FEE_LIMIT, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    }
+
+    log.info("Unknown selector trigger result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(unknownSelector))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt if available
+    if (result != null && result.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        result.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata.Builder metadataBuilder = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_unknown_selector_revert")
+        .caseCategory("edge")
+        .description("Trigger contract with unknown function selector (0xdeadbeef)")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS);
+
+    if (errorMessage != null) {
+      metadataBuilder.expectedRevert(errorMessage);
+    } else {
+      metadataBuilder.expectedStatus("SUCCESS");
+    }
+
+    FixtureMetadata metadata = metadataBuilder.build();
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated TriggerSmartContract edge_unknown_selector_revert fixture");
+  }
+
+  // ==========================================================================
+  // Phase 3: StorageDemo Boundary Fixtures
+  // ==========================================================================
+
+  @Test
+  public void generateTriggerSmartContract_edgeLongStringGt31StoreAndRead() throws Exception {
+    log.info("Generating TriggerSmartContract edge_long_string_gt_31_store_and_read fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/edge_long_string_gt_31_store_and_read");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Store a string > 31 bytes (32 chars = 32 bytes)
+    // "abcdefghijklmnopqrstuvwxyz123456" = 32 chars
+    String longString = "abcdefghijklmnopqrstuvwxyz123456";
+    byte[] longStringBytes = longString.getBytes();
+    Assert.assertTrue("String must be > 31 bytes", longStringBytes.length > 31);
+
+    // Build ABI-encoded params for testPut(1, "abcdefghijklmnopqrstuvwxyz123456")
+    // uint256 key = 1
+    // offset to string data = 0x40 (64)
+    // string length = 32 (0x20)
+    // string data = "abcdefghijklmnopqrstuvwxyz123456" padded to 32 bytes
+    String params = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000020"
+        + Hex.toHexString(longStringBytes);
+
+    byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+    TVMTestResult result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+        ownerBytes, contractAddress, triggerData, 0, DEFAULT_FEE_LIMIT, manager, null);
+
+    Assert.assertNull("Long string store should succeed", result.getRuntime().getRuntimeError());
+    log.info("Long string (> 31 bytes) stored successfully");
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt
+    if (result.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        result.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_long_string_gt_31_store_and_read")
+        .caseCategory("edge")
+        .description("Store string > 31 bytes (triggers multi-slot storage layout)")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("storage-row")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    metadata.setExpectedStatus("SUCCESS");
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated edge_long_string_gt_31_store_and_read fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_edgeDeleteNonexistentKeyNoop() throws Exception {
+    log.info("Generating TriggerSmartContract edge_delete_nonexistent_key_noop fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Capture pre-state (do NOT write anything first)
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/edge_delete_nonexistent_key_noop");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Delete key that was never set (key = 999)
+    String deleteParams = "00000000000000000000000000000000000000000000000000000000000003e7";
+    byte[] deleteData = TvmTestUtils.parseAbi("testDelete(uint256)", deleteParams);
+
+    TVMTestResult deleteResult = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+        ownerBytes, contractAddress, deleteData, 0, DEFAULT_FEE_LIMIT, manager, null);
+
+    Assert.assertNull("Delete nonexistent should succeed (no-op)",
+        deleteResult.getRuntime().getRuntimeError());
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(deleteData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt
+    if (deleteResult.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        deleteResult.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_delete_nonexistent_key_noop")
+        .caseCategory("edge")
+        .description("Delete storage key that was never set (should be no-op)")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("storage-row")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    metadata.setExpectedStatus("SUCCESS");
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated edge_delete_nonexistent_key_noop fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_edgeReadNonexistentKeyReturnsEmpty() throws Exception {
+    log.info("Generating TriggerSmartContract edge_read_nonexistent_key_returns_empty fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/edge_read_nonexistent_key_returns_empty");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Read key that was never set (key = 888)
+    String viewParams = "0000000000000000000000000000000000000000000000000000000000000378";
+    byte[] viewData = TvmTestUtils.parseAbi("int2str(uint256)", viewParams);
+
+    TVMTestResult viewResult = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+        ownerBytes, contractAddress, viewData, 0, DEFAULT_FEE_LIMIT, manager, null);
+
+    Assert.assertNull("Read nonexistent should succeed (returns empty)",
+        viewResult.getRuntime().getRuntimeError());
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(viewData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt
+    if (viewResult.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        viewResult.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_read_nonexistent_key_returns_empty")
+        .caseCategory("edge")
+        .description("Read storage key that was never set (returns empty string)")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    metadata.setExpectedStatus("SUCCESS");
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated edge_read_nonexistent_key_returns_empty fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_edgePutEmptyString() throws Exception {
+    log.info("Generating TriggerSmartContract edge_put_empty_string fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/edge_put_empty_string");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Store empty string at key 1
+    // testPut(1, "")
+    String params = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000000"; // length = 0
+
+    byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+    TVMTestResult result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+        ownerBytes, contractAddress, triggerData, 0, DEFAULT_FEE_LIMIT, manager, null);
+
+    Assert.assertNull("Put empty string should succeed", result.getRuntime().getRuntimeError());
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt
+    if (result.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        result.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_put_empty_string")
+        .caseCategory("edge")
+        .description("Store empty string value (differs from delete semantics)")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("storage-row")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    metadata.setExpectedStatus("SUCCESS");
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated edge_put_empty_string fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_edgeOverwriteShortToLong() throws Exception {
+    log.info("Generating TriggerSmartContract edge_overwrite_short_to_long fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // First write a short string (< 31 bytes)
+    String shortParams = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000005"
+        + "68656c6c6f000000000000000000000000000000000000000000000000000000"; // "hello"
+    byte[] shortData = TvmTestUtils.parseAbi("testPut(uint256,string)", shortParams);
+    TVMTestResult shortResult = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+        ownerBytes, contractAddress, shortData, 0, DEFAULT_FEE_LIMIT, manager, null);
+    Assert.assertNull("Short write should succeed", shortResult.getRuntime().getRuntimeError());
+
+    // Capture pre-state for overwrite
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/edge_overwrite_short_to_long");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Overwrite with long string (> 31 bytes)
+    String longString = "this_is_a_very_long_string_that_exceeds_31_bytes";
+    byte[] longStringBytes = longString.getBytes();
+    Assert.assertTrue("String must be > 31 bytes", longStringBytes.length > 31);
+
+    // Pad to multiple of 32 bytes
+    int paddedLen = ((longStringBytes.length + 31) / 32) * 32;
+    byte[] paddedBytes = new byte[paddedLen];
+    System.arraycopy(longStringBytes, 0, paddedBytes, 0, longStringBytes.length);
+
+    String longParams = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + String.format("%064x", longStringBytes.length)
+        + Hex.toHexString(paddedBytes);
+
+    byte[] longData = TvmTestUtils.parseAbi("testPut(uint256,string)", longParams);
+    TVMTestResult longResult = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+        ownerBytes, contractAddress, longData, 0, DEFAULT_FEE_LIMIT, manager, null);
+    Assert.assertNull("Long overwrite should succeed", longResult.getRuntime().getRuntimeError());
+
+    // Build request for the overwrite operation
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(longData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt
+    if (longResult.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        longResult.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_overwrite_short_to_long")
+        .caseCategory("edge")
+        .description("Overwrite short string (<31 bytes) with long string (>31 bytes)")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("storage-row")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    metadata.setExpectedStatus("SUCCESS");
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated edge_overwrite_short_to_long fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_edgeOverwriteLongToShort() throws Exception {
+    log.info("Generating TriggerSmartContract edge_overwrite_long_to_short fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // First write a long string (> 31 bytes)
+    String longString = "this_is_a_very_long_string_that_exceeds_31_bytes";
+    byte[] longStringBytes = longString.getBytes();
+    int paddedLen = ((longStringBytes.length + 31) / 32) * 32;
+    byte[] paddedBytes = new byte[paddedLen];
+    System.arraycopy(longStringBytes, 0, paddedBytes, 0, longStringBytes.length);
+
+    String longParams = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + String.format("%064x", longStringBytes.length)
+        + Hex.toHexString(paddedBytes);
+
+    byte[] longData = TvmTestUtils.parseAbi("testPut(uint256,string)", longParams);
+    TVMTestResult longResult = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+        ownerBytes, contractAddress, longData, 0, DEFAULT_FEE_LIMIT, manager, null);
+    Assert.assertNull("Long write should succeed", longResult.getRuntime().getRuntimeError());
+
+    // Capture pre-state for overwrite
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/edge_overwrite_long_to_short");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Overwrite with short string (< 31 bytes)
+    String shortParams = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000003"
+        + "6162630000000000000000000000000000000000000000000000000000000000"; // "abc"
+    byte[] shortData = TvmTestUtils.parseAbi("testPut(uint256,string)", shortParams);
+    TVMTestResult shortResult = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+        ownerBytes, contractAddress, shortData, 0, DEFAULT_FEE_LIMIT, manager, null);
+    Assert.assertNull("Short overwrite should succeed", shortResult.getRuntime().getRuntimeError());
+
+    // Build request for the overwrite operation
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(shortData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt
+    if (shortResult.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        shortResult.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_overwrite_long_to_short")
+        .caseCategory("edge")
+        .description("Overwrite long string (>31 bytes) with short string (<31 bytes)")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("storage-row")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    metadata.setExpectedStatus("SUCCESS");
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated edge_overwrite_long_to_short fixture");
+  }
+
+  // ==========================================================================
   // Helper Methods
   // ==========================================================================
 
@@ -670,9 +1852,10 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
           .setBlockHash(ByteString.copyFrom(blockCap.getBlockId().getBytes()))
           .setCoinbase(ByteString.copyFrom(blockCap.getWitnessAddress().toByteArray()));
     } else {
+      // Use deterministic timestamps for fixture generation
       contextBuilder
-          .setBlockNumber(1)
-          .setBlockTimestamp(System.currentTimeMillis());
+          .setBlockNumber(FIXED_BLOCK_NUMBER)
+          .setBlockTimestamp(FIXED_BLOCK_TIMESTAMP);
     }
 
     return ExecuteTransactionRequest.newBuilder()
@@ -714,9 +1897,10 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
           .setBlockHash(ByteString.copyFrom(blockCap.getBlockId().getBytes()))
           .setCoinbase(ByteString.copyFrom(blockCap.getWitnessAddress().toByteArray()));
     } else {
+      // Use deterministic timestamps for fixture generation
       contextBuilder
-          .setBlockNumber(1)
-          .setBlockTimestamp(System.currentTimeMillis());
+          .setBlockNumber(FIXED_BLOCK_NUMBER)
+          .setBlockTimestamp(FIXED_BLOCK_TIMESTAMP);
     }
 
     return ExecuteTransactionRequest.newBuilder()

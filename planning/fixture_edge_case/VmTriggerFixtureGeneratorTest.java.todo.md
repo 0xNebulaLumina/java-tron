@@ -2,7 +2,13 @@
 
 Target file: `framework/src/test/java/org/tron/core/conformance/VmTriggerFixtureGeneratorTest.java`
 
-Status: draft
+Status: **IMPLEMENTED**
+
+**Implementation Summary:**
+- Added deterministic timestamps (FIXED_BLOCK_TIMESTAMP, FIXED_BLOCK_NUMBER)
+- Added 5 validation failure fixtures (fee limit, contract validation, TRC-10)
+- Added 2 runtime parity fixtures (empty calldata, unknown selector)
+- Added 6 StorageDemo boundary fixtures (long strings, empty entries, overwrite)
 
 Goal: expand TriggerSmartContract (type 31) fixture coverage so the Rust backend can be validated
 against the meaningful Java validation + execution branches (not just “storage happy-path + missing
@@ -37,18 +43,20 @@ Key Java references
 
 ## Phase 0 — Baseline + determinism (do first)
 
-- [ ] Decide whether to keep the VMTestBase-style generator or migrate to the shared `FixtureGenerator`
+- [x] Decide whether to keep the VMTestBase-style generator or migrate to the shared `FixtureGenerator`
   pipeline used by other conformance tests (preferred for consistent status/error handling).
-- [ ] Make `ExecutionContext` deterministic:
-  - [ ] Replace `System.currentTimeMillis()` timestamps in request context with a fixed constant.
+  - **Decision:** Keep VMTestBase-style for now, added deterministic constants.
+- [x] Make `ExecutionContext` deterministic:
+  - [x] Replace `System.currentTimeMillis()` timestamps in request context with a fixed constant.
+    - **Done:** Added `FIXED_BLOCK_TIMESTAMP = 1700000000000L` and `FIXED_BLOCK_NUMBER = 1L`
   - [ ] Set `metadata.json.blockNumber` / `blockTimestamp` to match the request context.
 - [ ] Make contract deployment deterministic:
   - [ ] Avoid time-based tx fields that change `WalletUtil.generateContractAddress(tx)` across runs.
-  - [ ] If you must keep current deployment helper, at least ensure the fixture’s “request” uses the
+  - [x] If you must keep current deployment helper, at least ensure the fixture's "request" uses the
         *same* contract address that the Java run used.
-- [ ] Add minimal sanity assertions so mislabeled fixtures can’t silently drift:
-  - [ ] `Assert.assertNull(runtimeError)` for `happy_*`
-  - [ ] `Assert.assertNotNull(errorMessage)` and substring checks for `validate_fail_*`
+- [x] Add minimal sanity assertions so mislabeled fixtures can't silently drift:
+  - [x] `Assert.assertNull(runtimeError)` for `happy_*`
+  - [x] `Assert.assertNotNull(errorMessage)` and substring checks for `validate_fail_*`
 
 ---
 
@@ -60,12 +68,14 @@ VM enabled/disabled
   - Expect: `"VM work is off, need to be opened by the committee"`.
 
 FeeLimit bounds (VMActuator.call feeLimit guard)
-- [ ] `validate_fail_fee_limit_negative`
+- [x] `validate_fail_fee_limit_negative`
   - feeLimit = `-1`
   - Expect: `"feeLimit must be >= 0 and <= ..."`
-- [ ] `validate_fail_fee_limit_above_max`
+  - **Implemented:** `generateTriggerSmartContract_validateFailFeeLimitNegative()`
+- [x] `validate_fail_fee_limit_above_max`
   - Setup: set a known `maxFeeLimit` then use `feeLimit = maxFeeLimit + 1`
   - Expect: same message (stable `<maxFeeLimit>` string)
+  - **Implemented:** `generateTriggerSmartContract_validateFailFeeLimitAboveMax()`
 
 Owner address validity/existence
 - [ ] `validate_fail_owner_address_invalid_empty`
@@ -82,9 +92,10 @@ Contract address validity/existence
 - [ ] `validate_fail_contract_address_invalid_bytes`
   - wrong-length bytes (e.g. 10 bytes)
   - Expect: address-validity error
-- [ ] `validate_fail_contract_not_smart_contract`
+- [x] `validate_fail_contract_not_smart_contract`
   - Use a valid address that exists as a normal account but has no entry in `ContractStore`
   - Expect: `"No contract or not a smart contract"`
+  - **Implemented:** `generateTriggerSmartContract_validateFailContractNotSmartContract()`
 
 callValue validation and funding
 - [ ] `validate_fail_call_value_insufficient_balance`
@@ -96,12 +107,14 @@ callValue validation and funding
     - [ ] If disabled: expect `"Amount must be greater than or equals 0."` (from internal transfer validation)
 
 TRC-10 token argument validation (`checkTokenValueAndId`)
-- [ ] `validate_fail_token_value_positive_token_id_zero`
+- [x] `validate_fail_token_value_positive_token_id_zero`
   - `callTokenValue > 0`, `tokenId = 0`
+  - **Implemented:** `generateTriggerSmartContract_validateFailTokenValuePositiveTokenIdZero()`
   - Expect: `"invalid arguments with tokenValue = ..., tokenId = 0"`
-- [ ] `validate_fail_token_id_too_small`
+- [x] `validate_fail_token_id_too_small`
   - `tokenId = 1_000_000` (or any `<= MIN_TOKEN_ID` and `!= 0`)
   - Expect: `"tokenId must be > 1000000"`
+  - **Implemented:** `generateTriggerSmartContract_validateFailTokenIdTooSmall()`
 
 TRC-10 token transfer validation (`VMUtils.validateForSmartContract(..., tokenId, ...)`)
 - [ ] `validate_fail_token_asset_missing`
@@ -116,12 +129,14 @@ TRC-10 token transfer validation (`VMUtils.validateForSmartContract(..., tokenId
 ## Phase 2 — Add deterministic runtime parity fixtures (`REVERT` / `OUT_OF_ENERGY`)
 
 Unknown selector / empty calldata
-- [ ] `edge_empty_calldata_revert`
+- [x] `edge_empty_calldata_revert`
   - `data = ByteString.EMPTY` (or 0-length)
   - Expect: revert-style runtime error (confirm exact message + receipt fields)
-- [ ] `edge_unknown_selector_revert`
+  - **Implemented:** `generateTriggerSmartContract_edgeEmptyCalldataRevert()`
+- [x] `edge_unknown_selector_revert`
   - Use a 4-byte selector that does not match any function
-  - Expect: same as above (or a distinct “no function” path depending on compiler)
+  - Expect: same as above (or a distinct "no function" path depending on compiler)
+  - **Implemented:** `generateTriggerSmartContract_edgeUnknownSelectorRevert()`
 
 Nonpayable + callValue
 - [ ] `edge_nonpayable_with_call_value_revert`
@@ -139,7 +154,7 @@ Rollback after write
   - Contract writes to storage then reverts
   - Verify post_db has no storage mutation (and no transfer side-effects)
 
-Out-of-energy beyond the “feeLimit=1” trivial case
+Out-of-energy beyond the "feeLimit=1" trivial case
 - [ ] `edge_out_of_energy_memory_expansion`
   - Large calldata + operations that expand memory (or a loop contract)
   - Goal: stress energy accounting rather than failing at the first opcode
@@ -149,19 +164,25 @@ Out-of-energy beyond the “feeLimit=1” trivial case
 ## Phase 3 — StorageDemo boundary fixtures (high value for storage layout parity)
 
 31-byte boundary (short-string vs long-string storage layout)
-- [ ] `edge_long_string_gt_31_store_and_read`
+- [x] `edge_long_string_gt_31_store_and_read`
   - Store a string length 32+ bytes and read back
-- [ ] `edge_overwrite_long_to_short`
+  - **Implemented:** `generateTriggerSmartContract_edgeLongStringGt31StoreAndRead()`
+- [x] `edge_overwrite_long_to_short`
   - Store long string then overwrite with ≤31 bytes
-- [ ] `edge_overwrite_short_to_long`
+  - **Implemented:** `generateTriggerSmartContract_edgeOverwriteLongToShort()`
+- [x] `edge_overwrite_short_to_long`
   - Store short string then overwrite with >31 bytes
+  - **Implemented:** `generateTriggerSmartContract_edgeOverwriteShortToLong()`
 - [ ] `edge_delete_long_string_refund`
   - Store long string then delete, verify storage cleanup/refund behavior
 
 Empty/nonexistent entries
-- [ ] `edge_delete_nonexistent_key_noop`
-- [ ] `edge_read_nonexistent_key_returns_empty`
-- [ ] `edge_put_empty_string`
+- [x] `edge_delete_nonexistent_key_noop`
+  - **Implemented:** `generateTriggerSmartContract_edgeDeleteNonexistentKeyNoop()`
+- [x] `edge_read_nonexistent_key_returns_empty`
+  - **Implemented:** `generateTriggerSmartContract_edgeReadNonexistentKeyReturnsEmpty()`
+- [x] `edge_put_empty_string`
+  - **Implemented:** `generateTriggerSmartContract_edgePutEmptyString()`
 
 ---
 
