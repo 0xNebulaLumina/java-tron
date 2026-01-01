@@ -15,11 +15,14 @@ import org.tron.core.Wallet;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
 import org.tron.core.capsule.BlockCapsule;
+import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.config.args.Args;
+import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
+import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 
 /**
  * Generates conformance test fixtures for transfer contracts:
@@ -246,6 +249,412 @@ public class TransferFixtureGeneratorTest extends BaseTest {
     log.info("Transfer insufficient: validationError={}", result.getValidationError());
   }
 
+  // --------------------------------------------------------------------------
+  // TransferContract (1) - Phase 1 Edge Cases
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateTransfer_validateFailOwnerAddressInvalid() throws Exception {
+    // Empty owner address (invalid)
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY) // Invalid - empty
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAmount(10 * ONE_TRX)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("validate_fail_owner_address_invalid")
+        .caseCategory("validate_fail")
+        .description("Fail when ownerAddress is invalid (empty)")
+        .database("account")
+        .database("dynamic-properties")
+        .expectedError("Invalid ownerAddress!")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer owner invalid: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransfer_validateFailToAddressInvalid() throws Exception {
+    // Empty to address (invalid)
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.EMPTY) // Invalid - empty
+        .setAmount(10 * ONE_TRX)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("validate_fail_to_address_invalid")
+        .caseCategory("validate_fail")
+        .description("Fail when toAddress is invalid (empty)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid toAddress!")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer to invalid: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransfer_validateFailOwnerAccountNotFound() throws Exception {
+    // Use a valid-looking address that is NOT in the account store
+    String unknownOwner = generateAddress("unknown_owner_001");
+    // Note: NOT calling putAccount for this address
+
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(unknownOwner)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAmount(10 * ONE_TRX)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("validate_fail_owner_account_not_found")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address is valid but account not in store")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(unknownOwner)
+        .expectedError("Validate TransferContract error, no OwnerAccount.")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer owner not found: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransfer_validateFailAmountNegative() throws Exception {
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAmount(-1) // Negative amount
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("validate_fail_amount_negative")
+        .caseCategory("validate_fail")
+        .description("Fail when transfer amount is negative")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Amount must be greater than 0.")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer amount negative: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransfer_validateFailRecipientBalanceOverflow() throws Exception {
+    // Create recipient with balance near Long.MAX_VALUE
+    String maxBalanceRecipient = generateAddress("max_bal_recv_01");
+    AccountCapsule maxAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("max_balance"),
+        ByteString.copyFrom(ByteArray.fromHexString(maxBalanceRecipient)),
+        AccountType.Normal,
+        Long.MAX_VALUE); // Max balance
+    dbManager.getAccountStore().put(maxAccount.getAddress().toByteArray(), maxAccount);
+
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(maxBalanceRecipient)))
+        .setAmount(1) // Just 1 SUN should overflow
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("validate_fail_recipient_balance_overflow")
+        .caseCategory("validate_fail")
+        .description("Fail when recipient balance + amount would overflow Long.MAX_VALUE")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("long overflow")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer recipient overflow: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransfer_validateFailCreateRecipientInsufficientForFee() throws Exception {
+    // Create owner with just enough for the amount but not for amount + fee
+    String tightOwner = generateAddress("tight_owner_001");
+    long transferAmount = 10 * ONE_TRX;
+    // Owner has exactly transferAmount, but recipient doesn't exist,
+    // so CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT will be added
+    putAccount(dbManager, tightOwner, transferAmount, "tight_owner");
+
+    String newRecipient = generateAddress("new_recv_tight_1");
+    // Recipient does NOT exist (not created in DB)
+
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(tightOwner)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(newRecipient)))
+        .setAmount(transferAmount)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("validate_fail_create_recipient_insufficient_for_fee")
+        .caseCategory("validate_fail")
+        .description("Fail when owner has enough for amount but not amount + create-account fee")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(tightOwner)
+        .dynamicProperty("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", CREATE_ACCOUNT_FEE)
+        .expectedError("balance is not sufficient")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer create recipient insufficient fee: validationError={}",
+        result.getValidationError());
+  }
+
+  @Test
+  public void generateTransfer_edgePerfectTransferDrainsOwner() throws Exception {
+    // Create owner with exactly the amount to transfer (recipient exists, so no fee)
+    String drainOwner = generateAddress("drain_owner_001");
+    long drainAmount = 100 * ONE_TRX;
+    putAccount(dbManager, drainOwner, drainAmount, "drain_owner");
+
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(drainOwner)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAmount(drainAmount) // Transfer entire balance
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("edge_perfect_transfer_drains_owner")
+        .caseCategory("happy")
+        .description("Boundary: transfer exact balance, owner ends with 0 TRX")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(drainOwner)
+        .dynamicProperty("transfer_amount", drainAmount)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer perfect drain: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateTransfer_validateFailForbidTransferToContract() throws Exception {
+    // Create a Contract type account as recipient
+    String contractRecipient = generateAddress("contract_recv_01");
+    AccountCapsule contractAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("contract_account"),
+        ByteString.copyFrom(ByteArray.fromHexString(contractRecipient)),
+        AccountType.Contract, // Contract type
+        INITIAL_BALANCE);
+    dbManager.getAccountStore().put(contractAccount.getAddress().toByteArray(), contractAccount);
+
+    // Enable forbidTransferToContract
+    dbManager.getDynamicPropertiesStore().saveForbidTransferToContract(1);
+
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(contractRecipient)))
+        .setAmount(10 * ONE_TRX)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("validate_fail_forbid_transfer_to_contract")
+        .caseCategory("validate_fail")
+        .description("Fail when forbidTransferToContract=1 and recipient is Contract type")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("forbidTransferToContract", 1)
+        .expectedError("Cannot transfer TRX to a smartContract.")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer forbid to contract: validationError={}", result.getValidationError());
+
+    // Reset to default
+    dbManager.getDynamicPropertiesStore().saveForbidTransferToContract(0);
+  }
+
+  @Test
+  public void generateTransfer_validateFailEvmCompatibleVersionOneContract() throws Exception {
+    // Create a Contract type account as recipient
+    String contractRecipient = generateAddress("evm_contract_01");
+    AccountCapsule contractAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("evm_contract"),
+        ByteString.copyFrom(ByteArray.fromHexString(contractRecipient)),
+        AccountType.Contract,
+        INITIAL_BALANCE);
+    dbManager.getAccountStore().put(contractAccount.getAddress().toByteArray(), contractAccount);
+
+    // Create ContractCapsule with version=1
+    SmartContract.Builder smartContractBuilder = SmartContract.newBuilder()
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(contractRecipient)))
+        .setOriginAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setVersion(1); // Version 1
+    ContractCapsule contractCapsule = new ContractCapsule(smartContractBuilder.build());
+    dbManager.getContractStore().put(
+        ByteArray.fromHexString(contractRecipient), contractCapsule);
+
+    // Enable allowTvmCompatibleEvm but NOT forbidTransferToContract
+    dbManager.getDynamicPropertiesStore().saveForbidTransferToContract(0);
+    dbManager.getDynamicPropertiesStore().saveAllowTvmCompatibleEvm(1);
+
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(contractRecipient)))
+        .setAmount(10 * ONE_TRX)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("validate_fail_evm_compatible_version_one_contract")
+        .caseCategory("validate_fail")
+        .description("Fail when allowTvmCompatibleEvm=1 and recipient contract has version=1")
+        .database("account")
+        .database("dynamic-properties")
+        .database("contract")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("allowTvmCompatibleEvm", 1)
+        .expectedError("Cannot transfer TRX to a smartContract which version is one")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer evm version one: validationError={}", result.getValidationError());
+
+    // Reset to default
+    dbManager.getDynamicPropertiesStore().saveAllowTvmCompatibleEvm(0);
+  }
+
+  @Test
+  public void generateTransfer_edgeCreateRecipientAllowMultiSign() throws Exception {
+    String newRecipient = generateAddress("multisig_recv_01");
+    long amount = 10 * ONE_TRX;
+
+    // Enable multi-sign
+    dbManager.getDynamicPropertiesStore().saveAllowMultiSign(1);
+
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(newRecipient)))
+        .setAmount(amount)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("edge_create_recipient_allow_multisign")
+        .caseCategory("happy")
+        .description("Create recipient with allowMultiSign=1 (default permissions initialized)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("allowMultiSign", 1)
+        .dynamicProperty("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", CREATE_ACCOUNT_FEE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer multisign create: success={}", result.isSuccess());
+
+    // Reset to default
+    dbManager.getDynamicPropertiesStore().saveAllowMultiSign(0);
+  }
+
+  @Test
+  public void generateTransfer_edgeCreateRecipientBurnFee() throws Exception {
+    String newRecipient = generateAddress("burnfee_recv_01");
+    long amount = 10 * ONE_TRX;
+
+    // Enable blackhole optimization (burn instead of credit)
+    dbManager.getDynamicPropertiesStore().saveAllowBlackHoleOptimization(1);
+
+    TransferContract contract = TransferContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(newRecipient)))
+        .setAmount(amount)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_CONTRACT", 1)
+        .caseName("edge_create_recipient_burn_fee")
+        .caseCategory("happy")
+        .description("Create recipient with allowBlackHoleOptimization=1 (fee is burned)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("allowBlackHoleOptimization", 1)
+        .dynamicProperty("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", CREATE_ACCOUNT_FEE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("Transfer burn fee: success={}", result.isSuccess());
+
+    // Reset to default
+    dbManager.getDynamicPropertiesStore().saveAllowBlackHoleOptimization(0);
+  }
+
   // ==========================================================================
   // TransferAssetContract (2) Fixtures
   // ==========================================================================
@@ -417,5 +826,338 @@ public class TransferFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("TransferAsset to self: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // TransferAssetContract (2) - Phase 2 Edge Cases
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateTransferAsset_validateFailOwnerAddressInvalid() throws Exception {
+    // Empty owner address (invalid)
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY) // Invalid - empty
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(1000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_owner_address_invalid")
+        .caseCategory("validate_fail")
+        .description("Fail when ownerAddress is invalid (empty)")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset owner invalid: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailToAddressInvalid() throws Exception {
+    // Empty to address (invalid)
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.EMPTY) // Invalid - empty
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(1000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_to_address_invalid")
+        .caseCategory("validate_fail")
+        .description("Fail when toAddress is invalid (empty)")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid toAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset to invalid: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailOwnerAccountNotFound() throws Exception {
+    // Use a valid-looking address that is NOT in the account store
+    String unknownOwner = generateAddress("unknown_asset_owner");
+    // Note: NOT calling putAccount for this address
+
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(unknownOwner)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(1000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_owner_account_not_found")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address is valid but account not in store")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(unknownOwner)
+        .expectedError("No owner account!")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset owner not found: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailAmountZero() throws Exception {
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(0) // Zero amount
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_amount_zero")
+        .caseCategory("validate_fail")
+        .description("Fail when transfer amount is zero")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Amount must be greater than 0.")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset amount zero: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailAmountNegative() throws Exception {
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(-1) // Negative amount
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_amount_negative")
+        .caseCategory("validate_fail")
+        .description("Fail when transfer amount is negative")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Amount must be greater than 0.")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset amount negative: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailInsufficientAssetBalanceNonzero() throws Exception {
+    // Create owner with some TRC-10 tokens, but less than needed
+    String smallTokenOwner = generateAddress("small_token_own1");
+    AccountCapsule smallTokenAccount = putAccount(dbManager, smallTokenOwner, INITIAL_BALANCE, "small_token");
+    // Add a small token balance (5 tokens)
+    smallTokenAccount.addAssetAmountV2(TOKEN_ID.getBytes(), 5,
+        dbManager.getDynamicPropertiesStore(), dbManager.getAssetIssueStore());
+    dbManager.getAccountStore().put(smallTokenAccount.getAddress().toByteArray(), smallTokenAccount);
+
+    // Attempt to transfer more than available
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(smallTokenOwner)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(6) // More than the 5 tokens owned
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_insufficient_asset_balance_nonzero")
+        .caseCategory("validate_fail")
+        .description("Fail when owner has nonzero but insufficient token balance")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(smallTokenOwner)
+        .dynamicProperty("token_id", TOKEN_ID)
+        .expectedError("assetBalance is not sufficient.")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset insufficient nonzero: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailRecipientAssetBalanceOverflow() throws Exception {
+    // Create recipient with asset balance near Long.MAX_VALUE
+    String maxAssetRecipient = generateAddress("max_asset_recv1");
+    AccountCapsule maxAssetAccount = putAccount(dbManager, maxAssetRecipient, INITIAL_BALANCE, "max_asset");
+    // Add max token balance
+    maxAssetAccount.addAssetAmountV2(TOKEN_ID.getBytes(), Long.MAX_VALUE,
+        dbManager.getDynamicPropertiesStore(), dbManager.getAssetIssueStore());
+    dbManager.getAccountStore().put(maxAssetAccount.getAddress().toByteArray(), maxAssetAccount);
+
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(maxAssetRecipient)))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(1) // Just 1 token should overflow
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_recipient_asset_balance_overflow")
+        .caseCategory("validate_fail")
+        .description("Fail when recipient asset balance + amount would overflow Long.MAX_VALUE")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("token_id", TOKEN_ID)
+        .expectedError("long overflow")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset recipient overflow: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailCreateRecipientInsufficientTrxFee() throws Exception {
+    // Create owner with TRC-10 tokens but very low TRX balance
+    String lowTrxOwner = generateAddress("low_trx_owner_01");
+    AccountCapsule lowTrxAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("low_trx"),
+        ByteString.copyFrom(ByteArray.fromHexString(lowTrxOwner)),
+        AccountType.Normal,
+        100L); // Only 100 SUN - not enough for create account fee
+    // Add tokens
+    lowTrxAccount.addAssetAmountV2(TOKEN_ID.getBytes(), 1_000_000L,
+        dbManager.getDynamicPropertiesStore(), dbManager.getAssetIssueStore());
+    dbManager.getAccountStore().put(lowTrxAccount.getAddress().toByteArray(), lowTrxAccount);
+
+    String newRecipient = generateAddress("new_asset_recv_1");
+    // Recipient does NOT exist
+
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(lowTrxOwner)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(newRecipient)))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(1000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_create_recipient_insufficient_trx_fee")
+        .caseCategory("validate_fail")
+        .description("Fail when owner has tokens but not enough TRX for create-account fee")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(lowTrxOwner)
+        .dynamicProperty("token_id", TOKEN_ID)
+        .dynamicProperty("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", CREATE_ACCOUNT_FEE)
+        .expectedError("Validate TransferAssetActuator error, insufficient fee.")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset create recipient insufficient TRX fee: validationError={}",
+        result.getValidationError());
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailForbidTransferAssetToContract() throws Exception {
+    // Create a Contract type account as recipient
+    String contractRecipient = generateAddress("asset_contract_1");
+    AccountCapsule contractAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("contract_for_asset"),
+        ByteString.copyFrom(ByteArray.fromHexString(contractRecipient)),
+        AccountType.Contract, // Contract type
+        INITIAL_BALANCE);
+    dbManager.getAccountStore().put(contractAccount.getAddress().toByteArray(), contractAccount);
+
+    // Enable forbidTransferToContract
+    dbManager.getDynamicPropertiesStore().saveForbidTransferToContract(1);
+
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(contractRecipient)))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(1000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_forbid_transfer_asset_to_contract")
+        .caseCategory("validate_fail")
+        .description("Fail when forbidTransferToContract=1 and recipient is Contract type")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("token_id", TOKEN_ID)
+        .dynamicProperty("forbidTransferToContract", 1)
+        .expectedError("Cannot transfer asset to smartContract.")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset forbid to contract: validationError={}", result.getValidationError());
+
+    // Reset to default
+    dbManager.getDynamicPropertiesStore().saveForbidTransferToContract(0);
   }
 }

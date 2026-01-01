@@ -17,15 +17,15 @@ Acceptance Criteria
   matches the thrown `ContractValidateException` message.
 - For successful executions: `metadata.json.expectedStatus == "SUCCESS"` and `expected/post_db/` reflects the state
   mutation (including account creation where applicable).
-- `caseCategory` aligns with the actual produced status (avoid “validate_fail but SUCCESS”).
+- `caseCategory` aligns with the actual produced status (avoid "validate_fail but SUCCESS").
 - Fixtures remain deterministic across runs (timestamps/block context derived from `ConformanceFixtureTestSupport`).
 
 Checklist / TODO
 
 Phase 0 — Confirm Oracle Behavior
-- [ ] Skim validate/execute paths to map exact messages and branches:
-  - [ ] `actuator/src/main/java/org/tron/core/actuator/TransferActuator.java`
-  - [ ] `actuator/src/main/java/org/tron/core/actuator/TransferAssetActuator.java`
+- [x] Skim validate/execute paths to map exact messages and branches:
+  - [x] `actuator/src/main/java/org/tron/core/actuator/TransferActuator.java`
+  - [x] `actuator/src/main/java/org/tron/core/actuator/TransferAssetActuator.java`
 - [ ] Use existing unit tests as message/branch reference:
   - [ ] `framework/src/test/java/org/tron/core/actuator/TransferActuatorTest.java`
   - [ ] `framework/src/test/java/org/tron/core/actuator/TransferAssetActuatorTest.java`
@@ -36,115 +36,115 @@ Phase 0 — Confirm Oracle Behavior
 Phase 1 — TransferContract (1) Missing Fixtures
 
 Invalid address validation
-- [ ] Add `validate_fail_owner_address_invalid`:
-  - [ ] `ownerAddress = ByteString.EMPTY` (or wrong-length bytes).
-  - [ ] Expect error: `"Invalid ownerAddress!"`.
-  - [ ] DBs: `account`, `dynamic-properties`.
-- [ ] Add `validate_fail_to_address_invalid`:
-  - [ ] `toAddress = ByteString.EMPTY` (or wrong-length bytes).
-  - [ ] Expect error: `"Invalid toAddress!"`.
-  - [ ] DBs: `account`, `dynamic-properties`.
+- [x] Add `validate_fail_owner_address_invalid`:
+  - [x] `ownerAddress = ByteString.EMPTY` (or wrong-length bytes).
+  - [x] Expect error: `"Invalid ownerAddress!"`.
+  - [x] DBs: `account`, `dynamic-properties`.
+- [x] Add `validate_fail_to_address_invalid`:
+  - [x] `toAddress = ByteString.EMPTY` (or wrong-length bytes).
+  - [x] Expect error: `"Invalid toAddress!"`.
+  - [x] DBs: `account`, `dynamic-properties`.
 
 Owner account existence
-- [ ] Add `validate_fail_owner_account_not_found`:
-  - [ ] Use a valid-looking address not inserted into `AccountStore`.
-  - [ ] Expect error: `"Validate TransferContract error, no OwnerAccount."`.
+- [x] Add `validate_fail_owner_account_not_found`:
+  - [x] Use a valid-looking address not inserted into `AccountStore`.
+  - [x] Expect error: `"Validate TransferContract error, no OwnerAccount."`.
 
 Amount boundary
-- [ ] Add `validate_fail_amount_negative`:
-  - [ ] `amount = -1`.
-  - [ ] Expect error: `"Amount must be greater than 0."`.
+- [x] Add `validate_fail_amount_negative`:
+  - [x] `amount = -1`.
+  - [x] Expect error: `"Amount must be greater than 0."`.
 
 Overflow branch
-- [ ] Add `validate_fail_recipient_balance_overflow`:
-  - [ ] Set existing recipient’s TRX balance to `Long.MAX_VALUE`.
-  - [ ] Transfer `amount = 1`.
-  - [ ] Expect error: `"long overflow"`.
+- [x] Add `validate_fail_recipient_balance_overflow`:
+  - [x] Set existing recipient's TRX balance to `Long.MAX_VALUE`.
+  - [x] Transfer `amount = 1`.
+  - [x] Expect error: `"long overflow"`.
 
 Create-recipient fee boundary (fee-added branch)
-- [ ] Add `validate_fail_create_recipient_insufficient_for_fee`:
-  - [ ] Recipient does not exist (fresh address).
-  - [ ] Owner balance set to exactly `amount` (or `amount + fee - 1`), so `amount + CREATE_NEW_ACCOUNT_FEE` fails.
-  - [ ] Expect error contains: `"balance is not sufficient"`.
-  - [ ] Include dynamic property in metadata: `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`.
+- [x] Add `validate_fail_create_recipient_insufficient_for_fee`:
+  - [x] Recipient does not exist (fresh address).
+  - [x] Owner balance set to exactly `amount` (or `amount + fee - 1`), so `amount + CREATE_NEW_ACCOUNT_FEE` fails.
+  - [x] Expect error contains: `"balance is not sufficient"`.
+  - [x] Include dynamic property in metadata: `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`.
 
 Boundary-success semantics
-- [ ] Add `edge_perfect_transfer_drains_owner`:
-  - [ ] Seed owner balance to exactly `amount` (recipient exists, so fee path is 0) and transfer full balance.
-  - [ ] Expect `SUCCESS` and owner balance becomes 0.
+- [x] Add `edge_perfect_transfer_drains_owner`:
+  - [x] Seed owner balance to exactly `amount` (recipient exists, so fee path is 0) and transfer full balance.
+  - [x] Expect `SUCCESS` and owner balance becomes 0.
 
 Transfer-to-contract restrictions
-- [ ] Add `validate_fail_forbid_transfer_to_contract`:
-  - [ ] Seed recipient account with `AccountType.Contract`.
-  - [ ] Set `forbidTransferToContract = 1` in dynamic properties.
-  - [ ] Expect error: `"Cannot transfer TRX to a smartContract."`.
-  - [ ] DBs: at least `account`, `dynamic-properties` (consider `contract` if later extended).
-- [ ] (Optional, higher effort) Add `validate_fail_evm_compatible_version_one_contract`:
-  - [ ] Set `allowTvmCompatibleEvm = 1` and recipient `AccountType.Contract`.
-  - [ ] Seed a `ContractCapsule` for `toAddress` with `contractVersion = 1` in `ContractStore`.
-  - [ ] Expect error mentions: `"contract which version is one"`.
-  - [ ] DBs: include `contract` in addition to `account`, `dynamic-properties`.
+- [x] Add `validate_fail_forbid_transfer_to_contract`:
+  - [x] Seed recipient account with `AccountType.Contract`.
+  - [x] Set `forbidTransferToContract = 1` in dynamic properties.
+  - [x] Expect error: `"Cannot transfer TRX to a smartContract."`.
+  - [x] DBs: at least `account`, `dynamic-properties` (consider `contract` if later extended).
+- [x] (Optional, higher effort) Add `validate_fail_evm_compatible_version_one_contract`:
+  - [x] Set `allowTvmCompatibleEvm = 1` and recipient `AccountType.Contract`.
+  - [x] Seed a `ContractCapsule` for `toAddress` with `contractVersion = 1` in `ContractStore`.
+  - [x] Expect error mentions: `"contract which version is one"`.
+  - [x] DBs: include `contract` in addition to `account`, `dynamic-properties`.
 
 Account creation permission initialization
-- [ ] Add `edge_create_recipient_allow_multisign`:
-  - [ ] Set `allowMultiSign = 1`.
-  - [ ] Transfer to a non-existent recipient so account is created.
-  - [ ] Verify via fixture inspection that new account permission fields match Java’s created account shape.
+- [x] Add `edge_create_recipient_allow_multisign`:
+  - [x] Set `allowMultiSign = 1`.
+  - [x] Transfer to a non-existent recipient so account is created.
+  - [x] Verify via fixture inspection that new account permission fields match Java's created account shape.
 
 Fee disposition / blackhole optimization
-- [ ] Add `edge_create_recipient_burn_fee`:
-  - [ ] Set `allowBlackHoleOptimization = 1`.
-  - [ ] Transfer to a non-existent recipient so `CREATE_NEW_ACCOUNT_FEE` is applied.
-  - [ ] Verify fixture shows burn (dynamic-properties change) vs blackhole credit (account change).
+- [x] Add `edge_create_recipient_burn_fee`:
+  - [x] Set `allowBlackHoleOptimization = 1`.
+  - [x] Transfer to a non-existent recipient so `CREATE_NEW_ACCOUNT_FEE` is applied.
+  - [x] Verify fixture shows burn (dynamic-properties change) vs blackhole credit (account change).
 
 Phase 2 — TransferAssetContract (2) Missing Fixtures
 
 Invalid address validation
-- [ ] Add `validate_fail_owner_address_invalid`:
-  - [ ] `ownerAddress = ByteString.EMPTY` (or wrong-length bytes).
-  - [ ] Expect error: `"Invalid ownerAddress"`.
-  - [ ] DBs: `account`, `asset-issue-v2`, `dynamic-properties`.
-- [ ] Add `validate_fail_to_address_invalid`:
-  - [ ] `toAddress = ByteString.EMPTY` (or wrong-length bytes).
-  - [ ] Expect error: `"Invalid toAddress"`.
+- [x] Add `validate_fail_owner_address_invalid`:
+  - [x] `ownerAddress = ByteString.EMPTY` (or wrong-length bytes).
+  - [x] Expect error: `"Invalid ownerAddress"`.
+  - [x] DBs: `account`, `asset-issue-v2`, `dynamic-properties`.
+- [x] Add `validate_fail_to_address_invalid`:
+  - [x] `toAddress = ByteString.EMPTY` (or wrong-length bytes).
+  - [x] Expect error: `"Invalid toAddress"`.
 
 Owner account existence
-- [ ] Add `validate_fail_owner_account_not_found`:
-  - [ ] Use a valid-looking owner address not inserted into `AccountStore`.
-  - [ ] Expect error: `"No owner account!"`.
+- [x] Add `validate_fail_owner_account_not_found`:
+  - [x] Use a valid-looking owner address not inserted into `AccountStore`.
+  - [x] Expect error: `"No owner account!"`.
 
 Amount boundary
-- [ ] Add `validate_fail_amount_zero`:
-  - [ ] `amount = 0`.
-  - [ ] Expect error: `"Amount must be greater than 0."`.
-- [ ] Add `validate_fail_amount_negative`:
-  - [ ] `amount = -1`.
-  - [ ] Expect error: `"Amount must be greater than 0."`.
+- [x] Add `validate_fail_amount_zero`:
+  - [x] `amount = 0`.
+  - [x] Expect error: `"Amount must be greater than 0."`.
+- [x] Add `validate_fail_amount_negative`:
+  - [x] `amount = -1`.
+  - [x] Expect error: `"Amount must be greater than 0."`.
 
 Asset balance insufficient-but-nonzero
-- [ ] Add `validate_fail_insufficient_asset_balance_nonzero`:
-  - [ ] Seed owner with a small positive token balance (e.g., 5).
-  - [ ] Attempt transfer with `amount = 6`.
-  - [ ] Expect error: `"assetBalance is not sufficient."`.
+- [x] Add `validate_fail_insufficient_asset_balance_nonzero`:
+  - [x] Seed owner with a small positive token balance (e.g., 5).
+  - [x] Attempt transfer with `amount = 6`.
+  - [x] Expect error: `"assetBalance is not sufficient."`.
 
 Recipient asset overflow
-- [ ] Add `validate_fail_recipient_asset_balance_overflow`:
-  - [ ] Seed recipient with asset balance `Long.MAX_VALUE`.
-  - [ ] Transfer `amount = 1`.
-  - [ ] Expect error: `"long overflow"`.
+- [x] Add `validate_fail_recipient_asset_balance_overflow`:
+  - [x] Seed recipient with asset balance `Long.MAX_VALUE`.
+  - [x] Transfer `amount = 1`.
+  - [x] Expect error: `"long overflow"`.
 
 Create-recipient fee failure (distinct message)
-- [ ] Add `validate_fail_create_recipient_insufficient_trx_fee`:
-  - [ ] Recipient does not exist (fresh address).
-  - [ ] Owner has enough tokens but `owner.balance < CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`.
-  - [ ] Expect error: `"Validate TransferAssetActuator error, insufficient fee."`.
-  - [ ] Include dynamic property in metadata: `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`.
+- [x] Add `validate_fail_create_recipient_insufficient_trx_fee`:
+  - [x] Recipient does not exist (fresh address).
+  - [x] Owner has enough tokens but `owner.balance < CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`.
+  - [x] Expect error: `"Validate TransferAssetActuator error, insufficient fee."`.
+  - [x] Include dynamic property in metadata: `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`.
 
 Transfer-to-contract restriction
-- [ ] Add `validate_fail_forbid_transfer_asset_to_contract`:
-  - [ ] Seed recipient as `AccountType.Contract`.
-  - [ ] Set `forbidTransferToContract = 1`.
-  - [ ] Expect error: `"Cannot transfer asset to smartContract."`.
+- [x] Add `validate_fail_forbid_transfer_asset_to_contract`:
+  - [x] Seed recipient as `AccountType.Contract`.
+  - [x] Set `forbidTransferToContract = 1`.
+  - [x] Expect error: `"Cannot transfer asset to smartContract."`.
 
 Token-name mode split (optional, only if conformance needs legacy)
 - [ ] Add a legacy-mode fixture set with `allowSameTokenName = 0`:
@@ -153,11 +153,11 @@ Token-name mode split (optional, only if conformance needs legacy)
   - [ ] Keep these fixtures clearly named (e.g., `legacy_*`) to avoid mixing eras.
 
 Phase 3 — Metadata / DB Capture Hygiene
-- [ ] Ensure `FixtureMetadata.database(...)` includes all stores required to validate parity for the case:
-  - [ ] Always: `account`, `dynamic-properties`.
-  - [ ] TRC-10: include `asset-issue-v2` (and optionally `asset-issue` for legacy-mode fixtures).
-  - [ ] Contract restriction tests: include `contract` if validation touches `ContractStore`.
-- [ ] Add `dynamicProperty(...)` entries for any toggled flags (`forbidTransferToContract`, `allowMultiSign`,
+- [x] Ensure `FixtureMetadata.database(...)` includes all stores required to validate parity for the case:
+  - [x] Always: `account`, `dynamic-properties`.
+  - [x] TRC-10: include `asset-issue-v2` (and optionally `asset-issue` for legacy-mode fixtures).
+  - [x] Contract restriction tests: include `contract` if validation touches `ContractStore`.
+- [x] Add `dynamicProperty(...)` entries for any toggled flags (`forbidTransferToContract`, `allowMultiSign`,
       `allowBlackHoleOptimization`, `allowTvmCompatibleEvm`) so fixtures are self-describing.
 
 Phase 4 — Regenerate and Verify
