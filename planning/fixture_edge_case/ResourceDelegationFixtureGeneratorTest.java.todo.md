@@ -18,23 +18,23 @@ Acceptance Criteria
   `ContractValidateException` message captured.
 - Happy fixtures execute successfully and mutate expected DB state (`account`, `DelegatedResource`, index stores,
   and `dynamic-properties` where applicable).
-- For time-sensitive behaviors, embedded execution “now” (dynamic props) and remote context timestamp are aligned.
+- For time-sensitive behaviors, embedded execution "now" (dynamic props) and remote context timestamp are aligned.
 
 Checklist / TODO
 
 Phase 0 — Confirm Baselines + Make Fixture Output Deterministic
-- [ ] Record exact validate error messages and gating conditions:
-  - [ ] `actuator/src/main/java/org/tron/core/actuator/WithdrawExpireUnfreezeActuator.java`
-  - [ ] `actuator/src/main/java/org/tron/core/actuator/DelegateResourceActuator.java`
-  - [ ] `actuator/src/main/java/org/tron/core/actuator/UnDelegateResourceActuator.java`
-  - [ ] `actuator/src/main/java/org/tron/core/actuator/CancelAllUnfreezeV2Actuator.java`
-  - [ ] `chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java`:
-    - [ ] `supportUnfreezeDelay()`
-    - [ ] `supportDR()`
-    - [ ] `supportAllowCancelAllUnfreezeV2()`
-    - [ ] `supportMaxDelegateLockPeriod()`
-  - [ ] `chainbase/src/main/java/org/tron/core/store/DelegatedResourceStore.java` (`unLockExpireResource` uses `< now`)
-- [ ] Align block context + dynamic props (avoid “now” mismatches):
+- [x] Record exact validate error messages and gating conditions:
+  - [x] `actuator/src/main/java/org/tron/core/actuator/WithdrawExpireUnfreezeActuator.java`
+  - [x] `actuator/src/main/java/org/tron/core/actuator/DelegateResourceActuator.java`
+  - [x] `actuator/src/main/java/org/tron/core/actuator/UnDelegateResourceActuator.java`
+  - [x] `actuator/src/main/java/org/tron/core/actuator/CancelAllUnfreezeV2Actuator.java`
+  - [x] `chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java`:
+    - [x] `supportUnfreezeDelay()`
+    - [x] `supportDR()`
+    - [x] `supportAllowCancelAllUnfreezeV2()`
+    - [x] `supportMaxDelegateLockPeriod()`
+  - [x] `chainbase/src/main/java/org/tron/core/store/DelegatedResourceStore.java` (`unLockExpireResource` uses `< now`)
+- [ ] Align block context + dynamic props (avoid "now" mismatches):
   - [ ] Prefer `ConformanceFixtureTestSupport.createBlockContext(dbManager, witnessAddr)` to keep
     `latestBlockHeaderTimestamp/Number/Hash` consistent with `blockCap`.
 - [ ] Make timestamps deterministic:
@@ -45,172 +45,172 @@ Phase 0 — Confirm Baselines + Make Fixture Output Deterministic
 Phase 1 — WithdrawExpireUnfreezeContract (56) Missing Fixtures
 
 Feature gating
-- [ ] Add `validate_fail_feature_not_enabled`:
-  - [ ] Set `DynamicPropertiesStore.saveUnfreezeDelayDays(0)`
-  - [ ] Expect: `"Not support WithdrawExpireUnfreeze transaction, need to be opened by the committee"`.
+- [x] Add `validate_fail_feature_not_enabled`:
+  - [x] Set `DynamicPropertiesStore.saveUnfreezeDelayDays(0)`
+  - [x] Expect: `"Not support WithdrawExpireUnfreeze transaction, need to be opened by the committee"`.
 
 Owner/address/account validation
-- [ ] Add `validate_fail_owner_address_invalid_empty`:
-  - [ ] `owner_address = ByteString.EMPTY`
-  - [ ] Expect: `"Invalid address"`.
-- [ ] Add `validate_fail_owner_account_not_exist`:
-  - [ ] Use a valid-looking address not in `AccountStore`
-  - [ ] Expect: `"Account[... ] not exists"`.
+- [x] Add `validate_fail_owner_address_invalid_empty`:
+  - [x] `owner_address = ByteString.EMPTY`
+  - [x] Expect: `"Invalid address"`.
+- [x] Add `validate_fail_owner_account_not_exist`:
+  - [x] Use a valid-looking address not in `AccountStore`
+  - [x] Expect: `"Account[... ] not exists"`.
 
 Time/list handling
-- [ ] Add `edge_mixed_expired_and_unexpired_entries`:
-  - [ ] Seed one `unfrozenV2` with `expireTime < now` and one with `expireTime > now`
-  - [ ] Expect: `SUCCESS`, `withdrawExpireAmount == sum(expired)`, and unexpired entry remains in `unfrozenV2List`.
-- [ ] Add `edge_expire_time_equals_now_is_withdrawable`:
-  - [ ] Seed entry with `expireTime == now`
-  - [ ] Expect: treated as expired (`<= now`) and withdrawn.
+- [x] Add `edge_mixed_expired_and_unexpired_entries`:
+  - [x] Seed one `unfrozenV2` with `expireTime < now` and one with `expireTime > now`
+  - [x] Expect: `SUCCESS`, `withdrawExpireAmount == sum(expired)`, and unexpired entry remains in `unfrozenV2List`.
+- [x] Add `edge_expire_time_equals_now_is_withdrawable`:
+  - [x] Seed entry with `expireTime == now`
+  - [x] Expect: treated as expired (`<= now`) and withdrawn.
 
 Overflow protection (optional but high value)
-- [ ] Add `validate_fail_balance_overflow_on_withdraw`:
-  - [ ] Seed account balance near `Long.MAX_VALUE` and an expired unfreeze amount that overflows add
-  - [ ] Expect: validation failure with `ArithmeticException` message.
+- [x] Add `validate_fail_balance_overflow_on_withdraw`:
+  - [x] Seed account balance near `Long.MAX_VALUE` and an expired unfreeze amount that overflows add
+  - [x] Expect: validation failure with `ArithmeticException` message.
 
 Phase 2 — DelegateResourceContract (57) Missing Fixtures
 
 Feature gating
-- [ ] Add `validate_fail_delegate_disabled_supportDR`:
-  - [ ] Set `DynamicPropertiesStore.saveAllowDelegateResource(0)`
-  - [ ] Expect: `"No support for resource delegate"`.
-- [ ] Add `validate_fail_unfreeze_delay_disabled`:
-  - [ ] Set `DynamicPropertiesStore.saveUnfreezeDelayDays(0)` (keep allowDelegateResource enabled)
-  - [ ] Expect: `"Not support Delegate resource transaction, need to be opened by the committee"`.
+- [x] Add `validate_fail_delegate_disabled_supportDR`:
+  - [x] Set `DynamicPropertiesStore.saveAllowDelegateResource(0)`
+  - [x] Expect: `"No support for resource delegate"`.
+- [x] Add `validate_fail_unfreeze_delay_disabled`:
+  - [x] Set `DynamicPropertiesStore.saveUnfreezeDelayDays(0)` (keep allowDelegateResource enabled)
+  - [x] Expect: `"Not support Delegate resource transaction, need to be opened by the committee"`.
 
 Owner/address/account validation
-- [ ] Add `validate_fail_owner_address_invalid_empty`:
-  - [ ] `owner_address = ByteString.EMPTY`
-  - [ ] Expect: `"Invalid address"`.
-- [ ] Add `validate_fail_owner_account_not_exist`:
-  - [ ] Valid-looking owner not in `AccountStore`
-  - [ ] Expect: `"Account[... ] not exists"`.
+- [x] Add `validate_fail_owner_address_invalid_empty`:
+  - [x] `owner_address = ByteString.EMPTY`
+  - [x] Expect: `"Invalid address"`.
+- [x] Add `validate_fail_owner_account_not_exist`:
+  - [x] Valid-looking owner not in `AccountStore`
+  - [x] Expect: `"Account[... ] not exists"`.
 
 Delegate amount boundaries
-- [ ] Add `validate_fail_delegate_balance_lt_1_trx`:
-  - [ ] `balance = ONE_TRX - 1`
-  - [ ] Expect: `"delegateBalance must be greater than or equal to 1 TRX"`.
-- [ ] Add `happy_path_delegate_balance_exact_1_trx`:
-  - [ ] `balance = ONE_TRX`
-  - [ ] Expect: `SUCCESS`.
+- [x] Add `validate_fail_delegate_balance_lt_1_trx`:
+  - [x] `balance = ONE_TRX - 1`
+  - [x] Expect: `"delegateBalance must be greater than or equal to 1 TRX"`.
+- [x] Add `happy_path_delegate_balance_exact_1_trx`:
+  - [x] `balance = ONE_TRX`
+  - [x] Expect: `SUCCESS`.
 
 Resource code validation
-- [ ] Add `validate_fail_resource_unrecognized_value`:
-  - [ ] Use `DelegateResourceContract.Builder#setResourceValue(999)`
-  - [ ] Expect: `"ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]"`.
+- [x] Add `validate_fail_resource_unrecognized_value`:
+  - [x] Use `DelegateResourceContract.Builder#setResourceValue(999)`
+  - [x] Expect: `"ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]"`.
 
 Receiver/address/account validation
-- [ ] Add `validate_fail_receiver_address_invalid_empty`:
-  - [ ] `receiver_address = ByteString.EMPTY`
-  - [ ] Expect: `"Invalid receiverAddress"`.
-- [ ] Add `validate_fail_receiver_account_not_exist`:
-  - [ ] Receiver address not in `AccountStore`
-  - [ ] Expect: `"Account[... ] not exists"`.
-- [ ] Add `validate_fail_receiver_is_contract_account`:
-  - [ ] Seed receiver as `AccountType.Contract`
-  - [ ] Expect: `"Do not allow delegate resources to contract addresses"`.
+- [x] Add `validate_fail_receiver_address_invalid_empty`:
+  - [x] `receiver_address = ByteString.EMPTY`
+  - [x] Expect: `"Invalid receiverAddress"`.
+- [x] Add `validate_fail_receiver_account_not_exist`:
+  - [x] Receiver address not in `AccountStore`
+  - [x] Expect: `"Account[... ] not exists"`.
+- [x] Add `validate_fail_receiver_is_contract_account`:
+  - [x] Seed receiver as `AccountType.Contract`
+  - [x] Expect: `"Do not allow delegate resources to contract addresses"`.
 
 Lock semantics (max-lock feature)
-- [ ] Enable `supportMaxDelegateLockPeriod()` for lock-period validation:
-  - [ ] Set `DynamicPropertiesStore.saveMaxDelegateLockPeriod(X)` where `X > DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL`
-- [ ] Add `validate_fail_lock_period_negative`:
-  - [ ] `lock=true`, `lockPeriod=-1`
-  - [ ] Expect: `"The lock period of delegate resource cannot be less than 0..."`.
-- [ ] Add `validate_fail_lock_period_exceeds_max`:
-  - [ ] `lock=true`, `lockPeriod=max+1`
-  - [ ] Expect: `"The lock period of delegate resource cannot be less than 0 and cannot exceed <max>!"`.
-- [ ] Add `validate_fail_lock_period_less_than_remaining_previous_lock`:
-  - [ ] Seed an existing locked delegation with remaining time `R`
-  - [ ] Attempt new delegate with `lockPeriod * interval < R`
-  - [ ] Expect: `validRemainTime(...)` error string.
-- [ ] Add `edge_lock_period_zero_defaults`:
-  - [ ] `lock=true`, `lockPeriod=0` (supportMaxDelegateLockPeriod enabled)
-  - [ ] Expect: `SUCCESS` and expireTime uses default `DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL`.
+- [x] Enable `supportMaxDelegateLockPeriod()` for lock-period validation:
+  - [x] Set `DynamicPropertiesStore.saveMaxDelegateLockPeriod(X)` where `X > DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL`
+- [x] Add `validate_fail_lock_period_negative`:
+  - [x] `lock=true`, `lockPeriod=-1`
+  - [x] Expect: `"The lock period of delegate resource cannot be less than 0..."`.
+- [x] Add `validate_fail_lock_period_exceeds_max`:
+  - [x] `lock=true`, `lockPeriod=max+1`
+  - [x] Expect: `"The lock period of delegate resource cannot be less than 0 and cannot exceed <max>!"`.
+- [x] Add `validate_fail_lock_period_less_than_remaining_previous_lock`:
+  - [x] Seed an existing locked delegation with remaining time `R`
+  - [x] Attempt new delegate with `lockPeriod * interval < R`
+  - [x] Expect: `validRemainTime(...)` error string.
+- [x] Add `edge_lock_period_zero_defaults`:
+  - [x] `lock=true`, `lockPeriod=0` (supportMaxDelegateLockPeriod enabled)
+  - [x] Expect: `SUCCESS` and expireTime uses default `DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL`.
 
 Phase 3 — UnDelegateResourceContract (58) Missing Fixtures
 
 Feature gating
-- [ ] Add `validate_fail_undelegate_disabled_supportDR`:
-  - [ ] Set `DynamicPropertiesStore.saveAllowDelegateResource(0)`
-  - [ ] Expect: `"No support for resource delegate"`.
-- [ ] Add `validate_fail_unfreeze_delay_disabled`:
-  - [ ] Set `DynamicPropertiesStore.saveUnfreezeDelayDays(0)`
-  - [ ] Expect: `"Not support unDelegate resource transaction, need to be opened by the committee"`.
+- [x] Add `validate_fail_undelegate_disabled_supportDR`:
+  - [x] Set `DynamicPropertiesStore.saveAllowDelegateResource(0)`
+  - [x] Expect: `"No support for resource delegate"`.
+- [x] Add `validate_fail_unfreeze_delay_disabled`:
+  - [x] Set `DynamicPropertiesStore.saveUnfreezeDelayDays(0)`
+  - [x] Expect: `"Not support unDelegate resource transaction, need to be opened by the committee"`.
 
 Address + amount validation
-- [ ] Add `validate_fail_owner_address_invalid_empty`:
-  - [ ] `owner_address = ByteString.EMPTY`
-  - [ ] Expect: `"Invalid address"`.
-- [ ] Add `validate_fail_receiver_address_invalid_empty`:
-  - [ ] `receiver_address = ByteString.EMPTY`
-  - [ ] Expect: `"Invalid receiverAddress"`.
-- [ ] Add `validate_fail_receiver_equals_owner`:
-  - [ ] `receiver_address == owner_address`
-  - [ ] Expect: `"receiverAddress must not be the same as ownerAddress"`.
-- [ ] Add `validate_fail_unDelegate_balance_zero`:
-  - [ ] `balance = 0`
-  - [ ] Expect: `"unDelegateBalance must be more than 0 TRX"`.
-- [ ] Add `validate_fail_resource_unrecognized_value`:
-  - [ ] Use `UnDelegateResourceContract.Builder#setResourceValue(999)`
-  - [ ] Expect: `"ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]"`.
+- [x] Add `validate_fail_owner_address_invalid_empty`:
+  - [x] `owner_address = ByteString.EMPTY`
+  - [x] Expect: `"Invalid address"`.
+- [x] Add `validate_fail_receiver_address_invalid_empty`:
+  - [x] `receiver_address = ByteString.EMPTY`
+  - [x] Expect: `"Invalid receiverAddress"`.
+- [x] Add `validate_fail_receiver_equals_owner`:
+  - [x] `receiver_address == owner_address`
+  - [x] Expect: `"receiverAddress must not be the same as ownerAddress"`.
+- [x] Add `validate_fail_unDelegate_balance_zero`:
+  - [x] `balance = 0`
+  - [x] Expect: `"unDelegateBalance must be more than 0 TRX"`.
+- [x] Add `validate_fail_resource_unrecognized_value`:
+  - [x] Use `UnDelegateResourceContract.Builder#setResourceValue(999)`
+  - [x] Expect: `"ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]"`.
 
 Locked delegation boundary (strict `< now`)
-- [ ] Add `validate_fail_only_locked_delegation_not_expired`:
-  - [ ] Seed `DelegatedResourceStore` lock-key (`createDbKeyV2(..., true)`) with `expireTime >= now`
-  - [ ] Attempt undelegate
-  - [ ] Expect: `"insufficient delegatedFrozenBalance(...)"`.
-- [ ] Add `validate_fail_locked_expire_time_equals_now`:
-  - [ ] Same as above but `expireTime == now`
-  - [ ] Expect: still locked and fails (since unlock logic requires `< now`).
+- [x] Add `validate_fail_only_locked_delegation_not_expired`:
+  - [x] Seed `DelegatedResourceStore` lock-key (`createDbKeyV2(..., true)`) with `expireTime >= now`
+  - [x] Attempt undelegate
+  - [x] Expect: `"insufficient delegatedFrozenBalance(...)"`.
+- [x] Add `validate_fail_locked_expire_time_equals_now`:
+  - [x] Same as above but `expireTime == now`
+  - [x] Expect: still locked and fails (since unlock logic requires `< now`).
 
 Execution path gaps
-- [ ] Add `happy_path_full_undelegate_deletes_store_and_index`:
-  - [ ] Seed delegation and `DelegatedResourceAccountIndexStore` entry (or create via `DelegateResourceContract`)
-  - [ ] Undelegate the full amount
-  - [ ] Expect: `DelegatedResourceStore` entry removed and index store updated via `unDelegateV2(...)`.
-- [ ] Add `happy_path_receiver_account_missing`:
-  - [ ] Do not create receiver account, but seed delegation + owner balances
-  - [ ] Expect: `SUCCESS` and no NPE; receiver-side updates are skipped safely.
+- [x] Add `happy_path_full_undelegate_deletes_store_and_index`:
+  - [x] Seed delegation and `DelegatedResourceAccountIndexStore` entry (or create via `DelegateResourceContract`)
+  - [x] Undelegate the full amount
+  - [x] Expect: `DelegatedResourceStore` entry removed and index store updated via `unDelegateV2(...)`.
+- [x] Add `happy_path_receiver_account_missing`:
+  - [x] Do not create receiver account, but seed delegation + owner balances
+  - [x] Expect: `SUCCESS` and no NPE; receiver-side updates are skipped safely.
 
 Phase 4 — CancelAllUnfreezeV2Contract (59) Missing Fixtures
 
 Feature gating nuance
-- [ ] Add `validate_fail_unfreeze_delay_disabled`:
-  - [ ] Set `DynamicPropertiesStore.saveUnfreezeDelayDays(0)` while keeping `ALLOW_CANCEL_ALL_UNFREEZE_V2 = 1`
-  - [ ] Expect: `"Not support CancelAllUnfreezeV2 transaction, need to be opened by the committee"`.
+- [x] Add `validate_fail_unfreeze_delay_disabled`:
+  - [x] Set `DynamicPropertiesStore.saveUnfreezeDelayDays(0)` while keeping `ALLOW_CANCEL_ALL_UNFREEZE_V2 = 1`
+  - [x] Expect: `"Not support CancelAllUnfreezeV2 transaction, need to be opened by the committee"`.
 
 Owner/address/account validation
-- [ ] Add `validate_fail_owner_address_invalid_empty`:
-  - [ ] `owner_address = ByteString.EMPTY`
-  - [ ] Expect: `"Invalid address"`.
-- [ ] Add `validate_fail_owner_account_not_exist`:
-  - [ ] Valid-looking owner not in `AccountStore`
-  - [ ] Expect: `"Account[... ] not exists"`.
+- [x] Add `validate_fail_owner_address_invalid_empty`:
+  - [x] `owner_address = ByteString.EMPTY`
+  - [x] Expect: `"Invalid address"`.
+- [x] Add `validate_fail_owner_account_not_exist`:
+  - [x] Valid-looking owner not in `AccountStore`
+  - [x] Expect: `"Account[... ] not exists"`.
 
 TRON_POWER coverage
-- [ ] Add `happy_path_tron_power_unexpired_refreezes`:
-  - [ ] Seed `unfrozenV2(type=TRON_POWER, expireTime > now, amount > 0)`
-  - [ ] Expect: `SUCCESS`, TRON power V2 frozen increases, `totalTronPowerWeight` increases by floor(amount/ONE_TRX).
-- [ ] Add `happy_path_tron_power_expired_withdraws`:
-  - [ ] Seed `unfrozenV2(type=TRON_POWER, expireTime <= now)`
-  - [ ] Expect: `SUCCESS`, amount contributes to `withdrawExpireAmount`, no TRON power refreeze.
+- [x] Add `happy_path_tron_power_unexpired_refreezes`:
+  - [x] Seed `unfrozenV2(type=TRON_POWER, expireTime > now, amount > 0)`
+  - [x] Expect: `SUCCESS`, TRON power V2 frozen increases, `totalTronPowerWeight` increases by floor(amount/ONE_TRX).
+- [x] Add `happy_path_tron_power_expired_withdraws`:
+  - [x] Seed `unfrozenV2(type=TRON_POWER, expireTime <= now)`
+  - [x] Expect: `SUCCESS`, amount contributes to `withdrawExpireAmount`, no TRON power refreeze.
 
 Time boundary
-- [ ] Add `edge_expire_time_equals_now_treated_as_expired`:
-  - [ ] Seed entry with `expireTime == now`
-  - [ ] Expect: withdrawn (not refrozen).
+- [x] Add `edge_expire_time_equals_now_treated_as_expired`:
+  - [x] Seed entry with `expireTime == now`
+  - [x] Expect: withdrawn (not refrozen).
 
 List composition + rounding
-- [ ] Add `edge_all_entries_expired_withdraw_only`:
-  - [ ] Seed only expired entries across multiple resource types
-  - [ ] Expect: withdraw-only behavior; cancel amounts map entries are `0`.
-- [ ] Add `edge_multiple_entries_same_resource_sums`:
-  - [ ] Seed multiple unexpired entries of the same resource (e.g. BANDWIDTH twice)
-  - [ ] Expect: amounts sum and weight delta matches flooring rules.
-- [ ] Add `edge_amount_not_multiple_of_trx_precision_rounding`:
-  - [ ] Use an unexpired `unfreezeAmount = ONE_TRX + 1` (or `1`) to pin floor-division behavior in weight updates.
+- [x] Add `edge_all_entries_expired_withdraw_only`:
+  - [x] Seed only expired entries across multiple resource types
+  - [x] Expect: withdraw-only behavior; cancel amounts map entries are `0`.
+- [x] Add `edge_multiple_entries_same_resource_sums`:
+  - [x] Seed multiple unexpired entries of the same resource (e.g. BANDWIDTH twice)
+  - [x] Expect: amounts sum and weight delta matches flooring rules.
+- [x] Add `edge_amount_not_multiple_of_trx_precision_rounding`:
+  - [x] Use an unexpired `unfreezeAmount = ONE_TRX + 1` (or `1`) to pin floor-division behavior in weight updates.
 
 Phase 5 — Validate Fixture Output
 - [ ] Regenerate fixtures:
