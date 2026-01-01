@@ -200,11 +200,378 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("dynamic-properties")
         .ownerAddress(lowBalanceOwner)
-        .expectedError("balance")
+        .expectedError("insufficient fee")
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("AccountCreate insufficient fee: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountCreateContract (0) - Invalid owner address validation
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountCreate_validateFailOwnerAddressEmpty() throws Exception {
+    String newAccountAddress = generateAddress("new_account_emp1");
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY)
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_owner_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address is empty bytes")
+        .database("account")
+        .database("dynamic-properties")
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate empty owner address: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountCreate_validateFailOwnerAddressWrongPrefix() throws Exception {
+    String newAccountAddress = generateAddress("new_account_pfx1");
+
+    // Create 21-byte address with wrong prefix (0x00 instead of 0x41)
+    byte[] wrongPrefixAddress = new byte[21];
+    wrongPrefixAddress[0] = 0x00; // Wrong prefix
+    for (int i = 1; i < 21; i++) {
+      wrongPrefixAddress[i] = (byte) i;
+    }
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(wrongPrefixAddress))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_owner_address_wrong_prefix")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address has wrong prefix byte (not 0x41)")
+        .database("account")
+        .database("dynamic-properties")
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate wrong prefix owner: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountCreate_validateFailOwnerAddressWrongLength() throws Exception {
+    String newAccountAddress = generateAddress("new_account_len1");
+
+    // Create 20-byte address (wrong length, should be 21)
+    byte[] shortAddress = new byte[20];
+    shortAddress[0] = 0x41; // Correct prefix, but wrong length
+    for (int i = 1; i < 20; i++) {
+      shortAddress[i] = (byte) i;
+    }
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(shortAddress))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_owner_address_wrong_length")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address is not 21 bytes (20 bytes)")
+        .database("account")
+        .database("dynamic-properties")
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate wrong length owner: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountCreateContract (0) - Invalid account address validation
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountCreate_validateFailAccountAddressEmpty() throws Exception {
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountAddress(ByteString.EMPTY)
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_account_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when target account address is empty bytes")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid account address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate empty account address: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountCreate_validateFailAccountAddressWrongLength() throws Exception {
+    // Create 22-byte address (wrong length, should be 21)
+    byte[] longAddress = new byte[22];
+    longAddress[0] = 0x41; // Correct prefix, but wrong length
+    for (int i = 1; i < 22; i++) {
+      longAddress[i] = (byte) i;
+    }
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountAddress(ByteString.copyFrom(longAddress))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_account_address_wrong_length")
+        .caseCategory("validate_fail")
+        .description("Fail when target account address is not 21 bytes (22 bytes)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid account address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate wrong length account: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountCreateContract (0) - Fee boundary conditions
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountCreate_edgeHappyBalanceEqualsFee() throws Exception {
+    String boundaryOwner = generateAddress("boundary_own_eq1");
+    String newAccountAddress = generateAddress("new_account_beq1");
+
+    // Create owner with balance exactly equal to fee
+    putAccount(dbManager, boundaryOwner, CREATE_ACCOUNT_FEE, "boundary_exact");
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(boundaryOwner)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("edge_happy_balance_equals_fee")
+        .caseCategory("edge")
+        .description("Success when owner balance exactly equals create account fee")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(boundaryOwner)
+        .dynamicProperty("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", CREATE_ACCOUNT_FEE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate balance==fee: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateAccountCreate_validateFailBalanceFeeMinus1() throws Exception {
+    String boundaryOwner = generateAddress("boundary_own_m11");
+    String newAccountAddress = generateAddress("new_account_bm11");
+
+    // Create owner with balance exactly fee - 1
+    putAccount(dbManager, boundaryOwner, CREATE_ACCOUNT_FEE - 1, "boundary_minus1");
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(boundaryOwner)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_balance_fee_minus_one")
+        .caseCategory("validate_fail")
+        .description("Fail when owner balance is exactly fee - 1")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(boundaryOwner)
+        .dynamicProperty("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", CREATE_ACCOUNT_FEE)
+        .expectedError("insufficient fee")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate balance==fee-1: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountCreateContract (0) - Feature flag dependent execute behavior
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountCreate_edgeHappyAllowMultiSignEnabled() throws Exception {
+    String multiSignOwner = generateAddress("multisign_own_01");
+    String newAccountAddress = generateAddress("new_account_ms01");
+
+    // Create owner with sufficient balance
+    putAccount(dbManager, multiSignOwner, INITIAL_BALANCE, "multisign_owner");
+
+    // Enable multi-sign and set default active operations
+    dbManager.getDynamicPropertiesStore().saveAllowMultiSign(1);
+    // ACTIVE_DEFAULT_OPERATIONS must be initialized for getAllowMultiSign=1 execute path
+    dbManager.getDynamicPropertiesStore().saveActiveDefaultOperations(new byte[32]);
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(multiSignOwner)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("edge_happy_allow_multi_sign_enabled")
+        .caseCategory("edge")
+        .description("Success with ALLOW_MULTI_SIGN=1, new account gets default owner+active permissions")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(multiSignOwner)
+        .dynamicProperty("ALLOW_MULTI_SIGN", 1)
+        .dynamicProperty("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", CREATE_ACCOUNT_FEE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate ALLOW_MULTI_SIGN=1: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateAccountCreate_edgeHappyBlackholeOptimizationBurnsFee() throws Exception {
+    String burnOwner = generateAddress("burn_owner_0001");
+    String newAccountAddress = generateAddress("new_account_brn1");
+
+    // Create owner with sufficient balance
+    putAccount(dbManager, burnOwner, INITIAL_BALANCE, "burn_owner");
+
+    // Enable blackhole optimization (fees are burned instead of credited to blackhole)
+    dbManager.getDynamicPropertiesStore().saveAllowBlackHoleOptimization(1);
+    // BURN_TRX_AMOUNT must be initialized for supportBlackHoleOptimization execute path
+    dbManager.getDynamicPropertiesStore().saveBurnTrx(0);
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(burnOwner)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("edge_happy_blackhole_optimization_burns_fee")
+        .caseCategory("edge")
+        .description("Success with ALLOW_BLACKHOLE_OPTIMIZATION=1, fee is burned (BURN_TRX_AMOUNT incremented)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(burnOwner)
+        .dynamicProperty("ALLOW_BLACKHOLE_OPTIMIZATION", 1)
+        .dynamicProperty("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", CREATE_ACCOUNT_FEE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate ALLOW_BLACKHOLE_OPTIMIZATION=1: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateAccountCreate_edgeHappyFeeZero() throws Exception {
+    String zeroFeeOwner = generateAddress("zerofee_own_001");
+    String newAccountAddress = generateAddress("new_account_zf01");
+
+    // Create owner with zero balance (should still succeed if fee is 0)
+    putAccount(dbManager, zeroFeeOwner, 0, "zero_fee_owner");
+
+    // Set create account fee to 0
+    dbManager.getDynamicPropertiesStore().saveCreateNewAccountFeeInSystemContract(0);
+    dbManager.getDynamicPropertiesStore().saveCreateAccountFee(0);
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(zeroFeeOwner)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("edge_happy_fee_zero")
+        .caseCategory("edge")
+        .description("Success when CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT=0, zero balance owner can create")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(zeroFeeOwner)
+        .dynamicProperty("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", 0)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate fee=0: success={}", result.isSuccess());
   }
 
   // ==========================================================================
@@ -249,16 +616,21 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
   }
 
   @Test
-  public void generateAccountUpdate_validateFailInvalidName() throws Exception {
+  public void generateAccountUpdate_validateFailInvalidNameTooLong() throws Exception {
     String updateOwner = generateAddress("update_owner_002");
 
     // Create owner with empty name
     putAccount(dbManager, updateOwner, INITIAL_BALANCE, "");
 
-    // Invalid name - empty
+    // Invalid name - 201 bytes (exceeds MAX_ACCOUNT_NAME_LEN of 200)
+    byte[] tooLongName = new byte[201];
+    for (int i = 0; i < 201; i++) {
+      tooLongName[i] = (byte) 'a';
+    }
+
     AccountUpdateContract contract = AccountUpdateContract.newBuilder()
         .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(updateOwner)))
-        .setAccountName(ByteString.EMPTY)
+        .setAccountName(ByteString.copyFrom(tooLongName))
         .build();
 
     TransactionCapsule trxCap = createTransaction(
@@ -268,18 +640,18 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("ACCOUNT_UPDATE_CONTRACT", 10)
-        .caseName("validate_fail_invalid_name")
+        .caseName("validate_fail_invalid_name_too_long")
         .caseCategory("validate_fail")
-        .description("Fail when account name is empty or invalid")
+        .description("Fail when account name exceeds 200 bytes (201 bytes)")
         .database("account")
         .database("account-index")
         .database("dynamic-properties")
         .ownerAddress(updateOwner)
-        .expectedError("name")
+        .expectedError("Invalid accountName")
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
-    log.info("AccountUpdate invalid name: validationError={}", result.getValidationError());
+    log.info("AccountUpdate invalid name (201 bytes): validationError={}", result.getValidationError());
   }
 
   @Test
@@ -350,10 +722,216 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("account-index")
         .database("dynamic-properties")
         .ownerAddress(updateOwner)
-        .expectedError("exist")
+        .expectedError("This name is existed")
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("AccountUpdate duplicate name: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountUpdateContract (10) - Invalid owner address validation
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountUpdate_validateFailOwnerAddressEmpty() throws Exception {
+    AccountUpdateContract contract = AccountUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY)
+        .setAccountName(ByteString.copyFromUtf8("valid_name_0001"))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_UPDATE_CONTRACT", 10)
+        .caseName("validate_fail_owner_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address is empty bytes")
+        .database("account")
+        .database("account-index")
+        .database("dynamic-properties")
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountUpdate empty owner address: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountUpdateContract (10) - Account name boundary conditions
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountUpdate_edgeHappyAccountNameLen200() throws Exception {
+    String updateOwner = generateAddress("update_owner_200");
+
+    // Create owner with empty name
+    putAccount(dbManager, updateOwner, INITIAL_BALANCE, "");
+
+    // Valid name - exactly 200 bytes (MAX_ACCOUNT_NAME_LEN)
+    byte[] maxLengthName = new byte[200];
+    for (int i = 0; i < 200; i++) {
+      maxLengthName[i] = (byte) 'a';
+    }
+
+    AccountUpdateContract contract = AccountUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(updateOwner)))
+        .setAccountName(ByteString.copyFrom(maxLengthName))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_UPDATE_CONTRACT", 10)
+        .caseName("edge_happy_account_name_len_200")
+        .caseCategory("edge")
+        .description("Success when account name is exactly 200 bytes (max allowed)")
+        .database("account")
+        .database("account-index")
+        .database("dynamic-properties")
+        .ownerAddress(updateOwner)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountUpdate name=200 bytes: success={}", result.isSuccess());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountUpdateContract (10) - Owner already has name + updates disabled
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountUpdate_validateFailOwnerAlreadyNamedUpdatesDisabled() throws Exception {
+    String updateOwner = generateAddress("update_owner_004");
+
+    // Create owner with an existing name (non-empty)
+    AccountCapsule ownerAccount = putAccount(dbManager, updateOwner, INITIAL_BALANCE, "");
+    ownerAccount.setAccountName("existing_name_x".getBytes());
+    dbManager.getAccountStore().put(ownerAccount.getAddress().toByteArray(), ownerAccount);
+
+    // Disable account name updates
+    dbManager.getDynamicPropertiesStore().saveAllowUpdateAccountName(0);
+
+    // Try to update to a different (unique) name
+    AccountUpdateContract contract = AccountUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(updateOwner)))
+        .setAccountName(ByteString.copyFromUtf8("new_unique_name1"))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_UPDATE_CONTRACT", 10)
+        .caseName("validate_fail_owner_already_named_updates_disabled")
+        .caseCategory("validate_fail")
+        .description("Fail when owner already has a name and ALLOW_UPDATE_ACCOUNT_NAME=0")
+        .database("account")
+        .database("account-index")
+        .database("dynamic-properties")
+        .ownerAddress(updateOwner)
+        .dynamicProperty("ALLOW_UPDATE_ACCOUNT_NAME", 0)
+        .expectedError("This account name is already existed")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountUpdate owner already named: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountUpdateContract (10) - Update-enabled behavior (ALLOW_UPDATE_ACCOUNT_NAME=1)
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountUpdate_happyUpdateExistingNameUpdatesEnabled() throws Exception {
+    String updateOwner = generateAddress("update_owner_005");
+
+    // Create owner with an existing name (non-empty)
+    AccountCapsule ownerAccount = putAccount(dbManager, updateOwner, INITIAL_BALANCE, "");
+    ownerAccount.setAccountName("old_name_12345".getBytes());
+    dbManager.getAccountStore().put(ownerAccount.getAddress().toByteArray(), ownerAccount);
+    dbManager.getAccountIndexStore().put(ownerAccount);
+
+    // Enable account name updates
+    dbManager.getDynamicPropertiesStore().saveAllowUpdateAccountName(1);
+
+    // Update to a new name
+    AccountUpdateContract contract = AccountUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(updateOwner)))
+        .setAccountName(ByteString.copyFromUtf8("new_name_67890"))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_UPDATE_CONTRACT", 10)
+        .caseName("happy_update_existing_name_updates_enabled")
+        .caseCategory("happy")
+        .description("Success updating an existing account name when ALLOW_UPDATE_ACCOUNT_NAME=1")
+        .database("account")
+        .database("account-index")
+        .database("dynamic-properties")
+        .ownerAddress(updateOwner)
+        .dynamicProperty("ALLOW_UPDATE_ACCOUNT_NAME", 1)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountUpdate update existing name: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateAccountUpdate_edgeHappyDuplicateNameUpdatesEnabledOverwritesIndex() throws Exception {
+    String accountA = generateAddress("dup_account_aaa1");
+    String accountB = generateAddress("dup_account_bbb1");
+    String duplicateName = "duplicate_dup_1";
+
+    // Create account A with the name
+    AccountCapsule accountACapsule = putAccount(dbManager, accountA, INITIAL_BALANCE, "");
+    accountACapsule.setAccountName(duplicateName.getBytes());
+    dbManager.getAccountStore().put(accountACapsule.getAddress().toByteArray(), accountACapsule);
+    dbManager.getAccountIndexStore().put(accountACapsule);
+
+    // Create account B with empty name
+    putAccount(dbManager, accountB, INITIAL_BALANCE, "");
+
+    // Enable account name updates
+    dbManager.getDynamicPropertiesStore().saveAllowUpdateAccountName(1);
+
+    // Account B sets the same name as account A
+    AccountUpdateContract contract = AccountUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(accountB)))
+        .setAccountName(ByteString.copyFromUtf8(duplicateName))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_UPDATE_CONTRACT", 10)
+        .caseName("edge_happy_duplicate_name_updates_enabled_overwrites_index")
+        .caseCategory("edge")
+        .description("Success with duplicate name when ALLOW_UPDATE_ACCOUNT_NAME=1, account-index points to last writer")
+        .database("account")
+        .database("account-index")
+        .database("dynamic-properties")
+        .ownerAddress(accountB)
+        .dynamicProperty("ALLOW_UPDATE_ACCOUNT_NAME", 1)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountUpdate duplicate name overwrite: success={}", result.isSuccess());
   }
 }
