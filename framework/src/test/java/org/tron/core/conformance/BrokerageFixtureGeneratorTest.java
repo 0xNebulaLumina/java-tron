@@ -31,6 +31,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
   private static final Logger log = LoggerFactory.getLogger(BrokerageFixtureGeneratorTest.class);
   private static final String WITNESS_ADDRESS;
   private static final String NON_WITNESS_ADDRESS;
+  private static final String WITNESS_ONLY_ADDRESS; // has witness entry but no account
   private static final long INITIAL_BALANCE = 100_000_000_000L;
 
   private FixtureGenerator generator;
@@ -40,6 +41,8 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     Args.setParam(new String[]{"--output-directory", dbPath()}, Constant.TEST_CONF);
     WITNESS_ADDRESS = Wallet.getAddressPreFixString() + "abd4b9367799eaa3197fecb144eb71de1e049abc";
     NON_WITNESS_ADDRESS = Wallet.getAddressPreFixString() + "1111111111111111111111111111111111111111";
+    // Address that will have witness entry but no account entry (for "Account does not exist" test)
+    WITNESS_ONLY_ADDRESS = Wallet.getAddressPreFixString() + "2222222222222222222222222222222222222222";
   }
 
   @Before
@@ -77,6 +80,15 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
         AccountType.Normal,
         INITIAL_BALANCE);
     dbManager.getAccountStore().put(nonWitnessAccount.getAddress().toByteArray(), nonWitnessAccount);
+
+    // Create witness entry WITHOUT corresponding account (for "Account does not exist" test)
+    // This tests the branch where witness exists but account doesn't
+    WitnessCapsule witnessOnly = new WitnessCapsule(
+        ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ONLY_ADDRESS)),
+        10_000_000L,
+        "https://witness-only.network");
+    dbManager.getWitnessStore().put(witnessOnly.getAddress().toByteArray(), witnessOnly);
+    // Intentionally NOT creating an account for WITNESS_ONLY_ADDRESS
 
     // Enable change delegation feature
     dbManager.getDynamicPropertiesStore().saveChangeDelegation(1);
@@ -298,7 +310,8 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
   }
 
   @Test
-  public void generateUpdateBrokerage_accountNotExist() throws Exception {
+  public void generateUpdateBrokerage_witnessNotExist() throws Exception {
+    // This address has neither witness nor account entry - validation fails at witness check first
     String nonExistentAddress = Wallet.getAddressPreFixString() + "9999999999999999999999999999999999999999";
 
     UpdateBrokerageContract contract = UpdateBrokerageContract.newBuilder()
@@ -313,19 +326,194 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
-        .caseName("validate_fail_account_not_exist")
+        .caseName("validate_fail_witness_not_exist")
         .caseCategory("validate_fail")
-        .description("Fail when owner account does not exist")
+        .description("Fail when owner is not a registered witness (witness check precedes account check)")
         .database("account")
         .database("witness")
         .database("delegation")
         .database("dynamic-properties")
         .ownerAddress(nonExistentAddress)
-        .expectedError("exist")
+        .expectedError("Not existed witness")
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
-    log.info("UpdateBrokerage account not exist: validationError={}", result.getValidationError());
+    log.info("UpdateBrokerage witness not exist: validationError={}", result.getValidationError());
+  }
+
+  // ==========================================================================
+  // Phase 1: Invalid Owner Address Fixtures
+  // ==========================================================================
+
+  @Test
+  public void generateUpdateBrokerage_ownerAddressEmpty() throws Exception {
+    // Empty owner address fails DecodeUtil.addressValid check
+    UpdateBrokerageContract contract = UpdateBrokerageContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY)
+        .setBrokerage(20)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
+        .caseName("validate_fail_owner_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when owner_address is empty (0 bytes)")
+        .database("account")
+        .database("witness")
+        .database("delegation")
+        .database("dynamic-properties")
+        .ownerAddress("")
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateBrokerage owner empty: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateBrokerage_ownerAddressWrongLength() throws Exception {
+    // Wrong length (20 bytes instead of required 21 bytes) fails addressValid check
+    UpdateBrokerageContract contract = UpdateBrokerageContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(new byte[20]))
+        .setBrokerage(20)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
+        .caseName("validate_fail_owner_address_wrong_length")
+        .caseCategory("validate_fail")
+        .description("Fail when owner_address has wrong length (20 bytes instead of 21)")
+        .database("account")
+        .database("witness")
+        .database("delegation")
+        .database("dynamic-properties")
+        .ownerAddress(ByteArray.toHexString(new byte[20]))
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateBrokerage wrong length: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateBrokerage_ownerAddressWrongPrefix() throws Exception {
+    // Wrong prefix (0xa0 testnet prefix instead of 0x41 mainnet) fails addressValid check
+    // Construct 21-byte address with wrong prefix
+    byte[] wrongPrefixAddress = new byte[21];
+    wrongPrefixAddress[0] = (byte) 0xa0; // testnet prefix instead of 0x41 mainnet
+    for (int i = 1; i < 21; i++) {
+      wrongPrefixAddress[i] = (byte) i;
+    }
+
+    UpdateBrokerageContract contract = UpdateBrokerageContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(wrongPrefixAddress))
+        .setBrokerage(20)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
+        .caseName("validate_fail_owner_address_wrong_prefix")
+        .caseCategory("validate_fail")
+        .description("Fail when owner_address has wrong network prefix (0xa0 instead of 0x41)")
+        .database("account")
+        .database("witness")
+        .database("delegation")
+        .database("dynamic-properties")
+        .ownerAddress(ByteArray.toHexString(wrongPrefixAddress))
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateBrokerage wrong prefix: validationError={}", result.getValidationError());
+  }
+
+  // ==========================================================================
+  // Phase 2: Account Missing (Witness Exists) Fixture
+  // ==========================================================================
+
+  @Test
+  public void generateUpdateBrokerage_accountMissingWitnessExists() throws Exception {
+    // WITNESS_ONLY_ADDRESS has witness entry but no account entry
+    // This reaches the "Account does not exist" branch (after witness check passes)
+    UpdateBrokerageContract contract = UpdateBrokerageContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ONLY_ADDRESS)))
+        .setBrokerage(20)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
+        .caseName("validate_fail_account_not_exist")
+        .caseCategory("validate_fail")
+        .description("Fail when witness exists but account does not exist")
+        .database("account")
+        .database("witness")
+        .database("delegation")
+        .database("dynamic-properties")
+        .ownerAddress(WITNESS_ONLY_ADDRESS)
+        .expectedError("Account does not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateBrokerage account missing (witness exists): validationError={}",
+        result.getValidationError());
+  }
+
+  // ==========================================================================
+  // Phase 4 (Optional): Contract Encoding / Type Mismatch Fixtures
+  // ==========================================================================
+
+  @Test
+  public void generateUpdateBrokerage_contractParameterWrongType() throws Exception {
+    // Contract type is UpdateBrokerageContract but parameter packs a different message
+    // This covers the !any.is(UpdateBrokerageContract.class) branch
+    // We pack a TransferContract into an UpdateBrokerageContract transaction
+    org.tron.protos.contract.BalanceContract.TransferContract wrongContract =
+        org.tron.protos.contract.BalanceContract.TransferContract.newBuilder()
+            .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+            .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(NON_WITNESS_ADDRESS)))
+            .setAmount(1000)
+            .build();
+
+    TransactionCapsule trxCap = createTransactionWithMismatchedType(
+        Transaction.Contract.ContractType.UpdateBrokerageContract, wrongContract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
+        .caseName("validate_fail_contract_parameter_wrong_type")
+        .caseCategory("validate_fail")
+        .description("Fail when contract type is UpdateBrokerageContract but parameter is a different message type")
+        .database("account")
+        .database("witness")
+        .database("delegation")
+        .database("dynamic-properties")
+        .ownerAddress(WITNESS_ADDRESS)
+        .expectedError("contract type error")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateBrokerage wrong type: validationError={}", result.getValidationError());
   }
 
   // ==========================================================================
@@ -337,6 +525,29 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     Transaction.Contract protoContract = Transaction.Contract.newBuilder()
         .setType(type)
         .setParameter(Any.pack(contract))
+        .build();
+
+    Transaction transaction = Transaction.newBuilder()
+        .setRawData(Transaction.raw.newBuilder()
+            .addContract(protoContract)
+            .setTimestamp(System.currentTimeMillis())
+            .setExpiration(System.currentTimeMillis() + 3600000)
+            .build())
+        .build();
+
+    return new TransactionCapsule(transaction);
+  }
+
+  /**
+   * Creates a transaction with mismatched contract type (type says X but parameter is Y).
+   * This is used to test the !any.is(ExpectedContract.class) validation branch.
+   */
+  private TransactionCapsule createTransactionWithMismatchedType(
+      Transaction.Contract.ContractType declaredType,
+      com.google.protobuf.Message actualContract) {
+    Transaction.Contract protoContract = Transaction.Contract.newBuilder()
+        .setType(declaredType)
+        .setParameter(Any.pack(actualContract))
         .build();
 
     Transaction transaction = Transaction.newBuilder()
