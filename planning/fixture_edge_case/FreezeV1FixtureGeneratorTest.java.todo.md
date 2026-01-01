@@ -22,36 +22,36 @@ Acceptance Criteria
 Checklist / TODO
 
 Phase 0 — Confirm Baselines and Error Strings
-- [ ] Skim validate/execute paths and record exact error messages to lock in:
-  - [ ] `actuator/src/main/java/org/tron/core/actuator/FreezeBalanceActuator.java`
-  - [ ] `actuator/src/main/java/org/tron/core/actuator/UnfreezeBalanceActuator.java`
-  - [ ] `chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java` (defaults for min/max frozen time)
-- [ ] Confirm which flags actually gate delegation:
-  - [ ] `DynamicPropertiesStore.supportDR()` (delegated resources) is controlled by `ALLOW_DELEGATE_RESOURCE`.
-  - [ ] `DynamicPropertiesStore.allowChangeDelegation()` (reward delegation) is controlled by `CHANGE_DELEGATION`.
+- [x] Skim validate/execute paths and record exact error messages to lock in:
+  - [x] `actuator/src/main/java/org/tron/core/actuator/FreezeBalanceActuator.java`
+  - [x] `actuator/src/main/java/org/tron/core/actuator/UnfreezeBalanceActuator.java`
+  - [x] `chainbase/src/main/java/org/tron/core/store/DynamicPropertiesStore.java` (defaults for min/max frozen time)
+- [x] Confirm which flags actually gate delegation:
+  - [x] `DynamicPropertiesStore.supportDR()` (delegated resources) is controlled by `ALLOW_DELEGATE_RESOURCE`.
+  - [x] `DynamicPropertiesStore.allowChangeDelegation()` (reward delegation) is controlled by `CHANGE_DELEGATION`.
 - [ ] Run the current generator test to see baseline fixture outputs:
   - [ ] `./gradlew :framework:test --tests "org.tron.core.conformance.FreezeV1FixtureGeneratorTest" -Dconformance.output=../conformance/fixtures`
 
 Phase 1 — FreezeBalanceContract (11) Missing Fixtures (delegation OFF, new resource model OFF)
 
 Owner/address/account branches
-- [ ] Add `validate_fail_owner_address_invalid_empty`:
-  - [ ] `owner_address = ByteString.EMPTY`
-  - [ ] Expect: `"Invalid address"`.
-- [ ] Add `validate_fail_owner_account_not_exist`:
-  - [ ] Use a valid-looking address not in `AccountStore`
-  - [ ] Expect: contains `"Account["` and `"not exist"` (exact string per actuator).
+- [x] Add `validate_fail_owner_address_invalid_empty`:
+  - [x] `owner_address = ByteString.EMPTY`
+  - [x] Expect: `"Invalid address"`.
+- [x] Add `validate_fail_owner_account_not_exist`:
+  - [x] Use a valid-looking address not in `AccountStore`
+  - [x] Expect: contains `"Account["` and `"not exist"` (exact string per actuator).
 
 Frozen balance branches
-- [ ] Add `validate_fail_frozen_balance_zero`:
-  - [ ] `frozenBalance = 0`
-  - [ ] Expect: `"frozenBalance must be positive"`.
-- [ ] Add `happy_path_frozen_balance_exact_1_trx`:
-  - [ ] `frozenBalance = 1 * ONE_TRX`
-  - [ ] Expect: `SUCCESS`.
-- [ ] Add `happy_path_frozen_balance_equal_account_balance`:
-  - [ ] Seed account with balance `X`, freeze `X`
-  - [ ] Expect: `SUCCESS` and post balance is `0`.
+- [x] Add `validate_fail_frozen_balance_zero`:
+  - [x] `frozenBalance = 0`
+  - [x] Expect: `"frozenBalance must be positive"`.
+- [x] Add `happy_path_frozen_balance_exact_1_trx`:
+  - [x] `frozenBalance = 1 * ONE_TRX`
+  - [x] Expect: `SUCCESS`.
+- [x] Add `happy_path_frozen_balance_equal_account_balance`:
+  - [x] Seed account with balance `X`, freeze `X`
+  - [x] Expect: `SUCCESS` and post balance is `0`.
 
 Frozen duration branches (checkFrozenTime=1)
 - [ ] Add `validate_fail_frozen_duration_too_short`:
@@ -67,22 +67,22 @@ Pre-state guard (rare but explicitly validated)
   - [ ] Expect: `"frozenCount must be 0 or 1"`.
 
 Resource code validation
-- [ ] Add `validate_fail_resource_tron_power_when_new_resource_model_off`:
-  - [ ] Ensure `ALLOW_NEW_RESOURCE_MODEL = 0`
-  - [ ] `resource = TRON_POWER`
-  - [ ] Expect: `"ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]"`.
+- [x] Add `validate_fail_resource_tron_power_when_new_resource_model_off`:
+  - [x] Ensure `ALLOW_NEW_RESOURCE_MODEL = 0`
+  - [x] `resource = TRON_POWER`
+  - [x] Expect: `"ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]"`.
 
 Receiver set while delegation is OFF (edge: ignored by Java-tron)
-- [ ] Add `edge_receiver_address_ignored_when_delegation_off`:
-  - [ ] Ensure `ALLOW_DELEGATE_RESOURCE = 0`
-  - [ ] Set a non-empty `receiverAddress`
-  - [ ] Expect: `SUCCESS` and behavior matches self-freeze (no delegated DBs touched).
+- [x] Add `edge_receiver_address_ignored_when_delegation_off`:
+  - [x] Ensure `ALLOW_DELEGATE_RESOURCE = 0`
+  - [x] Set a non-empty `receiverAddress`
+  - [x] Expect: `SUCCESS` and behavior matches self-freeze (no delegated DBs touched).
 
 Multi-freeze execution semantics
-- [ ] Add `edge_freeze_bandwidth_twice_accumulates`:
-  - [ ] Execute two freeze transactions for the same owner (separate fixtures or a single fixture that seeds
+- [x] Add `edge_freeze_bandwidth_twice_accumulates`:
+  - [x] Execute two freeze transactions for the same owner (separate fixtures or a single fixture that seeds
         pre-state with an existing frozen entry).
-  - [ ] Expect: post frozen balance is the sum; expireTime reflects the second freeze’s `now + duration`.
+  - [x] Expect: post frozen balance is the sum; expireTime reflects the second freeze's `now + duration`.
 
 Phase 2 — FreezeBalanceContract (11) Delegation-Enabled Fixtures (optional but high value)
 
@@ -113,17 +113,17 @@ Delegation validation failures
 Phase 3 — UnfreezeBalanceContract (12) Missing Fixtures (delegation OFF, new resource model OFF)
 
 Owner/address/account branches
-- [ ] Add `validate_fail_owner_address_invalid_empty`:
-  - [ ] `owner_address = ByteString.EMPTY`
-  - [ ] Expect: `"Invalid address"`.
-- [ ] Add `validate_fail_owner_account_not_exist`:
-  - [ ] Use valid-looking address not in `AccountStore`
-  - [ ] Expect: `"Account[" + owner + "] does not exist"`.
+- [x] Add `validate_fail_owner_address_invalid_empty`:
+  - [x] `owner_address = ByteString.EMPTY`
+  - [x] Expect: `"Invalid address"`.
+- [x] Add `validate_fail_owner_account_not_exist`:
+  - [x] Use valid-looking address not in `AccountStore`
+  - [x] Expect: `"Account[" + owner + "] does not exist"`.
 
 BANDWIDTH expiration boundary + multiple entries
-- [ ] Add `edge_expire_time_equals_now_is_unfreezable_bandwidth`:
-  - [ ] Seed a frozen entry with `expireTime == latestBlockHeaderTimestamp` before execution
-  - [ ] Expect: `SUCCESS` and unfreezes that entry (validate uses `<= now`).
+- [x] Add `edge_expire_time_equals_now_is_unfreezable_bandwidth`:
+  - [x] Seed a frozen entry with `expireTime == latestBlockHeaderTimestamp` before execution
+  - [x] Expect: `SUCCESS` and unfreezes that entry (validate uses `<= now`).
 - [ ] Add `edge_partial_unfreeze_one_expired_one_not`:
   - [ ] Seed two frozen entries: one `expireTime < now`, one `expireTime > now`
   - [ ] Expect: `SUCCESS`, unfreeze amount equals only the expired entry, and one frozen entry remains.
@@ -132,30 +132,30 @@ BANDWIDTH expiration boundary + multiple entries
   - [ ] Expect: `SUCCESS` and unfreeze amount equals the sum.
 
 ENERGY resource coverage
-- [ ] Add `happy_path_unfreeze_energy_v1`:
-  - [ ] Seed `AccountResource.frozenBalanceForEnergy` with `expireTime < now`
-  - [ ] Expect: `SUCCESS`.
-- [ ] Add `validate_fail_unfreeze_energy_not_expired`:
-  - [ ] `expireTime > now`
-  - [ ] Expect: `"It's not time to unfreeze(Energy)."` (exact string).
-- [ ] Add `validate_fail_unfreeze_energy_no_frozen`:
-  - [ ] `frozenBalanceForEnergy == 0`
-  - [ ] Expect: `"no frozenBalance(Energy)"`.
+- [x] Add `happy_path_unfreeze_energy_v1`:
+  - [x] Seed `AccountResource.frozenBalanceForEnergy` with `expireTime < now`
+  - [x] Expect: `SUCCESS`.
+- [x] Add `validate_fail_unfreeze_energy_not_expired`:
+  - [x] `expireTime > now`
+  - [x] Expect: `"It's not time to unfreeze(Energy)."` (exact string).
+- [x] Add `validate_fail_unfreeze_energy_no_frozen`:
+  - [x] `frozenBalanceForEnergy == 0`
+  - [x] Expect: `"no frozenBalance(Energy)"`.
 
 Invalid resource code
-- [ ] Add `validate_fail_unfreeze_tron_power_when_new_resource_model_off`:
-  - [ ] Ensure `ALLOW_NEW_RESOURCE_MODEL = 0`, set `resource = TRON_POWER`
-  - [ ] Expect: `"ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]"`.
+- [x] Add `validate_fail_unfreeze_tron_power_when_new_resource_model_off`:
+  - [x] Ensure `ALLOW_NEW_RESOURCE_MODEL = 0`, set `resource = TRON_POWER`
+  - [x] Expect: `"ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]"`.
 
 Receiver set while delegation is OFF (edge: ignored by Java-tron)
-- [ ] Add `edge_receiver_address_ignored_when_delegation_off`:
-  - [ ] Ensure `ALLOW_DELEGATE_RESOURCE = 0`, set non-empty `receiverAddress`
-  - [ ] Expect: behaves like self-unfreeze (no delegated DBs touched).
+- [x] Add `edge_receiver_address_ignored_when_delegation_off`:
+  - [x] Ensure `ALLOW_DELEGATE_RESOURCE = 0`, set non-empty `receiverAddress`
+  - [x] Expect: behaves like self-unfreeze (no delegated DBs touched).
 
 V2-open compatibility (important cross-impl behavior)
-- [ ] Add `edge_unfreeze_v1_succeeds_when_v2_open`:
-  - [ ] Set `unfreezeDelayDays > 0` (V2 open) but seed a legacy V1 frozen entry
-  - [ ] Expect: V1 unfreeze `SUCCESS` (since `UnfreezeBalanceActuator` doesn’t reject V2-open).
+- [x] Add `edge_unfreeze_v1_succeeds_when_v2_open`:
+  - [x] Set `unfreezeDelayDays > 0` (V2 open) but seed a legacy V1 frozen entry
+  - [x] Expect: V1 unfreeze `SUCCESS` (since `UnfreezeBalanceActuator` doesn't reject V2-open).
 
 Phase 4 — UnfreezeBalanceContract (12) Delegation-Enabled Fixtures (optional but high value)
 
