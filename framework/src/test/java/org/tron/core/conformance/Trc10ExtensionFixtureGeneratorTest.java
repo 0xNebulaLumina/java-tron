@@ -1,5 +1,11 @@
 package org.tron.core.conformance;
 
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.DEFAULT_BLOCK_TIMESTAMP;
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.DEFAULT_TX_EXPIRATION;
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.DEFAULT_TX_TIMESTAMP;
+
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import java.io.File;
@@ -68,6 +74,13 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
   }
 
   private void initializeTestData() {
+    // Use deterministic timestamps from ConformanceFixtureTestSupport
+    long blockTimestamp = DEFAULT_BLOCK_TIMESTAMP;
+    long blockNumber = 10;
+
+    // Initialize TRC-10 dynamic properties (sets allowSameTokenName=1, oneDayNetLimit, etc.)
+    ConformanceFixtureTestSupport.initTrc10DynamicProps(dbManager, blockNumber, blockTimestamp);
+
     // Create owner account (asset issuer)
     AccountCapsule ownerAccount = new AccountCapsule(
         ByteString.copyFromUtf8("owner"),
@@ -75,9 +88,10 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
         AccountType.Normal,
         INITIAL_BALANCE);
 
-    // Add asset to owner
+    // Add asset to owner and mark owner as having issued this asset
     Protocol.Account.Builder ownerBuilder = ownerAccount.getInstance().toBuilder();
     ownerBuilder.putAssetV2(ASSET_ID, TOTAL_SUPPLY / 2); // Half supply available
+    ownerBuilder.setAssetIssuedID(ByteString.copyFromUtf8(ASSET_ID)); // Mark as issuer
     ownerAccount = new AccountCapsule(ownerBuilder.build());
     dbManager.getAccountStore().put(ownerAccount.getAddress().toByteArray(), ownerAccount);
 
@@ -97,11 +111,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
         INITIAL_BALANCE);
     dbManager.getAccountStore().put(otherAccount.getAddress().toByteArray(), otherAccount);
 
-    // Enable TRC-10 features
-    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
-
-    // Create asset issue
-    long currentTime = System.currentTimeMillis();
+    // Create asset issue with deterministic timestamps
     AssetIssueContract assetIssue = AssetIssueContract.newBuilder()
         .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
         .setName(ByteString.copyFromUtf8(ASSET_NAME))
@@ -110,8 +120,8 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
         .setTrxNum(TRX_NUM)
         .setNum(NUM)
         .setPrecision(6)
-        .setStartTime(currentTime - 86400000) // Started 1 day ago
-        .setEndTime(currentTime + 86400000 * 30) // Ends in 30 days
+        .setStartTime(blockTimestamp - 86400000) // Started 1 day ago
+        .setEndTime(blockTimestamp + 86400000L * 30) // Ends in 30 days
         .setDescription(ByteString.copyFromUtf8("Test Token for Conformance"))
         .setUrl(ByteString.copyFromUtf8("https://example.com"))
         .setFreeAssetNetLimit(1000)
@@ -121,10 +131,6 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     AssetIssueCapsule assetIssueCapsule = new AssetIssueCapsule(assetIssue);
     dbManager.getAssetIssueV2Store().put(assetIssueCapsule.createDbV2Key(), assetIssueCapsule);
-
-    // Set block properties
-    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(currentTime);
-    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(10);
   }
 
   // ==========================================================================
@@ -158,6 +164,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("ParticipateAssetIssue happy path: success={}", result.isSuccess());
+    assertTrue("Happy path should succeed", result.isSuccess());
   }
 
   @Test
@@ -197,6 +204,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("ParticipateAssetIssue insufficient balance: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
   }
 
   @Test
@@ -227,6 +235,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("ParticipateAssetIssue asset not found: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
   }
 
   @Test
@@ -287,6 +296,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("ParticipateAssetIssue sale ended: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
   }
 
   @Test
@@ -317,6 +327,380 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("ParticipateAssetIssue to self: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  // ==========================================================================
+  // ParticipateAssetIssueContract (9) - NEW EDGE CASES
+  // ==========================================================================
+
+  @Test
+  public void generateParticipateAssetIssue_ownerAccountMissing() throws Exception {
+    // Use a valid address that does not exist in AccountStore
+    String missingAddress = Wallet.getAddressPreFixString() + "4444444444444444444444444444444444444444";
+
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(missingAddress)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(ASSET_ID))
+        .setAmount(100_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("validate_fail_owner_account_missing")
+        .caseCategory("validate_fail")
+        .description("Fail when owner account does not exist")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(missingAddress)
+        .expectedError("Account does not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue owner missing: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateParticipateAssetIssue_toAccountMissing() throws Exception {
+    // Use a valid toAddress that does not exist in AccountStore
+    String missingToAddress = Wallet.getAddressPreFixString() + "5555555555555555555555555555555555555555";
+
+    // Create an asset issued by the missing address (so toAddress check can proceed)
+    String altAssetId = "1000010";
+    long blockTimestamp = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    AssetIssueContract altAsset = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(missingToAddress)))
+        .setName(ByteString.copyFromUtf8("AltToken"))
+        .setAbbr(ByteString.copyFromUtf8("ALT"))
+        .setTotalSupply(TOTAL_SUPPLY)
+        .setTrxNum(TRX_NUM)
+        .setNum(NUM)
+        .setPrecision(6)
+        .setStartTime(blockTimestamp - 86400000)
+        .setEndTime(blockTimestamp + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("Alt Token"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId(altAssetId)
+        .build();
+    AssetIssueCapsule altCapsule = new AssetIssueCapsule(altAsset);
+    dbManager.getAssetIssueV2Store().put(altCapsule.createDbV2Key(), altCapsule);
+
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(missingToAddress)))
+        .setAssetName(ByteString.copyFromUtf8(altAssetId))
+        .setAmount(100_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("validate_fail_to_account_missing")
+        .caseCategory("validate_fail")
+        .description("Fail when to account (issuer account) does not exist")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .expectedError("To account does not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue to account missing: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateParticipateAssetIssue_toNotIssuer() throws Exception {
+    // toAddress exists but is not the asset issuer
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS))) // Not the issuer
+        .setAssetName(ByteString.copyFromUtf8(ASSET_ID)) // Issued by OWNER_ADDRESS
+        .setAmount(100_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("validate_fail_to_not_issuer")
+        .caseCategory("validate_fail")
+        .description("Fail when toAddress is not the asset issuer")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .expectedError("The asset is not issued by")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue to not issuer: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateParticipateAssetIssue_saleNotStarted() throws Exception {
+    // Create an asset with start time in the future
+    String futureAssetId = "1000011";
+    long blockTimestamp = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    AssetIssueContract futureAsset = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .setName(ByteString.copyFromUtf8("FutureToken"))
+        .setAbbr(ByteString.copyFromUtf8("FUT"))
+        .setTotalSupply(TOTAL_SUPPLY)
+        .setTrxNum(TRX_NUM)
+        .setNum(NUM)
+        .setPrecision(6)
+        .setStartTime(blockTimestamp + 86400000L) // Starts in 1 day (future)
+        .setEndTime(blockTimestamp + 86400000L * 60)
+        .setDescription(ByteString.copyFromUtf8("Future Token"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId(futureAssetId)
+        .build();
+
+    AssetIssueCapsule futureCapsule = new AssetIssueCapsule(futureAsset);
+    dbManager.getAssetIssueV2Store().put(futureCapsule.createDbV2Key(), futureCapsule);
+
+    // Add tokens to OTHER_ADDRESS (the issuer)
+    AccountCapsule other = dbManager.getAccountStore().get(ByteArray.fromHexString(OTHER_ADDRESS));
+    Protocol.Account.Builder otherBuilder = other.getInstance().toBuilder();
+    otherBuilder.putAssetV2(futureAssetId, TOTAL_SUPPLY / 2);
+    dbManager.getAccountStore().put(other.getAddress().toByteArray(), new AccountCapsule(otherBuilder.build()));
+
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(futureAssetId))
+        .setAmount(100_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("validate_fail_sale_not_started")
+        .caseCategory("validate_fail")
+        .description("Fail when asset sale has not started yet")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .expectedError("No longer valid period")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue sale not started: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateParticipateAssetIssue_amountZero() throws Exception {
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(ASSET_ID))
+        .setAmount(0L) // Zero amount
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("validate_fail_amount_zero")
+        .caseCategory("validate_fail")
+        .description("Fail when amount is zero")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .expectedError("Amount must greater than 0")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue amount zero: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateParticipateAssetIssue_amountNegative() throws Exception {
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(ASSET_ID))
+        .setAmount(-1L) // Negative amount
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("validate_fail_amount_negative")
+        .caseCategory("validate_fail")
+        .description("Fail when amount is negative")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .expectedError("Amount must greater than 0")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue amount negative: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateParticipateAssetIssue_notEnoughAsset() throws Exception {
+    // Create a new asset with very limited supply held by issuer
+    String limitedAssetId = "1000012";
+    long blockTimestamp = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    AssetIssueContract limitedAsset = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .setName(ByteString.copyFromUtf8("LimitedToken"))
+        .setAbbr(ByteString.copyFromUtf8("LTD"))
+        .setTotalSupply(1_000_000L)
+        .setTrxNum(1)
+        .setNum(100) // 100 tokens per TRX
+        .setPrecision(6)
+        .setStartTime(blockTimestamp - 86400000)
+        .setEndTime(blockTimestamp + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("Limited Token"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId(limitedAssetId)
+        .build();
+
+    AssetIssueCapsule limitedCapsule = new AssetIssueCapsule(limitedAsset);
+    dbManager.getAssetIssueV2Store().put(limitedCapsule.createDbV2Key(), limitedCapsule);
+
+    // Add only 10 tokens to OTHER_ADDRESS (the issuer)
+    AccountCapsule other = dbManager.getAccountStore().get(ByteArray.fromHexString(OTHER_ADDRESS));
+    Protocol.Account.Builder otherBuilder = other.getInstance().toBuilder();
+    otherBuilder.putAssetV2(limitedAssetId, 10L); // Only 10 tokens
+    dbManager.getAccountStore().put(other.getAddress().toByteArray(), new AccountCapsule(otherBuilder.build()));
+
+    // Try to buy 1000 TRX worth of tokens (would require 100,000 tokens)
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(limitedAssetId))
+        .setAmount(1_000_000_000L) // 1000 TRX
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("validate_fail_not_enough_asset")
+        .caseCategory("validate_fail")
+        .description("Fail when issuer does not have enough asset balance")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .expectedError("Asset balance is not enough")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue not enough asset: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateParticipateAssetIssue_exchangeAmountZero() throws Exception {
+    // Create asset with high trxNum relative to num, so small amounts round to 0
+    String highRatioAssetId = "1000013";
+    long blockTimestamp = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    AssetIssueContract highRatioAsset = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .setName(ByteString.copyFromUtf8("HighRatioToken"))
+        .setAbbr(ByteString.copyFromUtf8("HRT"))
+        .setTotalSupply(1_000_000_000_000L)
+        .setTrxNum(1_000_000) // Very high TRX required
+        .setNum(1) // Only 1 token per 1M TRX
+        .setPrecision(6)
+        .setStartTime(blockTimestamp - 86400000)
+        .setEndTime(blockTimestamp + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("High Ratio Token"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId(highRatioAssetId)
+        .build();
+
+    AssetIssueCapsule highRatioCapsule = new AssetIssueCapsule(highRatioAsset);
+    dbManager.getAssetIssueV2Store().put(highRatioCapsule.createDbV2Key(), highRatioCapsule);
+
+    // Add tokens to OTHER_ADDRESS
+    AccountCapsule other = dbManager.getAccountStore().get(ByteArray.fromHexString(OTHER_ADDRESS));
+    Protocol.Account.Builder otherBuilder = other.getInstance().toBuilder();
+    otherBuilder.putAssetV2(highRatioAssetId, 1_000_000L);
+    dbManager.getAccountStore().put(other.getAddress().toByteArray(), new AccountCapsule(otherBuilder.build()));
+
+    // Try to buy with tiny amount (1 SUN) - floor(1 * 1 / 1000000) = 0
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(highRatioAssetId))
+        .setAmount(1L) // 1 SUN - too small for exchange
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("validate_fail_exchange_amount_zero")
+        .caseCategory("validate_fail")
+        .description("Fail when exchange amount rounds down to zero")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .expectedError("Can not process the exchange")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue exchange amount zero: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
   }
 
   // ==========================================================================
@@ -350,6 +734,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UnfreezeAsset happy path: success={}", result.isSuccess());
+    assertTrue("Happy path should succeed", result.isSuccess());
   }
 
   @Test
@@ -377,6 +762,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UnfreezeAsset no frozen: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
   }
 
   @Test
@@ -446,6 +832,197 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UnfreezeAsset not expired: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  // ==========================================================================
+  // UnfreezeAssetContract (14) - NEW EDGE CASES
+  // ==========================================================================
+
+  @Test
+  public void generateUnfreezeAsset_notIssuedAsset() throws Exception {
+    // Create an account with frozen supply but no assetIssuedID set
+    String noAssetIssuerAddress = Wallet.getAddressPreFixString() + "6666666666666666666666666666666666666666";
+    long currentTime = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    AccountCapsule noAssetAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("noassetissuer"),
+        ByteString.copyFrom(ByteArray.fromHexString(noAssetIssuerAddress)),
+        AccountType.Normal,
+        INITIAL_BALANCE);
+
+    // Add frozen supply but NOT set assetIssuedID
+    Protocol.Account.Builder builder = noAssetAccount.getInstance().toBuilder();
+    Protocol.Account.Frozen frozen = Protocol.Account.Frozen.newBuilder()
+        .setFrozenBalance(50_000_000_000L)
+        .setExpireTime(currentTime - 1000) // Already expired
+        .build();
+    builder.addFrozenSupply(frozen);
+    // Note: NOT setting assetIssuedID
+    dbManager.getAccountStore().put(noAssetAccount.getAddress().toByteArray(), new AccountCapsule(builder.build()));
+
+    UnfreezeAssetContract contract = UnfreezeAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(noAssetIssuerAddress)))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_ASSET_CONTRACT", 14)
+        .caseName("validate_fail_not_issued_asset")
+        .caseCategory("validate_fail")
+        .description("Fail when account has not issued any asset (assetIssuedID empty)")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(noAssetIssuerAddress)
+        .expectedError("this account has not issued any asset")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeAsset not issued asset: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUnfreezeAsset_ownerAccountMissing() throws Exception {
+    // Use a valid address that does not exist in AccountStore
+    String missingAddress = Wallet.getAddressPreFixString() + "7777777777777777777777777777777777777777";
+
+    UnfreezeAssetContract contract = UnfreezeAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(missingAddress)))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_ASSET_CONTRACT", 14)
+        .caseName("validate_fail_owner_account_missing")
+        .caseCategory("validate_fail")
+        .description("Fail when owner account does not exist")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(missingAddress)
+        .expectedError("does not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeAsset owner missing: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUnfreezeAsset_invalidOwnerAddress() throws Exception {
+    // Use an invalid address (wrong length)
+    byte[] invalidAddress = new byte[15]; // Wrong length
+
+    UnfreezeAssetContract contract = UnfreezeAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(invalidAddress))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_ASSET_CONTRACT", 14)
+        .caseName("validate_fail_invalid_owner_address")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address has invalid format")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(ByteArray.toHexString(invalidAddress))
+        .expectedError("Invalid address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeAsset invalid address: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUnfreezeAsset_partialUnfreezeSuccess() throws Exception {
+    // Create an account with multiple frozen entries: some expired, some not
+    String partialUnfreezeAddress = Wallet.getAddressPreFixString() + "8888888888888888888888888888888888888888";
+    String partialAssetId = "1000020";
+    long currentTime = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    // Create asset
+    AssetIssueContract partialAsset = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(partialUnfreezeAddress)))
+        .setName(ByteString.copyFromUtf8("PartialToken"))
+        .setAbbr(ByteString.copyFromUtf8("PRT"))
+        .setTotalSupply(TOTAL_SUPPLY)
+        .setTrxNum(TRX_NUM)
+        .setNum(NUM)
+        .setPrecision(6)
+        .setStartTime(currentTime - 86400000)
+        .setEndTime(currentTime + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("Partial Unfreeze Token"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId(partialAssetId)
+        .build();
+
+    AssetIssueCapsule partialCapsule = new AssetIssueCapsule(partialAsset);
+    dbManager.getAssetIssueV2Store().put(partialCapsule.createDbV2Key(), partialCapsule);
+
+    // Create account with two frozen entries
+    AccountCapsule partialAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("partialunfreeze"),
+        ByteString.copyFrom(ByteArray.fromHexString(partialUnfreezeAddress)),
+        AccountType.Normal,
+        INITIAL_BALANCE);
+
+    Protocol.Account.Builder builder = partialAccount.getInstance().toBuilder();
+    builder.setAssetIssuedID(ByteString.copyFromUtf8(partialAssetId));
+    // Frozen entry A: expired (should unfreeze)
+    Protocol.Account.Frozen frozenExpired = Protocol.Account.Frozen.newBuilder()
+        .setFrozenBalance(30_000_000_000L)
+        .setExpireTime(currentTime - 1000) // Already expired
+        .build();
+    // Frozen entry B: not expired (should remain)
+    Protocol.Account.Frozen frozenFuture = Protocol.Account.Frozen.newBuilder()
+        .setFrozenBalance(20_000_000_000L)
+        .setExpireTime(currentTime + 86400000L * 365) // Expires in 1 year
+        .build();
+    builder.addFrozenSupply(frozenExpired);
+    builder.addFrozenSupply(frozenFuture);
+    dbManager.getAccountStore().put(partialAccount.getAddress().toByteArray(), new AccountCapsule(builder.build()));
+
+    UnfreezeAssetContract contract = UnfreezeAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(partialUnfreezeAddress)))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_ASSET_CONTRACT", 14)
+        .caseName("edge_partial_unfreeze_success")
+        .caseCategory("edge")
+        .description("Successfully unfreeze only expired entries, keeping unexpired ones")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(partialUnfreezeAddress)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeAsset partial unfreeze: success={}", result.isSuccess());
+    assertTrue("Partial unfreeze should succeed", result.isSuccess());
   }
 
   // ==========================================================================
@@ -480,6 +1057,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UpdateAsset happy path: success={}", result.isSuccess());
+    assertTrue("Happy path should succeed", result.isSuccess());
   }
 
   @Test
@@ -511,6 +1089,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UpdateAsset not owner: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
   }
 
   @Test
@@ -542,6 +1121,7 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UpdateAsset invalid URL: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
   }
 
   @Test
@@ -579,6 +1159,376 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UpdateAsset description too long: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  // ==========================================================================
+  // UpdateAssetContract (15) - NEW EDGE CASES
+  // ==========================================================================
+
+  @Test
+  public void generateUpdateAsset_ownerAccountMissing() throws Exception {
+    // Use a valid address that does not exist in AccountStore
+    String missingAddress = Wallet.getAddressPreFixString() + "9999999999999999999999999999999999999999";
+
+    UpdateAssetContract contract = UpdateAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(missingAddress)))
+        .setDescription(ByteString.copyFromUtf8("Valid description"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setNewLimit(2000)
+        .setNewPublicLimit(2000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ASSET_CONTRACT", 15)
+        .caseName("validate_fail_owner_account_missing")
+        .caseCategory("validate_fail")
+        .description("Fail when owner account does not exist")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(missingAddress)
+        .expectedError("Account does not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateAsset owner missing: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateAsset_invalidOwnerAddress() throws Exception {
+    // Use an invalid address (wrong length)
+    byte[] invalidAddress = new byte[15]; // Wrong length
+
+    UpdateAssetContract contract = UpdateAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(invalidAddress))
+        .setDescription(ByteString.copyFromUtf8("Valid description"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setNewLimit(2000)
+        .setNewPublicLimit(2000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ASSET_CONTRACT", 15)
+        .caseName("validate_fail_invalid_owner_address")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address has invalid format")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(ByteArray.toHexString(invalidAddress))
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateAsset invalid address: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateAsset_noAssetIssued() throws Exception {
+    // Create an account without assetIssuedID set
+    String noAssetAddress = Wallet.getAddressPreFixString() + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    AccountCapsule noAssetAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("noasset"),
+        ByteString.copyFrom(ByteArray.fromHexString(noAssetAddress)),
+        AccountType.Normal,
+        INITIAL_BALANCE);
+    // Note: NOT setting assetIssuedID
+    dbManager.getAccountStore().put(noAssetAccount.getAddress().toByteArray(), noAssetAccount);
+
+    UpdateAssetContract contract = UpdateAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(noAssetAddress)))
+        .setDescription(ByteString.copyFromUtf8("Valid description"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setNewLimit(2000)
+        .setNewPublicLimit(2000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ASSET_CONTRACT", 15)
+        .caseName("validate_fail_no_asset_issued")
+        .caseCategory("validate_fail")
+        .description("Fail when account has not issued any asset")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(noAssetAddress)
+        .expectedError("Account has not issued any asset")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateAsset no asset issued: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateAsset_assetMissingInStore() throws Exception {
+    // Create an account with assetIssuedID set but no corresponding asset in store
+    String orphanAssetAddress = Wallet.getAddressPreFixString() + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    String nonExistentAssetId = "9999999";
+
+    AccountCapsule orphanAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("orphan"),
+        ByteString.copyFrom(ByteArray.fromHexString(orphanAssetAddress)),
+        AccountType.Normal,
+        INITIAL_BALANCE);
+
+    Protocol.Account.Builder builder = orphanAccount.getInstance().toBuilder();
+    builder.setAssetIssuedID(ByteString.copyFromUtf8(nonExistentAssetId)); // Asset ID not in store
+    dbManager.getAccountStore().put(orphanAccount.getAddress().toByteArray(), new AccountCapsule(builder.build()));
+
+    UpdateAssetContract contract = UpdateAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(orphanAssetAddress)))
+        .setDescription(ByteString.copyFromUtf8("Valid description"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setNewLimit(2000)
+        .setNewPublicLimit(2000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ASSET_CONTRACT", 15)
+        .caseName("validate_fail_asset_missing_in_store")
+        .caseCategory("validate_fail")
+        .description("Fail when account's assetIssuedID refers to non-existent asset")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(orphanAssetAddress)
+        .expectedError("Asset is not existed in AssetIssueV2Store")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateAsset asset missing in store: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateAsset_urlTooLong() throws Exception {
+    // Create a very long URL (> 256 bytes)
+    StringBuilder longUrl = new StringBuilder("https://example.com/");
+    for (int i = 0; i < 250; i++) {
+      longUrl.append("X");
+    }
+
+    UpdateAssetContract contract = UpdateAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setDescription(ByteString.copyFromUtf8("Valid description"))
+        .setUrl(ByteString.copyFromUtf8(longUrl.toString()))
+        .setNewLimit(2000)
+        .setNewPublicLimit(2000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ASSET_CONTRACT", 15)
+        .caseName("validate_fail_url_too_long")
+        .caseCategory("validate_fail")
+        .description("Fail when URL exceeds maximum length (256 bytes)")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid url")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateAsset URL too long: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateAsset_newLimitNegative() throws Exception {
+    UpdateAssetContract contract = UpdateAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setDescription(ByteString.copyFromUtf8("Valid description"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setNewLimit(-1) // Negative limit
+        .setNewPublicLimit(2000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ASSET_CONTRACT", 15)
+        .caseName("validate_fail_new_limit_negative")
+        .caseCategory("validate_fail")
+        .description("Fail when newLimit is negative")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid FreeAssetNetLimit")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateAsset newLimit negative: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateAsset_newLimitTooLarge() throws Exception {
+    // Get the oneDayNetLimit and use it as newLimit (should fail, must be < oneDayNetLimit)
+    long oneDayNetLimit = dbManager.getDynamicPropertiesStore().getOneDayNetLimit();
+
+    UpdateAssetContract contract = UpdateAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setDescription(ByteString.copyFromUtf8("Valid description"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setNewLimit(oneDayNetLimit) // Equal to limit (must be < limit)
+        .setNewPublicLimit(2000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ASSET_CONTRACT", 15)
+        .caseName("validate_fail_new_limit_too_large")
+        .caseCategory("validate_fail")
+        .description("Fail when newLimit >= oneDayNetLimit")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid FreeAssetNetLimit")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateAsset newLimit too large: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateAsset_newPublicLimitNegative() throws Exception {
+    UpdateAssetContract contract = UpdateAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setDescription(ByteString.copyFromUtf8("Valid description"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setNewLimit(2000)
+        .setNewPublicLimit(-1) // Negative public limit
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ASSET_CONTRACT", 15)
+        .caseName("validate_fail_new_public_limit_negative")
+        .caseCategory("validate_fail")
+        .description("Fail when newPublicLimit is negative")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid PublicFreeAssetNetLimit")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateAsset newPublicLimit negative: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateAsset_newPublicLimitTooLarge() throws Exception {
+    // Get the oneDayNetLimit and use it as newPublicLimit (should fail, must be < oneDayNetLimit)
+    long oneDayNetLimit = dbManager.getDynamicPropertiesStore().getOneDayNetLimit();
+
+    UpdateAssetContract contract = UpdateAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setDescription(ByteString.copyFromUtf8("Valid description"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setNewLimit(2000)
+        .setNewPublicLimit(oneDayNetLimit) // Equal to limit (must be < limit)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ASSET_CONTRACT", 15)
+        .caseName("validate_fail_new_public_limit_too_large")
+        .caseCategory("validate_fail")
+        .description("Fail when newPublicLimit >= oneDayNetLimit")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid PublicFreeAssetNetLimit")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateAsset newPublicLimit too large: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateAsset_edgeLimitMaxOk() throws Exception {
+    // Use oneDayNetLimit - 1 for both limits (should succeed - maximum valid value)
+    long oneDayNetLimit = dbManager.getDynamicPropertiesStore().getOneDayNetLimit();
+
+    UpdateAssetContract contract = UpdateAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setDescription(ByteString.copyFromUtf8("Valid description"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setNewLimit(oneDayNetLimit - 1) // Maximum valid value
+        .setNewPublicLimit(oneDayNetLimit - 1) // Maximum valid value
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ASSET_CONTRACT", 15)
+        .caseName("edge_limit_max_ok")
+        .caseCategory("edge")
+        .description("Successfully update with maximum valid limit values (oneDayNetLimit - 1)")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateAsset edge limit max ok: success={}", result.isSuccess());
+    assertTrue("Edge case with max limits should succeed", result.isSuccess());
   }
 
   // ==========================================================================
@@ -603,40 +1553,13 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
 
   private TransactionCapsule createTransaction(Transaction.Contract.ContractType type,
                                                 com.google.protobuf.Message contract) {
-    Transaction.Contract protoContract = Transaction.Contract.newBuilder()
-        .setType(type)
-        .setParameter(Any.pack(contract))
-        .build();
-
-    Transaction transaction = Transaction.newBuilder()
-        .setRawData(Transaction.raw.newBuilder()
-            .addContract(protoContract)
-            .setTimestamp(System.currentTimeMillis())
-            .setExpiration(System.currentTimeMillis() + 3600000)
-            .build())
-        .build();
-
-    return new TransactionCapsule(transaction);
+    // Use deterministic timestamps from ConformanceFixtureTestSupport
+    return ConformanceFixtureTestSupport.createTransaction(type, contract,
+        DEFAULT_TX_TIMESTAMP, DEFAULT_TX_EXPIRATION);
   }
 
   private BlockCapsule createBlockContext() {
-    long blockNum = chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber() + 1;
-    long blockTime = chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp() + 3000;
-
-    Protocol.BlockHeader.raw rawHeader = Protocol.BlockHeader.raw.newBuilder()
-        .setNumber(blockNum)
-        .setTimestamp(blockTime)
-        .setWitnessAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
-        .build();
-
-    Protocol.BlockHeader blockHeader = Protocol.BlockHeader.newBuilder()
-        .setRawData(rawHeader)
-        .build();
-
-    Protocol.Block block = Protocol.Block.newBuilder()
-        .setBlockHeader(blockHeader)
-        .build();
-
-    return new BlockCapsule(block);
+    // Use deterministic block context from ConformanceFixtureTestSupport
+    return ConformanceFixtureTestSupport.createBlockContext(dbManager, OWNER_ADDRESS);
   }
 }
