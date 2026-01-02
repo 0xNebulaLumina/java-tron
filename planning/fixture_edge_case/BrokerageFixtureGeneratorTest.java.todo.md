@@ -67,14 +67,15 @@ Phase 4 — Optional: Contract Encoding / Type Mismatch Fixtures
   - [x] Treat as optional because protobuf error strings can change across versions.
 
 Phase 5 — Fixture Determinism / Consistency (Optional Improvement)
-- [ ] Switch to `ConformanceFixtureTestSupport.createTransaction(...)` and `createBlockContext(dbManager, ...)`:
-  - [ ] Deterministic timestamps/expiration
-  - [ ] Populated `feeLimit/refBlock*` fields
-  - [ ] Dynamic head block fields aligned with the block context used in `request.pb`
+- [x] Switch to `ConformanceFixtureTestSupport.createTransaction(...)` and `createBlockContext(dbManager, ...)`:
+  - [x] Deterministic timestamps/expiration (uses `DEFAULT_TX_TIMESTAMP` = 1700000000000L)
+  - [x] Populated `feeLimit/refBlock*` fields (via support class)
+  - [x] Dynamic head block fields aligned with the block context used in `request.pb`
+  - [x] Simplified `initializeTestData()` using `putAccount()`, `putWitness()`, `initCommonDynamicPropsV1()`
 
 Phase 6 — Validate Outputs
 - [x] Regenerate fixtures and spot-check:
-  - [x] All 14 tests pass (verified via `./gradlew :framework:test --tests "org.tron.core.conformance.BrokerageFixtureGeneratorTest"`)
+  - [x] All 14 tests pass (includes new `invalidProtobufBytes` test)
   - [x] new invalid-owner fixtures show `"Invalid ownerAddress"`
   - [x] new account-missing fixture shows `"Account does not exist"`
   - [x] happy fixtures show `SUCCESS` and delegation DB changes
@@ -98,6 +99,13 @@ Phase 6 — Validate Outputs
 - Added `WITNESS_ONLY_ADDRESS` constant for address with witness but no account
 - Added witness entry for `WITNESS_ONLY_ADDRESS` in `initializeTestData()` without corresponding account
 
-### New Helper Methods:
+### Specialized Helper Methods (kept local):
 - `createTransactionWithMismatchedType()` - Creates transaction with declared type different from actual parameter type
 - `createTransactionWithRawAny()` - Creates transaction with pre-built Any parameter (for invalid protobuf bytes testing)
+
+### Phase 5 Refactoring (ConformanceFixtureTestSupport):
+- Switched to static import from `ConformanceFixtureTestSupport`
+- Replaced local `createTransaction()` with support class version (deterministic timestamps)
+- Replaced local `createBlockContext()` with `createBlockContext(dbManager, WITNESS_ADDRESS)`
+- Simplified `initializeTestData()` using `putAccount()`, `putWitness()`, `initCommonDynamicPropsV1()`
+- Updated specialized helper methods to use `DEFAULT_TX_TIMESTAMP` and `DEFAULT_TX_EXPIRATION`

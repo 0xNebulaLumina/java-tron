@@ -1,23 +1,21 @@
 package org.tron.core.conformance;
 
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.*;
+
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import java.io.File;
 import org.junit.Before;
+import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.junit.Test;
 import org.tron.common.BaseTest;
 import org.tron.common.utils.ByteArray;
 import org.tron.core.Constant;
 import org.tron.core.Wallet;
-import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
-import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.config.args.Args;
-import org.tron.protos.Protocol;
-import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.contract.StorageContract.UpdateBrokerageContract;
 
@@ -58,44 +56,23 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
   }
 
   private void initializeTestData() {
-    // Create witness account
-    AccountCapsule witnessAccount = new AccountCapsule(
-        ByteString.copyFromUtf8("witness"),
-        ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)),
-        AccountType.Normal,
-        INITIAL_BALANCE);
-    dbManager.getAccountStore().put(witnessAccount.getAddress().toByteArray(), witnessAccount);
+    // Initialize common dynamic properties with deterministic timestamps
+    initCommonDynamicPropsV1(dbManager, 10, DEFAULT_BLOCK_TIMESTAMP);
 
-    // Create witness
-    WitnessCapsule witness = new WitnessCapsule(
-        ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)),
-        10_000_000L,
-        "https://witness.network");
-    dbManager.getWitnessStore().put(witness.getAddress().toByteArray(), witness);
+    // Create witness account and witness entry
+    putAccount(dbManager, WITNESS_ADDRESS, INITIAL_BALANCE, "witness");
+    putWitness(dbManager, WITNESS_ADDRESS, "https://witness.network", 10_000_000L);
 
-    // Create non-witness account
-    AccountCapsule nonWitnessAccount = new AccountCapsule(
-        ByteString.copyFromUtf8("non_witness"),
-        ByteString.copyFrom(ByteArray.fromHexString(NON_WITNESS_ADDRESS)),
-        AccountType.Normal,
-        INITIAL_BALANCE);
-    dbManager.getAccountStore().put(nonWitnessAccount.getAddress().toByteArray(), nonWitnessAccount);
+    // Create non-witness account (no witness entry)
+    putAccount(dbManager, NON_WITNESS_ADDRESS, INITIAL_BALANCE, "non_witness");
 
     // Create witness entry WITHOUT corresponding account (for "Account does not exist" test)
     // This tests the branch where witness exists but account doesn't
-    WitnessCapsule witnessOnly = new WitnessCapsule(
-        ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ONLY_ADDRESS)),
-        10_000_000L,
-        "https://witness-only.network");
-    dbManager.getWitnessStore().put(witnessOnly.getAddress().toByteArray(), witnessOnly);
+    putWitness(dbManager, WITNESS_ONLY_ADDRESS, "https://witness-only.network", 10_000_000L);
     // Intentionally NOT creating an account for WITNESS_ONLY_ADDRESS
 
-    // Enable change delegation feature
+    // Enable change delegation feature (required for UpdateBrokerage)
     dbManager.getDynamicPropertiesStore().saveChangeDelegation(1);
-
-    // Set block properties
-    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(1000000);
-    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(10);
   }
 
   // ==========================================================================
@@ -112,7 +89,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -141,7 +118,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -169,7 +146,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -197,7 +174,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -226,7 +203,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -255,7 +232,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -287,7 +264,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -322,7 +299,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -356,7 +333,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -386,7 +363,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -423,7 +400,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -458,7 +435,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransaction(
         Transaction.Contract.ContractType.UpdateBrokerageContract, contract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -497,7 +474,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransactionWithMismatchedType(
         Transaction.Contract.ContractType.UpdateBrokerageContract, wrongContract);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -528,7 +505,7 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     TransactionCapsule trxCap = createTransactionWithRawAny(
         Transaction.Contract.ContractType.UpdateBrokerageContract, invalidAny);
 
-    BlockCapsule blockCap = createBlockContext();
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
 
     FixtureMetadata metadata = FixtureMetadata.builder()
         .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
@@ -548,26 +525,9 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
   }
 
   // ==========================================================================
-  // Helper Methods
+  // Helper Methods (specialized - standard createTransaction/createBlockContext
+  // are inherited from ConformanceFixtureTestSupport via static import)
   // ==========================================================================
-
-  private TransactionCapsule createTransaction(Transaction.Contract.ContractType type,
-                                                com.google.protobuf.Message contract) {
-    Transaction.Contract protoContract = Transaction.Contract.newBuilder()
-        .setType(type)
-        .setParameter(Any.pack(contract))
-        .build();
-
-    Transaction transaction = Transaction.newBuilder()
-        .setRawData(Transaction.raw.newBuilder()
-            .addContract(protoContract)
-            .setTimestamp(System.currentTimeMillis())
-            .setExpiration(System.currentTimeMillis() + 3600000)
-            .build())
-        .build();
-
-    return new TransactionCapsule(transaction);
-  }
 
   /**
    * Creates a transaction with mismatched contract type (type says X but parameter is Y).
@@ -584,8 +544,8 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     Transaction transaction = Transaction.newBuilder()
         .setRawData(Transaction.raw.newBuilder()
             .addContract(protoContract)
-            .setTimestamp(System.currentTimeMillis())
-            .setExpiration(System.currentTimeMillis() + 3600000)
+            .setTimestamp(DEFAULT_TX_TIMESTAMP)
+            .setExpiration(DEFAULT_TX_EXPIRATION)
             .build())
         .build();
 
@@ -607,32 +567,11 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     Transaction transaction = Transaction.newBuilder()
         .setRawData(Transaction.raw.newBuilder()
             .addContract(protoContract)
-            .setTimestamp(System.currentTimeMillis())
-            .setExpiration(System.currentTimeMillis() + 3600000)
+            .setTimestamp(DEFAULT_TX_TIMESTAMP)
+            .setExpiration(DEFAULT_TX_EXPIRATION)
             .build())
         .build();
 
     return new TransactionCapsule(transaction);
-  }
-
-  private BlockCapsule createBlockContext() {
-    long blockNum = chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderNumber() + 1;
-    long blockTime = chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp() + 3000;
-
-    Protocol.BlockHeader.raw rawHeader = Protocol.BlockHeader.raw.newBuilder()
-        .setNumber(blockNum)
-        .setTimestamp(blockTime)
-        .setWitnessAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
-        .build();
-
-    Protocol.BlockHeader blockHeader = Protocol.BlockHeader.newBuilder()
-        .setRawData(rawHeader)
-        .build();
-
-    Protocol.Block block = Protocol.Block.newBuilder()
-        .setBlockHeader(blockHeader)
-        .build();
-
-    return new BlockCapsule(block);
   }
 }
