@@ -61,10 +61,10 @@ Phase 4 — Optional: Contract Encoding / Type Mismatch Fixtures
   - [x] Expect validate error like:
         `contract type error, expected type [UpdateBrokerageContract], real type[class com.google.protobuf.Any]`
   - [x] Note: this covers the `!any.is(UpdateBrokerageContract.class)` branch.
-- [ ] (Optional, if stable) Add `validate_fail_invalid_protobuf_bytes`:
-  - [ ] Manually build `Any` with `type_url` for `UpdateBrokerageContract` but invalid `value` bytes.
-  - [ ] Expect an `InvalidProtocolBufferException`-derived message.
-  - [ ] Treat as optional because protobuf error strings can change across versions.
+- [x] (Optional, if stable) Add `validate_fail_invalid_protobuf_bytes`:
+  - [x] Manually build `Any` with `type_url` for `UpdateBrokerageContract` but invalid `value` bytes.
+  - [x] Expect an `InvalidProtocolBufferException`-derived message.
+  - [x] Treat as optional because protobuf error strings can change across versions.
 
 Phase 5 — Fixture Determinism / Consistency (Optional Improvement)
 - [ ] Switch to `ConformanceFixtureTestSupport.createTransaction(...)` and `createBlockContext(dbManager, ...)`:
@@ -74,7 +74,7 @@ Phase 5 — Fixture Determinism / Consistency (Optional Improvement)
 
 Phase 6 — Validate Outputs
 - [x] Regenerate fixtures and spot-check:
-  - [x] All 13 tests pass (verified via `./gradlew :framework:test --tests "org.tron.core.conformance.BrokerageFixtureGeneratorTest"`)
+  - [x] All 14 tests pass (verified via `./gradlew :framework:test --tests "org.tron.core.conformance.BrokerageFixtureGeneratorTest"`)
   - [x] new invalid-owner fixtures show `"Invalid ownerAddress"`
   - [x] new account-missing fixture shows `"Account does not exist"`
   - [x] happy fixtures show `SUCCESS` and delegation DB changes
@@ -87,6 +87,7 @@ Phase 6 — Validate Outputs
 3. `generateUpdateBrokerage_ownerAddressWrongPrefix()` - Tests 0xa0 prefix instead of 0x41 (Phase 1)
 4. `generateUpdateBrokerage_accountMissingWitnessExists()` - Tests witness exists but account doesn't (Phase 2)
 5. `generateUpdateBrokerage_contractParameterWrongType()` - Tests mismatched contract type (Phase 4)
+6. `generateUpdateBrokerage_invalidProtobufBytes()` - Tests corrupted protobuf bytes (Phase 4)
 
 ### Renamed Test Methods:
 - `generateUpdateBrokerage_accountNotExist` → `generateUpdateBrokerage_witnessNotExist` (Phase 3)
@@ -99,3 +100,4 @@ Phase 6 — Validate Outputs
 
 ### New Helper Methods:
 - `createTransactionWithMismatchedType()` - Creates transaction with declared type different from actual parameter type
+- `createTransactionWithRawAny()` - Creates transaction with pre-built Any parameter (for invalid protobuf bytes testing)

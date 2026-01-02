@@ -516,6 +516,37 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     log.info("UpdateBrokerage wrong type: validationError={}", result.getValidationError());
   }
 
+  @Test
+  public void generateUpdateBrokerage_invalidProtobufBytes() throws Exception {
+    // Manually build Any with correct type_url but invalid/corrupted value bytes
+    // This covers the InvalidProtocolBufferException catch block in validate()
+    Any invalidAny = Any.newBuilder()
+        .setTypeUrl("type.googleapis.com/" + UpdateBrokerageContract.getDescriptor().getFullName())
+        .setValue(ByteString.copyFrom(new byte[]{0x08, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF})) // invalid varint
+        .build();
+
+    TransactionCapsule trxCap = createTransactionWithRawAny(
+        Transaction.Contract.ContractType.UpdateBrokerageContract, invalidAny);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_BROKERAGE_CONTRACT", 49)
+        .caseName("validate_fail_invalid_protobuf_bytes")
+        .caseCategory("validate_fail")
+        .description("Fail when contract parameter contains invalid/corrupted protobuf bytes")
+        .database("account")
+        .database("witness")
+        .database("delegation")
+        .database("dynamic-properties")
+        .ownerAddress(WITNESS_ADDRESS)
+        .expectedError("Protocol") // InvalidProtocolBufferException message contains "Protocol"
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateBrokerage invalid protobuf: validationError={}", result.getValidationError());
+  }
+
   // ==========================================================================
   // Helper Methods
   // ==========================================================================
@@ -548,6 +579,29 @@ public class BrokerageFixtureGeneratorTest extends BaseTest {
     Transaction.Contract protoContract = Transaction.Contract.newBuilder()
         .setType(declaredType)
         .setParameter(Any.pack(actualContract))
+        .build();
+
+    Transaction transaction = Transaction.newBuilder()
+        .setRawData(Transaction.raw.newBuilder()
+            .addContract(protoContract)
+            .setTimestamp(System.currentTimeMillis())
+            .setExpiration(System.currentTimeMillis() + 3600000)
+            .build())
+        .build();
+
+    return new TransactionCapsule(transaction);
+  }
+
+  /**
+   * Creates a transaction with a pre-built Any parameter (for testing invalid protobuf bytes).
+   * This allows injecting malformed protobuf data to test error handling.
+   */
+  private TransactionCapsule createTransactionWithRawAny(
+      Transaction.Contract.ContractType declaredType,
+      Any rawAny) {
+    Transaction.Contract protoContract = Transaction.Contract.newBuilder()
+        .setType(declaredType)
+        .setParameter(rawAny)
         .build();
 
     Transaction transaction = Transaction.newBuilder()
