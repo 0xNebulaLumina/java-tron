@@ -2272,4 +2272,122 @@ public class AssetIssueFixtureGeneratorTest extends BaseTest {
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("AssetIssue V1 token exists: validationError={}", result.getValidationError());
   }
+
+  // ==========================================================================
+  // Phase 8: Fee Sink (Burn vs Blackhole)
+  // ==========================================================================
+
+  @Test
+  public void generateAssetIssue_happyPathFeeBurnEnabled() throws Exception {
+    // Reset dynamic properties with blackhole optimization enabled (burn mode)
+    initTrc10DynamicProps(dbManager,
+        DEFAULT_BLOCK_TIMESTAMP / 1000,
+        DEFAULT_BLOCK_TIMESTAMP);
+    dbManager.getDynamicPropertiesStore().saveAllowBlackHoleOptimization(1); // Enable burn
+
+    String issuerAddress = generateAddress("fee_burn_issuer");
+    putAccount(dbManager, issuerAddress, INITIAL_BALANCE, "fee_burn_issuer");
+
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
+    long endTime = startTime + 86400000 * 30;
+
+    AssetIssueContract contract = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(issuerAddress)))
+        .setName(ByteString.copyFromUtf8("BurnFeeToken"))
+        .setAbbr(ByteString.copyFromUtf8("BFT"))
+        .setTotalSupply(1_000_000_000L)
+        .setPrecision(6)
+        .setTrxNum(1)
+        .setNum(1)
+        .setStartTime(startTime)
+        .setEndTime(endTime)
+        .setDescription(ByteString.copyFromUtf8("Token with fee burn enabled"))
+        .setUrl(ByteString.copyFromUtf8("https://burn-fee.network"))
+        .setFreeAssetNetLimit(10000)
+        .setPublicFreeAssetNetLimit(10000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ASSET_ISSUE_CONTRACT", 6)
+        .caseName("happy_path_fee_burn_enabled")
+        .caseCategory("happy")
+        .description("Fee burn mode: fee is burned via dynamicStore.burnTrx() instead of crediting blackhole")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(issuerAddress)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 1)
+        .dynamicProperty("ALLOW_BLACK_HOLE_OPTIMIZATION", 1)
+        .dynamicProperty("ASSET_ISSUE_FEE", ASSET_ISSUE_FEE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AssetIssue fee burn enabled: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateAssetIssue_happyPathFeeToBlackholeDisabled() throws Exception {
+    // Reset dynamic properties with blackhole optimization disabled (credit blackhole)
+    initTrc10DynamicProps(dbManager,
+        DEFAULT_BLOCK_TIMESTAMP / 1000,
+        DEFAULT_BLOCK_TIMESTAMP);
+    dbManager.getDynamicPropertiesStore().saveAllowBlackHoleOptimization(0); // Disable burn
+
+    // Ensure blackhole account exists to receive the fee
+    String blackholeAddress = ByteArray.toHexString(
+        dbManager.getAccountStore().getBlackhole().getAddress().toByteArray());
+    // The blackhole account should already exist from test setup, but let's ensure it has balance tracking
+    if (dbManager.getAccountStore().get(dbManager.getAccountStore().getBlackhole().getAddress().toByteArray()) == null) {
+      putAccount(dbManager, blackholeAddress, 0, "blackhole");
+    }
+
+    String issuerAddress = generateAddress("fee_blackhole_issuer");
+    putAccount(dbManager, issuerAddress, INITIAL_BALANCE, "fee_blackhole_issuer");
+
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
+    long endTime = startTime + 86400000 * 30;
+
+    AssetIssueContract contract = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(issuerAddress)))
+        .setName(ByteString.copyFromUtf8("BlackholeFeeToken"))
+        .setAbbr(ByteString.copyFromUtf8("BHT"))
+        .setTotalSupply(1_000_000_000L)
+        .setPrecision(6)
+        .setTrxNum(1)
+        .setNum(1)
+        .setStartTime(startTime)
+        .setEndTime(endTime)
+        .setDescription(ByteString.copyFromUtf8("Token with fee to blackhole"))
+        .setUrl(ByteString.copyFromUtf8("https://blackhole-fee.network"))
+        .setFreeAssetNetLimit(10000)
+        .setPublicFreeAssetNetLimit(10000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ASSET_ISSUE_CONTRACT", 6)
+        .caseName("happy_path_fee_to_blackhole_disabled")
+        .caseCategory("happy")
+        .description("Blackhole mode: fee is credited to blackhole account instead of being burned")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(issuerAddress)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 1)
+        .dynamicProperty("ALLOW_BLACK_HOLE_OPTIMIZATION", 0)
+        .dynamicProperty("ASSET_ISSUE_FEE", ASSET_ISSUE_FEE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AssetIssue fee to blackhole: success={}", result.isSuccess());
+  }
 }

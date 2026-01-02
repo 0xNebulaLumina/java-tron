@@ -180,10 +180,14 @@ Phase 7 — Mode Differences: `ALLOW_SAME_TOKEN_NAME=0` (V1)
   - [x] Expect validate error: `"Token exists"`.
   - [x] Databases: `asset-issue`, `asset-issue-v2`, `account`, `dynamic-properties`.
 
-Phase 8 — Optional Execution Branch: Fee Sink (burn vs blackhole)
-- [ ] Decide whether conformance needs fixtures for `supportBlackHoleOptimization()`:
-  - [ ] If yes, add one fixture with burning enabled and one with burning disabled.
-  - [ ] Verify expected post-state differs (blackhole account credit vs dynamic burn counter).
+Phase 8 — Execution Branch: Fee Sink (burn vs blackhole)
+- [x] Add fixtures for `supportBlackHoleOptimization()`:
+  - [x] `happy_path_fee_burn_enabled`: burning enabled via `saveAllowBlackHoleOptimization(1)`.
+    - [x] Fee is burned via `dynamicStore.burnTrx()`.
+    - [x] Post-state: owner balance decreased, burn counter increased.
+  - [x] `happy_path_fee_to_blackhole_disabled`: burning disabled via `saveAllowBlackHoleOptimization(0)`.
+    - [x] Fee is credited to blackhole account.
+    - [x] Post-state: owner balance decreased, blackhole account balance increased.
 
 Phase 9 — Hygiene / Determinism
 - [x] Ensure time computations account for `createBlockContext(dbManager, ...)` mutating the dynamic head time/height.
