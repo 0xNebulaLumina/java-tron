@@ -1160,8 +1160,8 @@ public class MarketFixtureGeneratorTest extends BaseTest {
     // Seed maker orders at two different price levels
     // Price level 1: 1:1 (best price for taker)
     createMarketOrder(1, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN, 500_000_000L, 500_000_000L);
-    // Price level 2: 2:1 (worse price - maker wants 2 TRX per TOKEN_A)
-    createMarketOrder(2, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN, 500_000_000L, 1_000_000_000L);
+    // Price level 2: 3:2 (worse price - maker wants 1.5 TRX per TOKEN_A)
+    createMarketOrder(2, OTHER_ADDRESS, TOKEN_A, TRX_TOKEN, 500_000_000L, 750_000_000L);
 
     // Taker wants to buy more than what's available at the best price
     // This should consume the best price level and continue into the next
