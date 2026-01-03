@@ -505,9 +505,8 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
     putAccount(dbManager, burnOwner, INITIAL_BALANCE, "burn_owner");
 
     // Enable blackhole optimization (fees are burned instead of credited to blackhole)
+    // Note: BURN_TRX_AMOUNT is auto-initialized to 0 by DynamicPropertiesStore constructor
     dbManager.getDynamicPropertiesStore().saveAllowBlackHoleOptimization(1);
-    // BURN_TRX_AMOUNT must be initialized for supportBlackHoleOptimization execute path
-    dbManager.getDynamicPropertiesStore().saveBurnTrx(0);
 
     AccountCreateContract contract = AccountCreateContract.newBuilder()
         .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(burnOwner)))
