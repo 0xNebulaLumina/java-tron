@@ -136,7 +136,11 @@ Phase 5 — Numeric Fields / Flags
   - [x] Add `validate_fail_public_free_asset_net_limit_equal_one_day_net_limit`:
     - [x] `public_free_asset_net_limit = oneDayNetLimit`.
     - [x] Expect validate error: `"Invalid PublicFreeAssetNetLimit"`.
-  - [ ] (Optional) Add boundary-happy values `0` and `oneDayNetLimit - 1`.
+  - [x] Add boundary-happy values `0` and `oneDayNetLimit - 1`:
+    - [x] `happy_path_free_asset_net_limit_zero`: free_asset_net_limit = 0.
+    - [x] `happy_path_free_asset_net_limit_max_minus_1`: free_asset_net_limit = oneDayNetLimit - 1.
+    - [x] `happy_path_public_free_asset_net_limit_zero`: public_free_asset_net_limit = 0.
+    - [x] `happy_path_public_free_asset_net_limit_max_minus_1`: public_free_asset_net_limit = oneDayNetLimit - 1.
 
 Phase 6 — Frozen Supply List
 - [x] Add `happy_path_with_valid_frozen_supply`:

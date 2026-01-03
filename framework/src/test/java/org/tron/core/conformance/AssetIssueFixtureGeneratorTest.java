@@ -1781,6 +1781,190 @@ public class AssetIssueFixtureGeneratorTest extends BaseTest {
     log.info("AssetIssue pub_net_limit equals max: validationError={}", result.getValidationError());
   }
 
+  @Test
+  public void generateAssetIssue_happyPathFreeAssetNetLimitZero() throws Exception {
+    String issuerAddress = generateAddress("free_net_zero_issuer");
+    putAccount(dbManager, issuerAddress, INITIAL_BALANCE, "free_net_zero_issuer");
+
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
+    long endTime = startTime + 86400000 * 30;
+
+    AssetIssueContract contract = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(issuerAddress)))
+        .setName(ByteString.copyFromUtf8("ZeroFreeNetToken"))
+        .setAbbr(ByteString.copyFromUtf8("ZFN"))
+        .setTotalSupply(1_000_000_000L)
+        .setPrecision(6)
+        .setTrxNum(1)
+        .setNum(1)
+        .setStartTime(startTime)
+        .setEndTime(endTime)
+        .setDescription(ByteString.copyFromUtf8("Token with free_asset_net_limit = 0"))
+        .setUrl(ByteString.copyFromUtf8("https://zero-free-net.network"))
+        .setFreeAssetNetLimit(0) // Zero - boundary happy
+        .setPublicFreeAssetNetLimit(10000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ASSET_ISSUE_CONTRACT", 6)
+        .caseName("happy_path_free_asset_net_limit_zero")
+        .caseCategory("happy")
+        .description("Success when free_asset_net_limit is 0 (boundary-happy)")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(issuerAddress)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 1)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AssetIssue free_net_limit zero: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateAssetIssue_happyPathFreeAssetNetLimitMaxMinus1() throws Exception {
+    String issuerAddress = generateAddress("free_net_max_minus1_issuer");
+    putAccount(dbManager, issuerAddress, INITIAL_BALANCE, "free_net_max_minus1_issuer");
+
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
+    long endTime = startTime + 86400000 * 30;
+    long oneDayNetLimit = 300_000_000L;
+
+    AssetIssueContract contract = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(issuerAddress)))
+        .setName(ByteString.copyFromUtf8("MaxMinus1FreeNetToken"))
+        .setAbbr(ByteString.copyFromUtf8("MMF"))
+        .setTotalSupply(1_000_000_000L)
+        .setPrecision(6)
+        .setTrxNum(1)
+        .setNum(1)
+        .setStartTime(startTime)
+        .setEndTime(endTime)
+        .setDescription(ByteString.copyFromUtf8("Token with free_asset_net_limit = oneDayNetLimit - 1"))
+        .setUrl(ByteString.copyFromUtf8("https://max-minus1-free-net.network"))
+        .setFreeAssetNetLimit(oneDayNetLimit - 1) // Max - 1, boundary happy
+        .setPublicFreeAssetNetLimit(10000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ASSET_ISSUE_CONTRACT", 6)
+        .caseName("happy_path_free_asset_net_limit_max_minus_1")
+        .caseCategory("happy")
+        .description("Success when free_asset_net_limit is oneDayNetLimit - 1 (boundary-happy)")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(issuerAddress)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 1)
+        .dynamicProperty("ONE_DAY_NET_LIMIT", oneDayNetLimit)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AssetIssue free_net_limit max-1: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateAssetIssue_happyPathPublicFreeAssetNetLimitZero() throws Exception {
+    String issuerAddress = generateAddress("pub_net_zero_issuer");
+    putAccount(dbManager, issuerAddress, INITIAL_BALANCE, "pub_net_zero_issuer");
+
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
+    long endTime = startTime + 86400000 * 30;
+
+    AssetIssueContract contract = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(issuerAddress)))
+        .setName(ByteString.copyFromUtf8("ZeroPubNetToken"))
+        .setAbbr(ByteString.copyFromUtf8("ZPN"))
+        .setTotalSupply(1_000_000_000L)
+        .setPrecision(6)
+        .setTrxNum(1)
+        .setNum(1)
+        .setStartTime(startTime)
+        .setEndTime(endTime)
+        .setDescription(ByteString.copyFromUtf8("Token with public_free_asset_net_limit = 0"))
+        .setUrl(ByteString.copyFromUtf8("https://zero-pub-net.network"))
+        .setFreeAssetNetLimit(10000)
+        .setPublicFreeAssetNetLimit(0) // Zero - boundary happy
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ASSET_ISSUE_CONTRACT", 6)
+        .caseName("happy_path_public_free_asset_net_limit_zero")
+        .caseCategory("happy")
+        .description("Success when public_free_asset_net_limit is 0 (boundary-happy)")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(issuerAddress)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 1)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AssetIssue pub_net_limit zero: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateAssetIssue_happyPathPublicFreeAssetNetLimitMaxMinus1() throws Exception {
+    String issuerAddress = generateAddress("pub_net_max_minus1_issuer");
+    putAccount(dbManager, issuerAddress, INITIAL_BALANCE, "pub_net_max_minus1_issuer");
+
+    long startTime = DEFAULT_BLOCK_TIMESTAMP + DEFAULT_BLOCK_INTERVAL_MS + 1000;
+    long endTime = startTime + 86400000 * 30;
+    long oneDayNetLimit = 300_000_000L;
+
+    AssetIssueContract contract = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(issuerAddress)))
+        .setName(ByteString.copyFromUtf8("MaxMinus1PubNetToken"))
+        .setAbbr(ByteString.copyFromUtf8("MMP"))
+        .setTotalSupply(1_000_000_000L)
+        .setPrecision(6)
+        .setTrxNum(1)
+        .setNum(1)
+        .setStartTime(startTime)
+        .setEndTime(endTime)
+        .setDescription(ByteString.copyFromUtf8("Token with public_free_asset_net_limit = oneDayNetLimit - 1"))
+        .setUrl(ByteString.copyFromUtf8("https://max-minus1-pub-net.network"))
+        .setFreeAssetNetLimit(10000)
+        .setPublicFreeAssetNetLimit(oneDayNetLimit - 1) // Max - 1, boundary happy
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ASSET_ISSUE_CONTRACT", 6)
+        .caseName("happy_path_public_free_asset_net_limit_max_minus_1")
+        .caseCategory("happy")
+        .description("Success when public_free_asset_net_limit is oneDayNetLimit - 1 (boundary-happy)")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(issuerAddress)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 1)
+        .dynamicProperty("ONE_DAY_NET_LIMIT", oneDayNetLimit)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AssetIssue pub_net_limit max-1: success={}", result.isSuccess());
+  }
+
   // ==========================================================================
   // Phase 6: Frozen Supply List
   // ==========================================================================
