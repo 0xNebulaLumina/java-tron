@@ -206,9 +206,9 @@ Behavioral: permissionless trading
   - [x] Expect `SUCCESS`.
 
 Optional: strict math divergence
-- [ ] Add `happy_path_strict_math_enabled` (optional, only if the conformance harness cares):
-  - [ ] Set dynamic property `allowStrictMath=true` and regenerate a known trade.
-  - [ ] Compare output amounts vs the default fixture to confirm it actually changes.
+- [x] Add `happy_path_strict_math_enabled` (optional, only if the conformance harness cares):
+  - [x] Set dynamic property `allowStrictMath=true` and regenerate a known trade.
+  - [x] Compare output amounts vs the default fixture to confirm it actually changes.
 
 Phase 5 — Hygiene and Consistency
 - [x] Ensure each fixture lists the correct databases in `FixtureMetadata`:

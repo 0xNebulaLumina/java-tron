@@ -1939,6 +1939,49 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
     log.info("ExchangeTransaction non-creator happy path: success={}", result.isSuccess());
   }
 
+  @Test
+  public void generateExchangeTransaction_happyPathStrictMathEnabled() throws Exception {
+    // Enable strict math mode
+    dbManager.getDynamicPropertiesStore().saveAllowStrictMath(1);
+
+    // Create an exchange with liquidity
+    createExchange(308, TRX_TOKEN, TOKEN_A, 10_000_000_000L, 10_000_000_000L);
+
+    // Execute a token swap with strict math enabled
+    // The strict math mode affects rounding behavior in AMM calculations
+    ExchangeTransactionContract contract = ExchangeTransactionContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(308)
+        .setTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setQuant(100_000_000L) // Sell 100 TRX
+        .setExpected(1L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeTransactionContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_TRANSACTION_CONTRACT", 44)
+        .caseName("happy_path_strict_math_enabled")
+        .caseCategory("happy")
+        .description("Execute swap with strict math mode enabled (affects AMM rounding)")
+        .database("account")
+        .database("exchange-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("exchange_id", 308)
+        .dynamicProperty("ALLOW_STRICT_MATH", 1)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeTransaction strict math enabled: success={}", result.isSuccess());
+
+    // Restore default (disabled)
+    dbManager.getDynamicPropertiesStore().saveAllowStrictMath(0);
+  }
+
   // ==========================================================================
   // Helper Methods
   // ==========================================================================
