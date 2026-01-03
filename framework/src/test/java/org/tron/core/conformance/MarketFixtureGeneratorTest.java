@@ -1025,7 +1025,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
     AccountCapsule lowBalanceAccount = new AccountCapsule(
         ByteString.copyFromUtf8("lowBalance"),
         ByteString.copyFrom(ByteArray.fromHexString(
-            Wallet.getAddressPreFixString() + "feetest1234567890abcdef1234567890abcdef")),
+            Wallet.getAddressPreFixString() + "feeacc01234567890abcdef1234567890abcdef")),
         AccountType.Normal,
         1_000_000_000L); // Only 1000 TRX (= sell amount, no room for fee)
     dbManager.getAccountStore().put(lowBalanceAccount.getAddress().toByteArray(), lowBalanceAccount);
@@ -1070,7 +1070,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
     AccountCapsule lowTrxAccount = new AccountCapsule(
         ByteString.copyFromUtf8("lowTrx"),
         ByteString.copyFrom(ByteArray.fromHexString(
-            Wallet.getAddressPreFixString() + "feetest2234567890abcdef1234567890abcdef")),
+            Wallet.getAddressPreFixString() + "feeacc02234567890abcdef1234567890abcdef")),
         AccountType.Normal,
         100L); // Only 100 SUN (way less than 1000 TRX fee)
     lowTrxAccount.addAssetAmountV2(TOKEN_A, 10_000_000_000L,
@@ -1756,7 +1756,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
     AccountCapsule lowBalanceAccount = new AccountCapsule(
         ByteString.copyFromUtf8("lowBalanceCancel"),
         ByteString.copyFrom(ByteArray.fromHexString(
-            Wallet.getAddressPreFixString() + "canceltest1234567890abcdef1234567890abc")),
+            Wallet.getAddressPreFixString() + "cceacc01234567890abcdef1234567890abcdef")),
         AccountType.Normal,
         100L); // Only 100 SUN
     lowBalanceAccount.addAssetAmountV2(TOKEN_A, 10_000_000_000L,
