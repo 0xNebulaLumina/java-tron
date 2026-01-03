@@ -145,16 +145,16 @@ Expired sweep behavior (extend existing coverage)
   - [x] Seed entry with `unfreezeExpireTime == now`; expect it is swept (`<= now`).
 
 Vote side effects (optional but high value for cross-impl conformance)
-- [ ] Add `edge_unfreeze_clears_votes_on_new_resource_model_transition`:
-  - [ ] Ensure `ALLOW_NEW_RESOURCE_MODEL = 1`
-  - [ ] Seed account with non-empty `votesList` and `oldTronPower == 0` (default)
-  - [ ] Execute an unfreeze (any resource) and verify votes cleared per `updateVote(...)` logic.
-  - [ ] Include `votes` in `databasesTouched`.
-- [ ] Add `edge_unfreeze_rescales_votes_when_legacy_model`:
-  - [ ] Set `ALLOW_NEW_RESOURCE_MODEL = 0`
-  - [ ] Seed votes such that owned tron power becomes insufficient after unfreeze
-  - [ ] Verify vote rescaling behavior and `VotesStore` updates.
-  - [ ] Include `votes` in `databasesTouched`.
+- [x] Add `edge_unfreeze_clears_votes_on_new_resource_model_transition`:
+  - [x] Ensure `ALLOW_NEW_RESOURCE_MODEL = 1`
+  - [x] Seed account with non-empty `votesList` and `oldTronPower == 0` (default)
+  - [x] Execute an unfreeze (any resource) and verify votes cleared per `updateVote(...)` logic.
+  - [x] Include `votes` in `databasesTouched`.
+- [x] Add `edge_unfreeze_rescales_votes_when_legacy_model`:
+  - [x] Set `ALLOW_NEW_RESOURCE_MODEL = 0`
+  - [x] Seed votes such that owned tron power becomes insufficient after unfreeze
+  - [x] Verify vote rescaling behavior and `VotesStore` updates.
+  - [x] Include `votes` in `databasesTouched`.
 
 Phase 3 — Validate Fixture Output
 - [ ] Regenerate fixtures:

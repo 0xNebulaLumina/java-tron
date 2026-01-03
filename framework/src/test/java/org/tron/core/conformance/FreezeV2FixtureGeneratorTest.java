@@ -1653,4 +1653,137 @@ public class FreezeV2FixtureGeneratorTest extends BaseTest {
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UnfreezeV2 expire equals now: success={}", result.isSuccess());
   }
+
+  // ==========================================================================
+  // Vote Side Effects (high value for cross-impl conformance)
+  // ==========================================================================
+
+  @Test
+  public void generateUnfreezeBalanceV2_edgeUnfreezeClearsVotesOnNewResourceModelTransition() throws Exception {
+    String unfreezeOwner = generateAddress("unfreeze_v2_vote_clr");
+
+    // Create account with frozenV2(TRON_POWER) balance and votes
+    // When oldTronPower is not initialized (default 0) and new resource model is enabled,
+    // the first unfreeze will clear all votes during the transition
+    AccountCapsule account = putAccount(dbManager, unfreezeOwner, INITIAL_BALANCE, "unfreeze_v2_vote_clr");
+    Protocol.Account.Builder builder = account.getInstance().toBuilder();
+
+    // Add frozen TRON_POWER balance
+    builder.addFrozenV2(FreezeV2.newBuilder()
+        .setType(ResourceCode.TRON_POWER)
+        .setAmount(100 * ONE_TRX)
+        .build());
+
+    // Add votes (oldTronPower stays at default 0, meaning not initialized)
+    builder.addVotes(Protocol.Vote.newBuilder()
+        .setVoteAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+        .setVoteCount(50)
+        .build());
+
+    account = new AccountCapsule(builder.build());
+    dbManager.getAccountStore().put(account.getAddress().toByteArray(), account);
+
+    // Ensure ALLOW_NEW_RESOURCE_MODEL = 1 (baseline already has this)
+    dbManager.getDynamicPropertiesStore().saveAllowNewResourceModel(1);
+
+    long unfreezeAmount = 10 * ONE_TRX;
+
+    UnfreezeBalanceV2Contract contract = UnfreezeBalanceV2Contract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(unfreezeOwner)))
+        .setUnfreezeBalance(unfreezeAmount)
+        .setResource(ResourceCode.TRON_POWER)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeBalanceV2Contract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_BALANCE_V2_CONTRACT", 55)
+        .caseName("edge_unfreeze_clears_votes_on_new_resource_model_transition")
+        .caseCategory("edge")
+        .description("Unfreeze clears votes when transitioning to new resource model")
+        .database("account")
+        .database("dynamic-properties")
+        .database("votes")
+        .ownerAddress(unfreezeOwner)
+        .dynamicProperty("UNFREEZE_DELAY_DAYS", UNFREEZE_DELAY_DAYS)
+        .dynamicProperty("ALLOW_NEW_RESOURCE_MODEL", 1)
+        .dynamicProperty("pre_votes", 50)
+        .note("Tests updateVote clears votes when oldTronPower not initialized and new model enabled")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeV2 clears votes: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateUnfreezeBalanceV2_edgeUnfreezeRescalesVotesWhenLegacyModel() throws Exception {
+    String unfreezeOwner = generateAddress("unfreeze_v2_vote_scl");
+
+    // Disable new resource model (legacy mode)
+    dbManager.getDynamicPropertiesStore().saveAllowNewResourceModel(0);
+
+    // In legacy mode, tronPower = frozenBalance + frozenBalanceForEnergy
+    // Create account with frozen balance that will be reduced after unfreeze
+    // such that owned tron power becomes insufficient for the votes
+    AccountCapsule account = putAccount(dbManager, unfreezeOwner, INITIAL_BALANCE, "unfreeze_v2_vote_scl");
+    Protocol.Account.Builder builder = account.getInstance().toBuilder();
+
+    // Add legacy frozen balance for BANDWIDTH (contributes to tron power in legacy mode)
+    // Use frozenV2 for BANDWIDTH which will be unfrozen
+    builder.addFrozenV2(FreezeV2.newBuilder()
+        .setType(ResourceCode.BANDWIDTH)
+        .setAmount(100 * ONE_TRX)
+        .build());
+
+    // Add votes that exceed what will remain after unfreeze
+    // Current tron power: 100 TRX = 100 votes capacity
+    // After unfreeze 80 TRX: 20 TRX = 20 votes capacity
+    // Votes of 80 should be rescaled to ~20
+    builder.addVotes(Protocol.Vote.newBuilder()
+        .setVoteAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+        .setVoteCount(80)
+        .build());
+
+    account = new AccountCapsule(builder.build());
+    dbManager.getAccountStore().put(account.getAddress().toByteArray(), account);
+
+    long unfreezeAmount = 80 * ONE_TRX; // Unfreeze 80 TRX, leaving 20 TRX
+
+    UnfreezeBalanceV2Contract contract = UnfreezeBalanceV2Contract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(unfreezeOwner)))
+        .setUnfreezeBalance(unfreezeAmount)
+        .setResource(ResourceCode.BANDWIDTH)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeBalanceV2Contract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_BALANCE_V2_CONTRACT", 55)
+        .caseName("edge_unfreeze_rescales_votes_when_legacy_model")
+        .caseCategory("edge")
+        .description("Unfreeze rescales votes when tron power becomes insufficient (legacy model)")
+        .database("account")
+        .database("dynamic-properties")
+        .database("votes")
+        .ownerAddress(unfreezeOwner)
+        .dynamicProperty("UNFREEZE_DELAY_DAYS", UNFREEZE_DELAY_DAYS)
+        .dynamicProperty("ALLOW_NEW_RESOURCE_MODEL", 0)
+        .dynamicProperty("pre_frozen", 100 * ONE_TRX)
+        .dynamicProperty("unfreeze_amount", unfreezeAmount)
+        .dynamicProperty("pre_votes", 80)
+        .note("Tests vote rescaling when owned tron power < total votes after unfreeze")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeV2 rescales votes: success={}", result.isSuccess());
+
+    // Restore new resource model
+    dbManager.getDynamicPropertiesStore().saveAllowNewResourceModel(1);
+  }
 }
