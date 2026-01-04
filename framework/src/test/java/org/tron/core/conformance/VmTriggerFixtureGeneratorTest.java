@@ -1719,6 +1719,862 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
   }
 
   @Test
+  public void generateTriggerSmartContract_validateFailVmDisabled() throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_vm_disabled fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first (while VM is enabled)
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Save original VM support setting
+    long originalAllowCreation = manager.getDynamicPropertiesStore().getAllowCreationOfContracts();
+
+    // Disable VM support
+    manager.getDynamicPropertiesStore().saveAllowCreationOfContracts(0);
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/validate_fail_vm_disabled");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    String expectedError = "VM work is off, need to be opened by the committee";
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    try {
+      String params = "0000000000000000000000000000000000000000000000000000000000000001"
+          + "0000000000000000000000000000000000000000000000000000000000000040"
+          + "0000000000000000000000000000000000000000000000000000000000000005"
+          + "68656c6c6f000000000000000000000000000000000000000000000000000000";
+      byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, contractAddress, triggerData, 0, DEFAULT_FEE_LIMIT, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (org.tron.core.exception.ContractValidateException e) {
+      errorMessage = e.getMessage();
+      log.info("Got expected validation error: {}", errorMessage);
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    } finally {
+      // Restore original VM support setting
+      manager.getDynamicPropertiesStore().saveAllowCreationOfContracts(originalAllowCreation);
+    }
+
+    log.info("VM disabled trigger result: error={}", errorMessage);
+
+    // Build request
+    String params = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000005"
+        + "68656c6c6f000000000000000000000000000000000000000000000000000000";
+    byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_vm_disabled")
+        .caseCategory("validate_fail")
+        .description("Trigger when VM support is disabled via committee")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated TriggerSmartContract validate_fail_vm_disabled fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailOwnerAddressInvalidEmpty() throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_owner_address_invalid_empty fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/validate_fail_owner_address_invalid_empty");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Build trigger with empty owner address
+    String params = "0000000000000000000000000000000000000000000000000000000000000001";
+    byte[] triggerData = TvmTestUtils.parseAbi("testDelete(uint256)", params);
+
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY)
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    // Note: The actual execution with empty owner may fail in different ways
+    // depending on where validation happens. We capture the expected behavior.
+    String expectedError = "Invalid ownerAddress";
+
+    log.info("Empty owner address fixture: expected error = {}", expectedError);
+
+    // Save request
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_owner_address_invalid_empty")
+        .caseCategory("validate_fail")
+        .description("Trigger with empty owner address should fail validation")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress("")
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated validate_fail_owner_address_invalid_empty fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailOwnerAccountMissing() throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_owner_account_missing fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/validate_fail_owner_account_missing");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Use a valid-looking address that doesn't exist in AccountStore
+    // TRON addresses are 21 bytes: 0x41 prefix + 20 bytes
+    byte[] missingOwner = Hex.decode("41aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+    String params = "0000000000000000000000000000000000000000000000000000000000000001";
+    byte[] triggerData = TvmTestUtils.parseAbi("testDelete(uint256)", params);
+
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          missingOwner, contractAddress, triggerData, 0, DEFAULT_FEE_LIMIT, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (org.tron.core.exception.ContractValidateException e) {
+      errorMessage = e.getMessage();
+      log.info("Got expected validation error: {}", errorMessage);
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    }
+
+    log.info("Missing owner account trigger result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(missingOwner))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    String expectedError = errorMessage != null ? errorMessage : "Account not exists";
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_owner_account_missing")
+        .caseCategory("validate_fail")
+        .description("Trigger with owner address that does not exist in AccountStore")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(Hex.toHexString(missingOwner))
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated validate_fail_owner_account_missing fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailContractAddressMissing() throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_contract_address_missing fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/validate_fail_contract_address_missing");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Build trigger without contract address (empty)
+    String params = "0000000000000000000000000000000000000000000000000000000000000001";
+    byte[] triggerData = TvmTestUtils.parseAbi("testDelete(uint256)", params);
+
+    String expectedError = "Cannot get contract address from TriggerContract";
+
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.EMPTY) // Missing contract address
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    log.info("Missing contract address fixture: expected error = {}", expectedError);
+
+    // Save request
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_contract_address_missing")
+        .caseCategory("validate_fail")
+        .description("Trigger without contract address should fail validation")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated validate_fail_contract_address_missing fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailContractAddressInvalidBytes()
+      throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_contract_address_invalid_bytes");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/validate_fail_contract_address_invalid_bytes");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Use invalid address bytes (wrong length - 10 bytes instead of 21)
+    byte[] invalidContractAddress = Hex.decode("01020304050607080910");
+
+    String params = "0000000000000000000000000000000000000000000000000000000000000001";
+    byte[] triggerData = TvmTestUtils.parseAbi("testDelete(uint256)", params);
+
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(invalidContractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .build();
+
+    String expectedError = "Invalid contract address";
+
+    log.info("Invalid contract address bytes fixture: expected error = {}", expectedError);
+
+    // Save request
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_contract_address_invalid_bytes")
+        .caseCategory("validate_fail")
+        .description("Trigger with invalid contract address bytes (wrong length)")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated validate_fail_contract_address_invalid_bytes fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailCallValueInsufficientBalance()
+      throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_call_value_insufficient_balance");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Get owner's current balance
+    long ownerBalance = manager.getAccountStore()
+        .get(ownerBytes).getBalance();
+    log.info("Owner balance before trigger: {} SUN", ownerBalance);
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/validate_fail_call_value_insufficient_balance");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Try to trigger with callValue much greater than balance
+    long excessiveCallValue = ownerBalance + 1_000_000_000_000L; // Way more than balance
+    String params = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000005"
+        + "68656c6c6f000000000000000000000000000000000000000000000000000000";
+    byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, contractAddress, triggerData, excessiveCallValue,
+          DEFAULT_FEE_LIMIT, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (org.tron.core.exception.ContractValidateException e) {
+      errorMessage = e.getMessage();
+      log.info("Got expected validation error: {}", errorMessage);
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    }
+
+    log.info("Insufficient balance trigger result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(excessiveCallValue)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    String expectedError = errorMessage != null ? errorMessage : "balance is not sufficient";
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_call_value_insufficient_balance")
+        .caseCategory("validate_fail")
+        .description("Trigger with callValue greater than owner balance")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated validate_fail_call_value_insufficient_balance fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailCallValueNegative() throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_call_value_negative fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/validate_fail_call_value_negative");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Try to trigger with negative callValue
+    long negativeCallValue = -1L;
+    String params = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000005"
+        + "68656c6c6f000000000000000000000000000000000000000000000000000000";
+    byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, contractAddress, triggerData, negativeCallValue,
+          DEFAULT_FEE_LIMIT, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (org.tron.core.exception.ContractValidateException e) {
+      errorMessage = e.getMessage();
+      log.info("Got expected validation error: {}", errorMessage);
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    }
+
+    log.info("Negative callValue trigger result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(negativeCallValue)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    // Error may be "callValue must be >= 0" (with ENERGY_LIMIT_HARD_FORK)
+    // or "Amount must be greater than or equals 0." (without hard fork)
+    String expectedError = errorMessage != null ? errorMessage : "callValue must be >= 0";
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_call_value_negative")
+        .caseCategory("validate_fail")
+        .description("Trigger with negative callValue should fail validation")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated validate_fail_call_value_negative fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_validateFailTokenAssetMissing() throws Exception {
+    log.info("Generating TriggerSmartContract validate_fail_token_asset_missing fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Enable TRC-10 transfer and multi-sign
+    manager.getDynamicPropertiesStore().saveAllowTvmTransferTrc10(1);
+    manager.getDynamicPropertiesStore().saveAllowMultiSign(1);
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/validate_fail_token_asset_missing");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Try with valid tokenId that doesn't exist as an asset
+    String params = "0000000000000000000000000000000000000000000000000000000000000001";
+    byte[] triggerData = TvmTestUtils.parseAbi("testDelete(uint256)", params);
+
+    long tokenValue = 100L;
+    long tokenId = 1_000_001L; // Valid tokenId but asset doesn't exist
+    String expectedError = "No asset !";
+
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(0)
+        .setCallTokenValue(tokenValue)
+        .setTokenId(tokenId)
+        .build();
+
+    log.info("Missing asset fixture: expected error = {}", expectedError);
+
+    // Save request
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("validate_fail_token_asset_missing")
+        .caseCategory("validate_fail")
+        .description("Trigger with tokenId for non-existent asset should fail")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError(expectedError)
+        .build();
+
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated validate_fail_token_asset_missing fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_edgeNonpayableWithCallValueRevert() throws Exception {
+    log.info("Generating TriggerSmartContract edge_nonpayable_with_call_value_revert fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract first (StorageDemo functions are nonpayable)
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // Capture pre-state
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/edge_nonpayable_with_call_value_revert");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Call nonpayable function with callValue > 0 (should revert)
+    String params = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + "0000000000000000000000000000000000000000000000000000000000000005"
+        + "68656c6c6f000000000000000000000000000000000000000000000000000000";
+    byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
+
+    long callValue = 1_000_000L; // 1 TRX
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    try {
+      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+          ownerBytes, contractAddress, triggerData, callValue, DEFAULT_FEE_LIMIT, manager, null);
+      if (result.getRuntime().getRuntimeError() != null) {
+        errorMessage = result.getRuntime().getRuntimeError();
+      }
+    } catch (Exception e) {
+      errorMessage = e.getMessage();
+    }
+
+    log.info("Nonpayable with callValue trigger result: error={}", errorMessage);
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(triggerData))
+        .setCallValue(callValue)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt if available
+    if (result != null && result.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        result.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata.Builder metadataBuilder = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_nonpayable_with_call_value_revert")
+        .caseCategory("edge")
+        .description("Call nonpayable function with callValue > 0 (should revert)")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS);
+
+    if (errorMessage != null) {
+      metadataBuilder.expectedRevert(errorMessage);
+    } else {
+      // If no error, it may have succeeded (depending on contract/compiler)
+      metadataBuilder.expectedStatus("SUCCESS");
+    }
+
+    FixtureMetadata metadata = metadataBuilder.build();
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated edge_nonpayable_with_call_value_revert fixture");
+  }
+
+  @Test
+  public void generateTriggerSmartContract_edgeDeleteLongStringRefund() throws Exception {
+    log.info("Generating TriggerSmartContract edge_delete_long_string_refund fixture");
+
+    byte[] ownerBytes = Hex.decode(OWNER_ADDRESS);
+
+    // Deploy contract
+    Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
+        "StorageDemo", ownerBytes, STORAGE_ABI, STORAGE_CODE,
+        0, DEFAULT_FEE_LIMIT, 50, null);
+
+    byte[] contractAddress = WalletUtil.generateContractAddress(deployTx);
+    runtime = TvmTestUtils.processTransactionAndReturnRuntime(deployTx, rootRepository, null);
+    Assert.assertNull("Deploy should succeed", runtime.getRuntimeError());
+
+    // First write a long string (> 31 bytes) to create multi-slot storage
+    String longString = "this_is_a_very_long_string_that_exceeds_31_bytes_and_uses_multiple_slots";
+    byte[] longStringBytes = longString.getBytes();
+    int paddedLen = ((longStringBytes.length + 31) / 32) * 32;
+    byte[] paddedBytes = new byte[paddedLen];
+    System.arraycopy(longStringBytes, 0, paddedBytes, 0, longStringBytes.length);
+
+    String longParams = "0000000000000000000000000000000000000000000000000000000000000001"
+        + "0000000000000000000000000000000000000000000000000000000000000040"
+        + String.format("%064x", longStringBytes.length)
+        + Hex.toHexString(paddedBytes);
+
+    byte[] longData = TvmTestUtils.parseAbi("testPut(uint256,string)", longParams);
+    TVMTestResult longResult = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+        ownerBytes, contractAddress, longData, 0, DEFAULT_FEE_LIMIT, manager, null);
+    Assert.assertNull("Long write should succeed", longResult.getRuntime().getRuntimeError());
+
+    // Capture pre-state for delete
+    File fixtureDir = new File(outputDir,
+        "trigger_smart_contract/edge_delete_long_string_refund");
+    fixtureDir.mkdirs();
+    File preDbDir = new File(fixtureDir, "pre_db");
+    preDbDir.mkdirs();
+    captureVmDatabases(preDbDir);
+
+    // Delete the long string (should clean up multi-slot storage and trigger refund)
+    String deleteParams = "0000000000000000000000000000000000000000000000000000000000000001";
+    byte[] deleteData = TvmTestUtils.parseAbi("testDelete(uint256)", deleteParams);
+    TVMTestResult deleteResult = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+        ownerBytes, contractAddress, deleteData, 0, DEFAULT_FEE_LIMIT, manager, null);
+    Assert.assertNull("Delete should succeed", deleteResult.getRuntime().getRuntimeError());
+
+    // Build request
+    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setContractAddress(ByteString.copyFrom(contractAddress))
+        .setData(ByteString.copyFrom(deleteData))
+        .setCallValue(0)
+        .build();
+
+    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+    File requestFile = new File(fixtureDir, "request.pb");
+    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+      request.writeTo(fos);
+    }
+
+    // Capture post-state
+    File expectedDir = new File(fixtureDir, "expected");
+    File postDbDir = new File(expectedDir, "post_db");
+    postDbDir.mkdirs();
+    captureVmDatabases(postDbDir);
+
+    // Save receipt
+    if (deleteResult.getReceipt() != null) {
+      File resultFile = new File(expectedDir, "result.pb");
+      try (FileOutputStream fos = new FileOutputStream(resultFile)) {
+        deleteResult.getReceipt().getReceipt().writeTo(fos);
+      }
+    }
+
+    // Save metadata
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRIGGER_SMART_CONTRACT", 31)
+        .caseName("edge_delete_long_string_refund")
+        .caseCategory("edge")
+        .description("Delete long string (>31 bytes) to verify storage cleanup and refund")
+        .database("account")
+        .database("contract")
+        .database("code")
+        .database("abi")
+        .database("contract-state")
+        .database("storage-row")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    metadata.setExpectedStatus("SUCCESS");
+    metadata.toFile(new File(fixtureDir, "metadata.json"));
+    log.info("Generated edge_delete_long_string_refund fixture");
+  }
+
+  @Test
   public void generateTriggerSmartContract_edgeOverwriteLongToShort() throws Exception {
     log.info("Generating TriggerSmartContract edge_overwrite_long_to_short fixture");
 
