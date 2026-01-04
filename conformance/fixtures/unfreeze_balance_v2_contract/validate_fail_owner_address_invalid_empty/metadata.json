@@ -1,0 +1,19 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "validate_fail_owner_address_invalid_empty",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner_address is empty (fails DecodeUtil.addressValid)",
+  "generatedAt": "2026-01-03T13:02:54.819Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid address",
+  "dynamicProperties": {},
+  "notes": []
+}

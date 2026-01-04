@@ -1,0 +1,25 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "happy_path_fee_burn_enabled",
+  "caseCategory": "happy",
+  "description": "Fee burn mode: fee is burned via dynamicStore.burnTrx() instead of crediting blackhole",
+  "generatedAt": "2026-01-03T03:10:32.961Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "End time should be greater than start time",
+  "ownerAddress": "a06665655f6275726e5f6973737565720000000000",
+  "dynamicProperties": {
+    "ALLOW_BLACK_HOLE_OPTIMIZATION": 1,
+    "ALLOW_SAME_TOKEN_NAME": 1,
+    "ASSET_ISSUE_FEE": 1024000000
+  },
+  "notes": []
+}

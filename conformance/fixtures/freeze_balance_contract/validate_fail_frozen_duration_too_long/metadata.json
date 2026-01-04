@@ -1,0 +1,24 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "validate_fail_frozen_duration_too_long",
+  "caseCategory": "validate_fail",
+  "description": "Fail when frozenDuration exceeds maxFrozenTime",
+  "generatedAt": "2026-01-04T07:59:45.791Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "frozenDuration must be less than 3 days and more than 3 days",
+  "ownerAddress": "a0667265657a655f76315f6475725f6c6f6e670000",
+  "dynamicProperties": {
+    "frozenDuration": 4,
+    "maxFrozenTime": 3,
+    "minFrozenTime": 3
+  },
+  "notes": []
+}

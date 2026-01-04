@@ -1,0 +1,21 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "validate_fail_unfreeze_tron_power_when_new_resource_model_off",
+  "caseCategory": "validate_fail",
+  "description": "Fail TRON_POWER resource when allowNewResourceModel=0",
+  "generatedAt": "2026-01-04T07:59:45.915Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]",
+  "ownerAddress": "a0756e667265657a655f76315f74705f6f66660000",
+  "dynamicProperties": {},
+  "notes": []
+}
