@@ -1,0 +1,21 @@
+{
+  "contractType": "ACCOUNT_UPDATE_CONTRACT",
+  "contractTypeNum": 10,
+  "caseName": "validate_fail_invalid_name_too_long",
+  "caseCategory": "validate_fail",
+  "description": "Fail when account name exceeds 200 bytes (201 bytes)",
+  "generatedAt": "2026-01-04T12:48:59.580Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "account-index",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid accountName",
+  "ownerAddress": "a07570646174655f6f776e65725f30303200000000",
+  "dynamicProperties": {},
+  "notes": []
+}

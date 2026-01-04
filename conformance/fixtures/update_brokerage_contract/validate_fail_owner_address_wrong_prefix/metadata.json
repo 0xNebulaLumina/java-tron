@@ -1,0 +1,22 @@
+{
+  "contractType": "UPDATE_BROKERAGE_CONTRACT",
+  "contractTypeNum": 49,
+  "caseName": "validate_fail_owner_address_wrong_prefix",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner_address has wrong network prefix (0xa0 instead of 0x41)",
+  "generatedAt": "2026-01-02T14:29:52.277Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "witness",
+    "delegation",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Not existed witness:a00102030405060708090a0b0c0d0e0f1011121314",
+  "ownerAddress": "a00102030405060708090a0b0c0d0e0f1011121314",
+  "dynamicProperties": {},
+  "notes": []
+}
