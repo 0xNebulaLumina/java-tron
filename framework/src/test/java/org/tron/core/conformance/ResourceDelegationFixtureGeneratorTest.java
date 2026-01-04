@@ -2,6 +2,9 @@ package org.tron.core.conformance;
 
 import static org.tron.core.config.Parameter.ChainConstant.BLOCK_PRODUCED_INTERVAL;
 import static org.tron.core.config.Parameter.ChainConstant.DELEGATE_PERIOD;
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.DEFAULT_BLOCK_TIMESTAMP;
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.DEFAULT_TX_EXPIRATION;
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.DEFAULT_TX_TIMESTAMP;
 
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
@@ -120,9 +123,8 @@ public class ResourceDelegationFixtureGeneratorTest extends BaseTest {
     dbManager.getDynamicPropertiesStore().saveTotalEnergyWeight(1_000_000_000L);
     dbManager.getDynamicPropertiesStore().saveTotalTronPowerWeight(1_000_000_000L);
 
-    // Set block properties
-    long currentTime = System.currentTimeMillis();
-    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(currentTime);
+    // Set block properties with deterministic timestamps for reproducible fixtures
+    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(DEFAULT_BLOCK_TIMESTAMP);
     dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(10);
   }
 
@@ -2417,11 +2419,12 @@ public class ResourceDelegationFixtureGeneratorTest extends BaseTest {
         .setParameter(Any.pack(contract))
         .build();
 
+    // Use deterministic timestamps for reproducible fixture generation
     Transaction transaction = Transaction.newBuilder()
         .setRawData(Transaction.raw.newBuilder()
             .addContract(protoContract)
-            .setTimestamp(System.currentTimeMillis())
-            .setExpiration(System.currentTimeMillis() + 3600000)
+            .setTimestamp(DEFAULT_TX_TIMESTAMP)
+            .setExpiration(DEFAULT_TX_EXPIRATION)
             .build())
         .build();
 
@@ -2446,6 +2449,16 @@ public class ResourceDelegationFixtureGeneratorTest extends BaseTest {
         .setBlockHeader(blockHeader)
         .build();
 
-    return new BlockCapsule(block);
+    BlockCapsule blockCap = new BlockCapsule(block);
+
+    // CRITICAL: Update dynamic properties to align with block context.
+    // Embedded actuators read "now" from DynamicPropertiesStore, so we must keep
+    // the timestamp/number/hash consistent with the block for correct boundary tests.
+    chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(blockNum);
+    chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(blockTime);
+    chainBaseManager.getDynamicPropertiesStore().saveLatestBlockHeaderHash(
+        blockCap.getBlockId().getByteString());
+
+    return blockCap;
   }
 }

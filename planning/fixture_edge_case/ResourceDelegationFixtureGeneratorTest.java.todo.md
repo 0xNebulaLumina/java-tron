@@ -34,11 +34,12 @@ Phase 0 — Confirm Baselines + Make Fixture Output Deterministic
     - [x] `supportAllowCancelAllUnfreezeV2()`
     - [x] `supportMaxDelegateLockPeriod()`
   - [x] `chainbase/src/main/java/org/tron/core/store/DelegatedResourceStore.java` (`unLockExpireResource` uses `< now`)
-- [ ] Align block context + dynamic props (avoid "now" mismatches):
-  - [ ] Prefer `ConformanceFixtureTestSupport.createBlockContext(dbManager, witnessAddr)` to keep
-    `latestBlockHeaderTimestamp/Number/Hash` consistent with `blockCap`.
-- [ ] Make timestamps deterministic:
-  - [ ] Prefer `ConformanceFixtureTestSupport.createTransaction(...)` (fixed tx timestamp/expiration/feeLimit).
+- [x] Align block context + dynamic props (avoid "now" mismatches):
+  - [x] Updated `createBlockContext()` to call `saveLatestBlockHeaderTimestamp/Number/Hash` after
+    creating block, ensuring actuators see consistent "now" values.
+- [x] Make timestamps deterministic:
+  - [x] Updated `initializeTestData()` to use `DEFAULT_BLOCK_TIMESTAMP` instead of `System.currentTimeMillis()`.
+  - [x] Updated `createTransaction()` to use `DEFAULT_TX_TIMESTAMP` and `DEFAULT_TX_EXPIRATION`.
 - [ ] Run the generator once to confirm current baseline output:
   - [ ] `./gradlew :framework:test --tests "org.tron.core.conformance.ResourceDelegationFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures --dependency-verification=off`
 
