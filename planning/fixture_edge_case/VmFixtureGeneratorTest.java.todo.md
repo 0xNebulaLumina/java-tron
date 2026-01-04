@@ -72,7 +72,7 @@ Name length bounds
 - [x] `edge_contract_name_len_32_ok`
   - Setup: exactly 32 bytes.
   - Expect: `SUCCESS`
-- [ ] (optional) `validate_fail_contract_name_multibyte_over_32_bytes`
+- [x] (optional) `validate_fail_contract_name_multibyte_over_32_bytes`
   - Setup: fewer than 32 chars but >32 bytes in UTF-8.
 
 consumeUserResourcePercent bounds
@@ -134,20 +134,20 @@ Constructor out-of-energy
   - Expect: OOG-style runtime error; confirm Java's exact message and encode it in fixture metadata.
 
 Not enough energy to save returned runtime code
-- [ ] `edge_not_enough_energy_to_save_code`
+- [x] `edge_not_enough_energy_to_save_code`
   - Construct init code that returns a non-trivial runtime code size.
   - Set `feeLimit` just high enough to run init but too low for
     `code.length * EnergyCost.getCreateData()`.
   - Expect: "not enough energy" exception string (from Java).
 
 London invalid code prefix (0xEF)
-- [ ] `edge_london_invalid_code_prefix_0xef`
+- [x] `edge_london_invalid_code_prefix_0xef`
   - Preconditions: `dbManager.getDynamicPropertiesStore().saveAllowTvmLondon(1)` (or equivalent VMConfig init).
   - Init code returns runtime code whose first byte is `0xEF`.
   - Expect: invalid-code runtime error (Java's `invalidCodeException` message).
 
 Optional success edge
-- [ ] `edge_empty_runtime_code_success`
+- [x] `edge_empty_runtime_code_success`
   - Init code returns empty runtime (`RETURN(0,0)`).
   - Expect: `SUCCESS` and contract exists but code store entry is empty/missing (document actual Java behavior).
 

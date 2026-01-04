@@ -994,6 +994,189 @@ public class VmFixtureGeneratorTest extends BaseTest {
         result.isSuccess(), result.getError());
   }
 
+  @Test
+  public void generateCreateSmartContract_nameMultibyteOver32Bytes() throws Exception {
+    log.info("Generating CreateSmartContract multibyte name over 32 bytes fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Create a name with fewer than 32 visible chars but > 32 bytes in UTF-8
+    // Chinese characters are 3 bytes each in UTF-8
+    // 11 Chinese chars = 33 bytes > 32 byte limit
+    String multibyteNname = "中文合约名称测试一二三"; // 11 chars, 33 bytes
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        multibyteNname,
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_contract_name_multibyte_over_32_bytes",
+        "validate_fail",
+        "Fail when contract name has < 32 chars but > 32 bytes (UTF-8)"
+    );
+
+    Assert.assertFalse("validate_fail_contract_name_multibyte_over_32_bytes should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention name length",
+        result.getError() != null && result.getError().contains("contractName's length cannot be greater than 32"));
+    log.info("CreateSmartContract multibyte name: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_notEnoughEnergyToSaveCode() throws Exception {
+    log.info("Generating CreateSmartContract not enough energy to save code fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Init code that returns a non-trivial runtime code (32 bytes of zeros)
+    // PUSH32 0x00...00 (32 zeros), PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN
+    // This returns 32 bytes of runtime code
+    // Save cost = 32 * 200 = 6400 energy
+    // We set feeLimit just enough for init but not for saving
+    String initCodeReturns32Bytes =
+        "7F0000000000000000000000000000000000000000000000000000000000000000" // PUSH32 zeros
+        + "6000" // PUSH1 0x00
+        + "52"   // MSTORE
+        + "6020" // PUSH1 0x20 (32 bytes)
+        + "6000" // PUSH1 0x00
+        + "F3";  // RETURN
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "SaveCodeFail",
+        ownerBytes,
+        "[]",
+        initCodeReturns32Bytes,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    // Use a feeLimit that allows init to run but not save 32 bytes (6400 energy needed)
+    // Init code costs: ~200 (PUSH32) + 3 (PUSH1) + 3 (MSTORE base) + memory expansion + 3 (PUSH1) + 3 (PUSH1) + 0 (RETURN)
+    // Set feeLimit to around 1000 which should be enough for init but not for 6400 save cost
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, 5000L);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "edge_not_enough_energy_to_save_code",
+        "edge",
+        "Not enough energy to save returned runtime code"
+    );
+
+    // This should fail with "save just created contract code" error
+    Assert.assertFalse("edge_not_enough_energy_to_save_code should fail", result.isSuccess());
+    log.info("CreateSmartContract not enough energy to save code: success={}, error={}",
+        result.isSuccess(), result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_londonInvalidCodePrefix0xEF() throws Exception {
+    log.info("Generating CreateSmartContract London invalid code prefix 0xEF fixture");
+
+    // Enable TVM London for this test
+    dbManager.getDynamicPropertiesStore().saveAllowTvmLondon(1);
+
+    try {
+      byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+      // Init code that returns runtime code starting with 0xEF
+      // PUSH1 0xEF, PUSH1 0x00, MSTORE8, PUSH1 0x01, PUSH1 0x00, RETURN
+      // This returns 1 byte: 0xEF (invalid under London rules)
+      String initCodeReturnsEF =
+          "60EF" // PUSH1 0xEF
+          + "6000" // PUSH1 0x00
+          + "53"   // MSTORE8 (store single byte)
+          + "6001" // PUSH1 0x01 (return 1 byte)
+          + "6000" // PUSH1 0x00
+          + "F3";  // RETURN
+
+      CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+          "EFPrefix",
+          ownerBytes,
+          "[]",
+          initCodeReturnsEF,
+          0,
+          50,
+          null,
+          10_000_000L
+      );
+
+      TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+      BlockCapsule blockCap = createBlockContext();
+
+      VmFixtureResult result = generateVmFixture(
+          trxCap, blockCap, createContract,
+          "create_smart_contract",
+          "edge_london_invalid_code_prefix_0xef",
+          "edge",
+          "Runtime code starting with 0xEF rejected under London rules"
+      );
+
+      Assert.assertFalse("edge_london_invalid_code_prefix_0xef should fail", result.isSuccess());
+      Assert.assertTrue("Error should mention invalid code 0xef",
+          result.getError() != null && result.getError().contains("0xef"));
+      log.info("CreateSmartContract London 0xEF: success={}, error={}",
+          result.isSuccess(), result.getError());
+    } finally {
+      // Disable TVM London for other tests
+      dbManager.getDynamicPropertiesStore().saveAllowTvmLondon(0);
+    }
+  }
+
+  @Test
+  public void generateCreateSmartContract_emptyRuntimeCodeSuccess() throws Exception {
+    log.info("Generating CreateSmartContract empty runtime code success fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Init code that returns empty runtime code: PUSH1 0x00, PUSH1 0x00, RETURN
+    // Returns 0 bytes (empty runtime)
+    String initCodeReturnsEmpty =
+        "6000" // PUSH1 0x00 (size = 0)
+        + "6000" // PUSH1 0x00 (offset = 0)
+        + "F3";  // RETURN
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "EmptyRuntime",
+        ownerBytes,
+        "[]",
+        initCodeReturnsEmpty,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "edge_empty_runtime_code_success",
+        "edge",
+        "Success with empty runtime code (RETURN(0,0))"
+    );
+
+    // Empty runtime code should still result in SUCCESS (contract exists but has no code)
+    Assert.assertTrue("edge_empty_runtime_code_success should succeed", result.isSuccess());
+    log.info("CreateSmartContract empty runtime: success={}", result.isSuccess());
+  }
+
   // ==========================================================================
   // TriggerSmartContract (31) Fixtures
   // ==========================================================================
