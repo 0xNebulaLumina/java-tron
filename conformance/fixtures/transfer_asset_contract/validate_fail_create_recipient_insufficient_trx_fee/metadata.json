@@ -1,0 +1,24 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "validate_fail_create_recipient_insufficient_trx_fee",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner has tokens but not enough TRX for create-account fee",
+  "generatedAt": "2026-01-04T06:41:56.131Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Validate TransferAssetActuator error, insufficient fee.",
+  "ownerAddress": "a06c6f775f7472785f6f776e65725f303100000000",
+  "dynamicProperties": {
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000,
+    "token_id": "1000001"
+  },
+  "notes": []
+}
