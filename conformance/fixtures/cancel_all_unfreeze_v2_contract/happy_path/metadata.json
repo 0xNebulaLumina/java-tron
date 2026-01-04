@@ -4,10 +4,10 @@
   "caseName": "happy_path",
   "caseCategory": "happy",
   "description": "Cancel all pending unfreeze operations",
-  "generatedAt": "2025-12-31T09:59:28.794Z",
+  "generatedAt": "2026-01-04T06:15:42.131Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1767175171793,
+  "blockTimestamp": 1700000003000,
   "databasesTouched": [
     "account",
     "dynamic-properties"

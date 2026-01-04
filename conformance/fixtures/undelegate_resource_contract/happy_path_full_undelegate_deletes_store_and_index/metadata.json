@@ -1,0 +1,21 @@
+{
+  "contractType": "UNDELEGATE_RESOURCE_CONTRACT",
+  "contractTypeNum": 58,
+  "caseName": "happy_path_full_undelegate_deletes_store_and_index",
+  "caseCategory": "happy",
+  "description": "Full undelegate removes DelegatedResourceStore entry and updates DelegatedResourceAccountIndex",
+  "generatedAt": "2026-01-04T06:15:42.106Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "DelegatedResource",
+    "DelegatedResourceAccountIndex",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5",
+  "dynamicProperties": {},
+  "notes": []
+}
