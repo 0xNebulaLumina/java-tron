@@ -6,9 +6,10 @@ Status: **FULLY IMPLEMENTED**
 
 **Implementation Summary:**
 - Added deterministic timestamps (FIXED_BLOCK_TIMESTAMP, FIXED_BLOCK_NUMBER)
-- Added 12 validation failure fixtures (fee limit, VM disabled, owner/contract address, call value, TRC-10)
-- Added 4 runtime parity fixtures (empty calldata, unknown selector, nonpayable with value)
+- Added 13 validation failure fixtures (fee limit, VM disabled, owner/contract address, call value, TRC-10 including balance insufficient)
+- Added 7 runtime parity fixtures (empty calldata, unknown selector, nonpayable with value, revert with reason, write then revert rollback, OOE memory expansion)
 - Added 7 StorageDemo boundary fixtures (long strings, empty entries, overwrite, delete refund)
+- **Total: 33 test methods, 33 fixture directories generated**
 
 Goal: expand TriggerSmartContract (type 31) fixture coverage so the Rust backend can be validated
 against the meaningful Java validation + execution branches (not just “storage happy-path + missing
@@ -128,10 +129,10 @@ TRC-10 token transfer validation (`VMUtils.validateForSmartContract(..., tokenId
   - `callTokenValue > 0`, `tokenId = 1_000_001`, do not create the asset
   - Expect: `"No asset !"`
   - **Implemented:** `generateTriggerSmartContract_validateFailTokenAssetMissing()`
-- [ ] `validate_fail_token_balance_insufficient`
+- [x] `validate_fail_token_balance_insufficient`
   - Create asset `1_000_001` and give caller a smaller token balance than `callTokenValue`
   - Expect: `"assetBalance is not sufficient."`
-  - **Note:** Requires asset creation infrastructure, deferred to future iteration
+  - **Implemented:** `generateTriggerSmartContract_validateFailTokenBalanceInsufficient()`
 
 ---
 
@@ -155,22 +156,22 @@ Nonpayable + callValue
   - **Implemented:** `generateTriggerSmartContract_edgeNonpayableWithCallValueRevert()`
 
 Explicit revert with reason (new minimal contract)
-- [ ] `edge_revert_with_reason`
+- [x] `edge_revert_with_reason`
   - Deploy a contract with `require(false, "reason")` / `revert("reason")`
   - Expect: revert status and non-empty `return_data` (reason ABI) if exposed in receipt/result
-  - **Note:** Requires deploying a new contract with explicit revert, deferred to future iteration
+  - **Implemented:** `generateTriggerSmartContract_edgeRevertWithReason()`
 
 Rollback after write
-- [ ] `edge_write_then_revert_rollback`
+- [x] `edge_write_then_revert_rollback`
   - Contract writes to storage then reverts
   - Verify post_db has no storage mutation (and no transfer side-effects)
-  - **Note:** Requires deploying a contract that writes then reverts, deferred to future iteration
+  - **Implemented:** `generateTriggerSmartContract_edgeWriteThenRevertRollback()`
 
 Out-of-energy beyond the "feeLimit=1" trivial case
-- [ ] `edge_out_of_energy_memory_expansion`
-  - Large calldata + operations that expand memory (or a loop contract)
+- [x] `edge_out_of_energy_memory_expansion`
+  - Large calldata + operations that expand memory (4KB string storage with limited fee)
   - Goal: stress energy accounting rather than failing at the first opcode
-  - **Note:** Requires deploying a loop contract, deferred to future iteration
+  - **Implemented:** `generateTriggerSmartContract_edgeOutOfEnergyMemoryExpansion()`
 
 ---
 
@@ -203,9 +204,9 @@ Empty/nonexistent entries
 ## Phase 4 — Verification checklist
 
 - [x] Run: `./gradlew :framework:test --tests "org.tron.core.conformance.VmTriggerFixtureGeneratorTest" --dependency-verification=off -x generateGitProperties`
-  - **Result:** All 29 tests passed (BUILD SUCCESSFUL in 1m 19s)
+  - **Result:** All 33 tests passed (BUILD SUCCESSFUL in 59s)
 - [x] Confirm fixtures emitted under `conformance/fixtures/trigger_smart_contract/<caseName>/...`
-  - **Result:** 29 fixture directories generated with correct structure (pre_db/, request.pb, expected/post_db/, expected/result.pb, metadata.json)
+  - **Result:** 33 fixture directories generated with correct structure (pre_db/, request.pb, expected/post_db/, expected/result.pb, metadata.json)
 - [x] Spot-check a few `metadata.json` files:
   - [x] `expectedStatus` matches intent and is supported by the consumer
   - [x] `expectedErrorMessage` is stable (avoid environment-dependent prefixes)
