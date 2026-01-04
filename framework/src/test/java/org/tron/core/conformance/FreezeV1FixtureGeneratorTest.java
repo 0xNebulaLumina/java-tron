@@ -1754,13 +1754,19 @@ public class FreezeV1FixtureGeneratorTest extends BaseTest {
 
     // Set up owner's delegated frozen balance for energy
     Protocol.Account.Builder ownerBuilder = ownerAccount.getInstance().toBuilder();
-    ownerBuilder.setDelegatedFrozenBalanceForEnergy(delegatedAmount);
+    Protocol.Account.AccountResource.Builder ownerResourceBuilder =
+        ownerBuilder.getAccountResource().toBuilder();
+    ownerResourceBuilder.setDelegatedFrozenBalanceForEnergy(delegatedAmount);
+    ownerBuilder.setAccountResource(ownerResourceBuilder.build());
     ownerAccount = new AccountCapsule(ownerBuilder.build());
     dbManager.getAccountStore().put(ownerAccount.getAddress().toByteArray(), ownerAccount);
 
     // Set up receiver's acquired delegated frozen balance for energy
     Protocol.Account.Builder receiverBuilder = receiverAccount.getInstance().toBuilder();
-    receiverBuilder.setAcquiredDelegatedFrozenBalanceForEnergy(delegatedAmount);
+    Protocol.Account.AccountResource.Builder receiverResourceBuilder =
+        receiverBuilder.getAccountResource().toBuilder();
+    receiverResourceBuilder.setAcquiredDelegatedFrozenBalanceForEnergy(delegatedAmount);
+    receiverBuilder.setAccountResource(receiverResourceBuilder.build());
     receiverAccount = new AccountCapsule(receiverBuilder.build());
     dbManager.getAccountStore().put(receiverAccount.getAddress().toByteArray(), receiverAccount);
 
