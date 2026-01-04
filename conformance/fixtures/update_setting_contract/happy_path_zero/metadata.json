@@ -4,7 +4,7 @@
   "caseName": "happy_path_zero",
   "caseCategory": "happy",
   "description": "Set consume_user_resource_percent to 0 (contract pays all)",
-  "generatedAt": "2026-01-03T02:55:48.745Z",
+  "generatedAt": "2026-01-04T12:43:10.791Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
