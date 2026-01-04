@@ -1,0 +1,21 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "validate_fail_delegated_resource_not_exist",
+  "caseCategory": "validate_fail",
+  "description": "Fail when delegated resource entry does not exist",
+  "generatedAt": "2026-01-04T07:59:45.675Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "delegated Resource does not exist",
+  "ownerAddress": "a0756e667265657a655f64656c5f6e6f5f72657300",
+  "dynamicProperties": {},
+  "notes": []
+}

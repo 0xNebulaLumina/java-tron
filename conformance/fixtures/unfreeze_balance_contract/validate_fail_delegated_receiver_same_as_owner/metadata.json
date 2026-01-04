@@ -1,0 +1,21 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "validate_fail_delegated_receiver_same_as_owner",
+  "caseCategory": "validate_fail",
+  "description": "Fail when receiver address is the same as owner for delegated unfreeze",
+  "generatedAt": "2026-01-04T07:59:45.846Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "receiverAddress must not be the same as ownerAddress",
+  "ownerAddress": "a0756e667265657a655f64656c5f73616d65000000",
+  "dynamicProperties": {},
+  "notes": []
+}
