@@ -1,0 +1,24 @@
+{
+  "contractType": "TRIGGER_SMART_CONTRACT",
+  "contractTypeNum": 31,
+  "caseName": "edge_nonpayable_with_call_value_revert",
+  "caseCategory": "edge",
+  "description": "Call nonpayable function with callValue > 0 (should revert)",
+  "generatedAt": "2026-01-04T11:54:15.383Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 0,
+  "blockTimestamp": 0,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "code",
+    "abi",
+    "contract-state",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "REVERT",
+  "expectedErrorMessage": "REVERT opcode executed",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

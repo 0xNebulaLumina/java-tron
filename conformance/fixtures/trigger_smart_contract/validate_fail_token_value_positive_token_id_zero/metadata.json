@@ -1,0 +1,24 @@
+{
+  "contractType": "TRIGGER_SMART_CONTRACT",
+  "contractTypeNum": 31,
+  "caseName": "validate_fail_token_value_positive_token_id_zero",
+  "caseCategory": "validate_fail",
+  "description": "Trigger with callTokenValue > 0 and tokenId = 0 should fail",
+  "generatedAt": "2026-01-04T11:53:54.954Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 0,
+  "blockTimestamp": 0,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "code",
+    "abi",
+    "contract-state",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "invalid arguments with tokenValue = 100, tokenId = 0",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

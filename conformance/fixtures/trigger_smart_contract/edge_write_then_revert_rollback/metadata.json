@@ -1,0 +1,24 @@
+{
+  "contractType": "TRIGGER_SMART_CONTRACT",
+  "contractTypeNum": 31,
+  "caseName": "edge_write_then_revert_rollback",
+  "caseCategory": "edge",
+  "description": "Contract writes to storage then reverts - verify storage is rolled back",
+  "generatedAt": "2026-01-04T11:53:59.038Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 0,
+  "blockTimestamp": 0,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "code",
+    "abi",
+    "contract-state",
+    "storage-row",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "REVERT",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}
