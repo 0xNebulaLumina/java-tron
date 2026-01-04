@@ -1,0 +1,20 @@
+{
+  "contractType": "WITNESS_CREATE_CONTRACT",
+  "contractTypeNum": 5,
+  "caseName": "validate_fail_owner_address_invalid_empty",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner address is empty (invalid address)",
+  "generatedAt": "2026-01-04T07:26:42.646Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid address",
+  "dynamicProperties": {},
+  "notes": []
+}

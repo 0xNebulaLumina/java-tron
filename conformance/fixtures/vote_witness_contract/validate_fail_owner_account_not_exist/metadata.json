@@ -1,0 +1,22 @@
+{
+  "contractType": "VOTE_WITNESS_CONTRACT",
+  "contractTypeNum": 4,
+  "caseName": "validate_fail_owner_account_not_exist",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner account does not exist in AccountStore",
+  "generatedAt": "2026-01-04T07:26:42.463Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Account[a06e6f6e65786973745f766f746572303031000000] not exists",
+  "ownerAddress": "a06e6f6e65786973745f766f746572303031000000",
+  "dynamicProperties": {},
+  "notes": []
+}
