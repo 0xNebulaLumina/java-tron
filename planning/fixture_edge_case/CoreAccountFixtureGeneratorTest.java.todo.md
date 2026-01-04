@@ -18,114 +18,148 @@ Acceptance Criteria
   `expectedErrorMessage` matches the thrown `ContractValidateException` message.
 - For happy paths: `metadata.json.expectedStatus == "SUCCESS"` and post-state DBs reflect the intended
   state transitions.
-- `caseCategory` and `description` are consistent with the observed result (avoid “validate_fail but SUCCESS”).
+- `caseCategory` and `description` are consistent with the observed result (avoid "validate_fail but SUCCESS").
 
 Checklist / TODO
 
 Phase 0 — Confirm Baselines
-- [ ] Skim the validate paths to align fixtures with real branches:
-  - [ ] `actuator/src/main/java/org/tron/core/actuator/CreateAccountActuator.java`
-  - [ ] `actuator/src/main/java/org/tron/core/actuator/UpdateAccountActuator.java`
-  - [ ] `common/src/main/java/org/tron/common/utils/DecodeUtil.java` (`addressValid`)
-  - [ ] `actuator/src/main/java/org/tron/core/utils/TransactionUtil.java` (`validAccountName`)
+- [x] Skim the validate paths to align fixtures with real branches:
+  - [x] `actuator/src/main/java/org/tron/core/actuator/CreateAccountActuator.java`
+  - [x] `actuator/src/main/java/org/tron/core/actuator/UpdateAccountActuator.java`
+  - [x] `common/src/main/java/org/tron/common/utils/DecodeUtil.java` (`addressValid`)
+  - [x] `actuator/src/main/java/org/tron/core/utils/TransactionUtil.java` (`validAccountName`)
 - [ ] Run once to confirm which existing cases match their intent:
   - [ ] `./gradlew :framework:test --tests "org.tron.core.conformance.CoreAccountFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures --dependency-verification=off`
-  - [ ] Verify whether `generateAccountUpdate_validateFailInvalidName` produces `SUCCESS`.
+  - [x] Verify whether `generateAccountUpdate_validateFailInvalidName` produces `SUCCESS`.
+        **CONFIRMED:** Empty name is allowed by `validAccountName`, replaced with 201-byte test.
 
 Phase 1 — AccountCreateContract (0) Fixtures
 
 Missing validation branch: invalid owner address
-- [ ] Add `validate_fail_owner_address_invalid_empty`:
-  - [ ] `owner_address = ByteString.EMPTY`.
-  - [ ] Expect validate error substring: `"Invalid ownerAddress"`.
-  - [ ] DBs: `account`, `dynamic-properties`.
-- [ ] Add `validate_fail_owner_address_invalid_prefix` (optional but nice):
-  - [ ] 21-byte address with wrong prefix byte.
-  - [ ] Expect validate error substring: `"Invalid ownerAddress"`.
+- [x] Add `validate_fail_owner_address_invalid_empty`:
+  - [x] `owner_address = ByteString.EMPTY`.
+  - [x] Expect validate error substring: `"Invalid ownerAddress"`.
+  - [x] DBs: `account`, `dynamic-properties`.
+- [x] Add `validate_fail_owner_address_invalid_prefix` (optional but nice):
+  - [x] 21-byte address with wrong prefix byte.
+  - [x] Expect validate error substring: `"Invalid ownerAddress"`.
+- [x] Add `validate_fail_owner_address_wrong_length`:
+  - [x] 20-byte address (wrong length).
+  - [x] Expect validate error substring: `"Invalid ownerAddress"`.
 
 Missing validation branch: invalid target account address
-- [ ] Add `validate_fail_account_address_invalid_empty`:
-  - [ ] `account_address = ByteString.EMPTY`.
-  - [ ] Expect validate error substring: `"Invalid account address"`.
-- [ ] Add `validate_fail_account_address_invalid_length` (optional):
-  - [ ] 20-byte or 22-byte address.
-  - [ ] Expect validate error substring: `"Invalid account address"`.
+- [x] Add `validate_fail_account_address_invalid_empty`:
+  - [x] `account_address = ByteString.EMPTY`.
+  - [x] Expect validate error substring: `"Invalid account address"`.
+- [x] Add `validate_fail_account_address_invalid_length`:
+  - [x] 22-byte address (wrong length).
+  - [x] Expect validate error substring: `"Invalid account address"`.
 
 Fee boundary conditions
-- [ ] Add `edge_happy_balance_equals_fee`:
-  - [ ] Seed owner with `balance == CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`.
-  - [ ] Expect `SUCCESS`.
-- [ ] Add `validate_fail_balance_fee_minus_one`:
-  - [ ] Seed owner with `balance == fee - 1`.
-  - [ ] Expect validate error contains: `"insufficient fee"`.
+- [x] Add `edge_happy_balance_equals_fee`:
+  - [x] Seed owner with `balance == CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`.
+  - [x] Expect `SUCCESS`.
+- [x] Add `validate_fail_balance_fee_minus_one`:
+  - [x] Seed owner with `balance == fee - 1`.
+  - [x] Expect validate error contains: `"insufficient fee"`.
 
 Feature-flag dependent execute behavior
-- [ ] Add `edge_happy_allow_multi_sign_enabled_default_permissions`:
-  - [ ] Set `ALLOW_MULTI_SIGN = 1`.
-  - [ ] Expect `SUCCESS`.
-  - [ ] Verify new account contains default `ownerPermission` and `activePermission`.
-  - [ ] Ensure `ACTIVE_DEFAULT_OPERATIONS` is initialized in dynamic props (getter throws if unset).
-- [ ] Add `edge_happy_blackhole_optimization_burns_fee`:
-  - [ ] Set `ALLOW_BLACKHOLE_OPTIMIZATION = 1`.
-  - [ ] Expect `SUCCESS`.
-  - [ ] Verify `dynamic-properties` reflects `BURN_TRX_AMOUNT` increment and blackhole account balance
+- [x] Add `edge_happy_allow_multi_sign_enabled_default_permissions`:
+  - [x] Set `ALLOW_MULTI_SIGN = 1`.
+  - [x] Expect `SUCCESS`.
+  - [x] Verify new account contains default `ownerPermission` and `activePermission`.
+  - [x] Ensure `ACTIVE_DEFAULT_OPERATIONS` is initialized in dynamic props (getter throws if unset).
+- [x] Add `edge_happy_blackhole_optimization_burns_fee`:
+  - [x] Set `ALLOW_BLACKHOLE_OPTIMIZATION = 1`.
+  - [x] Expect `SUCCESS`.
+  - [x] Verify `dynamic-properties` reflects `BURN_TRX_AMOUNT` increment and blackhole account balance
         is not credited.
-  - [ ] Ensure `BURN_TRX_AMOUNT` is initialized (getter throws if unset).
+  - [x] Ensure `BURN_TRX_AMOUNT` is initialized (getter throws if unset).
 
 Fee parameterization (optional)
-- [ ] Add `edge_happy_fee_zero`:
-  - [ ] Set `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT = 0`.
-  - [ ] Seed owner with 0 balance; expect `SUCCESS`.
-  - [ ] Verify no balance changes (or only deterministic no-ops) beyond account creation itself.
+- [x] Add `edge_happy_fee_zero`:
+  - [x] Set `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT = 0`.
+  - [x] Seed owner with 0 balance; expect `SUCCESS`.
+  - [x] Verify no balance changes (or only deterministic no-ops) beyond account creation itself.
 
 Phase 2 — AccountUpdateContract (10) Fixtures
 
-Fix “invalid name” to hit the real validation rule
-- [ ] Replace/adjust `generateAccountUpdate_validateFailInvalidName`:
-  - [ ] Use `accountName` length 201 bytes (e.g., 201 `'a'` bytes).
-  - [ ] Expect validate error: `"Invalid accountName"`.
+Fix "invalid name" to hit the real validation rule
+- [x] Replace/adjust `generateAccountUpdate_validateFailInvalidName`:
+  - [x] Renamed to `generateAccountUpdate_validateFailInvalidNameTooLong`.
+  - [x] Use `accountName` length 201 bytes (e.g., 201 `'a'` bytes).
+  - [x] Expect validate error: `"Invalid accountName"`.
 
 Owner address validity
-- [ ] Add `validate_fail_owner_address_invalid_empty`:
-  - [ ] `owner_address = ByteString.EMPTY`.
-  - [ ] Expect validate error substring: `"Invalid ownerAddress"`.
+- [x] Add `validate_fail_owner_address_invalid_empty`:
+  - [x] `owner_address = ByteString.EMPTY`.
+  - [x] Expect validate error substring: `"Invalid ownerAddress"`.
 
 Account name boundary success
-- [ ] Add `edge_happy_account_name_len_200`:
-  - [ ] `accountName` length exactly 200 bytes.
-  - [ ] Expect `SUCCESS`.
+- [x] Add `edge_happy_account_name_len_200`:
+  - [x] `accountName` length exactly 200 bytes.
+  - [x] Expect `SUCCESS`.
 
 Missing allowUpdateAccountName branch: owner already has a name
-- [ ] Add `validate_fail_owner_already_named_updates_disabled`:
-  - [ ] Seed owner with a non-empty existing name in `AccountStore`.
-  - [ ] Ensure `ALLOW_UPDATE_ACCOUNT_NAME = 0`.
-  - [ ] Attempt to set a different (unique) name.
-  - [ ] Expect validate error: `"This account name is already existed"`.
+- [x] Add `validate_fail_owner_already_named_updates_disabled`:
+  - [x] Seed owner with a non-empty existing name in `AccountStore`.
+  - [x] Ensure `ALLOW_UPDATE_ACCOUNT_NAME = 0`.
+  - [x] Attempt to set a different (unique) name.
+  - [x] Expect validate error: `"This account name is already existed"`.
 
 Update-enabled behavior (`ALLOW_UPDATE_ACCOUNT_NAME = 1`)
-- [ ] Add `happy_update_existing_name_updates_enabled`:
-  - [ ] Seed owner with a non-empty existing name.
-  - [ ] Set `ALLOW_UPDATE_ACCOUNT_NAME = 1`.
-  - [ ] Update to a new name; expect `SUCCESS`.
-- [ ] Add `edge_happy_duplicate_name_updates_enabled_overwrites_index`:
-  - [ ] Seed two accounts.
-  - [ ] Set `ALLOW_UPDATE_ACCOUNT_NAME = 1`.
-  - [ ] Set account A name to `"dup"`, then set account B name to `"dup"`.
-  - [ ] Expect both `SUCCESS`; verify `account-index["dup"]` points to the last writer (B).
+- [x] Add `happy_update_existing_name_updates_enabled`:
+  - [x] Seed owner with a non-empty existing name.
+  - [x] Set `ALLOW_UPDATE_ACCOUNT_NAME = 1`.
+  - [x] Update to a new name; expect `SUCCESS`.
+- [x] Add `edge_happy_duplicate_name_updates_enabled_overwrites_index`:
+  - [x] Seed two accounts.
+  - [x] Set `ALLOW_UPDATE_ACCOUNT_NAME = 1`.
+  - [x] Set account A name to `"dup"`, then set account B name to `"dup"`.
+  - [x] Expect both `SUCCESS`; verify `account-index["dup"]` points to the last writer (B).
 
 Phase 3 — Metadata / DB Capture Hygiene
-- [ ] Ensure `FixtureMetadata.database(...)` lists match stores actually mutated:
-  - [ ] CreateAccount: `account`, `dynamic-properties` (+ include `account-index` only if needed by new cases).
-  - [ ] UpdateAccount: `account`, `account-index`, `dynamic-properties`.
-- [ ] Include `dynamicProperty(...)` in metadata for behavior-driving flags in new cases:
-  - [ ] `ALLOW_MULTI_SIGN`, `ALLOW_BLACKHOLE_OPTIMIZATION`, `ALLOW_UPDATE_ACCOUNT_NAME`,
+- [x] Ensure `FixtureMetadata.database(...)` lists match stores actually mutated:
+  - [x] CreateAccount: `account`, `dynamic-properties` (+ include `account-index` only if needed by new cases).
+  - [x] UpdateAccount: `account`, `account-index`, `dynamic-properties`.
+- [x] Include `dynamicProperty(...)` in metadata for behavior-driving flags in new cases:
+  - [x] `ALLOW_MULTI_SIGN`, `ALLOW_BLACKHOLE_OPTIMIZATION`, `ALLOW_UPDATE_ACCOUNT_NAME`,
         `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`.
-- [ ] Use consistent `caseCategory` names:
-  - [ ] `happy` for success cases, `validate_fail` for validation failures, `edge` for boundary-success cases.
+- [x] Use consistent `caseCategory` names:
+  - [x] `happy` for success cases, `validate_fail` for validation failures, `edge` for boundary-success cases.
+- [x] Fixed `expectedError` to match actual error messages from actuators.
 
 Phase 4 — Regenerate & Validate Fixtures
 - [ ] Run the class and regenerate fixtures:
   - [ ] `./gradlew :framework:test --tests "org.tron.core.conformance.CoreAccountFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures --dependency-verification=off`
 - [ ] Spot-check representative `metadata.json` files for expectedStatus and error messages.
 - [ ] (Optional) Run the conformance runner that consumes these fixtures to ensure no schema regressions.
+
+---
+
+## Implementation Summary
+
+### New AccountCreateContract (0) Fixtures Added:
+1. `generateAccountCreate_validateFailOwnerAddressEmpty` - Empty owner address
+2. `generateAccountCreate_validateFailOwnerAddressWrongPrefix` - Wrong prefix byte (0x00 vs 0x41)
+3. `generateAccountCreate_validateFailOwnerAddressWrongLength` - 20-byte address (should be 21)
+4. `generateAccountCreate_validateFailAccountAddressEmpty` - Empty target account address
+5. `generateAccountCreate_validateFailAccountAddressWrongLength` - 22-byte address (should be 21)
+6. `generateAccountCreate_edgeHappyBalanceEqualsFee` - Balance exactly equals fee (SUCCESS)
+7. `generateAccountCreate_validateFailBalanceFeeMinus1` - Balance = fee - 1 (FAIL)
+8. `generateAccountCreate_edgeHappyAllowMultiSignEnabled` - ALLOW_MULTI_SIGN=1 with default permissions
+9. `generateAccountCreate_edgeHappyBlackholeOptimizationBurnsFee` - ALLOW_BLACKHOLE_OPTIMIZATION=1
+10. `generateAccountCreate_edgeHappyFeeZero` - Fee=0, zero balance owner can create
+
+### New/Modified AccountUpdateContract (10) Fixtures:
+1. `generateAccountUpdate_validateFailInvalidNameTooLong` - **FIXED:** 201 bytes instead of empty
+2. `generateAccountUpdate_validateFailOwnerAddressEmpty` - Empty owner address
+3. `generateAccountUpdate_edgeHappyAccountNameLen200` - Exactly 200 bytes (max allowed)
+4. `generateAccountUpdate_validateFailOwnerAlreadyNamedUpdatesDisabled` - Owner has name + updates disabled
+5. `generateAccountUpdate_happyUpdateExistingNameUpdatesEnabled` - ALLOW_UPDATE_ACCOUNT_NAME=1
+6. `generateAccountUpdate_edgeHappyDuplicateNameUpdatesEnabledOverwritesIndex` - Duplicate name overwrites index
+
+### Fixes to Existing Fixtures:
+- `generateAccountCreate_validateFailInsufficientFee`: Updated `expectedError` from `"balance"` to `"insufficient fee"`
+- `generateAccountUpdate_validateFailDuplicateNameUpdatesDisabled`: Updated `expectedError` from `"exist"` to `"This name is existed"`
 

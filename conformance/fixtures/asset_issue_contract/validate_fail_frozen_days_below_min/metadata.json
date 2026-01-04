@@ -1,0 +1,23 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_frozen_days_below_min",
+  "caseCategory": "validate_fail",
+  "description": "Fail when frozen_days is below minFrozenSupplyTime",
+  "generatedAt": "2026-01-03T03:10:32.563Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "frozenDuration must be less than 3652 days and more than 1 days",
+  "ownerAddress": "a066726f7a656e5f646179735f6c6f775f69737375",
+  "dynamicProperties": {
+    "MIN_FROZEN_SUPPLY_TIME": 1
+  },
+  "notes": []
+}

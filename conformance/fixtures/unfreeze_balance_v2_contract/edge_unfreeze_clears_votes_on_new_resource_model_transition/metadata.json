@@ -1,0 +1,26 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "edge_unfreeze_clears_votes_on_new_resource_model_transition",
+  "caseCategory": "edge",
+  "description": "Unfreeze clears votes when transitioning to new resource model",
+  "generatedAt": "2026-01-03T13:02:54.778Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties",
+    "votes"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76325f766f74655f636c72",
+  "dynamicProperties": {
+    "ALLOW_NEW_RESOURCE_MODEL": 1,
+    "UNFREEZE_DELAY_DAYS": 14,
+    "pre_votes": 50
+  },
+  "notes": [
+    "Tests updateVote clears votes when oldTronPower not initialized and new model enabled"
+  ]
+}
