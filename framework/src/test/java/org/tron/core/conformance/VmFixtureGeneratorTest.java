@@ -31,6 +31,8 @@ import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.common.parameter.CommonParameter;
 import org.tron.core.config.args.Args;
+import org.tron.core.vm.config.ConfigLoader;
+import org.tron.core.vm.config.VMConfig;
 import org.tron.core.db.TransactionTrace;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
@@ -1186,8 +1188,10 @@ public class VmFixtureGeneratorTest extends BaseTest {
   public void generateCreateSmartContract_originEnergyLimitZero() throws Exception {
     log.info("Generating CreateSmartContract originEnergyLimit zero fixture (energy limit hard fork)");
 
+    // Disable ConfigLoader to prevent it from overriding VMConfig based on block number
+    ConfigLoader.disable = true;
     // Enable energy limit hard fork for this test
-    CommonParameter.setENERGY_LIMIT_HARD_FORK(true);
+    VMConfig.initVmHardFork(true);
 
     try {
       byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
@@ -1221,8 +1225,9 @@ public class VmFixtureGeneratorTest extends BaseTest {
           result.getError() != null && result.getError().contains("originEnergyLimit must be > 0"));
       log.info("CreateSmartContract originEnergyLimit zero: error={}", result.getError());
     } finally {
-      // Restore default
-      CommonParameter.setENERGY_LIMIT_HARD_FORK(false);
+      // Restore defaults
+      ConfigLoader.disable = false;
+      VMConfig.initVmHardFork(false);
     }
   }
 
@@ -1230,8 +1235,10 @@ public class VmFixtureGeneratorTest extends BaseTest {
   public void generateCreateSmartContract_callValueNegative() throws Exception {
     log.info("Generating CreateSmartContract callValue negative fixture (energy limit hard fork)");
 
+    // Disable ConfigLoader to prevent it from overriding VMConfig based on block number
+    ConfigLoader.disable = true;
     // Enable energy limit hard fork for this test
-    CommonParameter.setENERGY_LIMIT_HARD_FORK(true);
+    VMConfig.initVmHardFork(true);
 
     try {
       byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
@@ -1267,8 +1274,9 @@ public class VmFixtureGeneratorTest extends BaseTest {
           result.getError() != null && result.getError().contains("callValue must be >= 0"));
       log.info("CreateSmartContract callValue negative: error={}", result.getError());
     } finally {
-      // Restore default
-      CommonParameter.setENERGY_LIMIT_HARD_FORK(false);
+      // Restore defaults
+      ConfigLoader.disable = false;
+      VMConfig.initVmHardFork(false);
     }
   }
 
@@ -1276,8 +1284,10 @@ public class VmFixtureGeneratorTest extends BaseTest {
   public void generateCreateSmartContract_tokenValueNegative() throws Exception {
     log.info("Generating CreateSmartContract tokenValue negative fixture (energy limit hard fork)");
 
+    // Disable ConfigLoader to prevent it from overriding VMConfig based on block number
+    ConfigLoader.disable = true;
     // Enable energy limit hard fork for this test
-    CommonParameter.setENERGY_LIMIT_HARD_FORK(true);
+    VMConfig.initVmHardFork(true);
 
     try {
       byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
@@ -1314,8 +1324,9 @@ public class VmFixtureGeneratorTest extends BaseTest {
           result.getError() != null && result.getError().contains("tokenValue must be >= 0"));
       log.info("CreateSmartContract tokenValue negative: error={}", result.getError());
     } finally {
-      // Restore default
-      CommonParameter.setENERGY_LIMIT_HARD_FORK(false);
+      // Restore defaults
+      ConfigLoader.disable = false;
+      VMConfig.initVmHardFork(false);
     }
   }
 
