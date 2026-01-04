@@ -4,10 +4,10 @@
   "caseName": "validate_fail_nothing_to_withdraw",
   "caseCategory": "validate_fail",
   "description": "Fail when there is no expired unfrozen balance to withdraw",
-  "generatedAt": "2025-12-31T09:59:28.821Z",
+  "generatedAt": "2026-01-04T06:15:42.224Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1767175171821,
+  "blockTimestamp": 1700000003000,
   "databasesTouched": [
     "account",
     "dynamic-properties"

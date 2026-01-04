@@ -1,0 +1,22 @@
+{
+  "contractType": "PROPOSAL_CREATE_CONTRACT",
+  "contractTypeNum": 16,
+  "caseName": "validate_fail_negative_fee_like_param",
+  "caseCategory": "validate_fail",
+  "description": "Fail when fee-like parameter has negative value",
+  "generatedAt": "2026-01-04T05:56:08.370Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "proposal",
+    "dynamic-properties",
+    "witness"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Bad chain parameter value, valid range is [0,100000000000000000]",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

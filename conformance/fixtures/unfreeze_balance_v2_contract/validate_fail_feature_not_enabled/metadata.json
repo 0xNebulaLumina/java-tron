@@ -1,0 +1,20 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "validate_fail_feature_not_enabled",
+  "caseCategory": "validate_fail",
+  "description": "Fail V2 unfreeze when unfreezeDelayDays = 0 (V2 disabled)",
+  "generatedAt": "2026-01-03T13:02:54.814Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Not support UnfreezeV2 transaction, need to be opened by the committee",
+  "ownerAddress": "a0756e667265657a655f76325f6469730000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

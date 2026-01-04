@@ -1,0 +1,20 @@
+{
+  "contractType": "DELEGATE_RESOURCE_CONTRACT",
+  "contractTypeNum": 57,
+  "caseName": "validate_fail_delegate_disabled_supportDR",
+  "caseCategory": "validate_fail",
+  "description": "Fail when supportDR() is false (ALLOW_DELEGATE_RESOURCE = 0)",
+  "generatedAt": "2026-01-04T06:15:42.038Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "No support for resource delegate",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

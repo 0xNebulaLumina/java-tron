@@ -1,0 +1,21 @@
+{
+  "contractType": "SET_ACCOUNT_ID_CONTRACT",
+  "contractTypeNum": 19,
+  "caseName": "validate_fail_owner_address_wrong_length",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner address has wrong length (not 21 bytes)",
+  "generatedAt": "2025-12-31T14:58:15.703Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "accountid-index",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid ownerAddress",
+  "ownerAddress": "4142434445464748494a",
+  "dynamicProperties": {},
+  "notes": []
+}
