@@ -1,0 +1,22 @@
+{
+  "contractType": "TRANSFER_CONTRACT",
+  "contractTypeNum": 1,
+  "caseName": "validate_fail_create_recipient_insufficient_for_fee",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner has enough for amount but not amount + create-account fee",
+  "generatedAt": "2026-01-04T06:41:56.368Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Validate TransferContract error, balance is not sufficient.",
+  "ownerAddress": "a074696768745f6f776e65725f3030310000000000",
+  "dynamicProperties": {
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000
+  },
+  "notes": []
+}

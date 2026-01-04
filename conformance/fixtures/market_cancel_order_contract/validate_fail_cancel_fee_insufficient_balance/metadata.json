@@ -1,0 +1,22 @@
+{
+  "contractType": "MARKET_CANCEL_ORDER_CONTRACT",
+  "contractTypeNum": 53,
+  "caseName": "validate_fail_cancel_fee_insufficient_balance",
+  "caseCategory": "validate_fail",
+  "description": "Fail when cancel fee exceeds TRX balance",
+  "generatedAt": "2026-01-03T14:09:24.162Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "market_order",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid address",
+  "dynamicProperties": {
+    "MARKET_CANCEL_FEE": 1000000000
+  },
+  "notes": []
+}

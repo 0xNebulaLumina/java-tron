@@ -1,0 +1,21 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "edge_freeze_bandwidth_first_of_two",
+  "caseCategory": "edge",
+  "description": "First freeze in multi-freeze sequence",
+  "generatedAt": "2026-01-04T07:59:45.807Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0667265657a655f76315f6d756c74690000000000",
+  "dynamicProperties": {
+    "freeze_amount": 50000000
+  },
+  "notes": []
+}

@@ -1,0 +1,25 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "edge_sweep_multiple_expired_unfrozen_v2_entries",
+  "caseCategory": "edge",
+  "description": "Sweep multiple expired unfrozenV2 entries (sum: 45 TRX)",
+  "generatedAt": "2026-01-03T13:02:54.562Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76325f6d756c74695f6578",
+  "dynamicProperties": {
+    "UNFREEZE_DELAY_DAYS": 14,
+    "expired_entries": 3,
+    "total_expired_amount": 45000000
+  },
+  "notes": [
+    "Tests withdrawExpireAmount summing across multiple entries"
+  ]
+}

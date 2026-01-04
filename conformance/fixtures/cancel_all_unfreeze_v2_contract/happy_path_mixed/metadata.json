@@ -4,10 +4,10 @@
   "caseName": "happy_path_mixed",
   "caseCategory": "happy",
   "description": "Cancel with mixed expired/unexpired entries (expired goes to withdraw, unexpired re-freezes)",
-  "generatedAt": "2025-12-31T09:59:28.845Z",
+  "generatedAt": "2026-01-04T06:15:42.359Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1767175171844,
+  "blockTimestamp": 1700000003000,
   "databasesTouched": [
     "account",
     "dynamic-properties"

@@ -1,0 +1,21 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "validate_fail_delegated_receiver_invalid_address",
+  "caseCategory": "validate_fail",
+  "description": "Fail when receiver address is invalid for delegated unfreeze",
+  "generatedAt": "2026-01-04T07:59:45.769Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid receiverAddress",
+  "ownerAddress": "a0756e667265657a655f64656c5f696e7600000000",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -4,10 +4,10 @@
   "caseName": "validate_fail_negative",
   "caseCategory": "validate_fail",
   "description": "Fail when brokerage is negative",
-  "generatedAt": "2025-12-31T09:59:16.138Z",
+  "generatedAt": "2026-01-02T14:29:52.231Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1003000,
+  "blockTimestamp": 1700000003000,
   "databasesTouched": [
     "account",
     "witness",

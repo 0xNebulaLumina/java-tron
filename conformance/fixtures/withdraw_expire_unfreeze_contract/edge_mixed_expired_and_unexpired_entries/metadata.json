@@ -1,0 +1,21 @@
+{
+  "contractType": "WITHDRAW_EXPIRE_UNFREEZE_CONTRACT",
+  "contractTypeNum": 56,
+  "caseName": "edge_mixed_expired_and_unexpired_entries",
+  "caseCategory": "happy",
+  "description": "Withdraw only expired entries, keep unexpired entries in unfrozenV2 list",
+  "generatedAt": "2026-01-04T06:15:42.204Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a07777777777777777777777777777777777777777",
+  "dynamicProperties": {
+    "withdraw_expire_amount": 5000000000
+  },
+  "notes": []
+}

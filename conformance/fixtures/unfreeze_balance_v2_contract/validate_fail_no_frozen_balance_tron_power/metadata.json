@@ -1,0 +1,20 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "validate_fail_no_frozen_balance_tron_power",
+  "caseCategory": "validate_fail",
+  "description": "Fail when there is no frozenV2(TRON_POWER) balance",
+  "generatedAt": "2026-01-03T13:02:54.607Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "no frozenBalance(TronPower)",
+  "ownerAddress": "a0756e667265657a655f76325f6e6f5f7470000000",
+  "dynamicProperties": {},
+  "notes": []
+}
