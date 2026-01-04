@@ -87,28 +87,28 @@ Multi-freeze execution semantics
 Phase 2 — FreezeBalanceContract (11) Delegation-Enabled Fixtures (optional but high value)
 
 Enable delegation mode for this phase
-- [ ] In per-test setup, set `DynamicPropertiesStore.saveAllowDelegateResource(1)` (and optionally
+- [x] In per-test setup, set `DynamicPropertiesStore.saveAllowDelegateResource(1)` (and optionally
       `saveChangeDelegation(1)` if reward delegation side effects matter).
-- [ ] Include DBs in metadata:
-  - [ ] `account`, `dynamic-properties`, `DelegatedResource`, `DelegatedResourceAccountIndex`
+- [x] Include DBs in metadata:
+  - [x] `account`, `dynamic-properties`, `DelegatedResource`, `DelegatedResourceAccountIndex`
 
 Happy delegation
-- [ ] Add `happy_path_delegate_freeze_bandwidth`:
-  - [ ] `receiverAddress` is a different, existing account
-  - [ ] Expect: `SUCCESS` and delegated stores updated.
-- [ ] Add `happy_path_delegate_freeze_energy`:
-  - [ ] Same but `resource = ENERGY`.
+- [x] Add `happy_path_delegate_freeze_bandwidth`:
+  - [x] `receiverAddress` is a different, existing account
+  - [x] Expect: `SUCCESS` and delegated stores updated.
+- [x] Add `happy_path_delegate_freeze_energy`:
+  - [x] Same but `resource = ENERGY`.
 
 Delegation validation failures
-- [ ] Add `validate_fail_receiver_same_as_owner`:
-  - [ ] Expect: `"receiverAddress must not be the same as ownerAddress"`.
-- [ ] Add `validate_fail_receiver_invalid_address`:
-  - [ ] Expect: `"Invalid receiverAddress"`.
-- [ ] Add `validate_fail_receiver_account_not_exist`:
-  - [ ] Expect: `"Account[" + receiver + "] not exists"` (exact string).
-- [ ] (Optional) Add `validate_fail_delegate_to_contract_address`:
-  - [ ] Enable `allowTvmConstantinople=1`, set receiver account type to Contract
-  - [ ] Expect: `"Do not allow delegate resources to contract addresses"`.
+- [x] Add `validate_fail_receiver_same_as_owner`:
+  - [x] Expect: `"receiverAddress must not be the same as ownerAddress"`.
+- [x] Add `validate_fail_receiver_invalid_address`:
+  - [x] Expect: `"Invalid receiverAddress"`.
+- [x] Add `validate_fail_receiver_account_not_exist`:
+  - [x] Expect: `"Account[" + receiver + "] not exists"` (exact string).
+- [x] (Optional) Add `validate_fail_delegate_to_contract_address`:
+  - [x] Enable `allowTvmConstantinople=1`, set receiver account type to Contract
+  - [x] Expect: `"Do not allow delegate resources to contract addresses"`.
 
 Phase 3 — UnfreezeBalanceContract (12) Missing Fixtures (delegation OFF, new resource model OFF)
 
@@ -160,31 +160,31 @@ V2-open compatibility (important cross-impl behavior)
 Phase 4 — UnfreezeBalanceContract (12) Delegation-Enabled Fixtures (optional but high value)
 
 Enable delegation mode for this phase
-- [ ] Set `DynamicPropertiesStore.saveAllowDelegateResource(1)`
-- [ ] Include DBs in metadata:
-  - [ ] `account`, `dynamic-properties`, `votes`, `DelegatedResource`, `DelegatedResourceAccountIndex`
+- [x] Set `DynamicPropertiesStore.saveAllowDelegateResource(1)`
+- [x] Include DBs in metadata:
+  - [x] `account`, `dynamic-properties`, `votes`, `DelegatedResource`, `DelegatedResourceAccountIndex`
 
 Delegated unfreeze happy path
-- [ ] Add `happy_path_unfreeze_delegated_bandwidth`:
-  - [ ] Seed `DelegatedResource` (owner->receiver) with expired BANDWIDTH delegation
-  - [ ] Expect: `SUCCESS`, delegated entry cleared (and deleted if both resources are 0).
-- [ ] Add `happy_path_unfreeze_delegated_energy`:
-  - [ ] Same for ENERGY.
+- [x] Add `happy_path_unfreeze_delegated_bandwidth`:
+  - [x] Seed `DelegatedResource` (owner->receiver) with expired BANDWIDTH delegation
+  - [x] Expect: `SUCCESS`, delegated entry cleared (and deleted if both resources are 0).
+- [x] Add `happy_path_unfreeze_delegated_energy`:
+  - [x] Same for ENERGY.
 
 Delegated unfreeze validation failures
-- [ ] Add `validate_fail_receiver_same_as_owner`:
-  - [ ] Expect: `"receiverAddress must not be the same as ownerAddress"`.
-- [ ] Add `validate_fail_receiver_invalid_address`:
-  - [ ] Expect: `"Invalid receiverAddress"`.
-- [ ] Add `validate_fail_delegated_resource_not_exist`:
-  - [ ] Receiver set, but no `DelegatedResource` entry
-  - [ ] Expect: `"delegated Resource does not exist"`.
-- [ ] Add `validate_fail_no_delegated_frozen_balance`:
-  - [ ] DelegatedResource exists but frozen balance for the resource is `0`
-  - [ ] Expect: `"no delegatedFrozenBalance(BANDWIDTH)"` / `"no delegateFrozenBalance(Energy)"`.
-- [ ] Add `validate_fail_delegated_not_expired`:
-  - [ ] DelegatedResource expireTime > now
-  - [ ] Expect: `"It's not time to unfreeze."`.
+- [x] Add `validate_fail_receiver_same_as_owner`:
+  - [x] Expect: `"receiverAddress must not be the same as ownerAddress"`.
+- [x] Add `validate_fail_receiver_invalid_address`:
+  - [x] Expect: `"Invalid receiverAddress"`.
+- [x] Add `validate_fail_delegated_resource_not_exist`:
+  - [x] Receiver set, but no `DelegatedResource` entry
+  - [x] Expect: `"delegated Resource does not exist"`.
+- [x] Add `validate_fail_no_delegated_frozen_balance`:
+  - [x] DelegatedResource exists but frozen balance for the resource is `0`
+  - [x] Expect: `"no delegatedFrozenBalance(BANDWIDTH)"` / `"no delegateFrozenBalance(Energy)"`.
+- [x] Add `validate_fail_delegated_not_expired`:
+  - [x] DelegatedResource expireTime > now
+  - [x] Expect: `"It's not time to unfreeze."`.
 
 Phase 5 — Validate Fixture Output
 - [ ] Run the test class and regenerate fixtures:
