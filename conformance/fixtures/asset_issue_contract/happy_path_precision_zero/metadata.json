@@ -1,0 +1,23 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "happy_path_precision_zero",
+  "caseCategory": "happy",
+  "description": "Success when precision is 0 (boundary-happy)",
+  "generatedAt": "2026-01-03T03:10:34.231Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "End time should be greater than start time",
+  "ownerAddress": "a0707265636973696f6e5f7a65726f5f6973737565",
+  "dynamicProperties": {
+    "ALLOW_SAME_TOKEN_NAME": 1
+  },
+  "notes": []
+}
