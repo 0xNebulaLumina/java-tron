@@ -1,0 +1,22 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "happy_path_start_time_just_after_head_block_time",
+  "caseCategory": "happy",
+  "description": "Success when start_time = headBlockTime + 1",
+  "generatedAt": "2026-01-03T03:10:33.419Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a073746172745f61667465725f686561645f697373",
+  "dynamicProperties": {
+    "ALLOW_SAME_TOKEN_NAME": 1
+  },
+  "notes": []
+}

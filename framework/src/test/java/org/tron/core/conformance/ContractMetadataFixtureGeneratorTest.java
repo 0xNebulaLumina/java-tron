@@ -19,6 +19,8 @@ import org.tron.core.config.args.Args;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction;
+import org.tron.common.parameter.CommonParameter;
+import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
 import org.tron.protos.contract.SmartContractOuterClass.ClearABIContract;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract.ABI;
@@ -39,6 +41,7 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
   private static final String OWNER_ADDRESS;
   private static final String CONTRACT_ADDRESS;
   private static final String OTHER_ADDRESS;
+  private static final String NON_EXISTENT_ACCOUNT_ADDRESS;
   private static final long INITIAL_BALANCE = 100_000_000_000L;
 
   private FixtureGenerator generator;
@@ -49,6 +52,8 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
     OWNER_ADDRESS = Wallet.getAddressPreFixString() + "abd4b9367799eaa3197fecb144eb71de1e049abc";
     CONTRACT_ADDRESS = Wallet.getAddressPreFixString() + "1111111111111111111111111111111111111111";
     OTHER_ADDRESS = Wallet.getAddressPreFixString() + "2222222222222222222222222222222222222222";
+    // Valid address format but not present in AccountStore
+    NON_EXISTENT_ACCOUNT_ADDRESS = Wallet.getAddressPreFixString() + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   }
 
   @Before
@@ -287,6 +292,180 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
     log.info("UpdateSetting invalid percent: validationError={}", result.getValidationError());
   }
 
+  @Test
+  public void generateUpdateSetting_negativePercent() throws Exception {
+    UpdateSettingContract contract = UpdateSettingContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .setConsumeUserResourcePercent(-1) // Invalid: < 0
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateSettingContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_SETTING_CONTRACT", 33)
+        .caseName("validate_fail_negative_percent")
+        .caseCategory("validate_fail")
+        .description("Fail when consume_user_resource_percent is negative (< 0)")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("percent not in [0, 100]")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateSetting negative percent: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateSetting_ownerAddressEmpty() throws Exception {
+    UpdateSettingContract contract = UpdateSettingContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY) // Invalid: empty address
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .setConsumeUserResourcePercent(75)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateSettingContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_SETTING_CONTRACT", 33)
+        .caseName("validate_fail_owner_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when ownerAddress is empty (ByteString.EMPTY)")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .expectedError("Invalid address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateSetting owner address empty: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateSetting_ownerAddressWrongLength() throws Exception {
+    // 10 bytes instead of 21 bytes
+    UpdateSettingContract contract = UpdateSettingContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(new byte[10])) // Invalid: wrong length
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .setConsumeUserResourcePercent(75)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateSettingContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_SETTING_CONTRACT", 33)
+        .caseName("validate_fail_owner_address_wrong_length")
+        .caseCategory("validate_fail")
+        .description("Fail when ownerAddress has wrong length (not 21 bytes)")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .expectedError("Invalid address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateSetting owner address wrong length: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateSetting_ownerAccountNotExist() throws Exception {
+    // Valid address format but not present in AccountStore
+    UpdateSettingContract contract = UpdateSettingContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(NON_EXISTENT_ACCOUNT_ADDRESS)))
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .setConsumeUserResourcePercent(75)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateSettingContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_SETTING_CONTRACT", 33)
+        .caseName("validate_fail_owner_account_not_exist")
+        .caseCategory("validate_fail")
+        .description("Fail when owner account does not exist in AccountStore")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .ownerAddress(NON_EXISTENT_ACCOUNT_ADDRESS)
+        .expectedError("does not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateSetting owner account not exist: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateSetting_contractAddressEmpty() throws Exception {
+    UpdateSettingContract contract = UpdateSettingContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setContractAddress(ByteString.EMPTY) // Empty contract address
+        .setConsumeUserResourcePercent(75)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateSettingContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_SETTING_CONTRACT", 33)
+        .caseName("validate_fail_contract_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when contractAddress is empty (falls through to contract not exist)")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Contract does not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateSetting contract address empty: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateSetting_typeMismatch() throws Exception {
+    // Transaction type is UpdateSettingContract but payload is AssetIssueContract
+    AssetIssueContract wrongPayload = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setName(ByteString.copyFromUtf8("TestToken"))
+        .setTotalSupply(1000000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateSettingContract, wrongPayload);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_SETTING_CONTRACT", 33)
+        .caseName("validate_fail_type_mismatch")
+        .caseCategory("validate_fail")
+        .description("Fail when contract type is UpdateSettingContract but payload is different protobuf")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .expectedError("contract type error")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateSetting type mismatch: validationError={}", result.getValidationError());
+  }
+
   // ==========================================================================
   // UpdateEnergyLimitContract (45) Fixtures
   // ==========================================================================
@@ -436,6 +615,219 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UpdateEnergyLimit negative limit: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateEnergyLimit_forkNotEnabled() throws Exception {
+    // Set fork height high so energy limit feature is not enabled
+    long originalForkHeight = CommonParameter.getInstance().getBlockNumForEnergyLimit();
+    CommonParameter.getInstance().setBlockNumForEnergyLimit(100); // Block 10 < 100
+
+    try {
+      UpdateEnergyLimitContract contract = UpdateEnergyLimitContract.newBuilder()
+          .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+          .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+          .setOriginEnergyLimit(20_000_000L)
+          .build();
+
+      TransactionCapsule trxCap = createTransaction(
+          Transaction.Contract.ContractType.UpdateEnergyLimitContract, contract);
+
+      BlockCapsule blockCap = createBlockContext();
+
+      FixtureMetadata metadata = FixtureMetadata.builder()
+          .contractType("UPDATE_ENERGY_LIMIT_CONTRACT", 45)
+          .caseName("validate_fail_fork_not_enabled")
+          .caseCategory("validate_fail")
+          .description("Fail when energy limit fork is not enabled (blockNum < blockNumForEnergyLimit)")
+          .database("account")
+          .database("contract")
+          .database("dynamic-properties")
+          .ownerAddress(OWNER_ADDRESS)
+          .expectedError("contract type error, unexpected type [UpdateEnergyLimitContract]")
+          .build();
+
+      FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+      log.info("UpdateEnergyLimit fork not enabled: validationError={}", result.getValidationError());
+    } finally {
+      // Restore original fork height
+      CommonParameter.getInstance().setBlockNumForEnergyLimit(originalForkHeight);
+    }
+  }
+
+  @Test
+  public void generateUpdateEnergyLimit_largeLimit() throws Exception {
+    // Very large but valid energy limit (Long.MAX_VALUE)
+    UpdateEnergyLimitContract contract = UpdateEnergyLimitContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .setOriginEnergyLimit(Long.MAX_VALUE) // Extreme but valid value
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateEnergyLimitContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ENERGY_LIMIT_CONTRACT", 45)
+        .caseName("edge_large_energy_limit")
+        .caseCategory("happy")
+        .description("Update origin_energy_limit to Long.MAX_VALUE (extreme but valid)")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("origin_energy_limit", Long.MAX_VALUE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateEnergyLimit large limit: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateUpdateEnergyLimit_ownerAddressEmpty() throws Exception {
+    UpdateEnergyLimitContract contract = UpdateEnergyLimitContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY) // Invalid: empty address
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .setOriginEnergyLimit(20_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateEnergyLimitContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ENERGY_LIMIT_CONTRACT", 45)
+        .caseName("validate_fail_owner_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when ownerAddress is empty (ByteString.EMPTY)")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .expectedError("Invalid address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateEnergyLimit owner address empty: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateEnergyLimit_ownerAddressWrongLength() throws Exception {
+    // 10 bytes instead of 21 bytes
+    UpdateEnergyLimitContract contract = UpdateEnergyLimitContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(new byte[10])) // Invalid: wrong length
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .setOriginEnergyLimit(20_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateEnergyLimitContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ENERGY_LIMIT_CONTRACT", 45)
+        .caseName("validate_fail_owner_address_wrong_length")
+        .caseCategory("validate_fail")
+        .description("Fail when ownerAddress has wrong length (not 21 bytes)")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .expectedError("Invalid address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateEnergyLimit owner address wrong length: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateEnergyLimit_ownerAccountNotExist() throws Exception {
+    // Valid address format but not present in AccountStore
+    UpdateEnergyLimitContract contract = UpdateEnergyLimitContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(NON_EXISTENT_ACCOUNT_ADDRESS)))
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .setOriginEnergyLimit(20_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateEnergyLimitContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ENERGY_LIMIT_CONTRACT", 45)
+        .caseName("validate_fail_owner_account_not_exist")
+        .caseCategory("validate_fail")
+        .description("Fail when owner account does not exist in AccountStore")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .ownerAddress(NON_EXISTENT_ACCOUNT_ADDRESS)
+        .expectedError("does not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateEnergyLimit owner account not exist: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateEnergyLimit_contractAddressEmpty() throws Exception {
+    UpdateEnergyLimitContract contract = UpdateEnergyLimitContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setContractAddress(ByteString.EMPTY) // Empty contract address
+        .setOriginEnergyLimit(20_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateEnergyLimitContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ENERGY_LIMIT_CONTRACT", 45)
+        .caseName("validate_fail_contract_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when contractAddress is empty (falls through to contract not exist)")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Contract does not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateEnergyLimit contract address empty: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateUpdateEnergyLimit_typeMismatch() throws Exception {
+    // Transaction type is UpdateEnergyLimitContract but payload is AssetIssueContract
+    AssetIssueContract wrongPayload = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setName(ByteString.copyFromUtf8("TestToken"))
+        .setTotalSupply(1000000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UpdateEnergyLimitContract, wrongPayload);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UPDATE_ENERGY_LIMIT_CONTRACT", 45)
+        .caseName("validate_fail_type_mismatch")
+        .caseCategory("validate_fail")
+        .description("Fail when contract type is UpdateEnergyLimitContract but payload is different protobuf")
+        .database("account")
+        .database("contract")
+        .database("dynamic-properties")
+        .expectedError("contract type error")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UpdateEnergyLimit type mismatch: validationError={}", result.getValidationError());
   }
 
   // ==========================================================================
@@ -604,6 +996,152 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("ClearABI already cleared: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateClearABI_ownerAddressEmpty() throws Exception {
+    ClearABIContract contract = ClearABIContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY) // Invalid: empty address
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ClearABIContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_owner_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when ownerAddress is empty (ByteString.EMPTY)")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .expectedError("Invalid address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI owner address empty: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateClearABI_ownerAddressWrongLength() throws Exception {
+    // 10 bytes instead of 21 bytes
+    ClearABIContract contract = ClearABIContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(new byte[10])) // Invalid: wrong length
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ClearABIContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_owner_address_wrong_length")
+        .caseCategory("validate_fail")
+        .description("Fail when ownerAddress has wrong length (not 21 bytes)")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .expectedError("Invalid address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI owner address wrong length: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateClearABI_ownerAccountNotExist() throws Exception {
+    // Valid address format but not present in AccountStore
+    ClearABIContract contract = ClearABIContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(NON_EXISTENT_ACCOUNT_ADDRESS)))
+        .setContractAddress(ByteString.copyFrom(ByteArray.fromHexString(CONTRACT_ADDRESS)))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ClearABIContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_owner_account_not_exist")
+        .caseCategory("validate_fail")
+        .description("Fail when owner account does not exist in AccountStore")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .ownerAddress(NON_EXISTENT_ACCOUNT_ADDRESS)
+        .expectedError("not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI owner account not exist: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateClearABI_contractAddressEmpty() throws Exception {
+    ClearABIContract contract = ClearABIContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setContractAddress(ByteString.EMPTY) // Empty contract address
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ClearABIContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_contract_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when contractAddress is empty (falls through to contract not exists)")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Contract not exists")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI contract address empty: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateClearABI_typeMismatch() throws Exception {
+    // Transaction type is ClearABIContract but payload is AssetIssueContract
+    AssetIssueContract wrongPayload = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setName(ByteString.copyFromUtf8("TestToken"))
+        .setTotalSupply(1000000)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ClearABIContract, wrongPayload);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_type_mismatch")
+        .caseCategory("validate_fail")
+        .description("Fail when contract type is ClearABIContract but payload is different protobuf")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .expectedError("contract type error")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI type mismatch: validationError={}", result.getValidationError());
   }
 
   // ==========================================================================

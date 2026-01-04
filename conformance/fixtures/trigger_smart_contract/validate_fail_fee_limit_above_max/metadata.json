@@ -1,0 +1,24 @@
+{
+  "contractType": "TRIGGER_SMART_CONTRACT",
+  "contractTypeNum": 31,
+  "caseName": "validate_fail_fee_limit_above_max",
+  "caseCategory": "validate_fail",
+  "description": "Trigger with feeLimit > maxFeeLimit should fail validation",
+  "generatedAt": "2026-01-04T11:53:40.872Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 0,
+  "blockTimestamp": 0,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "code",
+    "abi",
+    "contract-state",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "feeLimit must be >= 0 and <= 1000000000",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

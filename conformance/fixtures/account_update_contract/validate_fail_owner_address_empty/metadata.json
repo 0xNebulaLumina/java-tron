@@ -1,0 +1,20 @@
+{
+  "contractType": "ACCOUNT_UPDATE_CONTRACT",
+  "contractTypeNum": 10,
+  "caseName": "validate_fail_owner_address_empty",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner address is empty bytes",
+  "generatedAt": "2026-01-04T12:48:59.569Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "account-index",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid ownerAddress",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1,0 +1,23 @@
+{
+  "contractType": "MARKET_SELL_ASSET_CONTRACT",
+  "contractTypeNum": 52,
+  "caseName": "edge_rounding_quantity_too_small_returns_sell_token",
+  "caseCategory": "edge",
+  "description": "multiplyAndDivide returns 0; sell token returned, order becomes INACTIVE",
+  "generatedAt": "2026-01-03T14:09:24.055Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "market_order",
+    "market_account",
+    "market_pair_to_price",
+    "market_pair_price_to_order",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

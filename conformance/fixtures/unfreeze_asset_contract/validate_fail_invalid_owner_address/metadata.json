@@ -1,0 +1,21 @@
+{
+  "contractType": "UNFREEZE_ASSET_CONTRACT",
+  "contractTypeNum": 14,
+  "caseName": "validate_fail_invalid_owner_address",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner address has invalid format",
+  "generatedAt": "2026-01-04T07:08:08.539Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid address",
+  "ownerAddress": "000000000000000000000000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

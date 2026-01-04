@@ -1,0 +1,19 @@
+{
+  "contractType": "CANCEL_ALL_UNFREEZE_V2_CONTRACT",
+  "contractTypeNum": 59,
+  "caseName": "edge_amount_not_multiple_of_trx_precision_rounding",
+  "caseCategory": "happy",
+  "description": "Non-TRX-multiple amount to pin floor division rounding in weight updates",
+  "generatedAt": "2026-01-04T06:15:42.271Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8",
+  "dynamicProperties": {},
+  "notes": []
+}

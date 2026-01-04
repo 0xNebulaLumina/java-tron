@@ -1,0 +1,22 @@
+{
+  "contractType": "PROPOSAL_APPROVE_CONTRACT",
+  "contractTypeNum": 17,
+  "caseName": "validate_fail_expired_at_exact_boundary",
+  "caseCategory": "validate_fail",
+  "description": "Fail when now == expirationTime (exact boundary)",
+  "generatedAt": "2026-01-04T05:56:08.182Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "proposal",
+    "dynamic-properties",
+    "witness"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Proposal[21] expired",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

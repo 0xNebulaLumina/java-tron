@@ -1,0 +1,21 @@
+{
+  "contractType": "WITHDRAW_EXPIRE_UNFREEZE_CONTRACT",
+  "contractTypeNum": 56,
+  "caseName": "edge_expire_time_equals_now_is_withdrawable",
+  "caseCategory": "happy",
+  "description": "Entry with expireTime == now is treated as expired and withdrawable (<= now)",
+  "generatedAt": "2026-01-04T06:15:42.384Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a08888888888888888888888888888888888888888",
+  "dynamicProperties": {
+    "withdraw_expire_amount": 2000000000
+  },
+  "notes": []
+}

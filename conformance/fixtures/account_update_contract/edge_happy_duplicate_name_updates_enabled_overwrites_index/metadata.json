@@ -1,0 +1,22 @@
+{
+  "contractType": "ACCOUNT_UPDATE_CONTRACT",
+  "contractTypeNum": 10,
+  "caseName": "edge_happy_duplicate_name_updates_enabled_overwrites_index",
+  "caseCategory": "edge",
+  "description": "Success with duplicate name when ALLOW_UPDATE_ACCOUNT_NAME=1, account-index points to last writer",
+  "generatedAt": "2026-01-04T12:48:59.426Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "account-index",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a06475705f6163636f756e745f6262623100000000",
+  "dynamicProperties": {
+    "ALLOW_UPDATE_ACCOUNT_NAME": 1
+  },
+  "notes": []
+}

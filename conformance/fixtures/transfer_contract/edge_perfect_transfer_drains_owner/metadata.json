@@ -1,0 +1,21 @@
+{
+  "contractType": "TRANSFER_CONTRACT",
+  "contractTypeNum": 1,
+  "caseName": "edge_perfect_transfer_drains_owner",
+  "caseCategory": "happy",
+  "description": "Boundary: transfer exact balance, owner ends with 0 TRX",
+  "generatedAt": "2026-01-04T06:41:56.363Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0647261696e5f6f776e65725f3030310000000000",
+  "dynamicProperties": {
+    "transfer_amount": 100000000
+  },
+  "notes": []
+}

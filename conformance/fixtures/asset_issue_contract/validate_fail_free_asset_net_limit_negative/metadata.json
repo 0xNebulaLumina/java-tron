@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_free_asset_net_limit_negative",
+  "caseCategory": "validate_fail",
+  "description": "Fail when free_asset_net_limit is negative",
+  "generatedAt": "2026-01-03T03:10:33.347Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid FreeAssetNetLimit",
+  "ownerAddress": "a0667265655f6e65745f6e65675f69737375657200",
+  "dynamicProperties": {},
+  "notes": []
+}

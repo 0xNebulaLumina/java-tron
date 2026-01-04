@@ -1,0 +1,23 @@
+{
+  "contractType": "PROPOSAL_CREATE_CONTRACT",
+  "contractTypeNum": 16,
+  "caseName": "happy_path_maintenance_interval_min_bound",
+  "caseCategory": "happy",
+  "description": "Create proposal with MAINTENANCE_TIME_INTERVAL at minimum boundary",
+  "generatedAt": "2026-01-04T05:56:08.201Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "proposal",
+    "dynamic-properties",
+    "witness"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {
+    "MAINTENANCE_TIME_INTERVAL": 81000
+  },
+  "notes": []
+}

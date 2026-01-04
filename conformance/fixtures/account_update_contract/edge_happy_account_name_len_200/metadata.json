@@ -1,0 +1,20 @@
+{
+  "contractType": "ACCOUNT_UPDATE_CONTRACT",
+  "contractTypeNum": 10,
+  "caseName": "edge_happy_account_name_len_200",
+  "caseCategory": "edge",
+  "description": "Success when account name is exactly 200 bytes (max allowed)",
+  "generatedAt": "2026-01-04T12:48:59.507Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "account-index",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a07570646174655f6f776e65725f32303000000000",
+  "dynamicProperties": {},
+  "notes": []
+}
