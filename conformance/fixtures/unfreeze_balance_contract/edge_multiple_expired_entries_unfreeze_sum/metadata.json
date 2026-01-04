@@ -1,0 +1,24 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "edge_multiple_expired_entries_unfreeze_sum",
+  "caseCategory": "edge",
+  "description": "Multiple expired entries: unfreeze amount equals the sum",
+  "generatedAt": "2026-01-04T07:59:45.891Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76315f6d756c74695f6578",
+  "dynamicProperties": {
+    "expected_unfreeze_amount": 100000000,
+    "first_expired_amount": 40000000,
+    "second_expired_amount": 60000000
+  },
+  "notes": []
+}

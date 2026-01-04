@@ -1,0 +1,22 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "validate_fail_unfreezing_times_over_limit",
+  "caseCategory": "validate_fail",
+  "description": "Fail when unfreezing times >= 32 (UNFREEZE_MAX_TIMES)",
+  "generatedAt": "2026-01-03T13:02:54.742Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid unfreeze operation, unfreezing times is over limit",
+  "ownerAddress": "a0756e667265657a655f76325f6c696d6974000000",
+  "dynamicProperties": {
+    "pending_unfreezes": 32
+  },
+  "notes": []
+}

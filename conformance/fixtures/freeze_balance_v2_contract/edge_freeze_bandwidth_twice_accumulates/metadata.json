@@ -1,0 +1,25 @@
+{
+  "contractType": "FREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 54,
+  "caseName": "edge_freeze_bandwidth_twice_accumulates",
+  "caseCategory": "edge",
+  "description": "Freeze BANDWIDTH twice - accumulation semantics (50 + 30 = 80 TRX)",
+  "generatedAt": "2026-01-03T13:02:54.671Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0667265657a655f76325f616363756d0000000000",
+  "dynamicProperties": {
+    "UNFREEZE_DELAY_DAYS": 14,
+    "freeze_amount": 30000000,
+    "pre_frozen_amount": 50000000
+  },
+  "notes": [
+    "Tests accumulation and totalNetWeight delta behavior"
+  ]
+}

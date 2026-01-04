@@ -657,6 +657,818 @@ public class ProposalFixtureGeneratorTest extends BaseTest {
   }
 
   // ==========================================================================
+  // Phase 1: ProposalCreateContract Additional Edge Cases
+  // ==========================================================================
+
+  // --- Owner address / account / witness validation ---
+
+  @Test
+  public void generateProposalCreate_invalidOwnerAddressShort() throws Exception {
+    // Build proposal with invalid (too short) owner address - 2 bytes
+    Map<Long, Long> params = new HashMap<>();
+    params.put(0L, 1000000L);
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString("aaaa")))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_owner_address_invalid_short")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address is invalid (too short)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .expectedError("Invalid address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate invalid address short: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_ownerAccountNotExist() throws Exception {
+    // Build proposal with valid-looking address but no account exists
+    String nonExistentAddress = Wallet.getAddressPreFixString() + "abcdef1234567890abcdef1234567890abcdef12";
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(0L, 1000000L);
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(nonExistentAddress)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_owner_account_not_exist")
+        .caseCategory("validate_fail")
+        .description("Fail when owner account does not exist")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .expectedError("Account[")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate account not exist: validationError={}", result.getValidationError());
+  }
+
+  // --- Parameter id/value validation ---
+
+  @Test
+  public void generateProposalCreate_paramCodeUnsupported() throws Exception {
+    // Build proposal with unsupported parameter code
+    Map<Long, Long> params = new HashMap<>();
+    params.put(9999L, 1L);  // Unsupported code
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_param_code_unsupported")
+        .caseCategory("validate_fail")
+        .description("Fail when parameter code is not supported")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Does not support code : 9999")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate unsupported code: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_maintenanceIntervalTooLow() throws Exception {
+    // Build proposal with MAINTENANCE_TIME_INTERVAL below minimum (< 3 * 27 * 1000 = 81000)
+    Map<Long, Long> params = new HashMap<>();
+    params.put(0L, 1L);  // Way below minimum
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_maintenance_interval_too_low")
+        .caseCategory("validate_fail")
+        .description("Fail when MAINTENANCE_TIME_INTERVAL is below minimum")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("valid range is [3 * 27 * 1000,24 * 3600 * 1000]")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate maintenance too low: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_maintenanceIntervalTooHigh() throws Exception {
+    // Build proposal with MAINTENANCE_TIME_INTERVAL above maximum (> 24 * 3600 * 1000 = 86400000)
+    Map<Long, Long> params = new HashMap<>();
+    params.put(0L, 24L * 3600L * 1000L + 1L);  // Just above maximum
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_maintenance_interval_too_high")
+        .caseCategory("validate_fail")
+        .description("Fail when MAINTENANCE_TIME_INTERVAL is above maximum")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("valid range is [3 * 27 * 1000,24 * 3600 * 1000]")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate maintenance too high: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_negativeFeeParam() throws Exception {
+    // Build proposal with negative value for fee-like parameter (CREATE_ACCOUNT_FEE = 2)
+    Map<Long, Long> params = new HashMap<>();
+    params.put(2L, -1L);  // Negative CREATE_ACCOUNT_FEE
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_negative_fee_like_param")
+        .caseCategory("validate_fail")
+        .description("Fail when fee-like parameter has negative value")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("valid range is [0,")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate negative fee: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_allowCreationOfContractsValueZero() throws Exception {
+    // Build proposal with ALLOW_CREATION_OF_CONTRACTS (9) = 0 (must be 1)
+    Map<Long, Long> params = new HashMap<>();
+    params.put(9L, 0L);  // ALLOW_CREATION_OF_CONTRACTS must be 1
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_allow_creation_of_contracts_value_zero")
+        .caseCategory("validate_fail")
+        .description("Fail when ALLOW_CREATION_OF_CONTRACTS is not 1")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("ALLOW_CREATION_OF_CONTRACTS")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate allow creation zero: validationError={}", result.getValidationError());
+  }
+
+  // --- Parameter prerequisite / dependency ---
+
+  @Test
+  public void generateProposalCreate_allowTvmTransferTrc10PrereqNotMet() throws Exception {
+    // Set ALLOW_SAME_TOKEN_NAME to 0 before proposing ALLOW_TVM_TRANSFER_TRC10
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(0);
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(18L, 1L);  // ALLOW_TVM_TRANSFER_TRC10 requires ALLOW_SAME_TOKEN_NAME == 1
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_allow_tvm_transfer_trc10_prereq_not_met")
+        .caseCategory("validate_fail")
+        .description("Fail when ALLOW_SAME_TOKEN_NAME not approved before ALLOW_TVM_TRANSFER_TRC10")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("[ALLOW_SAME_TOKEN_NAME] proposal must be approved before [ALLOW_TVM_TRANSFER_TRC10] can be proposed")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate TRC10 prereq not met: validationError={}", result.getValidationError());
+  }
+
+  // --- One-time proposal validation ---
+
+  @Test
+  public void generateProposalCreate_removePowerGrAlreadyExecuted() throws Exception {
+    // Set REMOVE_THE_POWER_OF_THE_GR to -1 (already executed)
+    dbManager.getDynamicPropertiesStore().saveRemoveThePowerOfTheGr(-1);
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(10L, 1L);  // REMOVE_THE_POWER_OF_THE_GR
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_remove_power_gr_already_executed")
+        .caseCategory("validate_fail")
+        .description("Fail when REMOVE_THE_POWER_OF_THE_GR already executed")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("only allowed to be executed once")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate GR already executed: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_removePowerGrValueNotOne() throws Exception {
+    // Set REMOVE_THE_POWER_OF_THE_GR to 0 (not executed yet)
+    dbManager.getDynamicPropertiesStore().saveRemoveThePowerOfTheGr(0);
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(10L, 0L);  // REMOVE_THE_POWER_OF_THE_GR must be 1
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_remove_power_gr_value_not_one")
+        .caseCategory("validate_fail")
+        .description("Fail when REMOVE_THE_POWER_OF_THE_GR value is not 1")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("REMOVE_THE_POWER_OF_THE_GR")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate GR value not one: validationError={}", result.getValidationError());
+  }
+
+  // --- Boundary-happy fixtures ---
+
+  @Test
+  public void generateProposalCreate_maintenanceIntervalMinBound() throws Exception {
+    // Build proposal with MAINTENANCE_TIME_INTERVAL at minimum boundary (3 * 27 * 1000 = 81000)
+    Map<Long, Long> params = new HashMap<>();
+    params.put(0L, 3L * 27L * 1000L);  // Exactly at minimum
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("happy_path_maintenance_interval_min_bound")
+        .caseCategory("happy")
+        .description("Create proposal with MAINTENANCE_TIME_INTERVAL at minimum boundary")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("MAINTENANCE_TIME_INTERVAL", 3L * 27L * 1000L)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate maintenance min bound: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateProposalCreate_maintenanceIntervalMaxBound() throws Exception {
+    // Build proposal with MAINTENANCE_TIME_INTERVAL at maximum boundary (24 * 3600 * 1000 = 86400000)
+    Map<Long, Long> params = new HashMap<>();
+    params.put(0L, 24L * 3600L * 1000L);  // Exactly at maximum
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("happy_path_maintenance_interval_max_bound")
+        .caseCategory("happy")
+        .description("Create proposal with MAINTENANCE_TIME_INTERVAL at maximum boundary")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("MAINTENANCE_TIME_INTERVAL", 24L * 3600L * 1000L)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate maintenance max bound: success={}", result.isSuccess());
+  }
+
+  // ==========================================================================
+  // Phase 2: ProposalApproveContract Additional Edge Cases
+  // ==========================================================================
+
+  // --- Owner/witness validation ---
+
+  @Test
+  public void generateProposalApprove_invalidOwnerAddressShort() throws Exception {
+    // Build proposal approve with invalid (too short) owner address - 2 bytes
+    ProposalApproveContract contract = ProposalApproveContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString("aaaa")))
+        .setProposalId(1)
+        .setIsAddApproval(true)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalApproveContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_APPROVE_CONTRACT", 17)
+        .caseName("validate_fail_owner_address_invalid_short")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address is invalid (too short)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .expectedError("Invalid address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalApprove invalid address short: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalApprove_ownerAccountNotExist() throws Exception {
+    // Build proposal approve with valid-looking address but no account exists
+    String nonExistentAddress = Wallet.getAddressPreFixString() + "abcdef1234567890abcdef1234567890abcdef12";
+
+    ProposalApproveContract contract = ProposalApproveContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(nonExistentAddress)))
+        .setProposalId(1)
+        .setIsAddApproval(true)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalApproveContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_APPROVE_CONTRACT", 17)
+        .caseName("validate_fail_owner_account_not_exist")
+        .caseCategory("validate_fail")
+        .description("Fail when owner account does not exist")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .expectedError("Account[")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalApprove account not exist: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalApprove_ownerNotWitness() throws Exception {
+    // Create an account that is NOT a witness
+    String nonWitnessAddress = Wallet.getAddressPreFixString() + "9876543210fedcba9876543210fedcba98765432";
+
+    AccountCapsule nonWitnessAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("non-witness-approve"),
+        ByteString.copyFrom(ByteArray.fromHexString(nonWitnessAddress)),
+        AccountType.Normal,
+        INITIAL_BALANCE);
+    dbManager.getAccountStore().put(nonWitnessAccount.getAddress().toByteArray(), nonWitnessAccount);
+
+    // Create a proposal to approve
+    createProposal(20);
+
+    ProposalApproveContract contract = ProposalApproveContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(nonWitnessAddress)))
+        .setProposalId(20)
+        .setIsAddApproval(true)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalApproveContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_APPROVE_CONTRACT", 17)
+        .caseName("validate_fail_owner_not_witness")
+        .caseCategory("validate_fail")
+        .description("Fail when owner is not a witness")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(nonWitnessAddress)
+        .expectedError("Witness[")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalApprove not witness: validationError={}", result.getValidationError());
+  }
+
+  // --- Proposal store / dynamic property inconsistency ---
+
+  @Test
+  public void generateProposalApprove_proposalMissingButLatestNumAllows() throws Exception {
+    // Set latestProposalNum to 100 but don't create proposal 100
+    dbManager.getDynamicPropertiesStore().saveLatestProposalNum(100);
+
+    ProposalApproveContract contract = ProposalApproveContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setProposalId(100)
+        .setIsAddApproval(true)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalApproveContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_APPROVE_CONTRACT", 17)
+        .caseName("validate_fail_proposal_missing_but_latest_num_allows_it")
+        .caseCategory("validate_fail")
+        .description("Fail when proposal is missing from ProposalStore but latestProposalNum allows it")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Proposal[100]")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalApprove missing proposal: validationError={}", result.getValidationError());
+  }
+
+  // --- Expiration boundary ---
+
+  @Test
+  public void generateProposalApprove_expiredAtExactBoundary() throws Exception {
+    // Create proposal where expirationTime == current timestamp (exact boundary)
+    long currentTime = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    createProposalWithExpiration(21, currentTime);
+
+    ProposalApproveContract contract = ProposalApproveContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setProposalId(21)
+        .setIsAddApproval(true)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalApproveContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_APPROVE_CONTRACT", 17)
+        .caseName("validate_fail_expired_at_exact_boundary")
+        .caseCategory("validate_fail")
+        .description("Fail when now == expirationTime (exact boundary)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("expired")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalApprove expired boundary: validationError={}", result.getValidationError());
+  }
+
+  // ==========================================================================
+  // Phase 3: ProposalDeleteContract Additional Edge Cases
+  // ==========================================================================
+
+  // --- Owner address / account existence ---
+
+  @Test
+  public void generateProposalDelete_invalidOwnerAddressShort() throws Exception {
+    // Build proposal delete with invalid (too short) owner address - 2 bytes
+    ProposalDeleteContract contract = ProposalDeleteContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString("aaaa")))
+        .setProposalId(1)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalDeleteContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_DELETE_CONTRACT", 18)
+        .caseName("validate_fail_owner_address_invalid_short")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address is invalid (too short)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .expectedError("Invalid address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalDelete invalid address short: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalDelete_ownerAccountNotExist() throws Exception {
+    // Build proposal delete with valid-looking address but no account exists
+    String nonExistentAddress = Wallet.getAddressPreFixString() + "abcdef1234567890abcdef1234567890abcdef12";
+
+    ProposalDeleteContract contract = ProposalDeleteContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(nonExistentAddress)))
+        .setProposalId(1)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalDeleteContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_DELETE_CONTRACT", 18)
+        .caseName("validate_fail_owner_account_not_exist")
+        .caseCategory("validate_fail")
+        .description("Fail when owner account does not exist")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .expectedError("Account[")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalDelete account not exist: validationError={}", result.getValidationError());
+  }
+
+  // --- Semantic nuance: delete does not require witness membership ---
+
+  @Test
+  public void generateProposalDelete_happyPathWithoutWitnessEntry() throws Exception {
+    // Create proposal first (while owner is still a witness)
+    createProposal(30);
+
+    // Remove the owner from WitnessStore (delete does NOT require witness)
+    dbManager.getWitnessStore().delete(ByteArray.fromHexString(OWNER_ADDRESS));
+
+    ProposalDeleteContract contract = ProposalDeleteContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setProposalId(30)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalDeleteContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_DELETE_CONTRACT", 18)
+        .caseName("happy_path_delete_without_witness_entry")
+        .caseCategory("happy")
+        .description("Delete succeeds even if owner is no longer a witness (only account + proposer match required)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("proposal_id", 30)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalDelete without witness: success={}", result.isSuccess());
+
+    // Re-add witness for other tests
+    WitnessCapsule witness = new WitnessCapsule(
+        ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)),
+        10_000_000L,
+        WITNESS_URL);
+    dbManager.getWitnessStore().put(witness.getAddress().toByteArray(), witness);
+  }
+
+  // --- Proposal store / dynamic property inconsistency ---
+
+  @Test
+  public void generateProposalDelete_proposalMissingButLatestNumAllows() throws Exception {
+    // Set latestProposalNum to 200 but don't create proposal 200
+    dbManager.getDynamicPropertiesStore().saveLatestProposalNum(200);
+
+    ProposalDeleteContract contract = ProposalDeleteContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setProposalId(200)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalDeleteContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_DELETE_CONTRACT", 18)
+        .caseName("validate_fail_proposal_missing_but_latest_num_allows_it")
+        .caseCategory("validate_fail")
+        .description("Fail when proposal is missing from ProposalStore but latestProposalNum allows it")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Proposal[200]")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalDelete missing proposal: validationError={}", result.getValidationError());
+  }
+
+  // --- Expiration boundary ---
+
+  @Test
+  public void generateProposalDelete_expiredAtExactBoundary() throws Exception {
+    // Create proposal where expirationTime == current timestamp (exact boundary)
+    long currentTime = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    createProposalWithExpiration(31, currentTime);
+
+    ProposalDeleteContract contract = ProposalDeleteContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setProposalId(31)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalDeleteContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_DELETE_CONTRACT", 18)
+        .caseName("validate_fail_expired_at_exact_boundary")
+        .caseCategory("validate_fail")
+        .description("Fail when now == expirationTime (exact boundary)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("expired")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalDelete expired boundary: validationError={}", result.getValidationError());
+  }
+
+  // --- Optional: cancellation with existing approvals ---
+
+  @Test
+  public void generateProposalDelete_happyPathEvenIfApproved() throws Exception {
+    // Create proposal and approve it, then delete by creator
+    createProposal(32);
+    approveProposal(32);
+
+    ProposalDeleteContract contract = ProposalDeleteContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setProposalId(32)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalDeleteContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_DELETE_CONTRACT", 18)
+        .caseName("happy_path_delete_even_if_already_approved_by_someone")
+        .caseCategory("happy")
+        .description("Delete succeeds even if proposal already has approvals")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("proposal_id", 32)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalDelete with approvals: success={}", result.isSuccess());
+  }
+
+  // ==========================================================================
   // Helper Methods
   // ==========================================================================
 
@@ -768,5 +1580,23 @@ public class ProposalFixtureGeneratorTest extends BaseTest {
     chainBaseManager.getDynamicPropertiesStore().saveLatestProposalNum(id);
 
     log.info("Created canceled proposal {} for testing", id);
+  }
+
+  private void createProposalWithExpiration(long id, long expirationTime) {
+    Map<Long, Long> params = new HashMap<>();
+    params.put(0L, 1000000L);
+
+    ProposalCapsule proposal = new ProposalCapsule(
+        ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)),
+        id);
+    proposal.setParameters(params);
+    proposal.setCreateTime(
+        chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp());
+    proposal.setExpirationTime(expirationTime);
+
+    chainBaseManager.getProposalStore().put(proposal.createDbKey(), proposal);
+    chainBaseManager.getDynamicPropertiesStore().saveLatestProposalNum(id);
+
+    log.info("Created proposal {} with expiration {} for testing", id, expirationTime);
   }
 }
