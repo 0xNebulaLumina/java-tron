@@ -29,6 +29,7 @@ import org.tron.core.Wallet;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.TransactionTrace;
 import org.tron.core.exception.ContractValidateException;
@@ -1175,6 +1176,147 @@ public class VmFixtureGeneratorTest extends BaseTest {
     // Empty runtime code should still result in SUCCESS (contract exists but has no code)
     Assert.assertTrue("edge_empty_runtime_code_success should succeed", result.isSuccess());
     log.info("CreateSmartContract empty runtime: success={}", result.isSuccess());
+  }
+
+  // ==========================================================================
+  // Energy-Limit Hard Fork Gated Validations (mainnet parity)
+  // ==========================================================================
+
+  @Test
+  public void generateCreateSmartContract_originEnergyLimitZero() throws Exception {
+    log.info("Generating CreateSmartContract originEnergyLimit zero fixture (energy limit hard fork)");
+
+    // Enable energy limit hard fork for this test
+    CommonParameter.setENERGY_LIMIT_HARD_FORK(true);
+
+    try {
+      byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+      // Build contract with originEnergyLimit = 0 (invalid when hard fork enabled)
+      SmartContract.Builder contractBuilder = SmartContract.newBuilder();
+      contractBuilder.setOriginAddress(ByteString.copyFrom(ownerBytes));
+      contractBuilder.setBytecode(ByteString.copyFrom(ByteArray.fromHexString(MINIMAL_BYTECODE)));
+      contractBuilder.setConsumeUserResourcePercent(50);
+      contractBuilder.setOriginEnergyLimit(0); // Invalid: must be > 0
+      contractBuilder.setName("ZeroOriginEnergy");
+
+      CreateSmartContract.Builder createBuilder = CreateSmartContract.newBuilder();
+      createBuilder.setOwnerAddress(ByteString.copyFrom(ownerBytes));
+      createBuilder.setNewContract(contractBuilder.build());
+      CreateSmartContract createContract = createBuilder.build();
+
+      TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+      BlockCapsule blockCap = createBlockContext();
+
+      VmFixtureResult result = generateVmFixture(
+          trxCap, blockCap, createContract,
+          "create_smart_contract",
+          "validate_fail_origin_energy_limit_zero",
+          "validate_fail",
+          "Fail when originEnergyLimit is 0 (energy limit hard fork enabled)"
+      );
+
+      Assert.assertFalse("validate_fail_origin_energy_limit_zero should fail", result.isSuccess());
+      Assert.assertTrue("Error should mention originEnergyLimit",
+          result.getError() != null && result.getError().contains("originEnergyLimit must be > 0"));
+      log.info("CreateSmartContract originEnergyLimit zero: error={}", result.getError());
+    } finally {
+      // Restore default
+      CommonParameter.setENERGY_LIMIT_HARD_FORK(false);
+    }
+  }
+
+  @Test
+  public void generateCreateSmartContract_callValueNegative() throws Exception {
+    log.info("Generating CreateSmartContract callValue negative fixture (energy limit hard fork)");
+
+    // Enable energy limit hard fork for this test
+    CommonParameter.setENERGY_LIMIT_HARD_FORK(true);
+
+    try {
+      byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+      // Build contract with negative callValue (SmartContract.call_value)
+      SmartContract.Builder contractBuilder = SmartContract.newBuilder();
+      contractBuilder.setOriginAddress(ByteString.copyFrom(ownerBytes));
+      contractBuilder.setBytecode(ByteString.copyFrom(ByteArray.fromHexString(MINIMAL_BYTECODE)));
+      contractBuilder.setConsumeUserResourcePercent(50);
+      contractBuilder.setOriginEnergyLimit(10_000_000L);
+      contractBuilder.setName("NegativeCallValue");
+      contractBuilder.setCallValue(-1); // Invalid: must be >= 0
+
+      CreateSmartContract.Builder createBuilder = CreateSmartContract.newBuilder();
+      createBuilder.setOwnerAddress(ByteString.copyFrom(ownerBytes));
+      createBuilder.setNewContract(contractBuilder.build());
+
+      CreateSmartContract createContract = createBuilder.build();
+
+      TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+      BlockCapsule blockCap = createBlockContext();
+
+      VmFixtureResult result = generateVmFixture(
+          trxCap, blockCap, createContract,
+          "create_smart_contract",
+          "validate_fail_call_value_negative",
+          "validate_fail",
+          "Fail when callValue is negative (energy limit hard fork enabled)"
+      );
+
+      Assert.assertFalse("validate_fail_call_value_negative should fail", result.isSuccess());
+      Assert.assertTrue("Error should mention callValue",
+          result.getError() != null && result.getError().contains("callValue must be >= 0"));
+      log.info("CreateSmartContract callValue negative: error={}", result.getError());
+    } finally {
+      // Restore default
+      CommonParameter.setENERGY_LIMIT_HARD_FORK(false);
+    }
+  }
+
+  @Test
+  public void generateCreateSmartContract_tokenValueNegative() throws Exception {
+    log.info("Generating CreateSmartContract tokenValue negative fixture (energy limit hard fork)");
+
+    // Enable energy limit hard fork for this test
+    CommonParameter.setENERGY_LIMIT_HARD_FORK(true);
+
+    try {
+      byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+      // Build contract with negative tokenValue (CreateSmartContract.call_token_value)
+      SmartContract.Builder contractBuilder = SmartContract.newBuilder();
+      contractBuilder.setOriginAddress(ByteString.copyFrom(ownerBytes));
+      contractBuilder.setBytecode(ByteString.copyFrom(ByteArray.fromHexString(MINIMAL_BYTECODE)));
+      contractBuilder.setConsumeUserResourcePercent(50);
+      contractBuilder.setOriginEnergyLimit(10_000_000L);
+      contractBuilder.setName("NegativeTokenValue");
+
+      CreateSmartContract.Builder createBuilder = CreateSmartContract.newBuilder();
+      createBuilder.setOwnerAddress(ByteString.copyFrom(ownerBytes));
+      createBuilder.setNewContract(contractBuilder.build());
+      createBuilder.setTokenId(1_000_001L); // Valid token ID
+      createBuilder.setCallTokenValue(-1); // Invalid: tokenValue must be >= 0 (TRC-10)
+
+      CreateSmartContract createContract = createBuilder.build();
+
+      TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+      BlockCapsule blockCap = createBlockContext();
+
+      VmFixtureResult result = generateVmFixture(
+          trxCap, blockCap, createContract,
+          "create_smart_contract",
+          "validate_fail_token_value_negative",
+          "validate_fail",
+          "Fail when tokenValue is negative (energy limit hard fork enabled)"
+      );
+
+      Assert.assertFalse("validate_fail_token_value_negative should fail", result.isSuccess());
+      Assert.assertTrue("Error should mention tokenValue",
+          result.getError() != null && result.getError().contains("tokenValue must be >= 0"));
+      log.info("CreateSmartContract tokenValue negative: error={}", result.getError());
+    } finally {
+      // Restore default
+      CommonParameter.setENERGY_LIMIT_HARD_FORK(false);
+    }
   }
 
   // ==========================================================================

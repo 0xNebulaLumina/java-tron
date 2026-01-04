@@ -113,11 +113,11 @@ TRC-10 token transfer validation (`MUtil.transferToken` → `VMUtils.validateFor
   - Expect: `"assetBalance is not sufficient."` or `"assetBalance must greater than 0."`
 
 Gated-by-config validations (only if enabling `CommonParameter.ENERGY_LIMIT_HARD_FORK`)
-- [ ] Decide if conformance should run with energy-limit hard fork enabled (mainnet parity):
-  - [ ] If yes, set `CommonParameter.setENERGY_LIMIT_HARD_FORK(true)` in test setup and add:
-    - [ ] `validate_fail_origin_energy_limit_zero` → `"The originEnergyLimit must be > 0"`
-    - [ ] `validate_fail_call_value_negative` → `"callValue must be >= 0"`
-    - [ ] `validate_fail_token_value_negative` → `"tokenValue must be >= 0"`
+- [x] Decide if conformance should run with energy-limit hard fork enabled (mainnet parity):
+  - [x] If yes, set `CommonParameter.setENERGY_LIMIT_HARD_FORK(true)` in test setup and add:
+    - [x] `validate_fail_origin_energy_limit_zero` → `"The originEnergyLimit must be > 0"`
+    - [x] `validate_fail_call_value_negative` → `"callValue must be >= 0"`
+    - [x] `validate_fail_token_value_negative` → `"tokenValue must be >= 0"`
 
 ---
 
