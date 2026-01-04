@@ -1,0 +1,23 @@
+{
+  "contractType": "VOTE_WITNESS_CONTRACT",
+  "contractTypeNum": 4,
+  "caseName": "edge_tron_power_exact_match",
+  "caseCategory": "edge",
+  "description": "Edge case: votes exactly equal TRON power (boundary test for >= vs >)",
+  "generatedAt": "2026-01-04T07:26:42.593Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a065786163745f706f7765725f7674723100000000",
+  "dynamicProperties": {
+    "CHANGE_DELEGATION": 0
+  },
+  "notes": []
+}

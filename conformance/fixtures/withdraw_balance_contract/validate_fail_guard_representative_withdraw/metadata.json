@@ -1,0 +1,20 @@
+{
+  "contractType": "WITHDRAW_BALANCE_CONTRACT",
+  "contractTypeNum": 13,
+  "caseName": "validate_fail_guard_representative_withdraw",
+  "caseCategory": "validate_fail",
+  "description": "Fail when guard representative (genesis witness) tries to withdraw",
+  "generatedAt": "2026-01-04T07:26:42.438Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Account[a0299f3db80a24b20a254b89ce639d59132f157f13] is a guard representative and is not allowed to withdraw Balance",
+  "ownerAddress": "a0299f3db80a24b20a254b89ce639d59132f157f13",
+  "dynamicProperties": {},
+  "notes": []
+}
