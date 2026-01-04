@@ -1,0 +1,22 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "validate_fail_no_delegated_frozen_balance_bandwidth",
+  "caseCategory": "validate_fail",
+  "description": "Fail when delegated frozen balance for BANDWIDTH is 0",
+  "generatedAt": "2026-01-04T07:59:45.799Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties",
+    "DelegatedResource"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "no delegatedFrozenBalance(BANDWIDTH)",
+  "ownerAddress": "a0756e667265657a655f64656c5f6e6f5f62616c00",
+  "dynamicProperties": {},
+  "notes": []
+}

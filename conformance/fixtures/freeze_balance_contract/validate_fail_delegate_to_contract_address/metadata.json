@@ -1,0 +1,22 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "validate_fail_delegate_to_contract_address",
+  "caseCategory": "validate_fail",
+  "description": "Fail when delegating resources to a contract address",
+  "generatedAt": "2026-01-04T07:59:45.826Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Do not allow delegate resources to contract addresses",
+  "ownerAddress": "a0667265657a655f64656c5f636f6e747261637400",
+  "dynamicProperties": {
+    "ALLOW_TVM_CONSTANTINOPLE": 1
+  },
+  "notes": []
+}

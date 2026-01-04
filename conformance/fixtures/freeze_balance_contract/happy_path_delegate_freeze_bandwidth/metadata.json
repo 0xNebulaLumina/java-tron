@@ -1,0 +1,25 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "happy_path_delegate_freeze_bandwidth",
+  "caseCategory": "happy",
+  "description": "Delegated freeze for BANDWIDTH resource",
+  "generatedAt": "2026-01-04T07:59:45.950Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties",
+    "DelegatedResource",
+    "DelegatedResourceAccountIndex"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0667265657a655f64656c5f62775f6f776e000000",
+  "dynamicProperties": {
+    "ALLOW_DELEGATE_RESOURCE": 1,
+    "freeze_amount": 100000000,
+    "receiver_address": "a0667265657a655f64656c5f62775f726376000000"
+  },
+  "notes": []
+}
