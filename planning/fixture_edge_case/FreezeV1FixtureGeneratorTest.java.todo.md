@@ -54,17 +54,17 @@ Frozen balance branches
   - [x] Expect: `SUCCESS` and post balance is `0`.
 
 Frozen duration branches (checkFrozenTime=1)
-- [ ] Add `validate_fail_frozen_duration_too_short`:
-  - [ ] Use `frozenDuration = minFrozenTime - 1` (default min is `3`)
-  - [ ] Expect: message starts with `"frozenDuration must be less than"`.
-- [ ] Add `validate_fail_frozen_duration_too_long`:
-  - [ ] Use `frozenDuration = maxFrozenTime + 1` (default max is `3`)
-  - [ ] Expect: same duration error message (but distinct input).
+- [x] Add `validate_fail_frozen_duration_too_short`:
+  - [x] Use `frozenDuration = minFrozenTime - 1` (default min is `3`)
+  - [x] Expect: message starts with `"frozenDuration must be less than"`.
+- [x] Add `validate_fail_frozen_duration_too_long`:
+  - [x] Use `frozenDuration = maxFrozenTime + 1` (default max is `3`)
+  - [x] Expect: same duration error message (but distinct input).
 
 Pre-state guard (rare but explicitly validated)
-- [ ] Add `validate_fail_frozen_count_not_0_or_1`:
-  - [ ] Seed account with 2 `Account.Frozen` entries (use `AccountCapsule#setFrozen(...)` test helper)
-  - [ ] Expect: `"frozenCount must be 0 or 1"`.
+- [x] Add `validate_fail_frozen_count_not_0_or_1`:
+  - [x] Seed account with 2 `Account.Frozen` entries (use `AccountCapsule#setFrozen(...)` test helper)
+  - [x] Expect: `"frozenCount must be 0 or 1"`.
 
 Resource code validation
 - [x] Add `validate_fail_resource_tron_power_when_new_resource_model_off`:
@@ -124,12 +124,12 @@ BANDWIDTH expiration boundary + multiple entries
 - [x] Add `edge_expire_time_equals_now_is_unfreezable_bandwidth`:
   - [x] Seed a frozen entry with `expireTime == latestBlockHeaderTimestamp` before execution
   - [x] Expect: `SUCCESS` and unfreezes that entry (validate uses `<= now`).
-- [ ] Add `edge_partial_unfreeze_one_expired_one_not`:
-  - [ ] Seed two frozen entries: one `expireTime < now`, one `expireTime > now`
-  - [ ] Expect: `SUCCESS`, unfreeze amount equals only the expired entry, and one frozen entry remains.
-- [ ] Add `edge_multiple_expired_entries_unfreeze_sum`:
-  - [ ] Seed two expired frozen entries
-  - [ ] Expect: `SUCCESS` and unfreeze amount equals the sum.
+- [x] Add `edge_partial_unfreeze_one_expired_one_not`:
+  - [x] Seed two frozen entries: one `expireTime < now`, one `expireTime > now`
+  - [x] Expect: `SUCCESS`, unfreeze amount equals only the expired entry, and one frozen entry remains.
+- [x] Add `edge_multiple_expired_entries_unfreeze_sum`:
+  - [x] Seed two expired frozen entries
+  - [x] Expect: `SUCCESS` and unfreeze amount equals the sum.
 
 ENERGY resource coverage
 - [x] Add `happy_path_unfreeze_energy_v1`:

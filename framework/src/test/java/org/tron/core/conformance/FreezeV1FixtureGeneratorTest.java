@@ -560,6 +560,142 @@ public class FreezeV1FixtureGeneratorTest extends BaseTest {
     log.info("FreezeV1 entire balance: success={}", result.isSuccess());
   }
 
+  // --- Frozen duration branches (requires checkFrozenTime=1) ---
+  // Note: checkFrozenTime defaults to 1 in Args.java, min/max frozen time both default to 3 days
+
+  @Test
+  public void generateFreezeBalanceV1_validateFailFrozenDurationTooShort() throws Exception {
+    String freezeOwner = generateAddress("freeze_v1_dur_short");
+    putAccount(dbManager, freezeOwner, INITIAL_BALANCE, "freeze_owner_dur_short");
+
+    // Set min/max frozen time explicitly
+    dbManager.getDynamicPropertiesStore().saveMinFrozenTime(3);
+    dbManager.getDynamicPropertiesStore().saveMaxFrozenTime(3);
+
+    // Duration too short (less than min)
+    long frozenDuration = 2; // Less than 3
+
+    FreezeBalanceContract contract = FreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(freezeOwner)))
+        .setFrozenBalance(100 * ONE_TRX)
+        .setFrozenDuration(frozenDuration)
+        .setResource(ResourceCode.BANDWIDTH)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.FreezeBalanceContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("FREEZE_BALANCE_CONTRACT", 11)
+        .caseName("validate_fail_frozen_duration_too_short")
+        .caseCategory("validate_fail")
+        .description("Fail when frozenDuration is less than minFrozenTime")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(freezeOwner)
+        .dynamicProperty("frozenDuration", frozenDuration)
+        .dynamicProperty("minFrozenTime", 3)
+        .dynamicProperty("maxFrozenTime", 3)
+        .expectedError("frozenDuration must be less than")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("FreezeV1 duration too short: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateFreezeBalanceV1_validateFailFrozenDurationTooLong() throws Exception {
+    String freezeOwner = generateAddress("freeze_v1_dur_long");
+    putAccount(dbManager, freezeOwner, INITIAL_BALANCE, "freeze_owner_dur_long");
+
+    // Set min/max frozen time explicitly
+    dbManager.getDynamicPropertiesStore().saveMinFrozenTime(3);
+    dbManager.getDynamicPropertiesStore().saveMaxFrozenTime(3);
+
+    // Duration too long (more than max)
+    long frozenDuration = 4; // More than 3
+
+    FreezeBalanceContract contract = FreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(freezeOwner)))
+        .setFrozenBalance(100 * ONE_TRX)
+        .setFrozenDuration(frozenDuration)
+        .setResource(ResourceCode.BANDWIDTH)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.FreezeBalanceContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("FREEZE_BALANCE_CONTRACT", 11)
+        .caseName("validate_fail_frozen_duration_too_long")
+        .caseCategory("validate_fail")
+        .description("Fail when frozenDuration exceeds maxFrozenTime")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(freezeOwner)
+        .dynamicProperty("frozenDuration", frozenDuration)
+        .dynamicProperty("minFrozenTime", 3)
+        .dynamicProperty("maxFrozenTime", 3)
+        .expectedError("frozenDuration must be less than")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("FreezeV1 duration too long: validationError={}", result.getValidationError());
+  }
+
+  // --- Pre-state guard (frozenCount must be 0 or 1) ---
+
+  @Test
+  public void generateFreezeBalanceV1_validateFailFrozenCountNot0Or1() throws Exception {
+    String freezeOwner = generateAddress("freeze_v1_cnt_bad");
+
+    // Create account with 2 frozen entries (illegal state)
+    AccountCapsule account = putAccount(dbManager, freezeOwner, INITIAL_BALANCE,
+        "freeze_owner_cnt_bad");
+    Protocol.Account.Builder builder = account.getInstance().toBuilder();
+    // Add two frozen entries
+    builder.addFrozen(Frozen.newBuilder()
+        .setFrozenBalance(50 * ONE_TRX)
+        .setExpireTime(DEFAULT_BLOCK_TIMESTAMP + 86400000)
+        .build());
+    builder.addFrozen(Frozen.newBuilder()
+        .setFrozenBalance(30 * ONE_TRX)
+        .setExpireTime(DEFAULT_BLOCK_TIMESTAMP + 86400000)
+        .build());
+    account = new AccountCapsule(builder.build());
+    dbManager.getAccountStore().put(account.getAddress().toByteArray(), account);
+
+    FreezeBalanceContract contract = FreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(freezeOwner)))
+        .setFrozenBalance(10 * ONE_TRX)
+        .setFrozenDuration(MIN_FREEZE_DURATION)
+        .setResource(ResourceCode.BANDWIDTH)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.FreezeBalanceContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("FREEZE_BALANCE_CONTRACT", 11)
+        .caseName("validate_fail_frozen_count_not_0_or_1")
+        .caseCategory("validate_fail")
+        .description("Fail when account has 2 frozen entries (invalid state)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(freezeOwner)
+        .expectedError("frozenCount must be 0 or 1")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("FreezeV1 frozenCount bad: validationError={}", result.getValidationError());
+  }
+
   // --- Resource code validation ---
 
   @Test
@@ -818,6 +954,116 @@ public class FreezeV1FixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UnfreezeV1 expire==now: success={}", result.isSuccess());
+  }
+
+  // --- Multiple frozen entries edge cases ---
+
+  @Test
+  public void generateUnfreezeBalanceV1_edgePartialUnfreezeOneExpiredOneNot() throws Exception {
+    String unfreezeOwner = generateAddress("unfreeze_v1_partial");
+
+    // Create account with two frozen entries: one expired, one not
+    AccountCapsule unfreezeAccount = putAccount(dbManager, unfreezeOwner, INITIAL_BALANCE,
+        "unfreeze_partial");
+    long now = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    long expiredAmount = 50 * ONE_TRX;
+    long notExpiredAmount = 30 * ONE_TRX;
+
+    Protocol.Account.Builder builder = unfreezeAccount.getInstance().toBuilder();
+    // First entry: expired
+    builder.addFrozen(Frozen.newBuilder()
+        .setFrozenBalance(expiredAmount)
+        .setExpireTime(now - 1000) // Expired
+        .build());
+    // Second entry: not expired
+    builder.addFrozen(Frozen.newBuilder()
+        .setFrozenBalance(notExpiredAmount)
+        .setExpireTime(now + 86400000) // Future
+        .build());
+    unfreezeAccount = new AccountCapsule(builder.build());
+    dbManager.getAccountStore().put(unfreezeAccount.getAddress().toByteArray(), unfreezeAccount);
+
+    UnfreezeBalanceContract contract = UnfreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(unfreezeOwner)))
+        .setResource(ResourceCode.BANDWIDTH)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeBalanceContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_BALANCE_CONTRACT", 12)
+        .caseName("edge_partial_unfreeze_one_expired_one_not")
+        .caseCategory("edge")
+        .description("Partial unfreeze: only expired entry is unfrozen, not-expired remains")
+        .database("account")
+        .database("votes")
+        .database("dynamic-properties")
+        .ownerAddress(unfreezeOwner)
+        .dynamicProperty("expired_amount", expiredAmount)
+        .dynamicProperty("not_expired_amount", notExpiredAmount)
+        .dynamicProperty("expected_unfreeze_amount", expiredAmount)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeV1 partial: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateUnfreezeBalanceV1_edgeMultipleExpiredEntriesUnfreezeSum() throws Exception {
+    String unfreezeOwner = generateAddress("unfreeze_v1_multi_exp");
+
+    // Create account with two expired frozen entries
+    AccountCapsule unfreezeAccount = putAccount(dbManager, unfreezeOwner, INITIAL_BALANCE,
+        "unfreeze_multi_exp");
+    long now = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    long firstAmount = 40 * ONE_TRX;
+    long secondAmount = 60 * ONE_TRX;
+
+    Protocol.Account.Builder builder = unfreezeAccount.getInstance().toBuilder();
+    // First expired entry
+    builder.addFrozen(Frozen.newBuilder()
+        .setFrozenBalance(firstAmount)
+        .setExpireTime(now - 2000) // Expired
+        .build());
+    // Second expired entry
+    builder.addFrozen(Frozen.newBuilder()
+        .setFrozenBalance(secondAmount)
+        .setExpireTime(now - 1000) // Also expired
+        .build());
+    unfreezeAccount = new AccountCapsule(builder.build());
+    dbManager.getAccountStore().put(unfreezeAccount.getAddress().toByteArray(), unfreezeAccount);
+
+    UnfreezeBalanceContract contract = UnfreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(unfreezeOwner)))
+        .setResource(ResourceCode.BANDWIDTH)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeBalanceContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_BALANCE_CONTRACT", 12)
+        .caseName("edge_multiple_expired_entries_unfreeze_sum")
+        .caseCategory("edge")
+        .description("Multiple expired entries: unfreeze amount equals the sum")
+        .database("account")
+        .database("votes")
+        .database("dynamic-properties")
+        .ownerAddress(unfreezeOwner)
+        .dynamicProperty("first_expired_amount", firstAmount)
+        .dynamicProperty("second_expired_amount", secondAmount)
+        .dynamicProperty("expected_unfreeze_amount", firstAmount + secondAmount)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeV1 multi expired: success={}", result.isSuccess());
   }
 
   // --- ENERGY resource coverage ---
