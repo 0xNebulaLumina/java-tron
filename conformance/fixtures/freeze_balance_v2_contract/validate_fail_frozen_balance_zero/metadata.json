@@ -1,0 +1,20 @@
+{
+  "contractType": "FREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 54,
+  "caseName": "validate_fail_frozen_balance_zero",
+  "caseCategory": "validate_fail",
+  "description": "Fail when frozenBalance is 0",
+  "generatedAt": "2026-01-03T13:02:54.756Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "frozenBalance must be positive",
+  "ownerAddress": "a0667265657a655f76325f7a65726f000000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1,0 +1,22 @@
+{
+  "contractType": "ACCOUNT_CREATE_CONTRACT",
+  "contractTypeNum": 0,
+  "caseName": "edge_happy_allow_multi_sign_enabled",
+  "caseCategory": "edge",
+  "description": "Success with ALLOW_MULTI_SIGN=1, new account gets default owner+active permissions",
+  "generatedAt": "2026-01-04T12:48:59.495Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a06d756c74697369676e5f6f776e5f303100000000",
+  "dynamicProperties": {
+    "ALLOW_MULTI_SIGN": 1,
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000
+  },
+  "notes": []
+}

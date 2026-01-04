@@ -1,0 +1,21 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "validate_fail_owner_account_not_found",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner address is valid but account not in store",
+  "generatedAt": "2026-01-04T06:41:56.208Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "No owner account!",
+  "ownerAddress": "a0756e6b6e6f776e5f61737365745f6f776e657200",
+  "dynamicProperties": {},
+  "notes": []
+}

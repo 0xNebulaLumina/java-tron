@@ -70,15 +70,16 @@ public class AccountFixtureGeneratorTest extends BaseTest {
         INITIAL_BALANCE);
     dbManager.getAccountStore().put(ownerAccount.getAddress().toByteArray(), ownerAccount);
 
-    // Create witness account
+    // Create witness account - mark as witness for proper witness permission tests
     AccountCapsule witnessAccount = new AccountCapsule(
         ByteString.copyFromUtf8("witness"),
         ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)),
         AccountType.Normal,
         INITIAL_BALANCE);
+    witnessAccount.setIsWitness(true);  // Critical: mark as witness for validation
     dbManager.getAccountStore().put(witnessAccount.getAddress().toByteArray(), witnessAccount);
 
-    // Create witness
+    // Create witness entry in witness store
     WitnessCapsule witness = new WitnessCapsule(
         ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)),
         10_000_000L,
@@ -328,6 +329,278 @@ public class AccountFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("SetAccountId nonexistent owner: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // SetAccountId - Edge Cases: Invalid Owner Address
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateSetAccountId_invalidOwnerAddressEmpty() throws Exception {
+    SetAccountIdContract contract = SetAccountIdContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY)
+        .setAccountId(ByteString.copyFromUtf8("valid_id_123"))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.SetAccountIdContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("SET_ACCOUNT_ID_CONTRACT", 19)
+        .caseName("validate_fail_owner_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address is empty bytes")
+        .database("account")
+        .database("accountid-index")
+        .database("dynamic-properties")
+        .ownerAddress("")
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("SetAccountId empty owner address: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateSetAccountId_invalidOwnerAddressWrongLength() throws Exception {
+    // 10-byte address (wrong length - should be 21 bytes)
+    byte[] wrongLengthAddress = new byte[10];
+    for (int i = 0; i < 10; i++) {
+      wrongLengthAddress[i] = (byte) (0x41 + i);
+    }
+
+    SetAccountIdContract contract = SetAccountIdContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(wrongLengthAddress))
+        .setAccountId(ByteString.copyFromUtf8("valid_id_123"))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.SetAccountIdContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("SET_ACCOUNT_ID_CONTRACT", 19)
+        .caseName("validate_fail_owner_address_wrong_length")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address has wrong length (not 21 bytes)")
+        .database("account")
+        .database("accountid-index")
+        .database("dynamic-properties")
+        .ownerAddress(ByteArray.toHexString(wrongLengthAddress))
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("SetAccountId wrong length owner: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // SetAccountId - Edge Cases: Invalid AccountId (unreadable bytes)
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateSetAccountId_accountIdContainsSpace() throws Exception {
+    // Account ID with space (0x20) - fails validReadableBytes check (< 0x21)
+    String accountIdWithSpace = "ab  cdefgh";  // contains space
+
+    SetAccountIdContract contract = SetAccountIdContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountId(ByteString.copyFromUtf8(accountIdWithSpace))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.SetAccountIdContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("SET_ACCOUNT_ID_CONTRACT", 19)
+        .caseName("validate_fail_account_id_contains_space")
+        .caseCategory("validate_fail")
+        .description("Fail when account ID contains space character (0x20 < 0x21)")
+        .database("account")
+        .database("accountid-index")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid accountId")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("SetAccountId with space: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateSetAccountId_accountIdContainsControlChar() throws Exception {
+    // Account ID with newline control character (0x0A) - fails validReadableBytes check
+    byte[] idWithControlChar = "abcde\n1234".getBytes();
+
+    SetAccountIdContract contract = SetAccountIdContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountId(ByteString.copyFrom(idWithControlChar))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.SetAccountIdContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("SET_ACCOUNT_ID_CONTRACT", 19)
+        .caseName("validate_fail_account_id_control_char")
+        .caseCategory("validate_fail")
+        .description("Fail when account ID contains control character (newline)")
+        .database("account")
+        .database("accountid-index")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid accountId")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("SetAccountId with control char: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateSetAccountId_accountIdNonAscii() throws Exception {
+    // Account ID with non-ASCII byte (> 0x7E) - fails validReadableBytes check
+    byte[] idWithNonAscii = new byte[10];
+    for (int i = 0; i < 9; i++) {
+      idWithNonAscii[i] = (byte) ('a' + i);  // 'a' to 'i'
+    }
+    idWithNonAscii[9] = (byte) 0x80;  // non-ASCII byte (128)
+
+    SetAccountIdContract contract = SetAccountIdContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountId(ByteString.copyFrom(idWithNonAscii))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.SetAccountIdContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("SET_ACCOUNT_ID_CONTRACT", 19)
+        .caseName("validate_fail_account_id_non_ascii")
+        .caseCategory("validate_fail")
+        .description("Fail when account ID contains non-ASCII byte (> 0x7E)")
+        .database("account")
+        .database("accountid-index")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid accountId")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("SetAccountId non-ASCII: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // SetAccountId - Boundary Cases (min/max length)
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateSetAccountId_boundaryMinLength8() throws Exception {
+    // Exactly 8 bytes - minimum valid length
+    String accountId = "abcdefgh";  // exactly 8 printable ASCII chars
+
+    SetAccountIdContract contract = SetAccountIdContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountId(ByteString.copyFromUtf8(accountId))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.SetAccountIdContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("SET_ACCOUNT_ID_CONTRACT", 19)
+        .caseName("happy_path_min_len_8")
+        .caseCategory("edge")
+        .description("Success with account ID at minimum length (exactly 8 bytes)")
+        .database("account")
+        .database("accountid-index")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("SetAccountId min length 8: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateSetAccountId_boundaryMaxLength32() throws Exception {
+    // Exactly 32 bytes - maximum valid length
+    String accountId = "abcdefghijklmnopqrstuvwxyz123456";  // exactly 32 chars
+
+    // Need fresh account without ID for this test
+    String freshAddress = Wallet.getAddressPreFixString() + "7777777777777777777777777777777777777777";
+    AccountCapsule freshAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("fresh32"),
+        ByteString.copyFrom(ByteArray.fromHexString(freshAddress)),
+        AccountType.Normal,
+        INITIAL_BALANCE);
+    dbManager.getAccountStore().put(freshAccount.getAddress().toByteArray(), freshAccount);
+
+    SetAccountIdContract contract = SetAccountIdContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(freshAddress)))
+        .setAccountId(ByteString.copyFromUtf8(accountId))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.SetAccountIdContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("SET_ACCOUNT_ID_CONTRACT", 19)
+        .caseName("happy_path_max_len_32")
+        .caseCategory("edge")
+        .description("Success with account ID at maximum length (exactly 32 bytes)")
+        .database("account")
+        .database("accountid-index")
+        .database("dynamic-properties")
+        .ownerAddress(freshAddress)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("SetAccountId max length 32: success={}", result.isSuccess());
+  }
+
+  // --------------------------------------------------------------------------
+  // SetAccountId - Explicit empty accountId
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateSetAccountId_accountIdEmpty() throws Exception {
+    SetAccountIdContract contract = SetAccountIdContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountId(ByteString.EMPTY)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.SetAccountIdContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("SET_ACCOUNT_ID_CONTRACT", 19)
+        .caseName("validate_fail_account_id_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when account ID is empty (0 bytes)")
+        .database("account")
+        .database("accountid-index")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid accountId")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("SetAccountId empty: validationError={}", result.getValidationError());
   }
 
   // ==========================================================================
@@ -791,6 +1064,1084 @@ public class AccountFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("AccountPermissionUpdate witness not SR: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountPermissionUpdate - Edge Cases: Owner Address Validation
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountPermissionUpdate_invalidOwnerAddressEmpty() throws Exception {
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.EMPTY)
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_owner_address_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address is empty")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress("")
+        .expectedError("invalidate ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate empty owner: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_ownerAccountNotExist() throws Exception {
+    String nonexistentAddress = Wallet.getAddressPreFixString() + "8888888888888888888888888888888888888888";
+
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(nonexistentAddress)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(nonexistentAddress)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(nonexistentAddress)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_owner_not_exist")
+        .caseCategory("validate_fail")
+        .description("Fail when owner account does not exist")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(nonexistentAddress)
+        .expectedError("ownerAddress account does not exist")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate nonexistent owner: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountPermissionUpdate - Edge Cases: Missing Required Fields
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountPermissionUpdate_ownerPermissionMissing() throws Exception {
+    // Build contract without owner permission but with active permission
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        // No .setOwner() call
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_owner_permission_missing")
+        .caseCategory("validate_fail")
+        .description("Fail when owner permission is not provided")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("owner permission is missed")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate owner missing: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_activePermissionMissing() throws Exception {
+    // Build contract with owner permission but no active permissions
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        // No .addActives() call
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_active_permission_missing")
+        .caseCategory("validate_fail")
+        .description("Fail when no active permissions are provided")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("active permission is missed")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate active missing: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_activePermissionTooMany() throws Exception {
+    // Build owner permission
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    // Build 9 active permissions (> 8 limit)
+    List<Permission> activePermissions = new ArrayList<>();
+    for (int i = 0; i < 9; i++) {
+      Permission activePermission = Permission.newBuilder()
+          .setType(Permission.PermissionType.Active)
+          .setId(2 + i)
+          .setPermissionName("active" + i)
+          .setThreshold(1)
+          .setOperations(ByteString.copyFrom(new byte[32]))
+          .addKeys(Key.newBuilder()
+              .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+              .setWeight(1)
+              .build())
+          .build();
+      activePermissions.add(activePermission);
+    }
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addAllActives(activePermissions)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_active_too_many")
+        .caseCategory("validate_fail")
+        .description("Fail when more than 8 active permissions are provided")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("active permission is too many")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate too many actives: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_witnessPermissionMissing() throws Exception {
+    // For witness account, witness permission is required
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    // Omit witness permission for a witness account
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        // No .setWitness() - missing for witness account
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_witness_permission_missing")
+        .caseCategory("validate_fail")
+        .description("Fail when witness account lacks witness permission")
+        .database("account")
+        .database("witness")
+        .database("dynamic-properties")
+        .ownerAddress(WITNESS_ADDRESS)
+        .expectedError("witness permission is missed")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate witness perm missing: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountPermissionUpdate - Edge Cases: Wrong Permission Types
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountPermissionUpdate_ownerPermissionTypeWrong() throws Exception {
+    // Owner permission with wrong type (Active instead of Owner)
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)  // Wrong type!
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_owner_type_wrong")
+        .caseCategory("validate_fail")
+        .description("Fail when owner permission has wrong type (Active instead of Owner)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("owner permission type is error")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate owner type wrong: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_activePermissionTypeWrong() throws Exception {
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    // Active permission with wrong type (Owner instead of Active)
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)  // Wrong type!
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_active_type_wrong")
+        .caseCategory("validate_fail")
+        .description("Fail when active permission has wrong type (Owner instead of Active)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("active permission type is error")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate active type wrong: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_witnessPermissionTypeWrong() throws Exception {
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    // Witness permission with wrong type (Active instead of Witness)
+    Permission witnessPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)  // Wrong type!
+        .setId(1)
+        .setPermissionName("witness")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+        .setOwner(ownerPermission)
+        .setWitness(witnessPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_witness_type_wrong")
+        .caseCategory("validate_fail")
+        .description("Fail when witness permission has wrong type (Active instead of Witness)")
+        .database("account")
+        .database("witness")
+        .database("dynamic-properties")
+        .ownerAddress(WITNESS_ADDRESS)
+        .expectedError("witness permission type is error")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate witness type wrong: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountPermissionUpdate - checkPermission() Edge Cases
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountPermissionUpdate_keysCountZero() throws Exception {
+    // Owner permission with zero keys
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        // No keys added
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_keys_count_zero")
+        .caseCategory("validate_fail")
+        .description("Fail when permission has zero keys")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("key's count should be greater than 0")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate keys zero: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_witnessKeysCountNotOne() throws Exception {
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    // Witness permission with 2 keys (should be exactly 1)
+    String secondKeyAddress = Wallet.getAddressPreFixString() + "4444444444444444444444444444444444444444";
+    Permission witnessPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Witness)
+        .setId(1)
+        .setPermissionName("witness")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(secondKeyAddress)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(WITNESS_ADDRESS)))
+        .setOwner(ownerPermission)
+        .setWitness(witnessPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_witness_keys_not_one")
+        .caseCategory("validate_fail")
+        .description("Fail when witness permission has more than 1 key")
+        .database("account")
+        .database("witness")
+        .database("dynamic-properties")
+        .ownerAddress(WITNESS_ADDRESS)
+        .expectedError("Witness permission's key count should be 1")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate witness keys not 1: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_thresholdZero() throws Exception {
+    // Owner permission with threshold = 0
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(0)  // Invalid: must be > 0
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_threshold_zero")
+        .caseCategory("validate_fail")
+        .description("Fail when permission threshold is 0")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("permission's threshold should be greater than 0")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate threshold zero: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_permissionNameTooLong() throws Exception {
+    // Permission name > 32 characters
+    String longName = "this_permission_name_is_way_too_long";  // 36 chars
+
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName(longName)
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_name_too_long")
+        .caseCategory("validate_fail")
+        .description("Fail when permission name exceeds 32 characters")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("permission's name is too long")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate name too long: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_parentIdNotOwner() throws Exception {
+    // Permission with parentId != 0
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .setParentId(1)  // Invalid: must be 0
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_parent_id_not_owner")
+        .caseCategory("validate_fail")
+        .description("Fail when permission parentId is not 0 (owner)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("permission's parent should be owner")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate parent not owner: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_keyAddressInvalid() throws Exception {
+    // Key with invalid address (10 bytes instead of 21)
+    byte[] invalidKeyAddress = new byte[10];
+    for (int i = 0; i < 10; i++) {
+      invalidKeyAddress[i] = (byte) (0x41 + i);
+    }
+
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(invalidKeyAddress))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_key_address_invalid")
+        .caseCategory("validate_fail")
+        .description("Fail when key address is invalid (wrong length)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("key is not a validate address")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate key address invalid: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_keyWeightZero() throws Exception {
+    // Key with weight = 0
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(0)  // Invalid: must be > 0
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_key_weight_zero")
+        .caseCategory("validate_fail")
+        .description("Fail when key weight is 0")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("key's weight should be greater than 0")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate key weight zero: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_nonActiveHasOperations() throws Exception {
+    // Owner permission with operations (should be empty for non-Active)
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))  // Invalid for Owner permission
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[32]))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_non_active_has_operations")
+        .caseCategory("validate_fail")
+        .description("Fail when non-Active permission has operations set")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("permission needn't operations")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate non-active ops: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountPermissionUpdate - Active Operations Validation
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountPermissionUpdate_activeOperationsEmpty() throws Exception {
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    // Active permission with empty operations
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.EMPTY)  // Invalid: must be 32 bytes
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_active_operations_empty")
+        .caseCategory("validate_fail")
+        .description("Fail when active permission operations is empty")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("operations size must 32")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate ops empty: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_activeOperationsWrongSize() throws Exception {
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    // Active permission with 31-byte operations (wrong size)
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(new byte[31]))  // Invalid: must be exactly 32 bytes
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_active_operations_wrong_size")
+        .caseCategory("validate_fail")
+        .description("Fail when active permission operations is not 32 bytes")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("operations size must 32")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate ops wrong size: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountPermissionUpdate_activeOperationsInvalidContractType() throws Exception {
+    // Clear available contract types to make all bits invalid
+    byte[] noContractTypes = new byte[32];  // all zeros = no valid contract types
+    dbManager.getDynamicPropertiesStore().saveAvailableContractType(noContractTypes);
+
+    Permission ownerPermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Owner)
+        .setPermissionName("owner")
+        .setThreshold(1)
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    // Active permission with bit 0 set (but contract type 0 is not available)
+    byte[] operations = new byte[32];
+    operations[0] = 0x01;  // Set bit 0
+
+    Permission activePermission = Permission.newBuilder()
+        .setType(Permission.PermissionType.Active)
+        .setId(2)
+        .setPermissionName("active")
+        .setThreshold(1)
+        .setOperations(ByteString.copyFrom(operations))
+        .addKeys(Key.newBuilder()
+            .setAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+            .setWeight(1)
+            .build())
+        .build();
+
+    AccountPermissionUpdateContract contract = AccountPermissionUpdateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setOwner(ownerPermission)
+        .addActives(activePermission)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountPermissionUpdateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_PERMISSION_UPDATE_CONTRACT", 46)
+        .caseName("validate_fail_active_invalid_contract_type")
+        .caseCategory("validate_fail")
+        .description("Fail when active permission enables a contract type not in AVAILABLE_CONTRACT_TYPE")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("isn't a validate ContractType")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountPermissionUpdate invalid contract type: validationError={}", result.getValidationError());
+
+    // Restore available contract types (enable all)
+    byte[] allContractTypes = new byte[32];
+    for (int i = 0; i < 32; i++) {
+      allContractTypes[i] = (byte) 0xFF;
+    }
+    dbManager.getDynamicPropertiesStore().saveAvailableContractType(allContractTypes);
   }
 
   // ==========================================================================

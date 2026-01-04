@@ -1,0 +1,24 @@
+{
+  "contractType": "CREATE_SMART_CONTRACT",
+  "contractTypeNum": 30,
+  "caseName": "validate_fail_token_asset_missing",
+  "caseCategory": "validate_fail",
+  "description": "Fail when tokenId points to non-existent TRC-10 asset",
+  "generatedAt": "2026-01-04T11:32:22.411Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "code",
+    "abi",
+    "contract-state",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "No asset !",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

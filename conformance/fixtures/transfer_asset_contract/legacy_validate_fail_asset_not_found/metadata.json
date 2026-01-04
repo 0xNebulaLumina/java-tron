@@ -1,0 +1,23 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "legacy_validate_fail_asset_not_found",
+  "caseCategory": "validate_fail",
+  "description": "Legacy mode (V1): Fail when token name does not exist in asset-issue store",
+  "generatedAt": "2026-01-04T06:41:56.172Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "No asset!",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
+  "dynamicProperties": {
+    "allowSameTokenName": 0
+  },
+  "notes": []
+}

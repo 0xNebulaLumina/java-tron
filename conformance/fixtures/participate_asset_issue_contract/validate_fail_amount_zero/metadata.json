@@ -1,0 +1,21 @@
+{
+  "contractType": "PARTICIPATE_ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 9,
+  "caseName": "validate_fail_amount_zero",
+  "caseCategory": "validate_fail",
+  "description": "Fail when amount is zero",
+  "generatedAt": "2026-01-04T07:08:08.593Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Amount must greater than 0!",
+  "ownerAddress": "a01111111111111111111111111111111111111111",
+  "dynamicProperties": {},
+  "notes": []
+}

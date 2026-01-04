@@ -1,0 +1,22 @@
+{
+  "contractType": "PROPOSAL_CREATE_CONTRACT",
+  "contractTypeNum": 16,
+  "caseName": "validate_fail_allow_creation_of_contracts_value_zero",
+  "caseCategory": "validate_fail",
+  "description": "Fail when ALLOW_CREATION_OF_CONTRACTS is not 1",
+  "generatedAt": "2026-01-04T05:56:08.326Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "proposal",
+    "dynamic-properties",
+    "witness"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "This value[ALLOW_CREATION_OF_CONTRACTS] is only allowed to be 1",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}
