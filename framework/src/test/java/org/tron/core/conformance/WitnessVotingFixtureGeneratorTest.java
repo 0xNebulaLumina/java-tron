@@ -1264,7 +1264,7 @@ public class WitnessVotingFixtureGeneratorTest extends BaseTest {
   @Test
   public void generateWithdrawBalance_validateFailGuardRepresentativeWithdraw() throws Exception {
     // Get a genesis witness address (guard representative)
-    org.tron.core.config.args.Args.Witness genesisWitness =
+    org.tron.common.args.Witness genesisWitness =
         CommonParameter.getInstance().getGenesisBlock().getWitnesses().get(0);
     byte[] grAddress = genesisWitness.getAddress();
     String grHexAddress = ByteArray.toHexString(grAddress);
