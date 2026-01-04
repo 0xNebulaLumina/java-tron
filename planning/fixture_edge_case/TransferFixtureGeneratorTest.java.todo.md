@@ -147,10 +147,10 @@ Transfer-to-contract restriction
   - [x] Expect error: `"Cannot transfer asset to smartContract."`.
 
 Token-name mode split (optional, only if conformance needs legacy)
-- [ ] Add a legacy-mode fixture set with `allowSameTokenName = 0`:
-  - [ ] Seed asset into `asset-issue` (V1) and set `assetName` to token name bytes.
-  - [ ] Duplicate at least: happy path + asset not found + insufficient balance.
-  - [ ] Keep these fixtures clearly named (e.g., `legacy_*`) to avoid mixing eras.
+- [x] Add a legacy-mode fixture set with `allowSameTokenName = 0`:
+  - [x] Seed asset into `asset-issue` (V1) and set `assetName` to token name bytes.
+  - [x] Duplicate at least: happy path + asset not found + insufficient balance.
+  - [x] Keep these fixtures clearly named (e.g., `legacy_*`) to avoid mixing eras.
 
 Phase 3 — Metadata / DB Capture Hygiene
 - [x] Ensure `FixtureMetadata.database(...)` includes all stores required to validate parity for the case:

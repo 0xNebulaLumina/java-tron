@@ -20,6 +20,7 @@ import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction;
+import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
 import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
@@ -1159,5 +1160,187 @@ public class TransferFixtureGeneratorTest extends BaseTest {
 
     // Reset to default
     dbManager.getDynamicPropertiesStore().saveForbidTransferToContract(0);
+  }
+
+  // --------------------------------------------------------------------------
+  // TransferAssetContract (2) - Legacy Mode (allowSameTokenName=0) Fixtures
+  // --------------------------------------------------------------------------
+
+  private static final String LEGACY_TOKEN_NAME = "LegacyToken";
+
+  /**
+   * Helper to seed a TRC-10 asset in V1 (name-based) mode.
+   * Uses asset-issue store (not V2) and sets assetName to token name.
+   */
+  private AssetIssueCapsule putAssetIssueV1(String tokenName, String ownerHexAddress, long totalSupply) {
+    long nowMs;
+    try {
+      nowMs = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    } catch (IllegalArgumentException e) {
+      nowMs = DEFAULT_BLOCK_TIMESTAMP;
+    }
+    long startTime = nowMs - DEFAULT_BLOCK_INTERVAL_MS;
+    long endTime = nowMs + 86400000L * 365;
+
+    AssetIssueContract assetIssue = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(ownerHexAddress)))
+        .setName(ByteString.copyFromUtf8(tokenName))
+        .setAbbr(ByteString.copyFromUtf8(tokenName.length() <= 5 ? tokenName : tokenName.substring(0, 5)))
+        .setTotalSupply(totalSupply)
+        .setPrecision(6)
+        .setTrxNum(1)
+        .setNum(1)
+        .setStartTime(startTime)
+        .setEndTime(endTime)
+        .setDescription(ByteString.copyFromUtf8("Legacy TRC-10 asset for conformance fixtures"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .build();
+
+    AssetIssueCapsule assetCapsule = new AssetIssueCapsule(assetIssue);
+    // V1 mode uses createDbKey() which returns the name bytes
+    dbManager.getAssetIssueStore().put(assetCapsule.createDbKey(), assetCapsule);
+    return assetCapsule;
+  }
+
+  @Test
+  public void generateTransferAsset_legacyHappyPathExistingRecipient() throws Exception {
+    // Switch to legacy mode (V1, name-based)
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(0);
+
+    // Seed V1 asset
+    putAssetIssueV1(LEGACY_TOKEN_NAME, OWNER_ADDRESS, 1_000_000_000_000L);
+
+    // Add legacy tokens to owner account using V1 method
+    AccountCapsule ownerAccount = dbManager.getAccountStore().get(
+        ByteArray.fromHexString(OWNER_ADDRESS));
+    ownerAccount.addAsset(LEGACY_TOKEN_NAME.getBytes(), 1_000_000_000L);
+    dbManager.getAccountStore().put(ownerAccount.getAddress().toByteArray(), ownerAccount);
+
+    long amount = 1000;
+
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(LEGACY_TOKEN_NAME)) // Name, not ID
+        .setAmount(amount)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("legacy_happy_path_existing_recipient")
+        .caseCategory("happy")
+        .description("Legacy mode (V1): Transfer TRC-10 asset by name to existing account")
+        .database("account")
+        .database("asset-issue")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("allowSameTokenName", 0)
+        .dynamicProperty("token_name", LEGACY_TOKEN_NAME)
+        .dynamicProperty("amount", amount)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset legacy happy path: success={}", result.isSuccess());
+
+    // Reset to V2 mode
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
+  }
+
+  @Test
+  public void generateTransferAsset_legacyValidateFailAssetNotFound() throws Exception {
+    // Switch to legacy mode (V1, name-based)
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(0);
+
+    String nonExistentToken = "NonExistentLegacy";
+    long amount = 1000;
+
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(nonExistentToken)) // Non-existent name
+        .setAmount(amount)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("legacy_validate_fail_asset_not_found")
+        .caseCategory("validate_fail")
+        .description("Legacy mode (V1): Fail when token name does not exist in asset-issue store")
+        .database("account")
+        .database("asset-issue")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("allowSameTokenName", 0)
+        .expectedError("No asset!")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset legacy asset not found: validationError={}", result.getValidationError());
+
+    // Reset to V2 mode
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
+  }
+
+  @Test
+  public void generateTransferAsset_legacyValidateFailInsufficientBalance() throws Exception {
+    // Switch to legacy mode (V1, name-based)
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(0);
+
+    String legacyTokenForInsufficient = "LegacyInsuf";
+
+    // Seed V1 asset
+    putAssetIssueV1(legacyTokenForInsufficient, OWNER_ADDRESS, 1_000_000_000_000L);
+
+    // Create owner with small token balance in legacy mode
+    String legacySmallOwner = generateAddress("legacy_small_own");
+    AccountCapsule legacySmallAccount = putAccount(dbManager, legacySmallOwner, INITIAL_BALANCE, "legacy_small");
+    // Add only 5 tokens using V1 method
+    legacySmallAccount.addAsset(legacyTokenForInsufficient.getBytes(), 5);
+    dbManager.getAccountStore().put(legacySmallAccount.getAddress().toByteArray(), legacySmallAccount);
+
+    // Attempt to transfer more than available
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(legacySmallOwner)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(legacyTokenForInsufficient)) // Name, not ID
+        .setAmount(10) // More than the 5 tokens owned
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("legacy_validate_fail_insufficient_balance")
+        .caseCategory("validate_fail")
+        .description("Legacy mode (V1): Fail when owner has insufficient token balance")
+        .database("account")
+        .database("asset-issue")
+        .database("dynamic-properties")
+        .ownerAddress(legacySmallOwner)
+        .dynamicProperty("allowSameTokenName", 0)
+        .dynamicProperty("token_name", legacyTokenForInsufficient)
+        .expectedError("assetBalance is not sufficient.")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset legacy insufficient balance: validationError={}", result.getValidationError());
+
+    // Reset to V2 mode
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
   }
 }
