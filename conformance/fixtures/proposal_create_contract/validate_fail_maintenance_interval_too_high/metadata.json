@@ -4,7 +4,7 @@
   "caseName": "validate_fail_maintenance_interval_too_high",
   "caseCategory": "validate_fail",
   "description": "Fail when MAINTENANCE_TIME_INTERVAL is above maximum",
-  "generatedAt": "2026-01-04T05:56:08.166Z",
+  "generatedAt": "2026-01-04T13:03:00.847Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

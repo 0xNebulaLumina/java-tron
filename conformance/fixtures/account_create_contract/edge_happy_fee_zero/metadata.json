@@ -4,7 +4,7 @@
   "caseName": "edge_happy_fee_zero",
   "caseCategory": "edge",
   "description": "Success when CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT=0, zero balance owner can create",
-  "generatedAt": "2026-01-04T12:48:59.408Z",
+  "generatedAt": "2026-01-04T13:02:52.869Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

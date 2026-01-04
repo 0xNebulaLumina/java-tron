@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_owner",
   "caseCategory": "validate_fail",
   "description": "Fail when account is not the asset owner",
-  "generatedAt": "2026-01-04T07:08:08.413Z",
+  "generatedAt": "2026-01-04T13:03:05.387Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

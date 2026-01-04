@@ -4,7 +4,7 @@
   "caseName": "validate_fail_calculated_another_token_quant_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when calculated proportional token quant is zero",
-  "generatedAt": "2026-01-03T12:25:16.351Z",
+  "generatedAt": "2026-01-04T13:02:54.342Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

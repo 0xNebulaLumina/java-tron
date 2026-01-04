@@ -4,7 +4,7 @@
   "caseName": "validate_fail_url_too_long_257",
   "caseCategory": "validate_fail",
   "description": "Fail when URL length exceeds MAX_URL_LEN (256 bytes)",
-  "generatedAt": "2026-01-04T07:26:42.551Z",
+  "generatedAt": "2026-01-04T13:03:51.738Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

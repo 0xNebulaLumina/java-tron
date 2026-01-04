@@ -4,7 +4,7 @@
   "caseName": "validate_fail_v1_closed_when_v2_open",
   "caseCategory": "validate_fail",
   "description": "Fail V1 freeze when unfreezeDelayDays > 0 (V2 enabled)",
-  "generatedAt": "2026-01-04T07:59:45.775Z",
+  "generatedAt": "2026-01-04T13:02:56.006Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

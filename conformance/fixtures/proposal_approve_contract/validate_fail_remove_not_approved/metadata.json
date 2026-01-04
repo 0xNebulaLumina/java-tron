@@ -4,7 +4,7 @@
   "caseName": "validate_fail_remove_not_approved",
   "caseCategory": "validate_fail",
   "description": "Fail when trying to remove approval from a proposal that was never approved",
-  "generatedAt": "2026-01-04T05:56:08.383Z",
+  "generatedAt": "2026-01-04T13:03:00.933Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

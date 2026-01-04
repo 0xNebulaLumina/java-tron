@@ -4,7 +4,7 @@
   "caseName": "happy_path_withdraw_second_token_side",
   "caseCategory": "happy",
   "description": "Withdraw liquidity on the second token side",
-  "generatedAt": "2026-01-03T12:25:16.547Z",
+  "generatedAt": "2026-01-04T13:02:54.424Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

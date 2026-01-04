@@ -4,7 +4,7 @@
   "caseName": "validate_fail_invalid_name_too_long",
   "caseCategory": "validate_fail",
   "description": "Fail when account name exceeds 200 bytes (201 bytes)",
-  "generatedAt": "2026-01-04T12:48:59.580Z",
+  "generatedAt": "2026-01-04T13:02:52.947Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

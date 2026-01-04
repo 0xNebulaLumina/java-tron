@@ -4,7 +4,7 @@
   "caseName": "validate_fail_delegated_receiver_same_as_owner",
   "caseCategory": "validate_fail",
   "description": "Fail when receiver address is the same as owner for delegated unfreeze",
-  "generatedAt": "2026-01-04T07:59:45.846Z",
+  "generatedAt": "2026-01-04T13:02:56.049Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

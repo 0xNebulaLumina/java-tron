@@ -4,7 +4,7 @@
   "caseName": "edge_out_of_energy",
   "caseCategory": "edge",
   "description": "Trigger contract with insufficient energy/fee limit",
-  "generatedAt": "2026-01-04T11:53:45.328Z",
+  "generatedAt": "2026-01-04T13:03:15.667Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

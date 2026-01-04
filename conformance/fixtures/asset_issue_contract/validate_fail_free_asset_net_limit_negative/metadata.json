@@ -4,7 +4,7 @@
   "caseName": "validate_fail_free_asset_net_limit_negative",
   "caseCategory": "validate_fail",
   "description": "Fail when free_asset_net_limit is negative",
-  "generatedAt": "2026-01-03T03:10:33.347Z",
+  "generatedAt": "2026-01-04T13:02:48.006Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

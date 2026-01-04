@@ -4,7 +4,7 @@
   "caseName": "validate_fail_abbr_too_long_33",
   "caseCategory": "validate_fail",
   "description": "Fail when abbreviation length is 33 bytes (max is 32)",
-  "generatedAt": "2026-01-03T03:10:32.257Z",
+  "generatedAt": "2026-01-04T13:02:47.881Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

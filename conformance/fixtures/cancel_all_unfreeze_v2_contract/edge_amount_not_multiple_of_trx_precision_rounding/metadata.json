@@ -4,7 +4,7 @@
   "caseName": "edge_amount_not_multiple_of_trx_precision_rounding",
   "caseCategory": "happy",
   "description": "Non-TRX-multiple amount to pin floor division rounding in weight updates",
-  "generatedAt": "2026-01-04T06:15:42.271Z",
+  "generatedAt": "2026-01-04T13:03:02.418Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

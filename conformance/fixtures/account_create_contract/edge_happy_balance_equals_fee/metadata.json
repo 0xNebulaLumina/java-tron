@@ -4,7 +4,7 @@
   "caseName": "edge_happy_balance_equals_fee",
   "caseCategory": "edge",
   "description": "Success when owner balance exactly equals create account fee",
-  "generatedAt": "2026-01-04T12:48:59.449Z",
+  "generatedAt": "2026-01-04T13:02:52.880Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

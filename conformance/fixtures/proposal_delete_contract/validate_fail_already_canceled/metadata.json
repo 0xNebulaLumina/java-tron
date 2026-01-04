@@ -4,7 +4,7 @@
   "caseName": "validate_fail_already_canceled",
   "caseCategory": "validate_fail",
   "description": "Fail when trying to delete an already canceled proposal",
-  "generatedAt": "2026-01-04T05:56:08.264Z",
+  "generatedAt": "2026-01-04T13:03:00.878Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

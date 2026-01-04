@@ -4,7 +4,7 @@
   "caseName": "validate_fail_balance_limit_exceeded_post_inject",
   "caseCategory": "validate_fail",
   "description": "Fail when injection would exceed balance limit",
-  "generatedAt": "2026-01-03T12:25:16.529Z",
+  "generatedAt": "2026-01-04T13:02:54.415Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

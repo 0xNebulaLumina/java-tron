@@ -4,7 +4,7 @@
   "caseName": "edge_freeze_amount_not_multiple_of_trx_precision",
   "caseCategory": "edge",
   "description": "Freeze amount not multiple of TRX_PRECISION (5 TRX + 1 SUN)",
-  "generatedAt": "2026-01-03T13:02:54.678Z",
+  "generatedAt": "2026-01-04T13:02:57.621Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

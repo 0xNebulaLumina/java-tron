@@ -4,7 +4,7 @@
   "caseName": "edge_blackhole_optimization_burns_trx",
   "caseCategory": "edge",
   "description": "Edge case: with ALLOW_BLACK_HOLE_OPTIMIZATION=1, TRX is burned instead of credited to blackhole",
-  "generatedAt": "2026-01-04T07:26:42.497Z",
+  "generatedAt": "2026-01-04T13:03:51.725Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

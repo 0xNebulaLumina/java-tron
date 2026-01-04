@@ -4,7 +4,7 @@
   "caseName": "validate_fail_invalid_protobuf_bytes",
   "caseCategory": "validate_fail",
   "description": "Fail when contract parameter contains invalid/corrupted protobuf bytes",
-  "generatedAt": "2026-01-02T14:29:52.248Z",
+  "generatedAt": "2026-01-04T13:02:49.774Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

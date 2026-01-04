@@ -4,7 +4,7 @@
   "caseName": "validate_fail_balance_fee_minus_1",
   "caseCategory": "validate_fail",
   "description": "Fail when owner balance is ASSET_ISSUE_FEE - 1",
-  "generatedAt": "2026-01-03T03:10:34.243Z",
+  "generatedAt": "2026-01-04T13:02:48.074Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

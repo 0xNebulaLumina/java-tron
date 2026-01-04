@@ -4,7 +4,7 @@
   "caseName": "happy_path_frozen_balance_equal_account_balance",
   "caseCategory": "happy",
   "description": "V2 freeze with frozenBalance == accountBalance (post balance is 0)",
-  "generatedAt": "2026-01-03T13:02:54.715Z",
+  "generatedAt": "2026-01-04T13:02:57.633Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_frozen_duration_too_short",
   "caseCategory": "validate_fail",
   "description": "Fail when frozenDuration is less than minFrozenTime",
-  "generatedAt": "2026-01-04T07:59:45.925Z",
+  "generatedAt": "2026-01-04T13:02:56.095Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

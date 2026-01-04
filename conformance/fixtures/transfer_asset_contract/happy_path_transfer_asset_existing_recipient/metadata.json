@@ -4,7 +4,7 @@
   "caseName": "happy_path_transfer_asset_existing_recipient",
   "caseCategory": "happy",
   "description": "Transfer TRC-10 asset to existing account",
-  "generatedAt": "2026-01-04T06:41:56.342Z",
+  "generatedAt": "2026-01-04T13:03:03.964Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

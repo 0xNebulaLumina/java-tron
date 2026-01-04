@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_value_positive_token_id_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when tokenValue > 0 and tokenId = 0",
-  "generatedAt": "2026-01-04T11:32:22.427Z",
+  "generatedAt": "2026-01-04T13:03:07.080Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

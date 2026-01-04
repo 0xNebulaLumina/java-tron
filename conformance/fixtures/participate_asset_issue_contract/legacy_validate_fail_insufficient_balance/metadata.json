@@ -4,7 +4,7 @@
   "caseName": "legacy_validate_fail_insufficient_balance",
   "caseCategory": "validate_fail",
   "description": "Legacy mode (allowSameTokenName=0): Fail when participant has insufficient TRX balance",
-  "generatedAt": "2026-01-04T07:08:08.482Z",
+  "generatedAt": "2026-01-04T13:03:05.410Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

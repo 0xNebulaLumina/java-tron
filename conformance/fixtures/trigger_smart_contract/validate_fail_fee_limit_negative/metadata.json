@@ -4,7 +4,7 @@
   "caseName": "validate_fail_fee_limit_negative",
   "caseCategory": "validate_fail",
   "description": "Trigger with negative feeLimit should fail validation",
-  "generatedAt": "2026-01-04T11:54:20.673Z",
+  "generatedAt": "2026-01-04T13:03:49.003Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

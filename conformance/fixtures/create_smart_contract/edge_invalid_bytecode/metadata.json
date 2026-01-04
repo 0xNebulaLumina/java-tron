@@ -4,7 +4,7 @@
   "caseName": "edge_invalid_bytecode",
   "caseCategory": "edge",
   "description": "Deploy with invalid/malformed bytecode",
-  "generatedAt": "2026-01-04T11:32:22.307Z",
+  "generatedAt": "2026-01-04T13:03:07.030Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "edge_unfreeze_rescales_votes_when_legacy_model",
   "caseCategory": "edge",
   "description": "Unfreeze rescales votes when tron power becomes insufficient (legacy model)",
-  "generatedAt": "2026-01-03T13:02:54.651Z",
+  "generatedAt": "2026-01-04T13:02:57.610Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

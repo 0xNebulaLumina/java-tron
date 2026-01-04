@@ -4,7 +4,7 @@
   "caseName": "validate_fail_invalid_url",
   "caseCategory": "validate_fail",
   "description": "Fail when update URL is empty or invalid",
-  "generatedAt": "2026-01-04T07:26:42.607Z",
+  "generatedAt": "2026-01-04T13:03:51.756Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

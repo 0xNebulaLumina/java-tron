@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_address_wrong_prefix",
   "caseCategory": "validate_fail",
   "description": "Fail when owner address has wrong prefix byte (not 0x41)",
-  "generatedAt": "2026-01-04T12:48:59.564Z",
+  "generatedAt": "2026-01-04T13:02:52.935Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

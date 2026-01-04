@@ -4,7 +4,7 @@
   "caseName": "happy_update_existing_name_updates_enabled",
   "caseCategory": "happy",
   "description": "Success updating an existing account name when ALLOW_UPDATE_ACCOUNT_NAME=1",
-  "generatedAt": "2026-01-04T12:48:59.437Z",
+  "generatedAt": "2026-01-04T13:02:52.877Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

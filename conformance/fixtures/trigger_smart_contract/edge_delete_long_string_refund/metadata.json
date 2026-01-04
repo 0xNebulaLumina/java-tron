@@ -4,7 +4,7 @@
   "caseName": "edge_delete_long_string_refund",
   "caseCategory": "edge",
   "description": "Delete long string (>31 bytes) to verify storage cleanup and refund",
-  "generatedAt": "2026-01-04T11:54:18.065Z",
+  "generatedAt": "2026-01-04T13:03:46.505Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

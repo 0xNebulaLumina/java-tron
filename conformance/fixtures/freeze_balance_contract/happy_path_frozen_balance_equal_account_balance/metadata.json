@@ -4,7 +4,7 @@
   "caseName": "happy_path_frozen_balance_equal_account_balance",
   "caseCategory": "happy",
   "description": "Freeze entire account balance (post balance should be 0)",
-  "generatedAt": "2026-01-04T07:59:45.920Z",
+  "generatedAt": "2026-01-04T13:02:56.092Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "happy_path_maintenance_interval_max_bound",
   "caseCategory": "happy",
   "description": "Create proposal with MAINTENANCE_TIME_INTERVAL at maximum boundary",
-  "generatedAt": "2026-01-04T05:56:08.319Z",
+  "generatedAt": "2026-01-04T13:03:00.906Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

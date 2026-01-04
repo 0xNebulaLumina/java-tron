@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_account_missing",
   "caseCategory": "validate_fail",
   "description": "Trigger with owner address that does not exist in AccountStore",
-  "generatedAt": "2026-01-04T11:54:10.072Z",
+  "generatedAt": "2026-01-04T13:03:38.430Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

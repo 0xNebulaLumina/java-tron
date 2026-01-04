@@ -4,7 +4,7 @@
   "caseName": "validate_fail_fee_limit_negative",
   "caseCategory": "validate_fail",
   "description": "Fail when feeLimit < 0",
-  "generatedAt": "2026-01-04T11:32:22.260Z",
+  "generatedAt": "2026-01-04T13:03:07.014Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

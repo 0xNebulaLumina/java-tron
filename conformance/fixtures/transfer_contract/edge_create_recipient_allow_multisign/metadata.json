@@ -4,7 +4,7 @@
   "caseName": "edge_create_recipient_allow_multisign",
   "caseCategory": "happy",
   "description": "Create recipient with allowMultiSign=1 (default permissions initialized)",
-  "generatedAt": "2026-01-04T06:41:56.236Z",
+  "generatedAt": "2026-01-04T13:03:03.923Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

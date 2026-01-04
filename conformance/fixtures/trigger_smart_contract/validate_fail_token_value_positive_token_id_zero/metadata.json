@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_value_positive_token_id_zero",
   "caseCategory": "validate_fail",
   "description": "Trigger with callTokenValue > 0 and tokenId = 0 should fail",
-  "generatedAt": "2026-01-04T11:53:54.954Z",
+  "generatedAt": "2026-01-04T13:03:24.534Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,
