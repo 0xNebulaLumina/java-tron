@@ -1,0 +1,22 @@
+{
+  "contractType": "TRANSFER_CONTRACT",
+  "contractTypeNum": 1,
+  "caseName": "validate_fail_forbid_transfer_to_contract",
+  "caseCategory": "validate_fail",
+  "description": "Fail when forbidTransferToContract=1 and recipient is Contract type",
+  "generatedAt": "2026-01-04T06:41:56.335Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Cannot transfer TRX to a smartContract.",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
+  "dynamicProperties": {
+    "forbidTransferToContract": 1
+  },
+  "notes": []
+}

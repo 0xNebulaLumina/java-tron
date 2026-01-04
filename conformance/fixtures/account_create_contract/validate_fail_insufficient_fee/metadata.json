@@ -4,7 +4,7 @@
   "caseName": "validate_fail_insufficient_fee",
   "caseCategory": "validate_fail",
   "description": "Fail when owner balance is less than create account fee",
-  "generatedAt": "2025-12-31T09:59:19.514Z",
+  "generatedAt": "2026-01-04T12:48:59.526Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

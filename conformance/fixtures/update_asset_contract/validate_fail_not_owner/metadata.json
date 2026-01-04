@@ -4,10 +4,10 @@
   "caseName": "validate_fail_not_owner",
   "caseCategory": "validate_fail",
   "description": "Fail when account is not the asset owner",
-  "generatedAt": "2025-12-31T09:59:31.736Z",
+  "generatedAt": "2026-01-04T07:08:08.413Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1767175174736,
+  "blockTimestamp": 1700000003000,
   "databasesTouched": [
     "account",
     "asset-issue-v2",

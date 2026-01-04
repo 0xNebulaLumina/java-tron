@@ -1,0 +1,20 @@
+{
+  "contractType": "TRANSFER_CONTRACT",
+  "contractTypeNum": 1,
+  "caseName": "validate_fail_to_address_invalid",
+  "caseCategory": "validate_fail",
+  "description": "Fail when toAddress is invalid (empty)",
+  "generatedAt": "2026-01-04T06:41:56.290Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid toAddress!",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
+  "dynamicProperties": {},
+  "notes": []
+}

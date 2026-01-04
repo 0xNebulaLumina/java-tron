@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_asset_name_non_ascii",
+  "caseCategory": "validate_fail",
+  "description": "Fail when asset name contains byte > 0x7E",
+  "generatedAt": "2026-01-03T03:10:33.212Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid assetName",
+  "ownerAddress": "a06e616d655f6e6f6e61736369695f697373756572",
+  "dynamicProperties": {},
+  "notes": []
+}

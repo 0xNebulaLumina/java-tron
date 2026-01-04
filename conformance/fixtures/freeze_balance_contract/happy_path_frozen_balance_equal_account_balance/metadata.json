@@ -1,0 +1,21 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "happy_path_frozen_balance_equal_account_balance",
+  "caseCategory": "happy",
+  "description": "Freeze entire account balance (post balance should be 0)",
+  "generatedAt": "2026-01-04T07:59:45.920Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0667265657a655f76315f616c6c5f62616c000000",
+  "dynamicProperties": {
+    "freeze_amount": 50000000
+  },
+  "notes": []
+}

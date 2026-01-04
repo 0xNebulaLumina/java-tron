@@ -1,0 +1,21 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "validate_fail_unfreeze_energy_no_frozen",
+  "caseCategory": "validate_fail",
+  "description": "Fail when there is no frozen ENERGY balance",
+  "generatedAt": "2026-01-04T07:59:45.998Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "no frozenBalance(Energy)",
+  "ownerAddress": "a0756e667265657a655f76315f656e657267795f6e",
+  "dynamicProperties": {},
+  "notes": []
+}

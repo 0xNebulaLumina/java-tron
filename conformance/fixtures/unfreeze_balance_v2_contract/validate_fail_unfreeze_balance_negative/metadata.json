@@ -1,0 +1,20 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "validate_fail_unfreeze_balance_negative",
+  "caseCategory": "validate_fail",
+  "description": "Fail when unfreezeBalance is negative",
+  "generatedAt": "2026-01-03T13:02:54.823Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid unfreeze_balance, [-1] is error",
+  "ownerAddress": "a0756e667265657a655f76325f6e65670000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

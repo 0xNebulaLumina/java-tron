@@ -1,0 +1,21 @@
+{
+  "contractType": "UNDELEGATE_RESOURCE_CONTRACT",
+  "contractTypeNum": 58,
+  "caseName": "validate_fail_only_locked_delegation_not_expired",
+  "caseCategory": "validate_fail",
+  "description": "Fail when delegation exists only in lock record and is not expired (expireTime >= now)",
+  "generatedAt": "2026-01-04T06:15:42.348Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "DelegatedResource",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "insufficient delegatedFrozenBalance(BANDWIDTH), request=5000000000, unlock_balance=0",
+  "ownerAddress": "a0f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+  "dynamicProperties": {},
+  "notes": []
+}

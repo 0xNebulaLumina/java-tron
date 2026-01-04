@@ -4,17 +4,17 @@
   "caseName": "validate_fail_description_too_long",
   "caseCategory": "validate_fail",
   "description": "Fail when description exceeds maximum length",
-  "generatedAt": "2025-12-31T09:59:31.733Z",
+  "generatedAt": "2026-01-04T07:08:08.353Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1767175174731,
+  "blockTimestamp": 1700000003000,
   "databasesTouched": [
     "account",
     "asset-issue-v2",
     "dynamic-properties"
   ],
   "expectedStatus": "VALIDATION_FAILED",
-  "expectedErrorMessage": "Account has not issued any asset",
+  "expectedErrorMessage": "Invalid description",
   "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
   "dynamicProperties": {},
   "notes": []
