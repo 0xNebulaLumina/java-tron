@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_start_time_zero",
+  "caseCategory": "validate_fail",
+  "description": "Fail when start_time is 0",
+  "generatedAt": "2026-01-03T03:10:33.060Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Start time should be not empty",
+  "ownerAddress": "a073746172745f7a65726f5f697373756572000000",
+  "dynamicProperties": {},
+  "notes": []
+}

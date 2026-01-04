@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_abbr_too_long_33",
+  "caseCategory": "validate_fail",
+  "description": "Fail when abbreviation length is 33 bytes (max is 32)",
+  "generatedAt": "2026-01-03T03:10:32.257Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid abbreviation for token",
+  "ownerAddress": "a0616262725f6c6f6e675f69737375657200000000",
+  "dynamicProperties": {},
+  "notes": []
+}
