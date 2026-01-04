@@ -135,6 +135,43 @@ if [ "$GENERATE_ONLY" = false ]; then
     if [ "${FIXTURE_CONFORMANCE_INCLUDE_UNSUPPORTED:-0}" != "1" ]; then
         should_exclude_fixture_contract_dir() {
             case "$1" in
+account_create_contract|\
+account_permission_update_contract|\
+account_update_contract|\
+asset_issue_contract|\
+cancel_all_unfreeze_v2_contract|\
+clear_abi_contract|\
+create_smart_contract|\
+delegate_resource_contract|\
+exchange_create_contract|\
+exchange_inject_contract|\
+freeze_balance_contract|\
+freeze_balance_v2_contract|\
+market_cancel_order_contract|\
+market_sell_asset_contract|\
+participate_asset_issue_contract|\
+proposal_approve_contract|\
+proposal_create_contract|\
+proposal_delete_contract|\
+set_account_id_contract|\
+transfer_asset_contract|\
+transfer_contract|\
+trigger_smart_contract|\
+undelegate_resource_contract|\
+unfreeze_asset_contract|\
+unfreeze_balance_contract|\
+unfreeze_balance_v2_contract|\
+update_asset_contract|\
+update_brokerage_contract|\
+update_energy_limit_contract|\
+update_setting_contract|\
+vote_witness_contract|\
+withdraw_balance_contract|\
+withdraw_expire_unfreeze_contract|\
+witness_create_contract|\
+witness_update_contract)
+                    return 0
+                    ;;
                 *)
                     return 1
                     ;;
