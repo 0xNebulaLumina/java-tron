@@ -65,9 +65,13 @@ TODOs
 - [x] `validate_fail_exchange_amount_zero`
   - Setup: create an asset where `trxNum` is very large vs `num`, and use a small `amount` so `floor(amount * num / trxNum) == 0`.
   - Contract: amount>0 but tiny, triggers `"Can not process the exchange!"`.
-- [ ] (optional/deep) `validate_fail_overflow_add_exact` / `validate_fail_overflow_multiply_exact`
+- [x] (optional/deep) `validate_fail_overflow_add_exact` / `validate_fail_overflow_multiply_exact`
   - Setup: craft `amount` close to `Long.MAX_VALUE` to overflow `multiplyExact(amount, num)` or `addExact(amount, fee)`.
   - Goal: lock down Java's overflow error message behavior in fixtures.
+- [x] Legacy mode (`allowSameTokenName=0`) fixtures:
+  - `legacy_happy_path` — successful participation via legacy asset name store
+  - `legacy_validate_fail_asset_not_found` — asset name not in legacy store
+  - `legacy_validate_fail_insufficient_balance` — participant lacks TRX balance
 
 ---
 
@@ -93,7 +97,10 @@ TODOs
     - Frozen A: `expireTime <= now` (should unfreeze)
     - Frozen B: `expireTime > now` (should remain)
   - Assert: fixture captures post-state where only B remains in `frozenSupplyList`.
-- [ ] (optional) Add a second run-mode fixture with `allowSameTokenName=0` to cover the `assetIssuedName` branch (only if conformance wants parity across both modes).
+- [x] (optional) Add a second run-mode fixture with `allowSameTokenName=0` to cover the `assetIssuedName` branch:
+  - `legacy_happy_path` — successful unfreeze via legacy asset name field
+  - `legacy_validate_fail_no_frozen` — no frozen supply in legacy mode
+  - `legacy_validate_fail_not_issued_asset` — account has no assetIssuedName
 
 ---
 

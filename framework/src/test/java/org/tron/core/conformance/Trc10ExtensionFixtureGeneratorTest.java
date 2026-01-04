@@ -703,6 +703,262 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
     assertNotNull("Validate fail should have validation error", result.getValidationError());
   }
 
+  @Test
+  public void generateParticipateAssetIssue_overflowMultiplyExact() throws Exception {
+    // Create asset with num > 1 so multiplyExact(amount, num) can overflow
+    String overflowAssetId = "1000014";
+    long blockTimestamp = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    AssetIssueContract overflowAsset = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .setName(ByteString.copyFromUtf8("OverflowToken"))
+        .setAbbr(ByteString.copyFromUtf8("OVF"))
+        .setTotalSupply(Long.MAX_VALUE)
+        .setTrxNum(1)
+        .setNum(10) // num > 1 to trigger multiplyExact overflow
+        .setPrecision(6)
+        .setStartTime(blockTimestamp - 86400000)
+        .setEndTime(blockTimestamp + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("Overflow Token"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId(overflowAssetId)
+        .build();
+
+    AssetIssueCapsule overflowCapsule = new AssetIssueCapsule(overflowAsset);
+    dbManager.getAssetIssueV2Store().put(overflowCapsule.createDbV2Key(), overflowCapsule);
+
+    // Add tokens to OTHER_ADDRESS
+    AccountCapsule other = dbManager.getAccountStore().get(ByteArray.fromHexString(OTHER_ADDRESS));
+    Protocol.Account.Builder otherBuilder = other.getInstance().toBuilder();
+    otherBuilder.putAssetV2(overflowAssetId, Long.MAX_VALUE);
+    dbManager.getAccountStore().put(other.getAddress().toByteArray(), new AccountCapsule(otherBuilder.build()));
+
+    // Use amount close to Long.MAX_VALUE to trigger multiplyExact(amount, num) overflow
+    // Long.MAX_VALUE / 10 + 1 will overflow when multiplied by 10
+    long overflowAmount = (Long.MAX_VALUE / 10) + 1;
+
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(overflowAssetId))
+        .setAmount(overflowAmount)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("validate_fail_overflow_multiply_exact")
+        .caseCategory("validate_fail")
+        .description("Fail when multiplyExact(amount, num) overflows")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .expectedError("overflow")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue overflow multiply: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  @Test
+  public void generateParticipateAssetIssue_overflowAddExact() throws Exception {
+    // This test targets addExact(amount, fee) overflow
+    // Since fee is typically 0 for ParticipateAssetIssue, we need to use addExact in balance check
+    // The check is: ownerAccount.getBalance() < addExact(amount, fee)
+    // With fee = 0, this becomes a comparison, but the overflow happens in
+    // subtractExact during execution. Let's use a very large amount.
+
+    // Create asset for this test
+    String addOverflowAssetId = "1000015";
+    long blockTimestamp = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    AssetIssueContract addOverflowAsset = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .setName(ByteString.copyFromUtf8("AddOverflowToken"))
+        .setAbbr(ByteString.copyFromUtf8("AOT"))
+        .setTotalSupply(Long.MAX_VALUE)
+        .setTrxNum(1)
+        .setNum(1)
+        .setPrecision(6)
+        .setStartTime(blockTimestamp - 86400000)
+        .setEndTime(blockTimestamp + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("Add Overflow Token"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId(addOverflowAssetId)
+        .build();
+
+    AssetIssueCapsule addOverflowCapsule = new AssetIssueCapsule(addOverflowAsset);
+    dbManager.getAssetIssueV2Store().put(addOverflowCapsule.createDbV2Key(), addOverflowCapsule);
+
+    // Add tokens to OTHER_ADDRESS
+    AccountCapsule other = dbManager.getAccountStore().get(ByteArray.fromHexString(OTHER_ADDRESS));
+    Protocol.Account.Builder otherBuilder = other.getInstance().toBuilder();
+    otherBuilder.putAssetV2(addOverflowAssetId, Long.MAX_VALUE);
+    dbManager.getAccountStore().put(other.getAddress().toByteArray(), new AccountCapsule(otherBuilder.build()));
+
+    // Use Long.MAX_VALUE as amount - this will cause issues in balance checks
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(addOverflowAssetId))
+        .setAmount(Long.MAX_VALUE)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("validate_fail_overflow_add_exact")
+        .caseCategory("validate_fail")
+        .description("Fail when amount is Long.MAX_VALUE causing overflow in balance operations")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .expectedError("balance")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue overflow add: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+  }
+
+  // ==========================================================================
+  // ParticipateAssetIssueContract (9) - LEGACY MODE (allowSameTokenName=0)
+  // ==========================================================================
+
+  @Test
+  public void generateParticipateAssetIssue_legacy_happyPath() throws Exception {
+    // Setup legacy mode
+    setupLegacyModeAsset();
+
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(ASSET_NAME)) // Use name, not ID in legacy mode
+        .setAmount(100_000_000L) // 100 TRX
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("legacy_happy_path")
+        .caseCategory("happy")
+        .description("Legacy mode (allowSameTokenName=0): Participate in asset issuance using asset name")
+        .database("account")
+        .database("asset-issue") // Legacy store
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue legacy happy path: success={}", result.isSuccess());
+    assertTrue("Legacy happy path should succeed", result.isSuccess());
+
+    // Restore V2 mode for subsequent tests
+    restoreV2Mode();
+  }
+
+  @Test
+  public void generateParticipateAssetIssue_legacy_assetNotFound() throws Exception {
+    // Setup legacy mode
+    setupLegacyModeAsset();
+
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(PARTICIPANT_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8("NonExistentToken")) // Non-existent asset name
+        .setAmount(100_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("legacy_validate_fail_asset_not_found")
+        .caseCategory("validate_fail")
+        .description("Legacy mode (allowSameTokenName=0): Fail when asset name does not exist")
+        .database("account")
+        .database("asset-issue") // Legacy store
+        .database("dynamic-properties")
+        .ownerAddress(PARTICIPANT_ADDRESS)
+        .expectedError("No asset named")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue legacy asset not found: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+
+    // Restore V2 mode for subsequent tests
+    restoreV2Mode();
+  }
+
+  @Test
+  public void generateParticipateAssetIssue_legacy_insufficientBalance() throws Exception {
+    // Setup legacy mode
+    setupLegacyModeAsset();
+
+    // Create account with minimal balance
+    String poorAddress = Wallet.getAddressPreFixString() + "cccccccccccccccccccccccccccccccccccccccc";
+    AccountCapsule poorAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("legacypoor"),
+        ByteString.copyFrom(ByteArray.fromHexString(poorAddress)),
+        AccountType.Normal,
+        1000L); // Minimal balance
+    dbManager.getAccountStore().put(poorAccount.getAddress().toByteArray(), poorAccount);
+
+    ParticipateAssetIssueContract contract = ParticipateAssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(poorAddress)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(ASSET_NAME))
+        .setAmount(100_000_000L) // 100 TRX - more than balance
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ParticipateAssetIssueContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PARTICIPATE_ASSET_ISSUE_CONTRACT", 9)
+        .caseName("legacy_validate_fail_insufficient_balance")
+        .caseCategory("validate_fail")
+        .description("Legacy mode (allowSameTokenName=0): Fail when participant has insufficient TRX balance")
+        .database("account")
+        .database("asset-issue") // Legacy store
+        .database("dynamic-properties")
+        .ownerAddress(poorAddress)
+        .expectedError("balance")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ParticipateAssetIssue legacy insufficient balance: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+
+    // Restore V2 mode for subsequent tests
+    restoreV2Mode();
+  }
+
   // ==========================================================================
   // UnfreezeAssetContract (14) Fixtures
   // ==========================================================================
@@ -1023,6 +1279,131 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UnfreezeAsset partial unfreeze: success={}", result.isSuccess());
     assertTrue("Partial unfreeze should succeed", result.isSuccess());
+  }
+
+  // ==========================================================================
+  // UnfreezeAssetContract (14) - LEGACY MODE (allowSameTokenName=0)
+  // ==========================================================================
+
+  @Test
+  public void generateUnfreezeAsset_legacy_happyPath() throws Exception {
+    // Setup legacy mode with frozen supply
+    setupLegacyModeAssetWithFrozenSupply();
+
+    UnfreezeAssetContract contract = UnfreezeAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_ASSET_CONTRACT", 14)
+        .caseName("legacy_happy_path")
+        .caseCategory("happy")
+        .description("Legacy mode (allowSameTokenName=0): Unfreeze expired frozen asset supply using asset name")
+        .database("account")
+        .database("asset-issue") // Legacy store
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeAsset legacy happy path: success={}", result.isSuccess());
+    assertTrue("Legacy happy path should succeed", result.isSuccess());
+
+    // Restore V2 mode for subsequent tests
+    restoreV2Mode();
+  }
+
+  @Test
+  public void generateUnfreezeAsset_legacy_noFrozenAsset() throws Exception {
+    // Setup legacy mode but without frozen supply
+    setupLegacyModeAsset();
+
+    UnfreezeAssetContract contract = UnfreezeAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_ASSET_CONTRACT", 14)
+        .caseName("legacy_validate_fail_no_frozen")
+        .caseCategory("validate_fail")
+        .description("Legacy mode (allowSameTokenName=0): Fail when account has no frozen assets")
+        .database("account")
+        .database("asset-issue") // Legacy store
+        .database("dynamic-properties")
+        .ownerAddress(OTHER_ADDRESS)
+        .expectedError("frozen")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeAsset legacy no frozen: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+
+    // Restore V2 mode for subsequent tests
+    restoreV2Mode();
+  }
+
+  @Test
+  public void generateUnfreezeAsset_legacy_notIssuedAsset() throws Exception {
+    // Setup legacy mode
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(0);
+
+    // Create an account with frozen supply but no assetIssuedName set
+    String noAssetIssuerAddress = Wallet.getAddressPreFixString() + "dddddddddddddddddddddddddddddddddddddddd";
+    long currentTime = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    AccountCapsule noAssetAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("legacynoasset"),
+        ByteString.copyFrom(ByteArray.fromHexString(noAssetIssuerAddress)),
+        AccountType.Normal,
+        INITIAL_BALANCE);
+
+    // Add frozen supply but NOT set assetIssuedName (legacy field)
+    Protocol.Account.Builder builder = noAssetAccount.getInstance().toBuilder();
+    Protocol.Account.Frozen frozen = Protocol.Account.Frozen.newBuilder()
+        .setFrozenBalance(50_000_000_000L)
+        .setExpireTime(currentTime - 1000) // Already expired
+        .build();
+    builder.addFrozenSupply(frozen);
+    // Note: NOT setting assetIssuedName
+    dbManager.getAccountStore().put(noAssetAccount.getAddress().toByteArray(), new AccountCapsule(builder.build()));
+
+    UnfreezeAssetContract contract = UnfreezeAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(noAssetIssuerAddress)))
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_ASSET_CONTRACT", 14)
+        .caseName("legacy_validate_fail_not_issued_asset")
+        .caseCategory("validate_fail")
+        .description("Legacy mode (allowSameTokenName=0): Fail when account has not issued any asset (assetIssuedName empty)")
+        .database("account")
+        .database("asset-issue") // Legacy store
+        .database("dynamic-properties")
+        .ownerAddress(noAssetIssuerAddress)
+        .expectedError("this account has not issued any asset")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeAsset legacy not issued asset: validationError={}", result.getValidationError());
+    assertNotNull("Validate fail should have validation error", result.getValidationError());
+
+    // Restore V2 mode for subsequent tests
+    restoreV2Mode();
   }
 
   // ==========================================================================
@@ -1561,5 +1942,78 @@ public class Trc10ExtensionFixtureGeneratorTest extends BaseTest {
   private BlockCapsule createBlockContext() {
     // Use deterministic block context from ConformanceFixtureTestSupport
     return ConformanceFixtureTestSupport.createBlockContext(dbManager, OWNER_ADDRESS);
+  }
+
+  /**
+   * Set up legacy mode (allowSameTokenName=0) with an asset in the legacy AssetIssueStore.
+   * This creates the asset using the asset NAME as key (not ID).
+   */
+  private void setupLegacyModeAsset() {
+    // Switch to legacy mode
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(0);
+
+    long blockTimestamp = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    // Create asset in legacy store (keyed by name, not ID)
+    AssetIssueContract legacyAsset = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setName(ByteString.copyFromUtf8(ASSET_NAME)) // Key in legacy mode
+        .setAbbr(ByteString.copyFromUtf8("TT"))
+        .setTotalSupply(TOTAL_SUPPLY)
+        .setTrxNum(TRX_NUM)
+        .setNum(NUM)
+        .setPrecision(6)
+        .setStartTime(blockTimestamp - 86400000)
+        .setEndTime(blockTimestamp + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("Legacy Test Token"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId(ASSET_ID)
+        .build();
+
+    AssetIssueCapsule legacyCapsule = new AssetIssueCapsule(legacyAsset);
+    // Legacy store uses name as key
+    dbManager.getAssetIssueStore().put(legacyCapsule.createDbKey(), legacyCapsule);
+
+    // Update owner account to have asset using name (legacy mode)
+    AccountCapsule owner = dbManager.getAccountStore().get(ByteArray.fromHexString(OWNER_ADDRESS));
+    Protocol.Account.Builder ownerBuilder = owner.getInstance().toBuilder();
+    ownerBuilder.setAssetIssuedName(ByteString.copyFromUtf8(ASSET_NAME)); // Legacy field
+    // Also add asset balance using name key
+    ownerBuilder.putAsset(ASSET_NAME, TOTAL_SUPPLY / 2);
+    dbManager.getAccountStore().put(owner.getAddress().toByteArray(), new AccountCapsule(ownerBuilder.build()));
+  }
+
+  /**
+   * Set up legacy mode (allowSameTokenName=0) with an asset that has frozen supply.
+   * Used for UnfreezeAsset legacy tests.
+   */
+  private void setupLegacyModeAssetWithFrozenSupply() {
+    // First setup the basic legacy asset
+    setupLegacyModeAsset();
+
+    long currentTime = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    // Update owner account to have frozen supply
+    AccountCapsule owner = dbManager.getAccountStore().get(ByteArray.fromHexString(OWNER_ADDRESS));
+    Protocol.Account.Builder ownerBuilder = owner.getInstance().toBuilder();
+
+    // Add expired frozen supply
+    Protocol.Account.Frozen frozen = Protocol.Account.Frozen.newBuilder()
+        .setFrozenBalance(50_000_000_000L)
+        .setExpireTime(currentTime - 1000) // Already expired
+        .build();
+    ownerBuilder.addFrozenSupply(frozen);
+
+    dbManager.getAccountStore().put(owner.getAddress().toByteArray(), new AccountCapsule(ownerBuilder.build()));
+  }
+
+  /**
+   * Restore V2 mode (allowSameTokenName=1) after running legacy tests.
+   * This ensures subsequent tests use the V2 stores.
+   */
+  private void restoreV2Mode() {
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
   }
 }
