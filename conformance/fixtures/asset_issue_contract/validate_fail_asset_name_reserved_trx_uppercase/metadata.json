@@ -1,0 +1,23 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_asset_name_reserved_trx_uppercase",
+  "caseCategory": "validate_fail",
+  "description": "Fail when asset name is 'TRX' (case-insensitive reserved check)",
+  "generatedAt": "2026-01-03T03:10:32.697Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "assetName can't be trx",
+  "ownerAddress": "a06e616d655f7472785f75707065725f6973737565",
+  "dynamicProperties": {
+    "ALLOW_SAME_TOKEN_NAME": 1
+  },
+  "notes": []
+}

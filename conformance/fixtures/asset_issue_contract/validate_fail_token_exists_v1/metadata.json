@@ -1,0 +1,24 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_token_exists_v1",
+  "caseCategory": "validate_fail",
+  "description": "V1 mode: fail when token name already exists in asset-issue store",
+  "generatedAt": "2026-01-03T03:10:34.768Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Token exists",
+  "ownerAddress": "a06e65775f76315f69737375657200000000000000",
+  "dynamicProperties": {
+    "ALLOW_SAME_TOKEN_NAME": 0
+  },
+  "notes": []
+}
