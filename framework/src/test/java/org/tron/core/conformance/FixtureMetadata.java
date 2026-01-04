@@ -29,6 +29,7 @@ public class FixtureMetadata {
   private static final String STATUS_SUCCESS = "SUCCESS";
   private static final String STATUS_REVERT = "REVERT";
   private static final String STATUS_VALIDATION_FAILED = "VALIDATION_FAILED";
+  private static final String STATUS_OUT_OF_ENERGY = "OUT_OF_ENERGY";
 
   private String contractType;
   private int contractTypeNum;
@@ -374,6 +375,7 @@ public class FixtureMetadata {
         case STATUS_SUCCESS:
         case STATUS_REVERT:
         case STATUS_VALIDATION_FAILED:
+        case STATUS_OUT_OF_ENERGY:
           return true;
         default:
           return false;
