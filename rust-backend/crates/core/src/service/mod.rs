@@ -3769,7 +3769,22 @@ impl BackendService {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
         use revm_primitives::Address;
 
-        let owner = transaction.from;
+        // Decode full AssetIssueContractData early so we can validate owner_address and
+        // frozen_supply (java-tron AssetIssueActuator.validate).
+        use prost::Message;
+        let mut asset_proto = tron_backend_execution::protocol::AssetIssueContractData::decode(
+            transaction.data.as_ref(),
+        )
+        .map_err(|e| format!("Failed to decode AssetIssueContractData: {}", e))?;
+
+        // Validation parity: DecodeUtil.addressValid(ownerAddress)
+        let owner = match asset_proto.owner_address.as_slice() {
+            bytes if bytes.len() == 21 && (bytes[0] == 0x41 || bytes[0] == 0xa0) => {
+                Address::from_slice(&bytes[1..])
+            }
+            _ => return Err("Invalid ownerAddress".to_string()),
+        };
+
         let owner_tron = tron_backend_common::to_tron_address(&owner);
 
         debug!("Executing ASSET_ISSUE_CONTRACT for owner {}", owner_tron);
@@ -3867,6 +3882,14 @@ impl BackendService {
             return Err("PublicFreeAssetNetUsage must be 0!".to_string());
         }
 
+        let max_frozen_supply_number = storage_adapter
+            .get_max_frozen_supply_number()
+            .map_err(|e| format!("Failed to get MAX_FROZEN_SUPPLY_NUMBER: {}", e))?;
+
+        if (asset_proto.frozen_supply.len() as i64) > max_frozen_supply_number {
+            return Err("Frozen supply list length is too long".to_string());
+        }
+
         let one_day_net_limit = storage_adapter
             .get_one_day_net_limit()
             .map_err(|e| format!("Failed to get ONE_DAY_NET_LIMIT: {}", e))?;
@@ -3879,6 +3902,30 @@ impl BackendService {
             || asset_info.public_free_asset_net_limit >= one_day_net_limit
         {
             return Err("Invalid PublicFreeAssetNetLimit".to_string());
+        }
+
+        let min_frozen_supply_time = storage_adapter
+            .get_min_frozen_supply_time()
+            .map_err(|e| format!("Failed to get MIN_FROZEN_SUPPLY_TIME: {}", e))?;
+        let max_frozen_supply_time = storage_adapter
+            .get_max_frozen_supply_time()
+            .map_err(|e| format!("Failed to get MAX_FROZEN_SUPPLY_TIME: {}", e))?;
+
+        let mut remain_supply = asset_info.total_supply;
+        for fs in &asset_proto.frozen_supply {
+            if fs.frozen_amount <= 0 {
+                return Err("Frozen supply must be greater than 0!".to_string());
+            }
+            if fs.frozen_amount > remain_supply {
+                return Err("Frozen supply cannot exceed total supply".to_string());
+            }
+            if !(fs.frozen_days >= min_frozen_supply_time && fs.frozen_days <= max_frozen_supply_time) {
+                return Err(format!(
+                    "frozenDuration must be less than {} days and more than {} days",
+                    max_frozen_supply_time, min_frozen_supply_time
+                ));
+            }
+            remain_supply -= fs.frozen_amount;
         }
 
         let mut owner_account_proto = storage_adapter
@@ -3920,18 +3967,6 @@ impl BackendService {
             .map_err(|e| format!("Failed to save TOKEN_ID_NUM: {}", e))?;
         let token_id_str = new_token_id_num.to_string();
 
-        // Decode full AssetIssueContractData for persistence (includes frozen_supply list).
-        // Note: transaction.data is the unpacked contract bytes (Any.value), matching AssetIssueContractData.
-        use prost::Message;
-        let mut asset_proto = tron_backend_execution::protocol::AssetIssueContractData::decode(
-            transaction.data.as_ref(),
-        )
-        .map_err(|e| format!("Failed to decode AssetIssueContractData: {}", e))?;
-
-        // Ensure owner_address is present (some tests omit it); use tx.from as canonical.
-        if asset_proto.owner_address.is_empty() {
-            asset_proto.owner_address = storage_adapter.to_tron_address_21(&owner).to_vec();
-        }
         asset_proto.id = token_id_str.clone();
 
         // Persist AssetIssueStore (V1) and AssetIssueV2Store (V2) entries.
@@ -4010,8 +4045,9 @@ impl BackendService {
             .map_err(|e| format!("Failed to get blackhole optimization flag: {}", e))?;
 
         if support_blackhole {
-            // Burn mode - no additional account change needed
-            info!("Burning {} SUN asset issue fee (blackhole optimization)", asset_issue_fee);
+            storage_adapter
+                .burn_trx(asset_issue_fee)
+                .map_err(|e| format!("Failed to burn trx: {}", e))?;
         } else {
             // Credit blackhole account
             if let Some(blackhole_addr) = storage_adapter.get_blackhole_address()

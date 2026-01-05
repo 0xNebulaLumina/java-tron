@@ -3672,6 +3672,75 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get MAX_FROZEN_SUPPLY_NUMBER dynamic property (AssetIssueContract validation).
+    ///
+    /// Java stores this as a 4-byte big-endian int under key "MAX_FROZEN_SUPPLY_NUMBER".
+    /// Default: 10 (DynamicPropertiesStore initialization).
+    pub fn get_max_frozen_supply_number(&self) -> Result<i64> {
+        let key = b"MAX_FROZEN_SUPPLY_NUMBER";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Ok(10)
+                }
+            }
+            None => Ok(10),
+        }
+    }
+
+    /// Get MAX_FROZEN_SUPPLY_TIME dynamic property (AssetIssueContract validation).
+    ///
+    /// Java stores this as a 4-byte big-endian int under key "MAX_FROZEN_SUPPLY_TIME".
+    /// Default: 3652 (DynamicPropertiesStore initialization).
+    pub fn get_max_frozen_supply_time(&self) -> Result<i64> {
+        let key = b"MAX_FROZEN_SUPPLY_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Ok(3652)
+                }
+            }
+            None => Ok(3652),
+        }
+    }
+
+    /// Get MIN_FROZEN_SUPPLY_TIME dynamic property (AssetIssueContract validation).
+    ///
+    /// Java stores this as a 4-byte big-endian int under key "MIN_FROZEN_SUPPLY_TIME".
+    /// Default: 1 (DynamicPropertiesStore initialization).
+    pub fn get_min_frozen_supply_time(&self) -> Result<i64> {
+        let key = b"MIN_FROZEN_SUPPLY_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Ok(1)
+                }
+            }
+            None => Ok(1),
+        }
+    }
+
     /// Get asset issue by key (asset name or asset id depending on allowSameTokenName)
     pub fn get_asset_issue(&self, key: &[u8], allow_same_token_name: i64) -> Result<Option<crate::protocol::AssetIssueContractData>> {
         let db = if allow_same_token_name == 0 {

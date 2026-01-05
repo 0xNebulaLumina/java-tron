@@ -1113,8 +1113,10 @@ fn test_asset_issue_contract_trc10_change_emission() {
     let service = BackendService::new(module_manager);
 
     // Create test account (owner must have sufficient balance for fee)
-    let owner_address = Address::from([0x41, 0xab, 0xd4, 0xb9, 0x36, 0x77, 0x99, 0xea, 0xa3, 0x19, 
-                                      0x7f, 0xec, 0xb1, 0x44, 0xeb, 0x71, 0xde, 0x1e, 0x04, 0x91]);
+    // 20-byte EVM address; the TRON owner_address field is encoded as 0x41 + this 20-byte value.
+    let owner_address = Address::from([0xab, 0xd4, 0xb9, 0x36, 0x77, 0x99, 0xea, 0xa3, 0x19,
+                                      0x7f, 0xec, 0xb1, 0x44, 0xeb, 0x71, 0xde, 0x1e, 0x04,
+                                      0x91, 0x50]);
     let owner_account = AccountInfo {
         balance: U256::from(2000_000000u64), // 2000 TRX (enough for fee)
         nonce: 0,
@@ -1129,8 +1131,8 @@ fn test_asset_issue_contract_trc10_change_emission() {
     // Field 1: owner_address (length-delimited, tag=10)
     contract_data.push(10u8); // tag (field 1, type 2)
     contract_data.push(21u8); // length of address (21 bytes for Tron address)
-    contract_data.extend_from_slice(&[0x41, 0xab, 0xd4, 0xb9, 0x36, 0x77, 0x99, 0xea, 0xa3, 0x19, 
-                                     0x7f, 0xec, 0xb1, 0x44, 0xeb, 0x71, 0xde, 0x1e, 0x04, 0x91, 0x50]);
+    contract_data.push(0x41u8); // prefix
+    contract_data.extend_from_slice(owner_address.as_slice());
     
     // Field 2: name (length-delimited, tag=18)
     let name = b"TestToken";
@@ -1274,7 +1276,8 @@ fn test_asset_issue_contract_disabled() {
     // Build minimal AssetIssueContract
     let mut contract_data = Vec::new();
     contract_data.push(10u8); // owner_address tag
-    contract_data.push(20u8); // length
+    contract_data.push(21u8); // length
+    contract_data.push(0x41u8); // TRON address prefix (mainnet-style for tests)
     contract_data.extend_from_slice(&[1u8; 20]);
     contract_data.push(18u8); // name tag
     contract_data.push(4u8);
@@ -1348,7 +1351,8 @@ fn test_asset_issue_contract_phase2_fields() {
     // Build AssetIssueContract with Phase 2 fields (22-25)
     let mut contract_data = Vec::new();
     contract_data.push(10u8); // owner_address
-    contract_data.push(20u8);
+    contract_data.push(21u8);
+    contract_data.push(0x41u8); // TRON address prefix (mainnet-style for tests)
     contract_data.extend_from_slice(&[1u8; 20]);
     contract_data.push(18u8); // name
     contract_data.push(5u8);
@@ -1442,6 +1446,7 @@ fn test_asset_issue_contract_phase2_fields() {
 }
 
 fn build_asset_issue_contract_data(
+    owner: Address,
     name: &[u8],
     total_supply: u64,
     trx_num: u64,
@@ -1451,6 +1456,12 @@ fn build_asset_issue_contract_data(
     url: &[u8],
 ) -> Bytes {
     let mut contract_data = Vec::new();
+
+    // Field 1: owner_address
+    encode_varint(&mut contract_data, (1 << 3) | 2);
+    encode_varint(&mut contract_data, 21);
+    contract_data.push(0x41u8); // TRON address prefix (mainnet-style for tests)
+    contract_data.extend_from_slice(owner.as_slice());
 
     // Field 2: name
     encode_varint(&mut contract_data, (2 << 3) | 2);
@@ -1531,6 +1542,7 @@ fn test_asset_issue_validate_fail_insufficient_balance_message() {
     storage_adapter.set_account(owner_address, owner_account).unwrap();
 
     let contract_data = build_asset_issue_contract_data(
+        owner_address,
         b"Token",
         1000,
         1,
@@ -1581,6 +1593,7 @@ fn test_asset_issue_validate_fail_owner_already_issued() {
     storage_adapter.put_account_proto(&owner_address, &proto_account).unwrap();
 
     let contract_data = build_asset_issue_contract_data(
+        owner_address,
         b"Token",
         1000,
         1,
@@ -1627,6 +1640,7 @@ fn test_asset_issue_validate_fail_total_supply_zero() {
     storage_adapter.set_account(owner_address, owner_account).unwrap();
 
     let contract_data = build_asset_issue_contract_data(
+        owner_address,
         b"Token",
         0,
         1,
@@ -1679,6 +1693,7 @@ fn test_asset_issue_validate_fail_invalid_name_trx() {
     storage_adapter.set_account(owner_address, owner_account).unwrap();
 
     let contract_data = build_asset_issue_contract_data(
+        owner_address,
         b"trx",
         1000,
         1,
@@ -1730,6 +1745,7 @@ fn test_asset_issue_validate_fail_start_time_before_head_block_time() {
     storage_adapter.set_account(owner_address, owner_account).unwrap();
 
     let contract_data = build_asset_issue_contract_data(
+        owner_address,
         b"Token",
         1000,
         1,
@@ -1776,6 +1792,7 @@ fn test_asset_issue_validate_fail_end_time_not_greater_than_start_time() {
     storage_adapter.set_account(owner_address, owner_account).unwrap();
 
     let contract_data = build_asset_issue_contract_data(
+        owner_address,
         b"Token",
         1000,
         1,
@@ -1803,6 +1820,188 @@ fn test_asset_issue_validate_fail_end_time_not_greater_than_start_time() {
     let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
     assert!(result.is_err());
     assert_eq!(result.err().unwrap(), "End time should be greater than start time");
+}
+
+#[test]
+fn test_asset_issue_validate_fail_owner_address_empty() {
+    use prost::Message;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let contract = AssetIssueContractData {
+        owner_address: vec![],
+        name: b"Token".to_vec(),
+        abbr: b"TK".to_vec(),
+        total_supply: 1000,
+        frozen_supply: vec![],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://token.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut contract_bytes = Vec::new();
+    contract.encode(&mut contract_bytes).unwrap();
+
+    let transaction = TronTransaction {
+        from: Address::ZERO,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(contract_bytes),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_err());
+    assert_eq!(result.err().unwrap(), "Invalid ownerAddress");
+}
+
+#[test]
+fn test_asset_issue_validate_fail_frozen_supply_amount_zero() {
+    use prost::Message;
+    use tron_backend_execution::protocol::asset_issue_contract_data::FrozenSupply;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let mut owner_address = vec![0x41u8];
+    owner_address.extend_from_slice(&[1u8; 20]);
+
+    let contract = AssetIssueContractData {
+        owner_address,
+        name: b"Token".to_vec(),
+        abbr: b"TK".to_vec(),
+        total_supply: 1000,
+        frozen_supply: vec![FrozenSupply {
+            frozen_amount: 0,
+            frozen_days: 1,
+        }],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://token.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut contract_bytes = Vec::new();
+    contract.encode(&mut contract_bytes).unwrap();
+
+    let transaction = TronTransaction {
+        from: Address::from([1u8; 20]),
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(contract_bytes),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_err());
+    assert_eq!(result.err().unwrap(), "Frozen supply must be greater than 0!");
+}
+
+#[test]
+fn test_asset_issue_validate_fail_frozen_supply_days_out_of_range_message() {
+    use prost::Message;
+    use tron_backend_execution::protocol::asset_issue_contract_data::FrozenSupply;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let mut owner_address = vec![0x41u8];
+    owner_address.extend_from_slice(&[1u8; 20]);
+
+    let contract = AssetIssueContractData {
+        owner_address,
+        name: b"Token".to_vec(),
+        abbr: b"TK".to_vec(),
+        total_supply: 1000,
+        frozen_supply: vec![FrozenSupply {
+            frozen_amount: 1,
+            frozen_days: 0,
+        }],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://token.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut contract_bytes = Vec::new();
+    contract.encode(&mut contract_bytes).unwrap();
+
+    let transaction = TronTransaction {
+        from: Address::from([1u8; 20]),
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(contract_bytes),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_err());
+    assert_eq!(
+        result.err().unwrap(),
+        "frozenDuration must be less than 3652 days and more than 1 days"
+    );
 }
 
 // ====================================================================================

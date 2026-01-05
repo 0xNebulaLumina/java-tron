@@ -355,6 +355,7 @@ impl ConformanceRunner {
                 Some(TronContractType::AccountCreateContract)
                     | Some(TronContractType::AccountPermissionUpdateContract)
                     | Some(TronContractType::AccountUpdateContract)
+                    | Some(TronContractType::AssetIssueContract)
             );
 
             let (from_bytes, from_is_valid) = if tx.from.len() == 21 {
