@@ -4708,11 +4708,6 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
 
-        let owner = transaction.from;
-        let owner_tron = tron_backend_common::to_tron_address(&owner);
-
-        debug!("Executing CLEAR_ABI_CONTRACT for owner {}", owner_tron);
-
         // 1. Check if Constantinople is enabled
         let allow_constantinople = storage_adapter.get_allow_tvm_constantinople()
             .map_err(|e| format!("Failed to get Constantinople status: {}", e))?;
@@ -4722,38 +4717,57 @@ impl BackendService {
         }
 
         // 2. Parse the contract data
-        let contract_address = self.parse_clear_abi_contract(&transaction.data)?;
+        let (owner_in_contract, contract_address) = self.parse_clear_abi_contract(&transaction.data)?;
 
-        debug!("Parsed ClearABIContract: contract_address={}", hex::encode(&contract_address));
+        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        if owner_from_field.is_empty() && !owner_in_contract.is_empty() {
+            return Err("contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]".to_string());
+        }
 
-        // 3. Validate owner exists
-        // Build owner key as 21-byte TRON address (network-aware prefix)
-        let owner_key = storage_adapter.to_tron_address_21(&owner).to_vec();
+        let owner_tron = if !owner_from_field.is_empty() {
+            owner_from_field
+        } else {
+            owner_in_contract.as_slice()
+        };
 
-        let _owner_account = storage_adapter.get_account(&owner)
+        debug!(
+            "Executing CLEAR_ABI_CONTRACT for owner={}, contract={}",
+            hex::encode(owner_tron),
+            hex::encode(&contract_address)
+        );
+
+        // 3. Validate owner address
+        let expected_prefix = storage_adapter.address_prefix();
+        if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
+            return Err("Invalid address".to_string());
+        }
+        let owner = revm_primitives::Address::from_slice(&owner_tron[1..]);
+
+        // 4. Validate owner exists
+        let _owner_account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or_else(|| format!("Owner account {} does not exist", owner_tron))?;
+            .ok_or_else(|| format!("Account[{}] not exists", hex::encode(owner_tron)))?;
 
-        // 4. Get the smart contract (to validate ownership)
+        // 5. Get the smart contract (to validate ownership)
         let smart_contract = storage_adapter.get_smart_contract(&contract_address)
             .map_err(|e| format!("Failed to get contract: {}", e))?
             .ok_or_else(|| "Contract not exists".to_string())?;
 
-        // 5. Validate owner is the contract's origin_address
-        if smart_contract.origin_address != owner_key {
+        // 6. Validate owner is the contract's origin_address
+        if smart_contract.origin_address != owner_tron {
             return Err(format!(
                 "Account[{}] is not the owner of the contract",
-                hex::encode(&owner_key)
+                hex::encode(owner_tron)
             ));
         }
 
-        // 6. Clear ABI by writing default empty ABI to AbiStore
+        // 7. Clear ABI by writing default empty ABI to AbiStore
         storage_adapter.clear_abi(&contract_address)
             .map_err(|e| format!("Failed to clear ABI: {}", e))?;
 
         debug!("ABI cleared for contract {}", hex::encode(&contract_address));
 
-        // 7. Build result - no state changes for account balances, fee = 0
+        // 8. Build result - no state changes for account balances, fee = 0
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
         Ok(TronExecutionResult {
@@ -4911,9 +4925,10 @@ impl BackendService {
     /// ClearABIContract:
     ///   bytes owner_address = 1;
     ///   bytes contract_address = 2;
-    fn parse_clear_abi_contract(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+    fn parse_clear_abi_contract(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address: Vec<u8> = vec![];
         let mut contract_address: Vec<u8> = vec![];
         let mut pos = 0;
 
@@ -4927,10 +4942,16 @@ impl BackendService {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address - skip
+                    // owner_address
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_address = data[pos..end].to_vec();
+                    pos = end;
                 }
                 (2, 2) => {
                     // contract_address
@@ -4952,11 +4973,7 @@ impl BackendService {
             }
         }
 
-        if contract_address.is_empty() {
-            return Err("contract_address is required".to_string());
-        }
-
-        Ok(contract_address)
+        Ok((owner_address, contract_address))
     }
 
     // ========================================================================
