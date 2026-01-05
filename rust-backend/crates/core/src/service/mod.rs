@@ -5097,7 +5097,11 @@ impl BackendService {
         use contracts::proto::TransactionResultBuilder;
 
         let owner = transaction.from;
-        let owner_tron = add_tron_address_prefix(&owner);
+        let owner_tron = transaction
+            .metadata
+            .from_raw
+            .as_deref()
+            .unwrap_or(&[]);
 
         debug!("CancelAllUnfreezeV2: owner={}", hex::encode(&owner_tron));
 
@@ -5108,22 +5112,28 @@ impl BackendService {
             return Err("Not support CancelAllUnfreezeV2 transaction, need to be opened by the committee".to_string());
         }
 
-        // 2. Validate owner account exists
+        // 2. Validate owner address
+        let expected_prefix = storage_adapter.address_prefix();
+        if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
+            return Err("Invalid address".to_string());
+        }
+
+        // 3. Validate owner account exists
         let account_proto = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
-            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&owner_tron)))?;
+            .ok_or_else(|| format!("Account[{}] not exists", hex::encode(&owner_tron)))?;
 
-        // 3. Get latest block timestamp
+        // 4. Get latest block timestamp
         let now = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
 
-        // 4. Validate there are unfrozenV2 entries to process
+        // 5. Validate there are unfrozenV2 entries to process
         let unfrozen_v2_list = &account_proto.unfrozen_v2;
         if unfrozen_v2_list.is_empty() {
             return Err("No unfreezeV2 list to cancel".to_string());
         }
 
-        // 5. Process each unfrozenV2 entry:
+        // 6. Process each unfrozenV2 entry:
         //    - Expired (expire_time <= now): add to withdraw_expire_amount
         //    - Unexpired: re-freeze and add to cancel map
         let mut withdraw_expire_amount: i64 = 0;
@@ -5152,27 +5162,36 @@ impl BackendService {
                     0 => {
                         // BANDWIDTH
                         cancel_bandwidth += amount;
+                        let weight_before =
+                            Self::get_frozen_v2_balance_with_delegated_bandwidth(&updated_account)
+                                / TRX_PRECISION as i64;
                         // Re-freeze: add to frozenV2 bandwidth
                         Self::add_frozen_v2_bandwidth(&mut updated_account, amount);
-                        // Update weight delta (amount / TRX_PRECISION)
-                        let weight_before = Self::get_frozen_v2_balance_with_delegated_bandwidth(&account_proto) / TRX_PRECISION as i64;
-                        let weight_after = Self::get_frozen_v2_balance_with_delegated_bandwidth(&updated_account) / TRX_PRECISION as i64;
+                        let weight_after =
+                            Self::get_frozen_v2_balance_with_delegated_bandwidth(&updated_account)
+                                / TRX_PRECISION as i64;
                         net_weight_delta += weight_after - weight_before;
                     }
                     1 => {
                         // ENERGY
                         cancel_energy += amount;
+                        let weight_before =
+                            Self::get_frozen_v2_balance_with_delegated_energy(&updated_account)
+                                / TRX_PRECISION as i64;
                         Self::add_frozen_v2_energy(&mut updated_account, amount);
-                        let weight_before = Self::get_frozen_v2_balance_with_delegated_energy(&account_proto) / TRX_PRECISION as i64;
-                        let weight_after = Self::get_frozen_v2_balance_with_delegated_energy(&updated_account) / TRX_PRECISION as i64;
+                        let weight_after =
+                            Self::get_frozen_v2_balance_with_delegated_energy(&updated_account)
+                                / TRX_PRECISION as i64;
                         energy_weight_delta += weight_after - weight_before;
                     }
                     2 => {
                         // TRON_POWER
                         cancel_tron_power += amount;
+                        let weight_before = Self::get_tron_power_frozen_v2_balance(&updated_account)
+                            / TRX_PRECISION as i64;
                         Self::add_frozen_v2_tron_power(&mut updated_account, amount);
-                        let weight_before = Self::get_tron_power_frozen_v2_balance(&account_proto) / TRX_PRECISION as i64;
-                        let weight_after = Self::get_tron_power_frozen_v2_balance(&updated_account) / TRX_PRECISION as i64;
+                        let weight_after = Self::get_tron_power_frozen_v2_balance(&updated_account)
+                            / TRX_PRECISION as i64;
                         tp_weight_delta += weight_after - weight_before;
                     }
                     _ => {
@@ -5182,16 +5201,16 @@ impl BackendService {
             }
         }
 
-        // 6. Clear unfrozenV2 list
+        // 7. Clear unfrozenV2 list
         updated_account.unfrozen_v2.clear();
 
-        // 7. Add expired amount to balance
+        // 8. Add expired amount to balance
         if withdraw_expire_amount > 0 {
             updated_account.balance = updated_account.balance.checked_add(withdraw_expire_amount)
                 .ok_or("Balance overflow")?;
         }
 
-        // 8. Update total resource weights in DynamicPropertiesStore
+        // 9. Update total resource weights in DynamicPropertiesStore
         if net_weight_delta != 0 {
             storage_adapter.add_total_net_weight(net_weight_delta)
                 .map_err(|e| format!("Failed to update total net weight: {}", e))?;
@@ -5205,11 +5224,11 @@ impl BackendService {
                 .map_err(|e| format!("Failed to update total tron power weight: {}", e))?;
         }
 
-        // 9. Persist updated account
+        // 10. Persist updated account
         storage_adapter.put_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to persist account: {}", e))?;
 
-        // 10. Build state change for CSV parity
+        // 11. Build state change for CSV parity
         let old_account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(account_proto.balance as u64),
             nonce: 0,
@@ -5229,7 +5248,7 @@ impl BackendService {
             new_account: Some(new_account_info),
         }];
 
-        // 11. Build receipt with withdraw_expire_amount and cancel_unfreezeV2_amount map
+        // 12. Build receipt with withdraw_expire_amount and cancel_unfreezeV2_amount map
         let receipt_bytes = TransactionResultBuilder::new()
             .with_withdraw_expire_amount(withdraw_expire_amount)
             .with_cancel_unfreeze_v2_amounts(cancel_bandwidth, cancel_energy, cancel_tron_power)

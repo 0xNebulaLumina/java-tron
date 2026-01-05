@@ -51,6 +51,11 @@ pub struct EngineBackedEvmStateStore {
 }
 
 impl EngineBackedEvmStateStore {
+    /// TRON address prefix byte used by this database (0x41 mainnet, 0xa0 testnets).
+    pub fn address_prefix(&self) -> u8 {
+        self.address_prefix
+    }
+
     pub fn new(storage_engine: StorageEngine) -> Self {
         let address_prefix = Self::detect_address_prefix(&storage_engine);
         Self {
@@ -1324,22 +1329,27 @@ impl EngineBackedEvmStateStore {
     /// Default: false
     pub fn support_allow_cancel_all_unfreeze_v2(&self) -> Result<bool> {
         let key = b"ALLOW_CANCEL_ALL_UNFREEZE_V2";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        let allow_cancel = match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7]
                     ]);
-                    Ok(val > 0)
+                    val == 1
                 } else if !data.is_empty() {
-                    Ok(data[0] != 0)
+                    data[0] == 1
                 } else {
-                    Ok(false)
+                    false
                 }
             },
-            None => Ok(false) // Default disabled
-        }
+            None => false, // Default disabled
+        };
+
+        // Java parity: enabled only when ALLOW_CANCEL_ALL_UNFREEZE_V2 == 1
+        // and UNFREEZE_DELAY_DAYS > 0.
+        let unfreeze_delay_days = self.get_unfreeze_delay_days()?;
+        Ok(allow_cancel && unfreeze_delay_days > 0)
     }
 
     /// Check SUPPORT_DR dynamic property (delegate resource)
