@@ -15,6 +15,7 @@ import com.google.common.collect.Lists;
 import com.google.common.primitives.Longs;
 import com.google.protobuf.ByteString;
 import io.prometheus.client.Histogram;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -195,6 +196,8 @@ public class Manager {
   private static final int TX_ID_CACHE_SIZE = 100_000;
   private static final int SLEEP_FOR_WAIT_LOCK = 10;
   private static final int NO_BLOCK_WAITING_LOCK = 0;
+  private static final byte[] LATEST_BLOCK_HEADER_TIMESTAMP_KEY =
+      "latest_block_header_timestamp".getBytes(StandardCharsets.UTF_8);
   private final int shieldedTransInPendingMaxCounts =
       Args.getInstance().getShieldedTransInPendingMaxCounts();
   @Getter @Setter public boolean eventPluginLoaded = false;
@@ -1551,6 +1554,10 @@ public class Manager {
     // Initialize resource sync context before consuming resources
     TransactionContext txContext = new TransactionContext(blockCap, trxCap, StoreFactory.getInstance(), false, eventPluginLoaded);
     ResourceSyncContext.begin(txContext);
+    // Remote execution depends on DynamicPropertiesStore.getLatestBlockHeaderTimestamp() as "now"
+    // (java-tron semantics: during block N, this points at block N-1). Ensure the remote backend
+    // observes the same value even when SnapshotRoot hasn't flushed this key yet.
+    ResourceSyncContext.recordDynamicKeyDirty(LATEST_BLOCK_HEADER_TIMESTAMP_KEY);
 
     consumeBandwidth(trxCap, trace);
     consumeMultiSignFee(trxCap, trace);
