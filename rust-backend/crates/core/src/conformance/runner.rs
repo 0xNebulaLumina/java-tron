@@ -358,7 +358,11 @@ impl ConformanceRunner {
                 // Some fixtures validate ownerAddress inside the contract payload. In those
                 // cases, java-tron still produces a request.pb with an invalid/empty `from`.
                 // Allow conversion to proceed so contract-level validation can run.
-                if contract_type == Some(TronContractType::AccountCreateContract) {
+                if matches!(
+                    contract_type,
+                    Some(TronContractType::AccountCreateContract)
+                        | Some(TronContractType::AccountPermissionUpdateContract)
+                ) {
                     &[]
                 } else {
                     return Err(format!("Invalid from address length: {}", tx.from.len()));
@@ -1103,6 +1107,32 @@ mod tests {
         assert_eq!(transaction.from.as_slice()[0], 0x01); // TRON prefix stripped
         assert_eq!(transaction.gas_limit, 100000);
         assert!(transaction.to.is_none()); // Empty to field
+    }
+
+    #[test]
+    fn test_convert_request_to_transaction_allows_empty_from_for_account_permission_update() {
+        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
+        proto_tx.contract_type = 46; // AccountPermissionUpdateContract
+
+        let request = ExecuteTransactionRequest {
+            transaction: Some(proto_tx),
+            context: Some(ExecutionContext {
+                block_number: 1,
+                block_timestamp: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let transaction = ConformanceRunner::convert_request_to_transaction(&request).unwrap();
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract)
+        );
     }
 
     #[test]

@@ -283,6 +283,57 @@ fn test_account_update_contract_duplicate_set() {
 }
 
 #[test]
+fn test_account_permission_update_validate_fail_owner_address_empty() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    let exec_config = ExecutionConfig {
+        remote: RemoteExecutionConfig {
+            system_enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut module_manager = ModuleManager::new();
+    let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+    module_manager.register("execution", Box::new(exec_module));
+    let service = BackendService::new(module_manager);
+
+    // Ensure the transaction.from account exists so validation must come from the contract payload.
+    let tx_from = Address::from([7u8; 20]);
+    let tx_from_account = AccountInfo {
+        balance: U256::from(1_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    storage_adapter.set_account(tx_from, tx_from_account).unwrap();
+
+    // AccountPermissionUpdateContract owner_address = "" (field 1, length 0)
+    let contract_data = Bytes::from(vec![0x0a, 0x00]);
+
+    let transaction = TronTransaction {
+        from: tx_from,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            asset_id: None,
+        },
+    };
+
+    let err = service
+        .execute_account_permission_update_contract(&mut storage_adapter, &transaction, &new_test_context())
+        .unwrap_err();
+    assert_eq!(err, "invalidate ownerAddress");
+}
+
+#[test]
 fn test_freeze_balance_success_basic() {
     // Create test setup
     let owner_address = Address::from([1u8; 20]);

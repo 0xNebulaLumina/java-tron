@@ -3070,11 +3070,6 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
 
-        let owner = transaction.from;
-        let owner_tron = tron_backend_common::to_tron_address(&owner);
-
-        info!("AccountPermissionUpdate owner={}", owner_tron);
-
         // Validate: multi-sign must be enabled
         let allow_multi_sign = storage_adapter.get_allow_multi_sign()
             .map_err(|e| format!("Failed to get allow_multi_sign: {}", e))?;
@@ -3083,10 +3078,23 @@ impl BackendService {
         }
 
         // Parse contract
-        let (mut owner_permission, witness_permission, active_permissions) =
+        let (owner_address_bytes, mut owner_permission, witness_permission, active_permissions) =
             self.parse_account_permission_update_contract(&transaction.data)?;
 
-        // Load owner account (address is transaction.from, matching fixture generator)
+        // Validation: owner address must be present and valid (DecodeUtil.addressValid parity).
+        let expected_prefix = storage_adapter.to_tron_address_21(&revm_primitives::Address::ZERO)[0];
+        if owner_address_bytes.is_empty()
+            || owner_address_bytes.len() != 21
+            || owner_address_bytes[0] != expected_prefix
+        {
+            return Err("invalidate ownerAddress".to_string());
+        }
+
+        let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+        info!("AccountPermissionUpdate owner={}", owner_tron);
+
+        // Load owner account
         let mut account_proto = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .ok_or_else(|| "ownerAddress account does not exist".to_string())?;
@@ -3228,8 +3236,9 @@ impl BackendService {
     ///   Permission witness = 3;
     ///   repeated Permission actives = 4;
     ///
-    /// Returns a tuple: (owner_permission, witness_permission, active_permissions)
+    /// Returns a tuple: (owner_address, owner_permission, witness_permission, active_permissions)
     fn parse_account_permission_update_contract(&self, data: &[u8]) -> Result<(
+        Vec<u8>,
         Option<tron_backend_execution::protocol::Permission>,
         Option<tron_backend_execution::protocol::Permission>,
         Vec<tron_backend_execution::protocol::Permission>,
@@ -3237,6 +3246,7 @@ impl BackendService {
         use prost::Message;
         use tron_backend_execution::protocol::Permission;
 
+        let mut owner_address: Option<Vec<u8>> = None;
         let mut owner_permission: Option<Permission> = None;
         let mut witness_permission: Option<Permission> = None;
         let mut active_permissions: Vec<Permission> = Vec::new();
@@ -3252,10 +3262,16 @@ impl BackendService {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address - skip
+                    // owner_address
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid owner address length".to_string());
+                    }
+                    owner_address = Some(data[pos..end].to_vec());
+                    pos = end;
                 }
                 (2, 2) => {
                     // owner permission
@@ -3305,7 +3321,12 @@ impl BackendService {
             }
         }
 
-        Ok((owner_permission, witness_permission, active_permissions))
+        Ok((
+            owner_address.unwrap_or_default(),
+            owner_permission,
+            witness_permission,
+            active_permissions,
+        ))
     }
 
     /// Execute an ASSET_ISSUE_CONTRACT (TRC-10 token issuance)
