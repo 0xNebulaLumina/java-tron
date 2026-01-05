@@ -56,6 +56,7 @@ fn test_witness_contract_metadata_parsing() {
     let witness_create_metadata = TxMetadata {
         contract_type: Some(TronContractType::WitnessCreateContract),
         asset_id: None,
+        ..Default::default()
     };
 
     // Verify contract type parsing
@@ -88,6 +89,7 @@ fn test_witness_create_execution() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::WitnessCreateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -174,6 +176,7 @@ fn test_witness_create_blackhole_mode() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::WitnessCreateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -233,6 +236,7 @@ fn test_witness_create_feature_disabled() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::WitnessCreateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -290,6 +294,7 @@ fn test_account_serialization_format() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::WitnessCreateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -357,6 +362,7 @@ fn test_state_change_deterministic_ordering() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::WitnessCreateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -492,6 +498,7 @@ fn test_vote_witness_after_freeze_v1_succeeds() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::VoteWitnessContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -606,6 +613,7 @@ fn test_vote_witness_multi_freeze_accumulates() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::VoteWitnessContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -705,6 +713,7 @@ fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::VoteWitnessContract),
             asset_id: None,
+            ..Default::default()
         },
     };
     backend_service.execute_non_vm_contract(&mut storage, &tx1, &context)
@@ -727,6 +736,7 @@ fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::VoteWitnessContract),
             asset_id: None,
+            ..Default::default()
         },
     };
     backend_service.execute_non_vm_contract(&mut storage, &tx2, &context)
@@ -749,6 +759,7 @@ fn test_asset_issue_contract_metadata() {
     let asset_issue_metadata = TxMetadata {
         contract_type: Some(TronContractType::AssetIssueContract),
         asset_id: None,
+        ..Default::default()
     };
 
     // Verify contract type parsing
@@ -789,6 +800,7 @@ fn test_asset_issue_contract_disabled() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -850,6 +862,7 @@ fn test_asset_issue_insufficient_balance() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -920,6 +933,7 @@ fn test_asset_issue_fee_burn() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1020,6 +1034,7 @@ fn test_asset_issue_fee_blackhole_credit() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1115,6 +1130,7 @@ fn test_asset_issue_aext_tracking() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1192,6 +1208,7 @@ fn test_asset_issue_deterministic_execution() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1295,6 +1312,7 @@ fn test_create_smart_contract_zero_address_treated_as_none() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::CreateSmartContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1380,6 +1398,7 @@ fn test_trigger_smart_contract_zero_address_preserved() {
         metadata: TxMetadata {
             contract_type: Some(TronContractType::TriggerSmartContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 

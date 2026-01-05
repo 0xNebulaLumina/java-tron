@@ -314,6 +314,10 @@ impl TryFrom<i32> for TronContractType {
 pub struct TxMetadata {
     pub contract_type: Option<TronContractType>,
     pub asset_id: Option<Vec<u8>>,  // For TRC-10 transfers
+    /// Raw `from` bytes as received over the wire (20 bytes EVM, 21 bytes TRON-prefixed, or malformed).
+    /// Some fixtures intentionally include malformed owner addresses; storing the raw bytes allows
+    /// contract-level validation to match java-tron error ordering and messages.
+    pub from_raw: Option<Vec<u8>>,
 }
 
 impl Default for TxMetadata {
@@ -321,6 +325,7 @@ impl Default for TxMetadata {
         Self {
             contract_type: None,
             asset_id: None,
+            from_raw: None,
         }
     }
 }

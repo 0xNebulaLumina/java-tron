@@ -350,29 +350,33 @@ impl ConformanceRunner {
 
         // Parse from address (strip 0x41 TRON prefix if present)
         let from = {
-            let from_bytes: &[u8] = if tx.from.len() == 21 && (tx.from[0] == 0x41 || tx.from[0] == 0xa0) {
-                &tx.from[1..]
-            } else if tx.from.len() == 20 {
-                &tx.from[..]
-            } else {
-                // Some fixtures validate ownerAddress inside the contract payload. In those
-                // cases, java-tron still produces a request.pb with an invalid/empty `from`.
-                // Allow conversion to proceed so contract-level validation can run.
-                if matches!(
-                    contract_type,
-                    Some(TronContractType::AccountCreateContract)
-                        | Some(TronContractType::AccountPermissionUpdateContract)
-                ) {
-                    &[]
+            let allow_malformed_from = matches!(
+                contract_type,
+                Some(TronContractType::AccountCreateContract)
+                    | Some(TronContractType::AccountPermissionUpdateContract)
+                    | Some(TronContractType::AccountUpdateContract)
+            );
+
+            let (from_bytes, from_is_valid) = if tx.from.len() == 21 {
+                if tx.from[0] == 0x41 || tx.from[0] == 0xa0 {
+                    (&tx.from[1..], true)
                 } else {
-                    return Err(format!("Invalid from address length: {}", tx.from.len()));
+                    (&[][..], false)
                 }
+            } else if tx.from.len() == 20 {
+                (&tx.from[..], true)
+            } else {
+                (&[][..], false)
             };
 
-            if from_bytes.len() == 20 {
+            if !from_is_valid && !allow_malformed_from {
+                return Err(format!("Invalid from address length: {}", tx.from.len()));
+            }
+
+            if from_is_valid {
                 Address::from_slice(from_bytes)
             } else {
-                // Contract-specific validation will reject invalid ownerAddress where required.
+                // Keep conversion alive for fixtures where ownerAddress is intentionally malformed.
                 Address::ZERO
             }
         };
@@ -427,6 +431,7 @@ impl ConformanceRunner {
             metadata: TxMetadata {
                 contract_type,
                 asset_id,
+                from_raw: Some(tx.from.clone()),
             },
         })
     }

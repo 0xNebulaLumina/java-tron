@@ -1817,6 +1817,18 @@ impl BackendService {
             return Err("Invalid accountName".to_string());
         }
 
+        // Validation parity: DecodeUtil.addressValid(ownerAddress)
+        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
+            let owner_address_valid = match from_raw.len() {
+                21 => from_raw[0] == 0x41 || from_raw[0] == 0xa0,
+                20 => true,
+                _ => false,
+            };
+            if !owner_address_valid {
+                return Err("Invalid ownerAddress".to_string());
+            }
+        }
+
         // Validation: owner account must exist (java: \"Account does not exist\")
         let owner_account = storage_adapter
             .get_account(&transaction.from)

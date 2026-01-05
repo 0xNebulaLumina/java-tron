@@ -441,6 +441,7 @@ mod witness_tests {
             metadata: TxMetadata {
                 contract_type: Some(TronContractType::WitnessCreateContract),
                 asset_id: None,
+                ..Default::default()
             },
         };
 
@@ -532,6 +533,7 @@ mod witness_tests {
             metadata: TxMetadata {
                 contract_type: Some(TronContractType::WitnessCreateContract),
                 asset_id: None,
+                ..Default::default()
             },
         };
 

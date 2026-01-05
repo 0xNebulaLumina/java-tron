@@ -18,9 +18,48 @@ impl BackendService {
         debug!("Raw transaction from Java - energy_limit: {}, energy_price: {}, data_len: {}, contract_type: {}, asset_id_len: {}",
                tx.energy_limit, tx.energy_price, tx.data.len(), tx.contract_type, tx.asset_id.len());
 
-        // Convert bytes to Address (strip Tron 0x41 prefix if present)
-        let from_bytes = strip_tron_address_prefix(&tx.from)?;
-        let from = revm_primitives::Address::from_slice(from_bytes);
+        // Extract tx_kind first - needed to properly handle contract_type and special-case parsing.
+        let tx_kind = crate::backend::TxKind::try_from(tx.tx_kind).unwrap_or(crate::backend::TxKind::Vm);
+
+        // Extract contract_type and asset_id from protobuf for TRON system contracts
+        // NOTE: AccountCreateContract has enum value 0, which is proto3's default.
+        // For NON_VM transactions, we must always try to parse contract_type since 0 is valid.
+        // For VM transactions, contract_type=0 genuinely means "unset" (not AccountCreateContract).
+        let contract_type = if tx_kind == crate::backend::TxKind::NonVm || tx.contract_type != 0 {
+            match tron_backend_execution::TronContractType::try_from(tx.contract_type) {
+                Ok(ct) => {
+                    debug!("Parsed contract type: {:?}", ct);
+                    Some(ct)
+                }
+                Err(e) => {
+                    warn!("Invalid contract type {}: {}, ignoring", tx.contract_type, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Convert bytes to Address (strip Tron 0x41 prefix if present).
+        //
+        // Some conformance fixtures intentionally include malformed owner addresses, while java-tron
+        // still serializes `request.pb` with the malformed bytes in `from`. Allow conversion to
+        // proceed for those system contracts so contract-level validation can produce the expected
+        // error messages.
+        let allow_malformed_from = matches!(
+            contract_type,
+            Some(tron_backend_execution::TronContractType::AccountCreateContract)
+                | Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract)
+                | Some(tron_backend_execution::TronContractType::AccountUpdateContract)
+        );
+        let from = match strip_tron_address_prefix(&tx.from) {
+            Ok(from_bytes) => revm_primitives::Address::from_slice(from_bytes),
+            Err(e) if allow_malformed_from => {
+                debug!("Allowing malformed from address for {:?}: {}", contract_type, e);
+                revm_primitives::Address::ZERO
+            }
+            Err(e) => return Err(e),
+        };
 
         // Phase 0.5: Fix CreateSmartContract toAddress semantics
         // When tx_kind=VM and contract_type=CREATE_SMART_CONTRACT (30), Java sends a 20-byte
@@ -34,8 +73,8 @@ impl BackendService {
 
             // For VM contract creation, treat all-zero address as None
             // This is needed because Java sends new byte[20] (all zeros) for CreateSmartContract
-            let is_vm_create = tx.tx_kind == crate::backend::TxKind::Vm as i32
-                && tx.contract_type == 30; // CREATE_SMART_CONTRACT = 30
+            let is_vm_create =
+                tx_kind == crate::backend::TxKind::Vm && tx.contract_type == 30; // CREATE_SMART_CONTRACT = 30
 
             if is_vm_create && to_address == revm_primitives::Address::ZERO {
                 debug!("CreateSmartContract detected: treating zero address as contract creation (to=None)");
@@ -88,28 +127,6 @@ impl BackendService {
             tx.energy_limit as u64
         };
 
-        // Extract tx_kind first - needed to properly handle contract_type
-        let tx_kind = crate::backend::TxKind::try_from(tx.tx_kind).unwrap_or(crate::backend::TxKind::Vm);
-
-        // Extract contract_type and asset_id from protobuf for TRON system contracts
-        // NOTE: AccountCreateContract has enum value 0, which is proto3's default.
-        // For NON_VM transactions, we must always try to parse contract_type since 0 is valid.
-        // For VM transactions, contract_type=0 genuinely means "unset" (not AccountCreateContract).
-        let contract_type = if tx_kind == crate::backend::TxKind::NonVm || tx.contract_type != 0 {
-            match tron_backend_execution::TronContractType::try_from(tx.contract_type) {
-                Ok(ct) => {
-                    debug!("Parsed contract type: {:?}", ct);
-                    Some(ct)
-                },
-                Err(e) => {
-                    warn!("Invalid contract type {}: {}, ignoring", tx.contract_type, e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
         let asset_id = if !tx.asset_id.is_empty() {
             debug!("Parsed asset_id: {} bytes", tx.asset_id.len());
             Some(tx.asset_id.clone())
@@ -120,6 +137,7 @@ impl BackendService {
         let metadata = tron_backend_execution::TxMetadata {
             contract_type,
             asset_id,
+            from_raw: Some(tx.from.clone()),
         };
 
         let transaction = TronTransaction {

@@ -60,6 +60,7 @@ async fn test_non_vm_transaction_execution() {
         metadata: TxMetadata {
             contract_type: None,
             asset_id: None,
+            ..Default::default()
         },
     };
 

@@ -61,6 +61,7 @@ fn test_account_update_contract_happy_path() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -152,6 +153,7 @@ fn test_account_update_contract_validations() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -172,6 +174,7 @@ fn test_account_update_contract_validations() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -191,6 +194,7 @@ fn test_account_update_contract_validations() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -252,6 +256,7 @@ fn test_account_update_contract_duplicate_set() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -270,6 +275,7 @@ fn test_account_update_contract_duplicate_set() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -324,6 +330,7 @@ fn test_account_permission_update_validate_fail_owner_address_empty() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -378,6 +385,7 @@ fn test_freeze_balance_success_basic() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -466,6 +474,7 @@ fn test_freeze_balance_insufficient_balance() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -525,6 +534,7 @@ fn test_freeze_balance_bad_params() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -596,6 +606,7 @@ fn test_freeze_balance_emits_freeze_changes_when_enabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -684,6 +695,7 @@ fn test_freeze_balance_no_emission_when_disabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -766,6 +778,7 @@ fn test_unfreeze_balance_emits_freeze_changes_when_enabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -851,6 +864,7 @@ fn test_freeze_balance_v2_emits_with_v2_flag() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceV2Contract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -939,6 +953,7 @@ fn test_unfreeze_balance_v2_partial_unfreeze() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1025,6 +1040,7 @@ fn test_unfreeze_balance_v2_full_unfreeze() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1178,6 +1194,7 @@ fn test_asset_issue_contract_trc10_change_emission() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1274,6 +1291,7 @@ fn test_asset_issue_contract_disabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1392,6 +1410,7 @@ fn test_asset_issue_contract_phase2_fields() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1532,6 +1551,7 @@ fn test_asset_issue_validate_fail_insufficient_balance_message() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1581,6 +1601,7 @@ fn test_asset_issue_validate_fail_owner_already_issued() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1626,6 +1647,7 @@ fn test_asset_issue_validate_fail_total_supply_zero() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1677,6 +1699,7 @@ fn test_asset_issue_validate_fail_invalid_name_trx() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1727,6 +1750,7 @@ fn test_asset_issue_validate_fail_start_time_before_head_block_time() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1772,6 +1796,7 @@ fn test_asset_issue_validate_fail_end_time_not_greater_than_start_time() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1835,6 +1860,7 @@ fn test_witness_update_contract_happy_path() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1919,6 +1945,7 @@ fn test_witness_update_contract_validations() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1939,6 +1966,7 @@ fn test_witness_update_contract_validations() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1958,6 +1986,7 @@ fn test_witness_update_contract_validations() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -1985,6 +2014,7 @@ fn test_witness_update_contract_validations() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -2007,6 +2037,7 @@ fn test_witness_update_contract_validations() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -2061,6 +2092,7 @@ fn test_witness_update_tracks_aext_when_enabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
+            ..Default::default()
         },
     };
 
