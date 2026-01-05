@@ -134,8 +134,7 @@ if [ "$GENERATE_ONLY" = false ]; then
     FIXTURES_DIR_FOR_RUST="$FIXTURES_DIR"
     if [ "${FIXTURE_CONFORMANCE_INCLUDE_UNSUPPORTED:-0}" != "1" ]; then
         should_exclude_fixture_contract_dir() {
-            case "$1" in
-account_create_contract|\
+                case "$1" in
 account_permission_update_contract|\
 account_update_contract|\
 asset_issue_contract|\

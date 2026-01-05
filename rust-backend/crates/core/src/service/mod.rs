@@ -1899,19 +1899,17 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
-        let owner = transaction.from;
+        // 1. Parse AccountCreateContract from transaction.data
+        // AccountCreateContract protobuf:
+        //   bytes owner_address = 1;
+        //   bytes account_address = 2; (target account to create)
+        //   AccountType type = 3;      (ignored - always Normal)
+        let (owner, target_address) = self.parse_account_create_contract(&transaction.data)?;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
         let owner_tron_21 = storage_adapter.to_tron_address_21(&owner);
         let readable_owner_address = revm_primitives::hex::encode(owner_tron_21);
 
         info!("AccountCreate owner={}", owner_tron);
-
-        // 1. Parse AccountCreateContract from transaction.data
-        // AccountCreateContract protobuf:
-        //   bytes owner_address = 1;   (ignored - use transaction.from)
-        //   bytes account_address = 2; (target account to create)
-        //   AccountType type = 3;      (ignored - always Normal)
-        let target_address = self.parse_account_create_contract(&transaction.data)?;
         let target_tron = tron_backend_common::to_tron_address(&target_address);
 
         info!(
@@ -2004,15 +2002,53 @@ impl BackendService {
         });
 
         // Persist new account (include create_time for fixture parity).
-        use tron_backend_execution::protocol::Account as ProtoAccount;
+        use tron_backend_execution::protocol::permission::PermissionType;
+        use tron_backend_execution::protocol::{Account as ProtoAccount, Key, Permission};
         let create_time = storage_adapter
             .get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?;
-        let target_proto = ProtoAccount {
-            address: storage_adapter.to_tron_address_21(&target_address).to_vec(),
+        let target_address_bytes = storage_adapter.to_tron_address_21(&target_address).to_vec();
+
+        let allow_multi_sign = storage_adapter
+            .get_allow_multi_sign()
+            .map_err(|e| format!("Failed to get ALLOW_MULTI_SIGN: {}", e))?;
+
+        let mut target_proto = ProtoAccount {
+            address: target_address_bytes.clone(),
             create_time,
             ..Default::default()
         };
+
+        if allow_multi_sign {
+            let active_default_operations = storage_adapter
+                .get_active_default_operations()
+                .map_err(|e| format!("Failed to get ACTIVE_DEFAULT_OPERATIONS: {}", e))?;
+
+            let default_key = Key {
+                address: target_address_bytes.clone(),
+                weight: 1,
+            };
+
+            target_proto.owner_permission = Some(Permission {
+                r#type: PermissionType::Owner as i32,
+                id: 0,
+                permission_name: "owner".to_string(),
+                threshold: 1,
+                parent_id: 0,
+                operations: Vec::new(),
+                keys: vec![default_key.clone()],
+            });
+
+            target_proto.active_permission = vec![Permission {
+                r#type: PermissionType::Active as i32,
+                id: 2,
+                permission_name: "active".to_string(),
+                threshold: 1,
+                parent_id: 0,
+                operations: active_default_operations,
+                keys: vec![default_key],
+            }];
+        }
         storage_adapter
             .put_account_proto(&target_address, &target_proto)
             .map_err(|e| format!("Failed to persist new account proto: {}", e))?;
@@ -2025,6 +2061,9 @@ impl BackendService {
         } else if support_blackhole {
             // Burn mode - no additional account change needed
             info!("Burning {} SUN (blackhole optimization)", fee);
+            storage_adapter
+                .burn_trx(fee)
+                .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             fee_destination = String::from("burn");
         } else {
             // Credit blackhole account
@@ -2145,13 +2184,15 @@ impl BackendService {
 
     /// Parse AccountCreateContract from protobuf bytes
     /// AccountCreateContract structure:
-    ///   bytes owner_address = 1;   (field 1, length-delimited) - ignored, use tx.from
+    ///   bytes owner_address = 1;   (field 1, length-delimited)
     ///   bytes account_address = 2; (field 2, length-delimited) - target account
     ///   AccountType type = 3;      (field 3, varint) - ignored, always Normal
-    fn parse_account_create_contract(&self, data: &[u8]) -> Result<revm::primitives::Address, String> {
-        use crate::service::grpc::address::strip_tron_address_prefix;
-
-        let mut account_address: Option<revm::primitives::Address> = None;
+    fn parse_account_create_contract(
+        &self,
+        data: &[u8],
+    ) -> Result<(revm::primitives::Address, revm::primitives::Address), String> {
+        let mut owner_address_bytes: Option<Vec<u8>> = None;
+        let mut account_address_bytes: Option<Vec<u8>> = None;
         let mut pos = 0;
 
         while pos < data.len() {
@@ -2164,10 +2205,15 @@ impl BackendService {
             let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
-                (1, 2) => { // owner_address (length-delimited) - skip, use transaction.from
+                (1, 2) => { // owner_address (length-delimited)
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                    pos += bytes_read;
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid ownerAddress".to_string());
+                    }
+                    owner_address_bytes = Some(data[pos..pos + length as usize].to_vec());
+                    pos += length as usize;
                 },
                 (2, 2) => { // account_address (length-delimited) - the target account to create
                     let (length, bytes_read) = read_varint(&data[pos..])
@@ -2175,29 +2221,11 @@ impl BackendService {
                     pos += bytes_read;
 
                     if pos + length as usize > data.len() {
-                        return Err("Invalid account_address length".to_string());
+                        return Err("Invalid account address".to_string());
                     }
 
-                    let addr_bytes = &data[pos..pos + length as usize];
+                    account_address_bytes = Some(data[pos..pos + length as usize].to_vec());
                     pos += length as usize;
-
-                    // Handle 21-byte Tron address (0x41 mainnet / 0xa0 testnet) or 20-byte EVM address
-                    let evm_addr_bytes = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
-                        // Strip network prefix
-                        &addr_bytes[1..]
-                    } else if addr_bytes.len() == 20 {
-                        addr_bytes
-                    } else {
-                        return Err(format!("Invalid account_address length: {}", addr_bytes.len()));
-                    };
-
-                    if evm_addr_bytes.len() != 20 {
-                        return Err(format!("Invalid EVM address length: {}", evm_addr_bytes.len()));
-                    }
-
-                    let mut addr = [0u8; 20];
-                    addr.copy_from_slice(evm_addr_bytes);
-                    account_address = Some(revm::primitives::Address::from(addr));
                 },
                 (3, 0) => { // type (varint) - ignored, always use Normal
                     let (_, bytes_read) = read_varint(&data[pos..])
@@ -2213,7 +2241,26 @@ impl BackendService {
             }
         }
 
-        account_address.ok_or_else(|| "Missing account_address in AccountCreateContract".to_string())
+        let owner_address_bytes = owner_address_bytes.ok_or_else(|| "Invalid ownerAddress".to_string())?;
+        let account_address_bytes = account_address_bytes.ok_or_else(|| "Invalid account address".to_string())?;
+
+        fn parse_tron_prefixed_address(bytes: &[u8]) -> Result<revm::primitives::Address, ()> {
+            if bytes.len() != 21 {
+                return Err(());
+            }
+            let prefix = bytes[0];
+            if prefix != 0x41 && prefix != 0xa0 {
+                return Err(());
+            }
+            Ok(revm::primitives::Address::from_slice(&bytes[1..]))
+        }
+
+        let owner_address = parse_tron_prefixed_address(&owner_address_bytes)
+            .map_err(|()| "Invalid ownerAddress".to_string())?;
+        let account_address = parse_tron_prefixed_address(&account_address_bytes)
+            .map_err(|()| "Invalid account address".to_string())?;
+
+        Ok((owner_address, account_address))
     }
 
     // =========================================================================

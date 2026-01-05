@@ -657,6 +657,25 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get ACTIVE_DEFAULT_OPERATIONS dynamic property.
+    ///
+    /// Java reference: `DynamicPropertiesStore.getActiveDefaultOperations()`, with default value
+    /// "7fff1fc0033e0000000000000000000000000000000000000000000000000000" when missing.
+    pub fn get_active_default_operations(&self) -> Result<Vec<u8>> {
+        const DEFAULT_ACTIVE_DEFAULT_OPERATIONS: [u8; 32] = [
+            0x7f, 0xff, 0x1f, 0xc0, 0x03, 0x3e, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        let key = b"ACTIVE_DEFAULT_OPERATIONS";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if !data.is_empty() => Ok(data),
+            _ => Ok(DEFAULT_ACTIVE_DEFAULT_OPERATIONS.to_vec()),
+        }
+    }
+
     /// Get Black Hole Optimization dynamic property (parity with Java)
     /// Java stores this as a long under key "ALLOW_BLACKHOLE_OPTIMIZATION".
     /// When this flag is 1, the node BURNS fees (optimization enabled).

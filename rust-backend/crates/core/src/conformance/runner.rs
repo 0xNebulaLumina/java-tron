@@ -344,15 +344,34 @@ impl ConformanceRunner {
         let tx = request.transaction.as_ref()
             .ok_or("Transaction is required")?;
 
+        // Parse contract type early so we can handle special validation fixtures where
+        // `from` is intentionally malformed (e.g. ownerAddress validation cases).
+        let contract_type = TronContractType::try_from(tx.contract_type).ok();
+
         // Parse from address (strip 0x41 TRON prefix if present)
-        let from_bytes = if tx.from.len() == 21 && (tx.from[0] == 0x41 || tx.from[0] == 0xa0) {
-            &tx.from[1..]
-        } else if tx.from.len() == 20 {
-            &tx.from[..]
-        } else {
-            return Err(format!("Invalid from address length: {}", tx.from.len()));
+        let from = {
+            let from_bytes: &[u8] = if tx.from.len() == 21 && (tx.from[0] == 0x41 || tx.from[0] == 0xa0) {
+                &tx.from[1..]
+            } else if tx.from.len() == 20 {
+                &tx.from[..]
+            } else {
+                // Some fixtures validate ownerAddress inside the contract payload. In those
+                // cases, java-tron still produces a request.pb with an invalid/empty `from`.
+                // Allow conversion to proceed so contract-level validation can run.
+                if contract_type == Some(TronContractType::AccountCreateContract) {
+                    &[]
+                } else {
+                    return Err(format!("Invalid from address length: {}", tx.from.len()));
+                }
+            };
+
+            if from_bytes.len() == 20 {
+                Address::from_slice(from_bytes)
+            } else {
+                // Contract-specific validation will reject invalid ownerAddress where required.
+                Address::ZERO
+            }
         };
-        let from = Address::from_slice(from_bytes);
 
         // Parse to address
         //
@@ -385,9 +404,6 @@ impl ConformanceRunner {
         } else {
             return Err("Invalid value length".to_string());
         };
-
-        // Parse contract type
-        let contract_type = TronContractType::try_from(tx.contract_type).ok();
 
         // Parse asset_id
         let asset_id = if tx.asset_id.is_empty() {
