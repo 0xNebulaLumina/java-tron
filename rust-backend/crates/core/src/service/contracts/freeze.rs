@@ -115,10 +115,19 @@ impl BackendService {
             .ok_or("Balance underflow")?;
 
         // Calculate expiration timestamp (milliseconds since epoch).
-        // Match java-tron's `DynamicPropertiesStore.getLatestBlockHeaderTimestamp()` semantics,
-        // which corresponds to the execution context's `block_timestamp` in conformance fixtures.
-        let duration_millis = params.frozen_duration as u64 * 86400 * 1000; // days to milliseconds
-        let expiration_timestamp = (context.block_timestamp + duration_millis) as i64;
+        //
+        // java-tron uses `DynamicPropertiesStore.getLatestBlockHeaderTimestamp()` as "now".
+        // During execution of block N, this still points at block N-1 because the dynamic
+        // property is updated only after the block is committed.
+        let now_ms = storage_adapter
+            .get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to read latest_block_header_timestamp: {}", e))?;
+        let now_ms_u64: u64 = now_ms.try_into().unwrap_or(context.block_timestamp);
+
+        let duration_millis = params.frozen_duration as u64 * 86_400_000; // days to milliseconds
+        let expiration_timestamp = now_ms_u64
+            .checked_add(duration_millis)
+            .ok_or("Expiration timestamp overflow")? as i64;
 
         debug!(
             "Freeze record: amount={}, expiration={}, resource={:?}",
@@ -456,8 +465,13 @@ impl BackendService {
             return Err(format!("no frozenBalance({})", resource_label));
         }
 
+        let now_ms = storage_adapter
+            .get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to read latest_block_header_timestamp: {}", e))?;
+        let now_ms_u64: u64 = now_ms.try_into().unwrap_or(context.block_timestamp);
+
         let expiration_u64: u64 = expiration_timestamp.try_into().unwrap_or(0);
-        if context.block_timestamp < expiration_u64 {
+        if now_ms_u64 < expiration_u64 {
             return Err(format!("It's not time to unfreeze({}).", resource_label));
         }
 
