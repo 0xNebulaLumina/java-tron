@@ -147,7 +147,6 @@ participate_asset_issue_contract|\
 proposal_approve_contract|\
 proposal_create_contract|\
 proposal_delete_contract|\
-set_account_id_contract|\
 trigger_smart_contract|\
 undelegate_resource_contract|\
 unfreeze_asset_contract|\

@@ -2967,6 +2967,19 @@ impl BackendService {
             return Err("Invalid accountId".to_string());
         }
 
+        // 2.5 Validate owner address
+        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
+            let prefix = storage_adapter.address_prefix();
+            let owner_address_valid = match from_raw.len() {
+                21 => from_raw[0] == prefix,
+                20 => true,
+                _ => false,
+            };
+            if !owner_address_valid {
+                return Err("Invalid ownerAddress".to_string());
+            }
+        }
+
         // 3. Get owner account
         let mut account_proto = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
@@ -3063,7 +3076,8 @@ impl BackendService {
             }
         }
 
-        account_id.ok_or_else(|| "Missing account_id".to_string())
+        // In proto3, empty bytes fields are omitted on the wire; treat missing as empty.
+        Ok(account_id.unwrap_or_default())
     }
 
     /// Validate account ID format
