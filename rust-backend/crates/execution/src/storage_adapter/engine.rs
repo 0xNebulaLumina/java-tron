@@ -486,9 +486,309 @@ impl EngineBackedEvmStateStore {
     /// making complex modifications to multiple fields.
     pub fn put_account_proto(&self, address: &Address, proto_account: &ProtoAccount) -> Result<()> {
         let key = self.account_key(address);
-        let data = proto_account.encode_to_vec();
+        let prev = self.buffered_get(self.account_database(), &key)?;
+        let data = self.encode_account_proto_java_compatible(proto_account, prev.as_deref())?;
         self.buffered_put(self.account_database(), key, data)?;
         Ok(())
+    }
+
+    fn encode_account_proto_java_compatible(
+        &self,
+        proto_account: &ProtoAccount,
+        prev_bytes: Option<&[u8]>,
+    ) -> Result<Vec<u8>> {
+        let data = proto_account.encode_to_vec();
+
+        // Conformance fixtures assert raw DB bytes produced by java-tron's protobuf encoder.
+        // Two java-specific behaviors matter for Account.assetV2 (field 56):
+        // 1) Map entry order preserves insertion/parse order (not sorted by key).
+        // 2) Map entry `key` is serialized even when empty ("") as `0x0A 0x00`.
+        //
+        // Prost uses `BTreeMap` for deterministic ordering (sorted by key) and skips encoding
+        // default string fields (empty key), so we need a small compatibility rewrite.
+        let needs_asset_v2_rewrite = proto_account.asset_v2.len() >= 2 || proto_account.asset_v2.contains_key("");
+        if !needs_asset_v2_rewrite {
+            return Ok(data);
+        }
+
+        let prev_order = match prev_bytes {
+            Some(bytes) => Some(self.extract_account_asset_v2_key_order(bytes)?),
+            None => None,
+        };
+
+        self.rewrite_account_asset_v2(&data, prev_order.as_deref())
+    }
+
+    fn rewrite_account_asset_v2(&self, data: &[u8], prev_order: Option<&[String]>) -> Result<Vec<u8>> {
+        // Account.assetV2 field number in protocol.tron.proto is 56.
+        const ACCOUNT_ASSET_V2_FIELD_NUMBER: u64 = 56;
+
+        let (entries_by_key, current_order) = self.collect_account_asset_v2_entries(data)?;
+        if entries_by_key.is_empty() {
+            return Ok(data.to_vec());
+        }
+
+        let desired_order = self.merge_asset_v2_order(prev_order, &current_order, &entries_by_key)?;
+
+        let mut out = Vec::with_capacity(data.len() + 8);
+        let mut pos = 0usize;
+        let mut emitted_asset_v2 = false;
+
+        while pos < data.len() {
+            let (tag, new_pos) = self.read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match wire_type {
+                0 => {
+                    self.write_varint(&mut out, tag);
+                    let (value, next_pos) = self.read_varint(data, pos)?;
+                    pos = next_pos;
+                    self.write_varint(&mut out, value);
+                }
+                1 => {
+                    self.write_varint(&mut out, tag);
+                    out.extend_from_slice(&data[pos..pos + 8]);
+                    pos += 8;
+                }
+                2 => {
+                    let (length, next_pos) = self.read_varint(data, pos)?;
+                    pos = next_pos;
+                    let length_usize = length as usize;
+
+                    if pos + length_usize > data.len() {
+                        return Err(anyhow::anyhow!(
+                            "Length-delimited field exceeds buffer: pos={} len={} total={}",
+                            pos,
+                            length_usize,
+                            data.len()
+                        ));
+                    }
+
+                    let payload = &data[pos..pos + length_usize];
+                    pos += length_usize;
+
+                    if field_number == ACCOUNT_ASSET_V2_FIELD_NUMBER {
+                        // Skip all existing assetV2 entries; emit the rewritten entries exactly once.
+                        if !emitted_asset_v2 {
+                            emitted_asset_v2 = true;
+                            for key in &desired_order {
+                                if let Some(entry_bytes) = entries_by_key.get(key) {
+                                    // field 56, wire type 2
+                                    self.write_varint(&mut out, tag);
+                                    self.write_varint(&mut out, entry_bytes.len() as u64);
+                                    out.extend_from_slice(entry_bytes);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    self.write_varint(&mut out, tag);
+                    self.write_varint(&mut out, length);
+                    out.extend_from_slice(payload);
+                }
+                5 => {
+                    self.write_varint(&mut out, tag);
+                    out.extend_from_slice(&data[pos..pos + 4]);
+                    pos += 4;
+                }
+                _ => return Err(anyhow::anyhow!("Unknown wire type: {}", wire_type)),
+            }
+        }
+
+        Ok(out)
+    }
+
+    fn collect_account_asset_v2_entries(
+        &self,
+        data: &[u8],
+    ) -> Result<(BTreeMap<String, Vec<u8>>, Vec<String>)> {
+        const ACCOUNT_ASSET_V2_FIELD_NUMBER: u64 = 56;
+
+        let mut entries_by_key: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        let mut order = Vec::new();
+
+        let mut pos = 0usize;
+        while pos < data.len() {
+            let (tag, new_pos) = self.read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            if wire_type != 2 {
+                pos = self.skip_field(data, pos, wire_type)?;
+                continue;
+            }
+
+            let (length, next_pos) = self.read_varint(data, pos)?;
+            pos = next_pos;
+            let length_usize = length as usize;
+            if pos + length_usize > data.len() {
+                return Err(anyhow::anyhow!(
+                    "Length-delimited field exceeds buffer: pos={} len={} total={}",
+                    pos,
+                    length_usize,
+                    data.len()
+                ));
+            }
+
+            let payload = &data[pos..pos + length_usize];
+            pos += length_usize;
+
+            if field_number != ACCOUNT_ASSET_V2_FIELD_NUMBER {
+                continue;
+            }
+
+            let key = self.map_entry_string_key(payload)?;
+            if !entries_by_key.contains_key(&key) {
+                order.push(key.clone());
+            }
+
+            let entry_bytes = if self.map_entry_has_string_key(payload)? {
+                payload.to_vec()
+            } else {
+                // Ensure empty-string keys serialize the `key` field: `0x0A 0x00`.
+                let mut patched = Vec::with_capacity(payload.len() + 2);
+                patched.extend_from_slice(&[0x0A, 0x00]);
+                patched.extend_from_slice(payload);
+                patched
+            };
+            entries_by_key.insert(key, entry_bytes);
+        }
+
+        Ok((entries_by_key, order))
+    }
+
+    fn merge_asset_v2_order(
+        &self,
+        prev_order: Option<&[String]>,
+        current_order: &[String],
+        entries_by_key: &BTreeMap<String, Vec<u8>>,
+    ) -> Result<Vec<String>> {
+        let mut desired = Vec::with_capacity(entries_by_key.len());
+        let mut seen = std::collections::BTreeSet::<String>::new();
+
+        if let Some(prev) = prev_order {
+            for key in prev {
+                if entries_by_key.contains_key(key) && !seen.contains(key) {
+                    desired.push(key.clone());
+                    seen.insert(key.clone());
+                }
+            }
+        }
+
+        for key in current_order {
+            if entries_by_key.contains_key(key) && !seen.contains(key) {
+                desired.push(key.clone());
+                seen.insert(key.clone());
+            }
+        }
+
+        // Safety net: append any remaining keys deterministically.
+        for key in entries_by_key.keys() {
+            if !seen.contains(key) {
+                desired.push(key.clone());
+                seen.insert(key.clone());
+            }
+        }
+
+        Ok(desired)
+    }
+
+    fn extract_account_asset_v2_key_order(&self, data: &[u8]) -> Result<Vec<String>> {
+        const ACCOUNT_ASSET_V2_FIELD_NUMBER: u64 = 56;
+
+        let mut order = Vec::new();
+        let mut pos = 0usize;
+
+        while pos < data.len() {
+            let (tag, new_pos) = self.read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            if wire_type != 2 {
+                pos = self.skip_field(data, pos, wire_type)?;
+                continue;
+            }
+
+            let (length, next_pos) = self.read_varint(data, pos)?;
+            pos = next_pos;
+            let length_usize = length as usize;
+            if pos + length_usize > data.len() {
+                return Err(anyhow::anyhow!(
+                    "Length-delimited field exceeds buffer: pos={} len={} total={}",
+                    pos,
+                    length_usize,
+                    data.len()
+                ));
+            }
+
+            let payload = &data[pos..pos + length_usize];
+            pos += length_usize;
+
+            if field_number == ACCOUNT_ASSET_V2_FIELD_NUMBER {
+                order.push(self.map_entry_string_key(payload)?);
+            }
+        }
+
+        Ok(order)
+    }
+
+    fn map_entry_has_string_key(&self, entry: &[u8]) -> Result<bool> {
+        let mut pos = 0usize;
+        while pos < entry.len() {
+            let (tag, new_pos) = self.read_varint(entry, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            if field_number == 1 && wire_type == 2 {
+                return Ok(true);
+            }
+
+            pos = self.skip_field(entry, pos, wire_type)?;
+        }
+
+        Ok(false)
+    }
+
+    fn map_entry_string_key(&self, entry: &[u8]) -> Result<String> {
+        let mut pos = 0usize;
+        while pos < entry.len() {
+            let (tag, new_pos) = self.read_varint(entry, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            if field_number == 1 {
+                if wire_type != 2 {
+                    return Err(anyhow::anyhow!(
+                        "Invalid wire type for map key: expected 2, got {}",
+                        wire_type
+                    ));
+                }
+                let (length, next_pos) = self.read_varint(entry, pos)?;
+                pos = next_pos;
+                let length_usize = length as usize;
+                if pos + length_usize > entry.len() {
+                    return Err(anyhow::anyhow!("Map key extends past entry bounds"));
+                }
+                let bytes = &entry[pos..pos + length_usize];
+                return Ok(String::from_utf8_lossy(bytes).to_string());
+            }
+
+            pos = self.skip_field(entry, pos, wire_type)?;
+        }
+
+        Ok(String::new())
     }
 
     /// Write a varint to the output buffer (kept for manual proto parsing elsewhere)

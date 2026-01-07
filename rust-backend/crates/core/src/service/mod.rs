@@ -3487,8 +3487,21 @@ impl BackendService {
 
         debug!("Executing TRANSFER_ASSET_CONTRACT for owner {}", owner_tron);
 
+        // Validation parity: DecodeUtil.addressValid(ownerAddress)
+        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
+            let owner_address_valid = match from_raw.len() {
+                21 => from_raw[0] == 0x41 || from_raw[0] == 0xa0,
+                20 => true,
+                _ => false,
+            };
+            if !owner_address_valid {
+                return Err("Invalid ownerAddress".to_string());
+            }
+        }
+
         // 1. Extract required fields from transaction
-        let to_address = transaction.to.ok_or("to address is required for TransferAssetContract")?;
+        // Validation parity: DecodeUtil.addressValid(toAddress)
+        let to_address = transaction.to.ok_or_else(|| "Invalid toAddress".to_string())?;
         let to_tron = tron_backend_common::to_tron_address(&to_address);
 
         // Get asset_id from metadata (Java passes it as metadata.asset_id)
@@ -3499,6 +3512,9 @@ impl BackendService {
         if asset_id.is_empty() {
             return Err("asset_id cannot be empty".to_string());
         }
+
+        // Java uses ByteArray.toStr(assetName) as the TRC-10 map key.
+        let asset_key_str = String::from_utf8_lossy(&asset_id).to_string();
 
         // Convert value (U256) to i64 for TRC-10 amount
         // TransferAssetContract amounts are typically i64
@@ -3530,17 +3546,14 @@ impl BackendService {
             .map_err(|e| format!("Failed to get asset issue: {}", e))?
             .ok_or("No asset!".to_string())?;
 
-        // Java stores legacy TRC-10 balances in `asset[name]` and also mirrors them into
-        // `assetV2[token_id]` for the eventual allowSameTokenName=1 transition.
-        // We need the numeric token id to update `asset_v2` correctly in legacy mode.
-        let token_id_str = if !asset_issue.id.is_empty() {
+        // Java semantics:
+        // - allowSameTokenName == 0: tokenID comes from AssetIssueCapsule.getId() (may be empty for legacy assets)
+        // - allowSameTokenName == 1: tokenID is ByteArray.toStr(assetName)
+        let token_id_str = if allow_same_token_name == 0 {
             asset_issue.id.clone()
         } else {
-            String::from_utf8_lossy(&asset_id).to_string()
+            asset_key_str.clone()
         };
-        if token_id_str.is_empty() {
-            return Err("token_id cannot be empty".to_string());
-        }
 
         let owner_asset_balance =
             Self::get_asset_balance_v2(&owner_account_proto, &asset_id, allow_same_token_name);
@@ -3554,6 +3567,31 @@ impl BackendService {
         let recipient_proto_opt = storage_adapter
             .get_account_proto(&to_address)
             .map_err(|e| format!("Failed to get recipient account: {}", e))?;
+
+        if let Some(ref recipient_proto) = recipient_proto_opt {
+            // After ForbidTransferToContract proposal, sending TRC-10 to smart contracts is disallowed.
+            let forbid_transfer_to_contract = storage_adapter
+                .get_forbid_transfer_to_contract()
+                .map_err(|e| format!("Failed to get FORBID_TRANSFER_TO_CONTRACT: {}", e))?;
+            if forbid_transfer_to_contract == 1 {
+                use tron_backend_execution::protocol::AccountType as ProtoAccountType;
+                if recipient_proto.r#type == ProtoAccountType::Contract as i32 {
+                    return Err("Cannot transfer asset to smartContract.".to_string());
+                }
+            }
+
+            // Validation parity: addExact(recipientBalance, amount) overflow check.
+            let existing_balance = if allow_same_token_name == 0 {
+                recipient_proto.asset.get(&asset_key_str).copied()
+            } else {
+                recipient_proto.asset_v2.get(&asset_key_str).copied()
+            };
+            if let Some(balance) = existing_balance {
+                balance
+                    .checked_add(amount)
+                    .ok_or_else(|| "long overflow".to_string())?;
+            }
+        }
 
         let create_account_fee = if recipient_proto_opt.is_none() {
             storage_adapter
@@ -6876,7 +6914,7 @@ impl BackendService {
             let current = *account.asset.get(&name_key).unwrap_or(&0);
             let new_amount = current
                 .checked_add(amount)
-                .ok_or("Asset balance overflow".to_string())?;
+                .ok_or_else(|| "long overflow".to_string())?;
 
             account.asset.insert(name_key, new_amount);
             account.asset_v2.insert(token_id.to_string(), new_amount);
@@ -6886,7 +6924,7 @@ impl BackendService {
         let current = *account.asset_v2.get(token_id).unwrap_or(&0);
         let new_amount = current
             .checked_add(amount)
-            .ok_or("Asset balance overflow".to_string())?;
+            .ok_or_else(|| "long overflow".to_string())?;
         account.asset_v2.insert(token_id.to_string(), new_amount);
         Ok(())
     }
@@ -6911,7 +6949,7 @@ impl BackendService {
 
             let new_amount = current
                 .checked_sub(amount)
-                .ok_or("Asset balance underflow".to_string())?;
+                .ok_or_else(|| "long overflow".to_string())?;
 
             account.asset.insert(name_key, new_amount);
             account.asset_v2.insert(token_id.to_string(), new_amount);
@@ -6925,7 +6963,7 @@ impl BackendService {
 
         let new_amount = current
             .checked_sub(amount)
-            .ok_or("Asset balance underflow".to_string())?;
+            .ok_or_else(|| "long overflow".to_string())?;
         account.asset_v2.insert(token_id.to_string(), new_amount);
         Ok(())
     }
