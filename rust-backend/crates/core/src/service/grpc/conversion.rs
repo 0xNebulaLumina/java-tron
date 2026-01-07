@@ -52,6 +52,7 @@ impl BackendService {
                 | Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract)
                 | Some(tron_backend_execution::TronContractType::AccountUpdateContract)
                 | Some(tron_backend_execution::TronContractType::UpdateAssetContract)
+                | Some(tron_backend_execution::TronContractType::UpdateSettingContract)
         );
         let from = match strip_tron_address_prefix(&tx.from) {
             Ok(from_bytes) => revm_primitives::Address::from_slice(from_bytes),

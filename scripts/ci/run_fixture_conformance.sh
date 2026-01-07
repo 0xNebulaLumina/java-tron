@@ -154,7 +154,6 @@ unfreeze_balance_contract|\
 unfreeze_balance_v2_contract|\
 update_brokerage_contract|\
 update_energy_limit_contract|\
-update_setting_contract|\
 vote_witness_contract|\
 withdraw_balance_contract|\
 withdraw_expire_unfreeze_contract|\

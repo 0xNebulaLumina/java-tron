@@ -4570,56 +4570,77 @@ impl BackendService {
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
-        use contracts::proto::read_varint;
-
-        let owner = transaction.from;
-        let owner_tron = tron_backend_common::to_tron_address(&owner);
-
-        debug!("Executing UPDATE_SETTING_CONTRACT for owner {}", owner_tron);
+        use revm_primitives::Address;
 
         // 1. Parse the contract data
-        let (contract_address, new_percent) = self.parse_update_setting_contract(&transaction.data)?;
+        let (owner_in_contract, contract_address, new_percent) =
+            self.parse_update_setting_contract(&transaction.data)?;
+
+        // java-tron validates the Any type_url before unpacking. In the fixture generator, a type
+        // mismatch causes TransactionCapsule#getOwnerAddress() to return an empty `from` field
+        // while the encoded payload still contains a non-empty owner address. Mirror that behavior
+        // so type-mismatch fixtures produce the expected message.
+        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        if owner_from_field.is_empty() && !owner_in_contract.is_empty() {
+            return Err(
+                "contract type error, expected type [UpdateSettingContract], real type[class com.google.protobuf.Any]"
+                    .to_string(),
+            );
+        }
 
         debug!("Parsed UpdateSettingContract: contract_address={}, new_percent={}",
                hex::encode(&contract_address), new_percent);
 
-        // 2. Validate owner exists
-        // Build owner key as 21-byte TRON address (network-aware prefix)
-        let owner_key = storage_adapter.to_tron_address_21(&owner).to_vec();
+        // 2. Validate owner address
+        let owner_tron = if !owner_from_field.is_empty() {
+            owner_from_field
+        } else {
+            owner_in_contract.as_slice()
+        };
 
-        let _owner_account = storage_adapter.get_account(&owner)
+        let expected_prefix = storage_adapter.address_prefix();
+        if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
+            return Err("Invalid address".to_string());
+        }
+        let owner = Address::from_slice(&owner_tron[1..]);
+        let owner_key = owner_tron.to_vec();
+        let readable_owner_address = hex::encode(owner_tron);
+
+        // 3. Validate owner exists
+        let _owner_account = storage_adapter
+            .get_account(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or_else(|| format!("Owner account {} does not exist", owner_tron))?;
+            .ok_or_else(|| format!("Account[{}] does not exist", readable_owner_address))?;
 
-        // 3. Validate new_percent is in [0, 100]
-        if new_percent < 0 || new_percent > 100 {
-            return Err(format!("percent not in [0, 100]: {}", new_percent));
+        // 4. Validate new_percent is in [0, 100]
+        if new_percent > 100 || new_percent < 0 {
+            return Err("percent not in [0, 100]".to_string());
         }
 
-        // 4. Get the smart contract
+        // 5. Get the smart contract
         let mut smart_contract = storage_adapter.get_smart_contract(&contract_address)
             .map_err(|e| format!("Failed to get contract: {}", e))?
             .ok_or_else(|| "Contract does not exist".to_string())?;
 
-        // 5. Validate owner is the contract's origin_address
+        // 6. Validate owner is the contract's origin_address
         if smart_contract.origin_address != owner_key {
             return Err(format!(
                 "Account[{}] is not the owner of the contract",
-                hex::encode(&owner_key)
+                readable_owner_address
             ));
         }
 
-        // 6. Update the consume_user_resource_percent field
+        // 7. Update the consume_user_resource_percent field
         let old_percent = smart_contract.consume_user_resource_percent;
         smart_contract.consume_user_resource_percent = new_percent;
 
         debug!("Updating consume_user_resource_percent: {} -> {}", old_percent, new_percent);
 
-        // 7. Write back to ContractStore
+        // 8. Write back to ContractStore
         storage_adapter.put_smart_contract(&smart_contract)
             .map_err(|e| format!("Failed to update contract: {}", e))?;
 
-        // 8. Build result - no state changes for account balances, fee = 0
+        // 9. Build result - no state changes for account balances, fee = 0
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
         Ok(TronExecutionResult {
@@ -4646,9 +4667,10 @@ impl BackendService {
     ///   bytes owner_address = 1;
     ///   bytes contract_address = 2;
     ///   int64 consume_user_resource_percent = 3;
-    fn parse_update_setting_contract(&self, data: &[u8]) -> Result<(Vec<u8>, i64), String> {
+    fn parse_update_setting_contract(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>, i64), String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address: Vec<u8> = vec![];
         let mut contract_address: Vec<u8> = vec![];
         let mut consume_user_resource_percent: i64 = 0;
         let mut pos = 0;
@@ -4663,10 +4685,16 @@ impl BackendService {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address - skip
+                    // owner_address
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_address = data[pos..end].to_vec();
+                    pos = end;
                 }
                 (2, 2) => {
                     // contract_address
@@ -4695,11 +4723,7 @@ impl BackendService {
             }
         }
 
-        if contract_address.is_empty() {
-            return Err("contract_address is required".to_string());
-        }
-
-        Ok((contract_address, consume_user_resource_percent))
+        Ok((owner_address, contract_address, consume_user_resource_percent))
     }
 
     /// Execute an UPDATE_ENERGY_LIMIT_CONTRACT (type 45)
