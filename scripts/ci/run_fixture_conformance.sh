@@ -149,7 +149,6 @@ proposal_create_contract|\
 proposal_delete_contract|\
 set_account_id_contract|\
 transfer_asset_contract|\
-transfer_contract|\
 trigger_smart_contract|\
 undelegate_resource_contract|\
 unfreeze_asset_contract|\

@@ -658,13 +658,32 @@ impl BackendService {
         let fee_config = &execution_config.fees;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
-        // For TRANSFER_CONTRACT specifically, we need the 'to' address
-        let to_address = transaction.to.ok_or("TRANSFER_CONTRACT must have 'to' address")?;
+        // TransferContract amount is a signed long; fixtures encode it into the low 8 bytes of
+        // `value` (big-endian) and conformance conversion preserves the raw bits in U256.
+        let amount_i64 = {
+            let limbs = transaction.value.as_limbs();
+            if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
+                return Err("long overflow".to_string());
+            }
+            limbs[0] as i64
+        };
 
-        // Validation parity with java-tron TransferActuator
-        if transaction.value.is_zero() {
-            return Err("Amount must be greater than 0.".to_string());
+        // Validation parity with java-tron TransferActuator.validate()
+        let prefix = storage_adapter.address_prefix();
+        if let Some(owner_raw) = transaction.metadata.from_raw.as_deref() {
+            if owner_raw.len() != 21 || owner_raw[0] != prefix {
+                return Err("Invalid ownerAddress!".to_string());
+            }
         }
+
+        // For TRANSFER_CONTRACT specifically, we need the 'to' address.
+        let to_address = match transaction.to {
+            Some(addr) => addr,
+            None => {
+                return Err("Invalid toAddress!".to_string());
+            }
+        };
+
         if to_address == transaction.from {
             return Err("Cannot transfer TRX to yourself.".to_string());
         }
@@ -675,11 +694,18 @@ impl BackendService {
         // Start with empty state changes
         let mut state_changes = Vec::new();
 
-        // Load sender account (track existence)
+        // Load sender account
         let sender_opt = storage_adapter
             .get_account(&transaction.from)
             .map_err(|e| format!("Failed to load sender account: {}", e))?;
-        let sender_account = sender_opt.clone().unwrap_or_default();
+        let sender_account = sender_opt
+            .clone()
+            .ok_or_else(|| "Validate TransferContract error, no OwnerAccount.".to_string())?;
+
+        if amount_i64 <= 0 {
+            return Err("Amount must be greater than 0.".to_string());
+        }
+        let amount_u256 = revm_primitives::U256::from(amount_i64 as u64);
 
         // Load recipient account (track existence)
         let recipient_opt = storage_adapter
@@ -716,17 +742,73 @@ impl BackendService {
             }
         };
 
-        // Validate sender has enough balance for value + create-account-fee + optional flat fee.
-        let total_cost = transaction
-            .value
-            .checked_add(revm_primitives::U256::from(create_account_fee))
-            .ok_or("Value + create account fee overflow")?
-            .checked_add(revm_primitives::U256::from(fee_amount))
-            .ok_or("Value + fees overflow")?;
+        // Contract-type restrictions (java: ForbidTransferToContract, AllowTvmCompatibleEvm).
+        // Apply after fee adjustment for existence, but before balance checks.
+        let recipient_proto_opt = if recipient_opt.is_some() {
+            storage_adapter
+                .get_account_proto(&to_address)
+                .map_err(|e| format!("Failed to load recipient account proto: {}", e))?
+        } else {
+            None
+        };
 
-        if sender_account.balance < total_cost {
+        let recipient_is_contract = matches!(
+            recipient_proto_opt.as_ref(),
+            Some(acct) if acct.r#type == tron_backend_execution::protocol::AccountType::Contract as i32
+        );
+
+        let forbid_transfer_to_contract = storage_adapter
+            .get_forbid_transfer_to_contract()
+            .map_err(|e| format!("Failed to get FORBID_TRANSFER_TO_CONTRACT: {}", e))?;
+        if forbid_transfer_to_contract == 1 && recipient_is_contract {
+            return Err("Cannot transfer TRX to a smartContract.".to_string());
+        }
+
+        let allow_tvm_compatible_evm = storage_adapter
+            .get_allow_tvm_compatible_evm()
+            .map_err(|e| format!("Failed to get ALLOW_TVM_COMPATIBLE_EVM: {}", e))?;
+        if allow_tvm_compatible_evm == 1 && recipient_is_contract {
+            let to_tron_21 = storage_adapter.to_tron_address_21(&to_address);
+            let contract = storage_adapter
+                .get_smart_contract(&to_tron_21)
+                .map_err(|e| format!("Failed to load smart contract: {}", e))?;
+            match contract {
+                None => {
+                    return Err("Account type is Contract, but it is not exist in contract store."
+                        .to_string());
+                }
+                Some(c) => {
+                    if c.version == 1 {
+                        return Err("Cannot transfer TRX to a smartContract which version is one. Instead please use TriggerSmartContract "
+                            .to_string());
+                    }
+                }
+            }
+        }
+
+        // Validate sender has enough balance for amount + fees (java: addExact(amount, fee)).
+        let fee_i64 = i64::try_from(create_account_fee)
+            .map_err(|_| "long overflow".to_string())?
+            .checked_add(i64::try_from(fee_amount).map_err(|_| "long overflow".to_string())?)
+            .ok_or_else(|| "long overflow".to_string())?;
+        let total_cost_i64 = amount_i64
+            .checked_add(fee_i64)
+            .ok_or_else(|| "long overflow".to_string())?;
+
+        let sender_balance_i64 = sender_account.balance.as_limbs()[0] as i64;
+        if sender_balance_i64 < total_cost_i64 {
             return Err("Validate TransferContract error, balance is not sufficient.".to_string());
         }
+
+        // Recipient balance overflow check (java: addExact(toBalance, amount) when toAccount != null).
+        if recipient_opt.is_some() {
+            let recipient_balance_i64 = recipient_account.balance.as_limbs()[0] as i64;
+            recipient_balance_i64
+                .checked_add(amount_i64)
+                .ok_or_else(|| "long overflow".to_string())?;
+        }
+
+        let total_cost = revm_primitives::U256::from(total_cost_i64 as u64);
 
         // Track AEXT for bandwidth if in tracked mode (after validation to ensure validate_fail has 0 writes)
         let mut aext_map = std::collections::HashMap::new();
@@ -796,7 +878,7 @@ impl BackendService {
         // Update recipient account: balance += value
         let new_recipient_balance = recipient_account
             .balance
-            .checked_add(transaction.value)
+            .checked_add(amount_u256)
             .ok_or("Recipient balance overflow")?;
         let new_recipient_account = revm_primitives::AccountInfo {
             balance: new_recipient_balance,
@@ -821,19 +903,56 @@ impl BackendService {
 
         // Persist recipient account update (create_time for newly-created accounts)
         if recipient_opt.is_none() {
-            use tron_backend_execution::protocol::Account as ProtoAccount;
+            use tron_backend_execution::protocol::permission::PermissionType;
+            use tron_backend_execution::protocol::{Account as ProtoAccount, Key, Permission};
 
             // java-tron uses DynamicPropertiesStore.latest_block_header_timestamp as "now"
             // for account creation timestamps.
             let create_time = storage_adapter
                 .get_latest_block_header_timestamp()
                 .map_err(|e| format!("Failed to get LATEST_BLOCK_HEADER_TIMESTAMP: {}", e))?;
-            let recipient_proto = ProtoAccount {
-                address: storage_adapter.to_tron_address_21(&to_address).to_vec(),
+            let recipient_address_bytes = storage_adapter.to_tron_address_21(&to_address).to_vec();
+
+            let mut recipient_proto = ProtoAccount {
+                address: recipient_address_bytes.clone(),
                 balance: new_recipient_account.balance.as_limbs()[0] as i64,
                 create_time,
                 ..Default::default()
             };
+
+            let allow_multi_sign = storage_adapter
+                .get_allow_multi_sign()
+                .map_err(|e| format!("Failed to get ALLOW_MULTI_SIGN: {}", e))?;
+            if allow_multi_sign {
+                let active_default_operations = storage_adapter
+                    .get_active_default_operations()
+                    .map_err(|e| format!("Failed to get ACTIVE_DEFAULT_OPERATIONS: {}", e))?;
+
+                let default_key = Key {
+                    address: recipient_address_bytes.clone(),
+                    weight: 1,
+                };
+
+                recipient_proto.owner_permission = Some(Permission {
+                    r#type: PermissionType::Owner as i32,
+                    id: 0,
+                    permission_name: "owner".to_string(),
+                    threshold: 1,
+                    parent_id: 0,
+                    operations: Vec::new(),
+                    keys: vec![default_key.clone()],
+                });
+
+                recipient_proto.active_permission = vec![Permission {
+                    r#type: PermissionType::Active as i32,
+                    id: 2,
+                    permission_name: "active".to_string(),
+                    threshold: 1,
+                    parent_id: 0,
+                    operations: active_default_operations,
+                    keys: vec![default_key],
+                }];
+            }
             storage_adapter
                 .put_account_proto(&to_address, &recipient_proto)
                 .map_err(|e| format!("Failed to persist recipient Account proto: {}", e))?;
@@ -853,6 +972,9 @@ impl BackendService {
                     "Burning create-account-fee {} SUN (blackhole optimization)",
                     create_account_fee
                 );
+                storage_adapter
+                    .burn_trx(create_account_fee)
+                    .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             } else if let Some(blackhole_addr) = storage_adapter
                 .get_blackhole_address()
                 .map_err(|e| format!("Failed to get blackhole address: {}", e))?

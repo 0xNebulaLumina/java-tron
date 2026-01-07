@@ -358,6 +358,7 @@ impl ConformanceRunner {
                     | Some(TronContractType::AssetIssueContract)
                     | Some(TronContractType::ClearAbiContract)
                     | Some(TronContractType::CancelAllUnfreezeV2Contract)
+                    | Some(TronContractType::TransferContract)
             );
 
             let (from_bytes, from_is_valid) = if tx.from.len() == 21 {
@@ -391,21 +392,37 @@ impl ConformanceRunner {
         let to = if tx.to.is_empty() {
             None
         } else {
-            let to_bytes = if tx.to.len() == 21 && (tx.to[0] == 0x41 || tx.to[0] == 0xa0) {
-                &tx.to[1..]
-            } else if tx.to.len() == 20 {
-                &tx.to[..]
-            } else {
-                return Err(format!("Invalid to address length: {}", tx.to.len()));
-            };
-            let to_address = Address::from_slice(to_bytes);
+            let allow_malformed_to =
+                matches!(contract_type, Some(TronContractType::TransferContract));
 
-            let is_vm_create = tx.tx_kind == crate::backend::TxKind::Vm as i32
-                && tx.contract_type == TronContractType::CreateSmartContract as i32;
-            if is_vm_create && to_address == Address::ZERO {
-                None
+            let (to_bytes, to_is_valid) = if tx.to.len() == 21 {
+                if tx.to[0] == 0x41 || tx.to[0] == 0xa0 {
+                    (&tx.to[1..], true)
+                } else {
+                    (&[][..], false)
+                }
+            } else if tx.to.len() == 20 {
+                (&tx.to[..], true)
             } else {
-                Some(to_address)
+                (&[][..], false)
+            };
+
+            if !to_is_valid {
+                if allow_malformed_to {
+                    None
+                } else {
+                    return Err(format!("Invalid to address length: {}", tx.to.len()));
+                }
+            } else {
+                let to_address = Address::from_slice(to_bytes);
+
+                let is_vm_create = tx.tx_kind == crate::backend::TxKind::Vm as i32
+                    && tx.contract_type == TronContractType::CreateSmartContract as i32;
+                if is_vm_create && to_address == Address::ZERO {
+                    None
+                } else {
+                    Some(to_address)
+                }
             }
         };
 

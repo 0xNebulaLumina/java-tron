@@ -681,6 +681,52 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get FORBID_TRANSFER_TO_CONTRACT dynamic property.
+    ///
+    /// Java reference: `DynamicPropertiesStore.getForbidTransferToContract()`.
+    /// Default: 0 when missing/invalid.
+    pub fn get_forbid_transfer_to_contract(&self) -> Result<u64> {
+        let key = b"FORBID_TRANSFER_TO_CONTRACT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if !data.is_empty() {
+                    Ok(data[0] as u64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_TVM_COMPATIBLE_EVM dynamic property.
+    ///
+    /// Java reference: `DynamicPropertiesStore.getAllowTvmCompatibleEvm()`.
+    /// Default: 0 when missing/invalid.
+    pub fn get_allow_tvm_compatible_evm(&self) -> Result<u64> {
+        let key = b"ALLOW_TVM_COMPATIBLE_EVM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if !data.is_empty() {
+                    Ok(data[0] as u64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
     /// Get Black Hole Optimization dynamic property (parity with Java)
     /// Java stores this as a long under key "ALLOW_BLACKHOLE_OPTIMIZATION".
     /// When this flag is 1, the node BURNS fees (optimization enabled).
