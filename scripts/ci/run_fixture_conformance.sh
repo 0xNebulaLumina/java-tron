@@ -152,7 +152,6 @@ undelegate_resource_contract|\
 unfreeze_asset_contract|\
 unfreeze_balance_contract|\
 unfreeze_balance_v2_contract|\
-update_asset_contract|\
 update_brokerage_contract|\
 update_energy_limit_contract|\
 update_setting_contract|\

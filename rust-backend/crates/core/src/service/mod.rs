@@ -6602,6 +6602,18 @@ impl BackendService {
         debug!("UpdateAsset: owner={}, new_limit={}, new_public_limit={}",
                hex::encode(&owner_tron), update_info.new_limit, update_info.new_public_limit);
 
+        // Validation parity: DecodeUtil.addressValid(ownerAddress)
+        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
+            let owner_address_valid = match from_raw.len() {
+                21 => from_raw[0] == 0x41 || from_raw[0] == 0xa0,
+                20 => true,
+                _ => false,
+            };
+            if !owner_address_valid {
+                return Err("Invalid ownerAddress".to_string());
+            }
+        }
+
         // 1. Validate owner account exists
         let account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
