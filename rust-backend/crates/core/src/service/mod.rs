@@ -664,6 +664,16 @@ impl BackendService {
         debug!("Executing TRANSFER_CONTRACT: from={:?}, to={:?}, value={}",
                transaction.from, transaction.to, transaction.value);
 
+        // Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.TransferContract") {
+                return Err(
+                    "contract type error, expected type [TransferContract], real type [class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
         let execution_config = self.get_execution_config()?;
         let fee_config = &execution_config.fees;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
@@ -1928,6 +1938,16 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
+        // Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.AccountUpdateContract") {
+                return Err(
+                    "contract type error, expected type [AccountUpdateContract], real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
         let owner_tron = tron_backend_common::to_tron_address(&transaction.from);
         let name_bytes = transaction.data.as_ref();
 
@@ -2043,12 +2063,28 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
-        // 1. Parse AccountCreateContract from transaction.data
+        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.AccountCreateContract") {
+                return Err(
+                    "contract type error,expected type [AccountCreateContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        // 1. Parse AccountCreateContract
         // AccountCreateContract protobuf:
         //   bytes owner_address = 1;
         //   bytes account_address = 2; (target account to create)
         //   AccountType type = 3;      (ignored - always Normal)
-        let (owner, target_address) = self.parse_account_create_contract(&transaction.data)?;
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+        let (owner, target_address) = self.parse_account_create_contract(contract_bytes)?;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
         let owner_tron_21 = storage_adapter.to_tron_address_21(&owner);
         let readable_owner_address = revm_primitives::hex::encode(owner_tron_21);
@@ -2958,6 +2994,16 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
 
+        // Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.SetAccountIdContract") {
+                return Err(
+                    "contract type error,expected type [SetAccountIdContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
 
@@ -2967,7 +3013,13 @@ impl BackendService {
         // SetAccountIdContract:
         //   bytes account_id = 1;
         //   bytes owner_address = 2;
-        let account_id = self.parse_set_account_id_contract(&transaction.data)?;
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+        let account_id = self.parse_set_account_id_contract(contract_bytes)?;
 
         info!("SetAccountId: owner={}, account_id={:?}",
               owner_tron, String::from_utf8_lossy(&account_id));
@@ -3235,9 +3287,25 @@ impl BackendService {
             return Err("multi sign is not allowed, need to be opened by the committee".to_string());
         }
 
+        // Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.AccountPermissionUpdateContract") {
+                return Err(
+                    "contract type error,expected type [AccountPermissionUpdateContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
         // Parse contract
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
         let (owner_address_bytes, mut owner_permission, witness_permission, active_permissions) =
-            self.parse_account_permission_update_contract(&transaction.data)?;
+            self.parse_account_permission_update_contract(contract_bytes)?;
 
         // Validation: owner address must be present and valid (DecodeUtil.addressValid parity).
         let expected_prefix = storage_adapter.to_tron_address_21(&revm_primitives::Address::ZERO)[0];
@@ -3510,6 +3578,16 @@ impl BackendService {
         let owner_tron = tron_backend_common::to_tron_address(&owner);
 
         debug!("Executing TRANSFER_ASSET_CONTRACT for owner {}", owner_tron);
+
+        // Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.TransferAssetContract") {
+                return Err(
+                    "contract type error, expected type [TransferAssetContract], real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
 
         // Validation parity: DecodeUtil.addressValid(ownerAddress)
         if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
@@ -3953,11 +4031,28 @@ impl BackendService {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
         use revm_primitives::Address;
 
+        // Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.AssetIssueContract") {
+                return Err(
+                    "contract type error,expected type [AssetIssueContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+
         // Decode full AssetIssueContractData early so we can validate owner_address and
         // frozen_supply (java-tron AssetIssueActuator.validate).
         use prost::Message;
         let mut asset_proto = tron_backend_execution::protocol::AssetIssueContractData::decode(
-            transaction.data.as_ref(),
+            contract_bytes,
         )
         .map_err(|e| format!("Failed to decode AssetIssueContractData: {}", e))?;
 
@@ -5456,29 +5551,39 @@ impl BackendService {
 
         debug!("CancelAllUnfreezeV2: owner={}", hex::encode(&owner_tron));
 
-        // 1. Gate check: supportAllowCancelAllUnfreezeV2() must be true
+        // 1. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.CancelAllUnfreezeV2Contract") {
+                return Err(
+                    "contract type error, expected type [CancelAllUnfreezeV2Contract], real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        // 2. Gate check: supportAllowCancelAllUnfreezeV2() must be true
         let allow_cancel = storage_adapter.support_allow_cancel_all_unfreeze_v2()
             .map_err(|e| format!("Failed to check supportAllowCancelAllUnfreezeV2: {}", e))?;
         if !allow_cancel {
             return Err("Not support CancelAllUnfreezeV2 transaction, need to be opened by the committee".to_string());
         }
 
-        // 2. Validate owner address
+        // 3. Validate owner address
         let expected_prefix = storage_adapter.address_prefix();
         if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
             return Err("Invalid address".to_string());
         }
 
-        // 3. Validate owner account exists
+        // 4. Validate owner account exists
         let account_proto = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .ok_or_else(|| format!("Account[{}] not exists", hex::encode(&owner_tron)))?;
 
-        // 4. Get latest block timestamp
+        // 5. Get latest block timestamp
         let now = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
 
-        // 5. Validate there are unfrozenV2 entries to process
+        // 6. Validate there are unfrozenV2 entries to process
         let unfrozen_v2_list = &account_proto.unfrozen_v2;
         if unfrozen_v2_list.is_empty() {
             return Err("No unfreezeV2 list to cancel".to_string());
@@ -6756,8 +6861,24 @@ impl BackendService {
         let owner = transaction.from;
         let owner_tron = add_tron_address_prefix(&owner);
 
+        // Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.UpdateAssetContract") {
+                return Err(
+                    "contract type error, expected type [UpdateAssetContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
         // Parse contract data
-        let update_info = self.parse_update_asset_contract(&transaction.data)?;
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+        let update_info = self.parse_update_asset_contract(contract_bytes)?;
 
         debug!("UpdateAsset: owner={}, new_limit={}, new_public_limit={}",
                hex::encode(&owner_tron), update_info.new_limit, update_info.new_public_limit);
