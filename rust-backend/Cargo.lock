@@ -3098,6 +3098,7 @@ dependencies = [
  "hex",
  "num-bigint",
  "prost",
+ "prost-types",
  "revm",
  "revm-primitives",
  "serde",

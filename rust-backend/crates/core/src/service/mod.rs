@@ -32,6 +32,16 @@ pub struct BackendService {
 }
 
 impl BackendService {
+    fn any_type_url_matches(type_url: &str, expected_full_name: &str) -> bool {
+        if type_url == expected_full_name {
+            return true;
+        }
+        match type_url.rsplit_once('/') {
+            Some((_, tail)) => tail == expected_full_name,
+            None => false,
+        }
+    }
+
     pub fn new(module_manager: ModuleManager) -> Self {
         Self {
             module_manager,
@@ -4572,16 +4582,35 @@ impl BackendService {
         use tron_backend_execution::TronExecutionResult;
         use revm_primitives::Address;
 
-        // 1. Parse the contract data
+        // 1. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.UpdateSettingContract") {
+                return Err(
+                    "contract type error, expected type [UpdateSettingContract], real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        // 2. Parse the contract data
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
         let (owner_in_contract, contract_address, new_percent) =
-            self.parse_update_setting_contract(&transaction.data)?;
+            self.parse_update_setting_contract(contract_bytes)?;
 
         // java-tron validates the Any type_url before unpacking. In the fixture generator, a type
         // mismatch causes TransactionCapsule#getOwnerAddress() to return an empty `from` field
         // while the encoded payload still contains a non-empty owner address. Mirror that behavior
         // so type-mismatch fixtures produce the expected message.
         let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if owner_from_field.is_empty() && !owner_in_contract.is_empty() {
+        if transaction.metadata.contract_parameter.is_none()
+            && owner_from_field.is_empty()
+            && !owner_in_contract.is_empty()
+        {
             return Err(
                 "contract type error, expected type [UpdateSettingContract], real type[class com.google.protobuf.Any]"
                     .to_string(),
@@ -4592,10 +4621,10 @@ impl BackendService {
                hex::encode(&contract_address), new_percent);
 
         // 2. Validate owner address
-        let owner_tron = if !owner_from_field.is_empty() {
-            owner_from_field
-        } else {
+        let owner_tron = if !owner_in_contract.is_empty() {
             owner_in_contract.as_slice()
+        } else {
+            owner_from_field
         };
 
         let expected_prefix = storage_adapter.address_prefix();
@@ -4762,13 +4791,30 @@ impl BackendService {
             return Err("contract type error, unexpected type [UpdateEnergyLimitContract]".to_string());
         }
 
-        // 2. Parse the contract data
-        let (contract_address, new_origin_energy_limit) = self.parse_update_energy_limit_contract(&transaction.data)?;
+        // 2. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.UpdateEnergyLimitContract") {
+                return Err(
+                    "contract type error, expected type [UpdateEnergyLimitContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        // 3. Parse the contract data
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+        let (contract_address, new_origin_energy_limit) =
+            self.parse_update_energy_limit_contract(contract_bytes)?;
 
         debug!("Parsed UpdateEnergyLimitContract: contract_address={}, new_origin_energy_limit={}",
                hex::encode(&contract_address), new_origin_energy_limit);
 
-        // 3. Validate owner exists
+        // 4. Validate owner exists
         // Build owner key as 21-byte TRON address (network-aware prefix)
         let owner_key = storage_adapter.to_tron_address_21(&owner).to_vec();
 
@@ -4776,17 +4822,17 @@ impl BackendService {
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or_else(|| format!("Owner account {} does not exist", owner_tron))?;
 
-        // 4. Validate new_origin_energy_limit > 0
+        // 5. Validate new_origin_energy_limit > 0
         if new_origin_energy_limit <= 0 {
             return Err("origin energy limit must be > 0".to_string());
         }
 
-        // 5. Get the smart contract
+        // 6. Get the smart contract
         let mut smart_contract = storage_adapter.get_smart_contract(&contract_address)
             .map_err(|e| format!("Failed to get contract: {}", e))?
             .ok_or_else(|| "Contract does not exist".to_string())?;
 
-        // 6. Validate owner is the contract's origin_address
+        // 7. Validate owner is the contract's origin_address
         if smart_contract.origin_address != owner_key {
             return Err(format!(
                 "Account[{}] is not the owner of the contract",
@@ -4794,17 +4840,17 @@ impl BackendService {
             ));
         }
 
-        // 7. Update the origin_energy_limit field
+        // 8. Update the origin_energy_limit field
         let old_limit = smart_contract.origin_energy_limit;
         smart_contract.origin_energy_limit = new_origin_energy_limit;
 
         debug!("Updating origin_energy_limit: {} -> {}", old_limit, new_origin_energy_limit);
 
-        // 8. Write back to ContractStore
+        // 9. Write back to ContractStore
         storage_adapter.put_smart_contract(&smart_contract)
             .map_err(|e| format!("Failed to update contract: {}", e))?;
 
-        // 9. Build result - no state changes for account balances, fee = 0
+        // 10. Build result - no state changes for account balances, fee = 0
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
         Ok(TronExecutionResult {
@@ -4914,18 +4960,40 @@ impl BackendService {
             return Err("contract type error,unexpected type [ClearABIContract]".to_string());
         }
 
-        // 2. Parse the contract data
-        let (owner_in_contract, contract_address) = self.parse_clear_abi_contract(&transaction.data)?;
-
-        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if owner_from_field.is_empty() && !owner_in_contract.is_empty() {
-            return Err("contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]".to_string());
+        // 2. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.ClearABIContract") {
+                return Err(
+                    "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
         }
 
-        let owner_tron = if !owner_from_field.is_empty() {
-            owner_from_field
-        } else {
+        // 3. Parse the contract data
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+        let (owner_in_contract, contract_address) = self.parse_clear_abi_contract(contract_bytes)?;
+
+        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        if transaction.metadata.contract_parameter.is_none()
+            && owner_from_field.is_empty()
+            && !owner_in_contract.is_empty()
+        {
+            return Err(
+                "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]"
+                    .to_string(),
+            );
+        }
+
+        let owner_tron = if !owner_in_contract.is_empty() {
             owner_in_contract.as_slice()
+        } else {
+            owner_from_field
         };
 
         debug!(
@@ -5013,15 +5081,34 @@ impl BackendService {
             return Err("contract type error, unexpected type [UpdateBrokerageContract]".to_string());
         }
 
-        // 2. Parse the contract data to get owner_address and brokerage value
-        let (owner_in_contract, brokerage) = self.parse_update_brokerage_contract(&transaction.data)?;
+        // 2. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.UpdateBrokerageContract") {
+                return Err(
+                    "contract type error, expected type [UpdateBrokerageContract], real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        // 3. Parse the contract data to get owner_address and brokerage value
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+        let (owner_in_contract, brokerage) = self.parse_update_brokerage_contract(contract_bytes)?;
 
         // java-tron validates the Any type_url before unpacking. In the fixture generator, a type
         // mismatch causes TransactionCapsule#getOwnerAddress() to return an empty `from` field
         // while the encoded payload still contains a non-empty owner address. Mirror that behavior
         // so type-mismatch fixtures produce the expected message.
         let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if owner_from_field.is_empty() && !owner_in_contract.is_empty() {
+        if transaction.metadata.contract_parameter.is_none()
+            && owner_from_field.is_empty()
+            && !owner_in_contract.is_empty()
+        {
             return Err(
                 "contract type error, expected type [UpdateBrokerageContract], real type[class com.google.protobuf.Any]"
                     .to_string(),
@@ -5029,10 +5116,10 @@ impl BackendService {
         }
 
         // 3. Validate owner address (DecodeUtil.addressValid)
-        let owner_tron = if !owner_from_field.is_empty() {
-            owner_from_field
-        } else {
+        let owner_tron = if !owner_in_contract.is_empty() {
             owner_in_contract.as_slice()
+        } else {
+            owner_from_field
         };
         let expected_prefix = storage_adapter.address_prefix();
         if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {

@@ -16,6 +16,7 @@ use tron_backend_storage::StorageEngine;
 use tron_backend_execution::{
     EngineBackedEvmStateStore, ExecutionModule, TronTransaction, TronExecutionContext,
     EvmStateStore, TronContractType, TxMetadata, ExecutionWriteBuffer,
+    TronContractParameter,
 };
 use std::sync::{Arc, Mutex};
 use revm_primitives::{hex, Address, B256, Bytes, U256};
@@ -458,6 +459,10 @@ impl ConformanceRunner {
                 contract_type,
                 asset_id,
                 from_raw: Some(tx.from.clone()),
+                contract_parameter: tx.contract_parameter.as_ref().map(|any| TronContractParameter {
+                    type_url: any.type_url.clone(),
+                    value: any.value.clone(),
+                }),
             },
         })
     }

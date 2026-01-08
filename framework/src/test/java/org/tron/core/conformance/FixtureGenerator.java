@@ -532,6 +532,8 @@ public class FixtureGenerator {
         .setTxKind(TxKind.NON_VM)
         .setContractType(
             tron.backend.BackendOuterClass.ContractType.forNumber(contract.getType().getNumber()))
+        // Preserve raw Any (type_url + value) for Rust-side any.is/any.unpack validation parity.
+        .setContractParameter(contractParameter)
         .build();
 
     ExecutionContext context = ExecutionContext.newBuilder()

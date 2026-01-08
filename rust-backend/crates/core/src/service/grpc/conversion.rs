@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use tracing::{debug, warn};
 use revm_primitives::hex;
-use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, AccountAext, TouchedKey};
+use tron_backend_execution::{TronContractParameter, TronExecutionContext, TronExecutionResult, TronStateChange, TronTransaction, AccountAext, TouchedKey};
 use crate::backend::*;
 use super::super::BackendService;
 use super::address::{strip_tron_address_prefix, add_tron_address_prefix};
@@ -51,8 +51,16 @@ impl BackendService {
             Some(tron_backend_execution::TronContractType::AccountCreateContract)
                 | Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract)
                 | Some(tron_backend_execution::TronContractType::AccountUpdateContract)
+                | Some(tron_backend_execution::TronContractType::AssetIssueContract)
                 | Some(tron_backend_execution::TronContractType::UpdateAssetContract)
+                | Some(tron_backend_execution::TronContractType::UpdateEnergyLimitContract)
                 | Some(tron_backend_execution::TronContractType::UpdateSettingContract)
+                | Some(tron_backend_execution::TronContractType::UpdateBrokerageContract)
+                | Some(tron_backend_execution::TronContractType::SetAccountIdContract)
+                | Some(tron_backend_execution::TronContractType::ClearAbiContract)
+                | Some(tron_backend_execution::TronContractType::CancelAllUnfreezeV2Contract)
+                | Some(tron_backend_execution::TronContractType::TransferAssetContract)
+                | Some(tron_backend_execution::TronContractType::TransferContract)
         );
         let from = match strip_tron_address_prefix(&tx.from) {
             Ok(from_bytes) => revm_primitives::Address::from_slice(from_bytes),
@@ -136,10 +144,16 @@ impl BackendService {
             None
         };
 
+        let contract_parameter = tx.contract_parameter.as_ref().map(|any| TronContractParameter {
+            type_url: any.type_url.clone(),
+            value: any.value.clone(),
+        });
+
         let metadata = tron_backend_execution::TxMetadata {
             contract_type,
             asset_id,
             from_raw: Some(tx.from.clone()),
+            contract_parameter,
         };
 
         let transaction = TronTransaction {

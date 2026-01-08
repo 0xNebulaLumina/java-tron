@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package tron.backend;
 
+import "google/protobuf/any.proto";
+
 // Unified Backend Service - combines all Rust modules
 service Backend {
   // Health and metadata
@@ -600,6 +602,10 @@ message TronTransaction {
   // Phase 3 additions for future TRC-10 support
   ContractType contract_type = 15;  // TRON contract type for detailed classification
   bytes asset_id = 16;             // TRC-10 asset ID for TransferAssetContract (optional)
+  // Raw contract parameter Any from Protocol.Transaction.Contract.parameter.
+  // This carries the original type_url and value bytes so the Rust backend can mirror
+  // java-tron `any.is(...)` / `any.unpack(...)` validation semantics.
+  google.protobuf.Any contract_parameter = 17;
 }
 
 message TronResource {

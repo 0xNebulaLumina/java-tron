@@ -13,7 +13,7 @@ pub mod protocol {
 }
 
 // Re-export key types for external use
-pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, TronContractType, TxMetadata, FreezeLedgerChange, FreezeLedgerResource, GlobalResourceTotalsChange, Trc10Change, Trc10AssetIssued, Trc10AssetTransferred, VoteChange, VoteEntry, WithdrawChange};
+pub use tron_evm::{TronContractParameter, TronContractType, TronEvm, TronExecutionContext, TronExecutionResult, TronStateChange, TronTransaction, TxMetadata, FreezeLedgerChange, FreezeLedgerResource, GlobalResourceTotalsChange, Trc10Change, Trc10AssetIssued, Trc10AssetTransferred, VoteChange, VoteEntry, WithdrawChange};
 pub use precompiles::TronPrecompiles;
 pub use storage_adapter::{EvmStateStore, InMemoryEvmStateStore, EngineBackedEvmStateStore, EvmStateDatabase, StateChangeRecord, WitnessInfo, FreezeRecord, VotesRecord, Vote, AccountAext, ResourceTracker, BandwidthPath, ExecutionWriteBuffer, WriteOp, TouchedKey};
 
