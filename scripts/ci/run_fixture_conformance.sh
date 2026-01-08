@@ -152,7 +152,6 @@ undelegate_resource_contract|\
 unfreeze_asset_contract|\
 unfreeze_balance_contract|\
 unfreeze_balance_v2_contract|\
-update_brokerage_contract|\
 vote_witness_contract|\
 withdraw_balance_contract|\
 withdraw_expire_unfreeze_contract|\
