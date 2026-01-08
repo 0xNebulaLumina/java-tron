@@ -366,6 +366,7 @@ impl ConformanceRunner {
                     | Some(TronContractType::CancelAllUnfreezeV2Contract)
                     | Some(TronContractType::TransferAssetContract)
                     | Some(TronContractType::TransferContract)
+                    | Some(TronContractType::ExchangeCreateContract)
             );
 
             let (from_bytes, from_is_valid) = if tx.from.len() == 21 {

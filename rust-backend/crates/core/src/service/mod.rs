@@ -7316,6 +7316,7 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use contracts::exchange::{is_number, is_trx};
         use contracts::proto::TransactionResultBuilder;
+        use revm::primitives::Address;
 
         debug!("Executing EXCHANGE_CREATE_CONTRACT: owner={:?}", transaction.from);
 
@@ -7328,12 +7329,22 @@ impl BackendService {
             create_info.second_token_balance
         );
 
-        // 2. Get owner account
-        let owner = transaction.from;
-        let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
-        let account = storage_adapter.get_account_proto(&owner)
+        // 2. Validate + get owner account (matches Java's ExchangeCreateActuator.validate)
+        let owner_address = create_info.owner_address.clone();
+        let readable_owner_address = hex::encode(&owner_address);
+
+        let address_prefix = storage_adapter.address_prefix();
+        let owner = if owner_address.len() == 21 && owner_address[0] == address_prefix {
+            Address::from_slice(&owner_address[1..])
+        } else {
+            return Err("Invalid address".to_string());
+        };
+
+        let owner_tron = owner_address;
+        let account = storage_adapter
+            .get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or("Owner account not found")?;
+            .ok_or(format!("account[{}] not exists", readable_owner_address))?;
 
         // 3. Get dynamic properties
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
@@ -8289,6 +8300,7 @@ impl BackendService {
     fn parse_exchange_create_contract(&self, data: &[u8]) -> Result<ExchangeCreateInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut first_token_id = Vec::new();
         let mut first_token_balance: i64 = 0;
         let mut second_token_id = Vec::new();
@@ -8303,11 +8315,13 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip)
+                // owner_address = 1
                 1 => {
                     if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // first_token_id = 2
                 2 => {
@@ -8351,6 +8365,7 @@ impl BackendService {
         }
 
         Ok(ExchangeCreateInfo {
+            owner_address,
             first_token_id,
             first_token_balance,
             second_token_id,
@@ -9816,6 +9831,7 @@ impl BackendService {
 /// Parsed ExchangeCreateContract information
 #[derive(Debug, Clone)]
 struct ExchangeCreateInfo {
+    owner_address: Vec<u8>,
     first_token_id: Vec<u8>,
     first_token_balance: i64,
     second_token_id: Vec<u8>,
