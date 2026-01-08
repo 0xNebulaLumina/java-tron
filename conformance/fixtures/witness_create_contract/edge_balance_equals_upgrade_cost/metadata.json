@@ -4,7 +4,7 @@
   "caseName": "edge_balance_equals_upgrade_cost",
   "caseCategory": "edge",
   "description": "Edge case: balance exactly equals ACCOUNT_UPGRADE_COST (boundary check for < vs <=)",
-  "generatedAt": "2026-01-04T13:03:51.677Z",
+  "generatedAt": "2026-01-08T06:31:36.784Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

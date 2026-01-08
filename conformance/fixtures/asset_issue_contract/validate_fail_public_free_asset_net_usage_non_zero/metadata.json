@@ -4,7 +4,7 @@
   "caseName": "validate_fail_public_free_asset_net_usage_non_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when public_free_asset_net_usage is non-zero",
-  "generatedAt": "2026-01-04T13:02:48.037Z",
+  "generatedAt": "2026-01-08T06:30:24.432Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

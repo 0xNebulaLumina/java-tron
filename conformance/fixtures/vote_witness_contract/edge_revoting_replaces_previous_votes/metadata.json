@@ -4,7 +4,7 @@
   "caseName": "edge_revoting_replaces_previous_votes",
   "caseCategory": "edge",
   "description": "Edge case: revoting clears old votes and replaces with new (not merged)",
-  "generatedAt": "2026-01-04T13:03:51.767Z",
+  "generatedAt": "2026-01-08T06:31:36.880Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "happy_path_trx_to_token",
   "caseCategory": "happy",
   "description": "Create a market sell order: TRX -> TRC-10 token",
-  "generatedAt": "2026-01-04T13:02:59.255Z",
+  "generatedAt": "2026-01-08T06:30:38.266Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

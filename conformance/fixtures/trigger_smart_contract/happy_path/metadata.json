@@ -4,7 +4,7 @@
   "caseName": "happy_path",
   "caseCategory": "happy",
   "description": "Trigger contract to store a value via testPut(1, 'hello')",
-  "generatedAt": "2026-01-04T13:03:25.754Z",
+  "generatedAt": "2026-01-08T06:31:08.571Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

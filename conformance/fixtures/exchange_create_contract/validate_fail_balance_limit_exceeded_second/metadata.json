@@ -4,7 +4,7 @@
   "caseName": "validate_fail_balance_limit_exceeded_second",
   "caseCategory": "validate_fail",
   "description": "Fail when second token balance exceeds limit",
-  "generatedAt": "2026-01-04T13:02:54.459Z",
+  "generatedAt": "2026-01-08T06:30:32.978Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

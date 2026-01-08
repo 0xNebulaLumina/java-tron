@@ -4,7 +4,7 @@
   "caseName": "edge_expire_time_equals_now_is_unfreezable_bandwidth",
   "caseCategory": "edge",
   "description": "Unfreeze succeeds when expireTime == now (boundary condition, uses <=)",
-  "generatedAt": "2026-01-04T13:02:56.129Z",
+  "generatedAt": "2026-01-08T06:30:34.851Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

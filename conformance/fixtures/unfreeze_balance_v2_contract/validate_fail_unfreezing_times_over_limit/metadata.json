@@ -4,7 +4,7 @@
   "caseName": "validate_fail_unfreezing_times_over_limit",
   "caseCategory": "validate_fail",
   "description": "Fail when unfreezing times >= 32 (UNFREEZE_MAX_TIMES)",
-  "generatedAt": "2026-01-04T13:02:57.663Z",
+  "generatedAt": "2026-01-08T06:30:36.612Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

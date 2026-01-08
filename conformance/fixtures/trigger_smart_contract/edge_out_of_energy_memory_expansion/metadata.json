@@ -4,7 +4,7 @@
   "caseName": "edge_out_of_energy_memory_expansion",
   "caseCategory": "edge",
   "description": "Large string storage (4KB) with limited energy to stress memory expansion",
-  "generatedAt": "2026-01-04T13:03:18.181Z",
+  "generatedAt": "2026-01-08T06:30:59.743Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

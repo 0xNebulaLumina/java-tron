@@ -4,7 +4,7 @@
   "caseName": "edge_long_string_gt_31_store_and_read",
   "caseCategory": "edge",
   "description": "Store string > 31 bytes (triggers multi-slot storage layout)",
-  "generatedAt": "2026-01-04T13:03:21.946Z",
+  "generatedAt": "2026-01-08T06:31:04.210Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_amount_negative",
   "caseCategory": "validate_fail",
   "description": "Fail when transfer amount is negative",
-  "generatedAt": "2026-01-04T13:03:03.950Z",
+  "generatedAt": "2026-01-08T06:30:43.853Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

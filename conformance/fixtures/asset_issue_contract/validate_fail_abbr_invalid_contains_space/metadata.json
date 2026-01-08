@@ -4,7 +4,7 @@
   "caseName": "validate_fail_abbr_invalid_contains_space",
   "caseCategory": "validate_fail",
   "description": "Fail when abbreviation contains space",
-  "generatedAt": "2026-01-04T13:02:48.029Z",
+  "generatedAt": "2026-01-08T06:30:24.423Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_asset_missing",
   "caseCategory": "validate_fail",
   "description": "Fail when tokenId points to non-existent TRC-10 asset",
-  "generatedAt": "2026-01-04T13:03:07.073Z",
+  "generatedAt": "2026-01-08T06:30:47.788Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

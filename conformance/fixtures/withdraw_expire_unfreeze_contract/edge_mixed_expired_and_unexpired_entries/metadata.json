@@ -4,7 +4,7 @@
   "caseName": "edge_mixed_expired_and_unexpired_entries",
   "caseCategory": "happy",
   "description": "Withdraw only expired entries, keep unexpired entries in unfrozenV2 list",
-  "generatedAt": "2026-01-04T13:03:02.396Z",
+  "generatedAt": "2026-01-08T06:30:41.945Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

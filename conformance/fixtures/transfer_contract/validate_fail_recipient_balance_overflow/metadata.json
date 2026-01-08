@@ -4,7 +4,7 @@
   "caseName": "validate_fail_recipient_balance_overflow",
   "caseCategory": "validate_fail",
   "description": "Fail when recipient balance + amount would overflow Long.MAX_VALUE",
-  "generatedAt": "2026-01-04T13:03:03.947Z",
+  "generatedAt": "2026-01-08T06:30:43.840Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "happy_path_with_lock",
   "caseCategory": "happy",
   "description": "Delegate resource with lock period",
-  "generatedAt": "2026-01-04T13:03:02.372Z",
+  "generatedAt": "2026-01-08T06:30:41.904Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

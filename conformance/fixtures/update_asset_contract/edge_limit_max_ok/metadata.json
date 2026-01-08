@@ -4,7 +4,7 @@
   "caseName": "edge_limit_max_ok",
   "caseCategory": "edge",
   "description": "Successfully update with maximum valid limit values (oneDayNetLimit - 1)",
-  "generatedAt": "2026-01-04T13:03:05.385Z",
+  "generatedAt": "2026-01-08T06:30:45.544Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

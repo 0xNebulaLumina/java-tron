@@ -4,7 +4,7 @@
   "caseName": "validate_fail_end_time_equals_start_time",
   "caseCategory": "validate_fail",
   "description": "Fail when end_time equals start_time",
-  "generatedAt": "2026-01-04T13:02:48.155Z",
+  "generatedAt": "2026-01-08T06:30:24.554Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

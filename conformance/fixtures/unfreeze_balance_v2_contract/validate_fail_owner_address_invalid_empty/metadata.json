@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_address_invalid_empty",
   "caseCategory": "validate_fail",
   "description": "Fail when owner_address is empty (fails DecodeUtil.addressValid)",
-  "generatedAt": "2026-01-04T13:02:57.763Z",
+  "generatedAt": "2026-01-08T06:30:36.704Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

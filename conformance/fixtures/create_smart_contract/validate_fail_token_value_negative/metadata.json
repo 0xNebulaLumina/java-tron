@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_value_negative",
   "caseCategory": "validate_fail",
   "description": "Fail when tokenValue is negative (energy limit hard fork enabled)",
-  "generatedAt": "2026-01-04T13:03:07.083Z",
+  "generatedAt": "2026-01-08T06:30:47.801Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

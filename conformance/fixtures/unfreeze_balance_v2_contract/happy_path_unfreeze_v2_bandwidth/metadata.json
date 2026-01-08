@@ -4,7 +4,7 @@
   "caseName": "happy_path_unfreeze_v2_bandwidth",
   "caseCategory": "happy",
   "description": "V2 unfreeze BANDWIDTH (creates pending unfrozen entry)",
-  "generatedAt": "2026-01-04T13:02:57.627Z",
+  "generatedAt": "2026-01-08T06:30:36.577Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

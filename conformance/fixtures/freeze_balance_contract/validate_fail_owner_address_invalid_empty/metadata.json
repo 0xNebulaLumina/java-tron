@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_address_invalid_empty",
   "caseCategory": "validate_fail",
   "description": "Fail when owner address is empty",
-  "generatedAt": "2026-01-04T13:02:56.037Z",
+  "generatedAt": "2026-01-08T06:30:34.701Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

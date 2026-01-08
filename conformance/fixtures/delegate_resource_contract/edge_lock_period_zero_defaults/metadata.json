@@ -4,7 +4,7 @@
   "caseName": "edge_lock_period_zero_defaults",
   "caseCategory": "happy",
   "description": "Succeed when lockPeriod=0 with supportMaxDelegateLockPeriod enabled (uses default)",
-  "generatedAt": "2026-01-04T13:03:02.462Z",
+  "generatedAt": "2026-01-08T06:30:41.996Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

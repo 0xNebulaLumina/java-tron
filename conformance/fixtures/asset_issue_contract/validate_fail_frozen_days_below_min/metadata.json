@@ -4,7 +4,7 @@
   "caseName": "validate_fail_frozen_days_below_min",
   "caseCategory": "validate_fail",
   "description": "Fail when frozen_days is below minFrozenSupplyTime",
-  "generatedAt": "2026-01-04T13:02:47.891Z",
+  "generatedAt": "2026-01-08T06:30:24.289Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

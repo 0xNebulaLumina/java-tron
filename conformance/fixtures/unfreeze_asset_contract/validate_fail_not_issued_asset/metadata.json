@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_issued_asset",
   "caseCategory": "validate_fail",
   "description": "Fail when account has not issued any asset (assetIssuedID empty)",
-  "generatedAt": "2026-01-04T13:03:05.451Z",
+  "generatedAt": "2026-01-08T06:30:45.631Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

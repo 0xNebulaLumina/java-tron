@@ -4,7 +4,7 @@
   "caseName": "edge_large_energy_limit",
   "caseCategory": "happy",
   "description": "Update origin_energy_limit to Long.MAX_VALUE (extreme but valid)",
-  "generatedAt": "2026-01-04T13:02:51.284Z",
+  "generatedAt": "2026-01-08T06:30:28.902Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

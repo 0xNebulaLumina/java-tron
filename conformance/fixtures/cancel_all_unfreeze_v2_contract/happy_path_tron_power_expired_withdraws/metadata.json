@@ -4,7 +4,7 @@
   "caseName": "happy_path_tron_power_expired_withdraws",
   "caseCategory": "happy",
   "description": "Expired TRON_POWER entry contributes to withdrawExpireAmount, not re-frozen",
-  "generatedAt": "2026-01-04T13:03:02.334Z",
+  "generatedAt": "2026-01-08T06:30:41.876Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

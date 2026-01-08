@@ -4,7 +4,7 @@
   "caseName": "edge_constructor_revert",
   "caseCategory": "edge",
   "description": "Constructor executes REVERT opcode",
-  "generatedAt": "2026-01-04T13:03:06.969Z",
+  "generatedAt": "2026-01-08T06:30:47.658Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

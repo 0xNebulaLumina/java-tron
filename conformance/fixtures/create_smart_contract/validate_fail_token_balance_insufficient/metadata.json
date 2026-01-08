@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_balance_insufficient",
   "caseCategory": "validate_fail",
   "description": "Fail when owner has insufficient TRC-10 token balance",
-  "generatedAt": "2026-01-04T13:03:06.994Z",
+  "generatedAt": "2026-01-08T06:30:47.683Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

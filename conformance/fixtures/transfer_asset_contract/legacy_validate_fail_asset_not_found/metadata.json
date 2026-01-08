@@ -4,7 +4,7 @@
   "caseName": "legacy_validate_fail_asset_not_found",
   "caseCategory": "validate_fail",
   "description": "Legacy mode (V1): Fail when token name does not exist in asset-issue store",
-  "generatedAt": "2026-01-04T13:03:03.908Z",
+  "generatedAt": "2026-01-08T06:30:43.749Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

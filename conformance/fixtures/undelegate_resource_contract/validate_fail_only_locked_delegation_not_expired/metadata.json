@@ -4,7 +4,7 @@
   "caseName": "validate_fail_only_locked_delegation_not_expired",
   "caseCategory": "validate_fail",
   "description": "Fail when delegation exists only in lock record and is not expired (expireTime >= now)",
-  "generatedAt": "2026-01-04T13:03:02.487Z",
+  "generatedAt": "2026-01-08T06:30:42.056Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

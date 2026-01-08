@@ -4,7 +4,7 @@
   "caseName": "happy_path_creates_recipient",
   "caseCategory": "happy",
   "description": "TRX transfer that creates the recipient account (pays create-account-fee)",
-  "generatedAt": "2026-01-04T13:03:03.893Z",
+  "generatedAt": "2026-01-08T06:30:43.729Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

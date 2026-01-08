@@ -4,7 +4,7 @@
   "caseName": "happy_path_tron_power_unexpired_refreezes",
   "caseCategory": "happy",
   "description": "Unexpired TRON_POWER entry is re-frozen, updating frozenForTronPowerV2 and totalTronPowerWeight",
-  "generatedAt": "2026-01-04T13:03:02.516Z",
+  "generatedAt": "2026-01-08T06:30:42.100Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

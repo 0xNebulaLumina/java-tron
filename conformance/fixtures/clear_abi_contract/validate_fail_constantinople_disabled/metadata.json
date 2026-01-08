@@ -4,7 +4,7 @@
   "caseName": "validate_fail_constantinople_disabled",
   "caseCategory": "validate_fail",
   "description": "Fail when TVM Constantinople is not enabled",
-  "generatedAt": "2026-01-04T13:02:51.335Z",
+  "generatedAt": "2026-01-08T06:30:29.038Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

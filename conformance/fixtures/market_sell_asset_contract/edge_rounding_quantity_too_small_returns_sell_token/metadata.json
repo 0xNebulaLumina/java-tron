@@ -4,7 +4,7 @@
   "caseName": "edge_rounding_quantity_too_small_returns_sell_token",
   "caseCategory": "edge",
   "description": "multiplyAndDivide returns 0; sell token returned, order becomes INACTIVE",
-  "generatedAt": "2026-01-04T13:02:59.337Z",
+  "generatedAt": "2026-01-08T06:30:38.439Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_exists_v1",
   "caseCategory": "validate_fail",
   "description": "V1 mode: fail when token name already exists in asset-issue store",
-  "generatedAt": "2026-01-04T13:02:48.179Z",
+  "generatedAt": "2026-01-08T06:30:24.624Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

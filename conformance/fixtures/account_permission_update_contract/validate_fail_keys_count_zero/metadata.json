@@ -4,7 +4,7 @@
   "caseName": "validate_fail_keys_count_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when permission has zero keys",
-  "generatedAt": "2026-01-04T13:02:45.973Z",
+  "generatedAt": "2026-01-08T06:30:21.767Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

@@ -4,7 +4,7 @@
   "caseName": "happy_path_receiver_account_missing",
   "caseCategory": "happy",
   "description": "Succeed when receiver account is missing (TVM contract suicide scenario)",
-  "generatedAt": "2026-01-04T13:03:02.363Z",
+  "generatedAt": "2026-01-08T06:30:41.899Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

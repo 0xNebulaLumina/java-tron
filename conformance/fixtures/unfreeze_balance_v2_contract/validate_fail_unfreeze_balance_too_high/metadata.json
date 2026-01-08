@@ -4,7 +4,7 @@
   "caseName": "validate_fail_unfreeze_balance_too_high",
   "caseCategory": "validate_fail",
   "description": "Fail when unfreeze amount exceeds frozen amount",
-  "generatedAt": "2026-01-04T13:02:57.713Z",
+  "generatedAt": "2026-01-08T06:30:36.690Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
