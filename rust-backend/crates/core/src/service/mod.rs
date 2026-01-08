@@ -7683,7 +7683,7 @@ impl BackendService {
 
         // - Another quant must be positive
         if another_token_quant_validate <= 0 {
-            return Err("the calculated token quant must be greater than 0".to_string());
+            return Err("the calculated token quant  must be greater than 0".to_string());
         }
 
         // - Balance limits

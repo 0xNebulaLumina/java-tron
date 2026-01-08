@@ -137,7 +137,6 @@ if [ "$GENERATE_ONLY" = false ]; then
                 case "$1" in
 create_smart_contract|\
 delegate_resource_contract|\
-exchange_inject_contract|\
 freeze_balance_contract|\
 freeze_balance_v2_contract|\
 market_cancel_order_contract|\
