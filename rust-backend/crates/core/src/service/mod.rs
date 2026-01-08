@@ -3003,16 +3003,42 @@ impl BackendService {
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
-        use prost::Message;
 
-        let owner = transaction.from;
-        let owner_tron = tron_backend_common::to_tron_address(&owner);
-        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
+        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.ProposalDeleteContract") {
+                return Err(
+                    "contract type error,expected type [ProposalDeleteContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        // 1. Parse ProposalDeleteContract
+        // ProposalDeleteContract:
+        //   bytes owner_address = 1;
+        //   int64 proposal_id = 2;
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+        let (owner_address_bytes, proposal_id) = self.parse_proposal_delete_contract(contract_bytes)?;
         let readable_owner_address = hex::encode(&owner_address_bytes);
+
+        // 2. Validate owner address (java-tron: DecodeUtil.addressValid)
+        let expected_prefix = storage_adapter.address_prefix();
+        if owner_address_bytes.len() != 21 || owner_address_bytes[0] != expected_prefix {
+            return Err("Invalid address".to_string());
+        }
+
+        let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
 
         info!("ProposalDelete owner={}", owner_tron);
 
-        // 0. Validate owner exists
+        // 3. Validate owner exists
         let account_exists = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .is_some();
@@ -3021,15 +3047,9 @@ impl BackendService {
             return Err(format!("Account[{}] not exists", readable_owner_address));
         }
 
-        // 1. Parse ProposalDeleteContract
-        // ProposalDeleteContract:
-        //   bytes owner_address = 1;
-        //   int64 proposal_id = 2;
-        let proposal_id = self.parse_proposal_delete_contract(&transaction.data)?;
-
         info!("ProposalDelete: id={}", proposal_id);
 
-        // 2. Validate proposal exists (java-tron parity checks LATEST_PROPOSAL_NUM first)
+        // 4. Validate proposal exists (java-tron parity checks LATEST_PROPOSAL_NUM first)
         let latest_proposal_num = storage_adapter.get_latest_proposal_num()
             .map_err(|e| format!("Failed to get LATEST_PROPOSAL_NUM: {}", e))?;
         if proposal_id > latest_proposal_num {
@@ -3040,7 +3060,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get proposal: {}", e))?
             .ok_or_else(|| format!("Proposal[{}] not exists", proposal_id))?;
 
-        // 3. Validate owner is the proposer
+        // 5. Validate owner is the proposer
         if proposal.proposer_address != owner_address_bytes {
             return Err(format!(
                 "Proposal[{}] is not proposed by {}",
@@ -3048,7 +3068,7 @@ impl BackendService {
             ));
         }
 
-        // 4. Validate expiration / canceled status
+        // 6. Validate expiration / canceled status
         let now = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?;
         if now >= proposal.expiration_time {
@@ -3058,10 +3078,10 @@ impl BackendService {
             return Err(format!("Proposal[{}] canceled", proposal_id));
         }
 
-        // 5. Set state to CANCELED (3)
+        // 7. Set state to CANCELED (3)
         proposal.state = 3;
 
-        // 6. Persist updated proposal
+        // 8. Persist updated proposal
         storage_adapter.put_proposal(&proposal)
             .map_err(|e| format!("Failed to persist proposal: {}", e))?;
 
@@ -3092,7 +3112,8 @@ impl BackendService {
     /// ProposalDeleteContract:
     ///   bytes owner_address = 1;
     ///   int64 proposal_id = 2;
-    fn parse_proposal_delete_contract(&self, data: &[u8]) -> Result<i64, String> {
+    fn parse_proposal_delete_contract(&self, data: &[u8]) -> Result<(Vec<u8>, i64), String> {
+        let mut owner_address_bytes: Vec<u8> = Vec::new();
         let mut proposal_id: Option<i64> = None;
         let mut pos = 0;
 
@@ -3106,10 +3127,15 @@ impl BackendService {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address - skip
+                    // owner_address (bytes)
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                    pos += bytes_read;
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid ownerAddress".to_string());
+                    }
+                    owner_address_bytes = data[pos..pos + length as usize].to_vec();
+                    pos += length as usize;
                 }
                 (2, 0) => {
                     // proposal_id (int64, varint)
@@ -3126,7 +3152,8 @@ impl BackendService {
             }
         }
 
-        proposal_id.ok_or_else(|| "Missing proposal_id".to_string())
+        let id = proposal_id.ok_or_else(|| "Missing proposal_id".to_string())?;
+        Ok((owner_address_bytes, id))
     }
 
     // ==========================================================================
