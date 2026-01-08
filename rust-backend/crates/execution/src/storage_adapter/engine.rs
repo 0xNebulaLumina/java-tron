@@ -1207,6 +1207,40 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get MAX_DELEGATE_LOCK_PERIOD dynamic property (in blocks).
+    ///
+    /// Java parity:
+    /// - getMaxDelegateLockPeriod() defaults to DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL (86400)
+    ///   when missing
+    /// - supportMaxDelegateLockPeriod() requires max > default and UNFREEZE_DELAY_DAYS > 0
+    pub fn get_max_delegate_lock_period(&self) -> Result<i64> {
+        const DEFAULT_MAX_DELEGATE_LOCK_PERIOD: i64 = 86400; // DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL
+        let key = b"MAX_DELEGATE_LOCK_PERIOD";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if !data.is_empty() {
+                    Ok(data[0] as i64)
+                } else {
+                    Ok(DEFAULT_MAX_DELEGATE_LOCK_PERIOD)
+                }
+            }
+            None => Ok(DEFAULT_MAX_DELEGATE_LOCK_PERIOD),
+        }
+    }
+
+    /// Check supportMaxDelegateLockPeriod() (DynamicPropertiesStore.supportMaxDelegateLockPeriod).
+    pub fn support_max_delegate_lock_period(&self) -> Result<bool> {
+        const DEFAULT_MAX_DELEGATE_LOCK_PERIOD: i64 = 86400; // DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL
+        let max_lock_period = self.get_max_delegate_lock_period()?;
+        let unfreeze_delay_days = self.get_unfreeze_delay_days()?;
+        Ok(max_lock_period > DEFAULT_MAX_DELEGATE_LOCK_PERIOD && unfreeze_delay_days > 0)
+    }
+
     /// Get blackhole address (if crediting instead of burning)
     /// Returns:
     /// - The configured dynamic property value when present (20 raw bytes)
@@ -3411,6 +3445,24 @@ impl EngineBackedEvmStateStore {
         tron_addr[0] = self.address_prefix;
         tron_addr[1..].copy_from_slice(address.as_slice());
         tron_addr
+    }
+
+    /// Get a DelegatedResource record (lock/unlock) without mutating state.
+    pub fn get_delegated_resource(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        lock: bool,
+    ) -> Result<Option<crate::protocol::DelegatedResource>> {
+        let key = self.delegated_resource_key_v2(owner, receiver, lock);
+        match self.buffered_get(self.delegated_resource_database(), &key)? {
+            Some(data) => {
+                let dr = crate::protocol::DelegatedResource::decode(data.as_slice())
+                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+                Ok(Some(dr))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Delegate resource from owner to receiver

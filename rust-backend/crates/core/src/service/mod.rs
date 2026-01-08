@@ -5971,24 +5971,8 @@ impl BackendService {
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        let owner = transaction.from;
-        let owner_tron = add_tron_address_prefix(&owner);
-
         // Parse contract data
         let delegate_info = self.parse_delegate_resource_contract(&transaction.data)?;
-
-        let receiver_address = if delegate_info.receiver_address.len() == 21 {
-            revm_primitives::Address::from_slice(&delegate_info.receiver_address[1..])
-        } else if delegate_info.receiver_address.len() == 20 {
-            revm_primitives::Address::from_slice(&delegate_info.receiver_address)
-        } else {
-            return Err("Invalid receiver address length".to_string());
-        };
-        let receiver_tron = add_tron_address_prefix(&receiver_address);
-
-        debug!("DelegateResource: owner={}, receiver={}, balance={}, resource={}, lock={}, lock_period={}",
-               hex::encode(&owner_tron), hex::encode(&receiver_tron),
-               delegate_info.balance, delegate_info.resource, delegate_info.lock, delegate_info.lock_period);
 
         // 1. Gate check: supportDR() must be true
         let support_dr = storage_adapter.support_dr()
@@ -6004,32 +5988,26 @@ impl BackendService {
             return Err("Not support Delegate resource transaction, need to be opened by the committee".to_string());
         }
 
-        // 3. Validate owner account exists
+        // 3. Validate owner address (DecodeUtil.addressValid)
+        let expected_prefix = storage_adapter.address_prefix();
+        let owner_raw = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        if owner_raw.len() != 21 || owner_raw[0] != expected_prefix {
+            return Err("Invalid address".to_string());
+        }
+        let owner = revm_primitives::Address::from_slice(&owner_raw[1..]);
+        let readable_owner_address = hex::encode(owner_raw);
+
+        // 4. Validate owner account exists
         let owner_account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&owner_tron)))?;
+            .ok_or_else(|| format!("Account[{}] not exists", readable_owner_address))?;
 
-        // 4. Validate delegate balance >= 1 TRX
+        // 5. Validate delegate balance >= 1 TRX
         if delegate_info.balance < TRX_PRECISION as i64 {
             return Err("delegateBalance must be greater than or equal to 1 TRX".to_string());
         }
 
-        // 5. Validate receiver is different from owner
-        if owner == receiver_address {
-            return Err("receiverAddress must not be the same as ownerAddress".to_string());
-        }
-
-        // 6. Validate receiver exists
-        let receiver_account = storage_adapter.get_account_proto(&receiver_address)
-            .map_err(|e| format!("Failed to get receiver account: {}", e))?
-            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&receiver_tron)))?;
-
-        // 7. Validate receiver is not a contract
-        if receiver_account.r#type == 2 { // Contract type
-            return Err("Do not allow delegate resources to contract addresses".to_string());
-        }
-
-        // 8. Validate sufficient frozen balance for the resource type
+        // 6. Validate sufficient frozen balance for the resource type
         match delegate_info.resource {
             0 => { // BANDWIDTH
                 let frozen_v2_bandwidth = Self::get_frozen_v2_balance_for_bandwidth(&owner_account);
@@ -6048,28 +6026,94 @@ impl BackendService {
             }
         }
 
-        // 9. Get timestamp and calculate expiration
+        // 7. Validate receiver address (DecodeUtil.addressValid)
+        let receiver_raw = delegate_info.receiver_address.as_slice();
+        if receiver_raw.len() != 21 || receiver_raw[0] != expected_prefix {
+            return Err("Invalid receiverAddress".to_string());
+        }
+        let receiver_address = revm_primitives::Address::from_slice(&receiver_raw[1..]);
+        let readable_receiver_address = hex::encode(receiver_raw);
+
+        // 8. Validate receiver is different from owner
+        if owner == receiver_address {
+            return Err("receiverAddress must not be the same as ownerAddress".to_string());
+        }
+
+        // 9. Validate receiver exists
+        let receiver_account = storage_adapter.get_account_proto(&receiver_address)
+            .map_err(|e| format!("Failed to get receiver account: {}", e))?
+            .ok_or_else(|| format!("Account[{}] not exists", readable_receiver_address))?;
+
+        // 10. Get timestamp and calculate expiration
         let now = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
 
+        let support_max_delegate_lock_period = storage_adapter.support_max_delegate_lock_period()
+            .map_err(|e| format!("Failed to check supportMaxDelegateLockPeriod: {}", e))?;
+        let default_lock_period: i64 = 86400; // DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL
         let lock_period = if delegate_info.lock {
-            if delegate_info.lock_period == 0 {
-                // Default lock period: DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL
-                // DELEGATE_PERIOD = 3 days in ms, BLOCK_PRODUCED_INTERVAL = 3000 ms
-                86400 // 3 days worth of blocks
+            if support_max_delegate_lock_period {
+                if delegate_info.lock_period == 0 {
+                    default_lock_period
+                } else {
+                    delegate_info.lock_period
+                }
             } else {
-                delegate_info.lock_period
+                default_lock_period
             }
         } else {
             0
         };
+
+        if delegate_info.lock && support_max_delegate_lock_period {
+            let max_lock_period = storage_adapter.get_max_delegate_lock_period()
+                .map_err(|e| format!("Failed to get maxDelegateLockPeriod: {}", e))?;
+            if lock_period < 0 || lock_period > max_lock_period {
+                return Err(format!(
+                    "The lock period of delegate resource cannot be less than 0 and cannot exceed {}!",
+                    max_lock_period
+                ));
+            }
+
+            if let Some(dr) = storage_adapter.get_delegated_resource(&owner, &receiver_address, true)
+                .map_err(|e| format!("Failed to get DelegatedResource: {}", e))? {
+                let expire_time_for_resource = match delegate_info.resource {
+                    0 => dr.expire_time_for_bandwidth,
+                    1 => dr.expire_time_for_energy,
+                    _ => 0,
+                };
+                let remain_time = expire_time_for_resource - now as i64;
+                let lock_period_ms = lock_period.checked_mul(3000)
+                    .ok_or_else(|| "Overflow calculating lock period".to_string())?;
+                if lock_period_ms < remain_time {
+                    let resource_name = match delegate_info.resource {
+                        0 => "BANDWIDTH",
+                        1 => "ENERGY",
+                        _ => "UNKNOWN",
+                    };
+                    return Err(format!(
+                        "The lock period for {} this time cannot be less than the remaining time[{}ms] of the last lock period for {}!",
+                        resource_name, remain_time, resource_name
+                    ));
+                }
+            }
+        }
+
+        if receiver_account.r#type == 2 { // Contract type
+            return Err("Do not allow delegate resources to contract addresses".to_string());
+        }
+
+        debug!("DelegateResource: owner={}, receiver={}, balance={}, resource={}, lock={}, lock_period={}",
+               readable_owner_address, readable_receiver_address,
+               delegate_info.balance, delegate_info.resource, delegate_info.lock, lock_period);
+
         let expire_time = if delegate_info.lock {
             now as i64 + lock_period * 3000 // BLOCK_PRODUCED_INTERVAL = 3000ms
         } else {
             0
         };
 
-        // 10. Update owner account
+        // Update owner account
         let mut updated_owner = owner_account.clone();
         match delegate_info.resource {
             0 => { // BANDWIDTH
@@ -6156,7 +6200,7 @@ impl BackendService {
 
         debug!("DelegateResource: delegated {} SUN of resource {} from {} to {}",
                delegate_info.balance, delegate_info.resource,
-               hex::encode(&owner_tron), hex::encode(&receiver_tron));
+               readable_owner_address, readable_receiver_address);
 
         Ok(TronExecutionResult {
             success: true,
@@ -6483,7 +6527,7 @@ impl BackendService {
         }
 
         if receiver_address.is_empty() {
-            return Err("receiver_address is required".to_string());
+            return Err("Invalid receiverAddress".to_string());
         }
 
         Ok(DelegateResourceInfo {
