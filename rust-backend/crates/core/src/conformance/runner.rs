@@ -368,6 +368,7 @@ impl ConformanceRunner {
                     | Some(TronContractType::TransferContract)
                     | Some(TronContractType::ExchangeCreateContract)
                     | Some(TronContractType::ProposalCreateContract)
+                    | Some(TronContractType::ProposalApproveContract)
                     | Some(TronContractType::ProposalDeleteContract)
             );
 

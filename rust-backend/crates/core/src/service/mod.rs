@@ -2831,16 +2831,43 @@ impl BackendService {
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
-        use prost::Message;
 
-        let owner = transaction.from;
-        let owner_tron = tron_backend_common::to_tron_address(&owner);
-        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
+        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.ProposalApproveContract") {
+                return Err(
+                    "contract type error,expected type [ProposalApproveContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        // 1. Parse ProposalApproveContract
+        // ProposalApproveContract:
+        //   bytes owner_address = 1;
+        //   int64 proposal_id = 2;
+        //   bool is_add_approval = 3;
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+        let (owner_address_bytes, proposal_id, is_add_approval) =
+            self.parse_proposal_approve_contract(contract_bytes)?;
         let readable_owner_address = hex::encode(&owner_address_bytes);
+
+        // 2. Validate owner address (java-tron: DecodeUtil.addressValid)
+        if owner_address_bytes.len() != 21 || owner_address_bytes[0] != storage_adapter.address_prefix() {
+            return Err("Invalid address".to_string());
+        }
+
+        let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
 
         info!("ProposalApprove owner={}", owner_tron);
 
-        // 1. Validate owner exists and is a witness (java-tron parity)
+        // 3. Validate owner exists and is a witness (java-tron parity)
         let account_exists = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .is_some();
@@ -2855,13 +2882,6 @@ impl BackendService {
             warn!("Witness {} does not exist", owner_tron);
             return Err(format!("Witness[{}] not exists", readable_owner_address));
         }
-
-        // 2. Parse ProposalApproveContract
-        // ProposalApproveContract:
-        //   bytes owner_address = 1;
-        //   int64 proposal_id = 2;
-        //   bool is_add_approval = 3;
-        let (proposal_id, is_add_approval) = self.parse_proposal_approve_contract(&transaction.data)?;
 
         info!(
             "ProposalApprove: id={}, is_add={}",
@@ -2946,8 +2966,9 @@ impl BackendService {
     ///   bytes owner_address = 1;
     ///   int64 proposal_id = 2;
     ///   bool is_add_approval = 3;
-    fn parse_proposal_approve_contract(&self, data: &[u8]) -> Result<(i64, bool), String> {
-        let mut proposal_id: Option<i64> = None;
+    fn parse_proposal_approve_contract(&self, data: &[u8]) -> Result<(Vec<u8>, i64, bool), String> {
+        let mut owner_address_bytes: Vec<u8> = Vec::new();
+        let mut proposal_id: i64 = 0; // proto3 default is 0 when field is omitted
         let mut is_add_approval = false; // proto3 default is false when field is omitted
         let mut pos = 0;
 
@@ -2961,17 +2982,22 @@ impl BackendService {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address - skip
+                    // owner_address (bytes)
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                    pos += bytes_read;
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid ownerAddress".to_string());
+                    }
+                    owner_address_bytes = data[pos..pos + length as usize].to_vec();
+                    pos += length as usize;
                 }
                 (2, 0) => {
                     // proposal_id (int64, varint)
                     let (v, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read proposal_id: {}", e))?;
                     pos += bytes_read;
-                    proposal_id = Some(v as i64);
+                    proposal_id = v as i64;
                 }
                 (3, 0) => {
                     // is_add_approval (bool, varint)
@@ -2988,8 +3014,7 @@ impl BackendService {
             }
         }
 
-        let id = proposal_id.ok_or("Missing proposal_id")?;
-        Ok((id, is_add_approval))
+        Ok((owner_address_bytes, proposal_id, is_add_approval))
     }
 
     /// Execute a PROPOSAL_DELETE_CONTRACT
