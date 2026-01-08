@@ -371,6 +371,7 @@ impl ConformanceRunner {
                     | Some(TronContractType::ProposalApproveContract)
                     | Some(TronContractType::ProposalDeleteContract)
                     | Some(TronContractType::WitnessCreateContract)
+                    | Some(TronContractType::WitnessUpdateContract)
             );
 
             let (from_bytes, from_is_valid) = if tx.from.len() == 21 {
@@ -1199,6 +1200,32 @@ mod tests {
         assert_eq!(
             transaction.metadata.contract_type,
             Some(tron_backend_execution::TronContractType::WitnessCreateContract)
+        );
+    }
+
+    #[test]
+    fn test_convert_request_to_transaction_allows_empty_from_for_witness_update() {
+        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
+        proto_tx.contract_type = 8; // WitnessUpdateContract
+
+        let request = ExecuteTransactionRequest {
+            transaction: Some(proto_tx),
+            context: Some(ExecutionContext {
+                block_number: 1,
+                block_timestamp: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let transaction = ConformanceRunner::convert_request_to_transaction(&request).unwrap();
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
         );
     }
 

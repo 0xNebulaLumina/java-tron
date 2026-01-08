@@ -1394,35 +1394,44 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange, WitnessInfo};
 
+        // 1. Validate owner address (java-tron: DecodeUtil.addressValid)
+        let prefix = storage_adapter.address_prefix();
+        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        if owner_from_field.len() != 21 || owner_from_field[0] != prefix {
+            return Err("Invalid address".to_string());
+        }
+
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
 
         debug!("Executing WITNESS_UPDATE_CONTRACT for owner {}", owner_tron);
 
-        // 1. Extract and validate URL from transaction.data
-        let url_bytes = &transaction.data;
-
-        // Validate: non-empty and ≤256 bytes (mirror TransactionUtil.validUrl with allowEmpty=false)
-        if url_bytes.is_empty() || url_bytes.len() > 256 {
-            warn!("WITNESS_UPDATE_CONTRACT: Invalid url (empty={}, len={})", url_bytes.is_empty(), url_bytes.len());
-            return Err("Invalid url".to_string());
-        }
-
-        // Decode URL as UTF-8 (consistent with existing WitnessCreate handler style)
-        let new_url = String::from_utf8(url_bytes.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 in witness URL: {}", e))?;
-
-        debug!("WitnessUpdate: new URL = {}", new_url);
-
         // 2. Load owner account (required)
-        let owner_account = storage_adapter.get_account(&owner)
+        let _owner_account = storage_adapter
+            .get_account(&owner)
             .map_err(|e| format!("Failed to load owner account: {}", e))?
             .ok_or_else(|| {
                 warn!("WITNESS_UPDATE_CONTRACT: account does not exist for {}", owner_tron);
                 "account does not exist".to_string()
             })?;
 
-        // 3. Load existing witness (required)
+        // 3. Extract and validate URL from transaction.data (java-tron: TransactionUtil.validUrl)
+        let url_bytes = &transaction.data;
+        if url_bytes.is_empty() || url_bytes.len() > 256 {
+            warn!(
+                "WITNESS_UPDATE_CONTRACT: Invalid url (empty={}, len={})",
+                url_bytes.is_empty(),
+                url_bytes.len()
+            );
+            return Err("Invalid url".to_string());
+        }
+
+        // Java uses ByteString#toStringUtf8(); accept non-UTF-8 bytes lossily for parity.
+        let new_url = String::from_utf8_lossy(url_bytes).to_string();
+
+        debug!("WitnessUpdate: new URL = {}", new_url);
+
+        // 4. Load existing witness (required)
         let existing_witness = storage_adapter.get_witness(&owner)
             .map_err(|e| format!("Failed to load witness: {}", e))?
             .ok_or_else(|| {
@@ -1432,14 +1441,14 @@ impl BackendService {
 
         let old_url = existing_witness.url.clone();
 
-        // 4. Create updated witness entry with new URL, preserving address and vote_count
+        // 5. Create updated witness entry with new URL, preserving address and vote_count
         let updated_witness = WitnessInfo::new(
             existing_witness.address,
             new_url.clone(),
             existing_witness.vote_count,
         );
 
-        // 5. Persist updated witness only if URL actually changes to avoid no-op writes
+        // 6. Persist updated witness only if URL actually changes to avoid no-op writes
         if new_url != old_url {
             storage_adapter
                 .put_witness(&updated_witness)
@@ -1455,14 +1464,14 @@ impl BackendService {
             );
         }
 
-        // 6. Do not emit state changes for WitnessUpdateContract to match embedded semantics
+        // 7. Do not emit state changes for WitnessUpdateContract to match embedded semantics
         // (Java embedded CSV logs 0 state changes and empty digest for witness updates)
         let state_changes: Vec<TronStateChange> = Vec::new();
 
-        // 7. Calculate bandwidth usage
+        // 8. Calculate bandwidth usage
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        // 8. Handle AEXT tracking if enabled
+        // 9. Handle AEXT tracking if enabled
         let execution_config = self.get_execution_config()?;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
         let mut aext_map = std::collections::HashMap::new();
@@ -1498,7 +1507,7 @@ impl BackendService {
             debug!("AEXT tracked for owner {}: bandwidth_used={}", owner_tron, bandwidth_used);
         }
 
-        // 9. Return success result
+        // 10. Return success result
         debug!("WITNESS_UPDATE_CONTRACT completed successfully for {}", owner_tron);
 
         Ok(TronExecutionResult {
