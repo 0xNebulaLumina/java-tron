@@ -2449,6 +2449,83 @@ impl BackendService {
     // These contracts handle TRON governance proposals (parameter changes).
     // Java reference: ProposalCreateActuator, ProposalApproveActuator, ProposalDeleteActuator
 
+    fn is_supported_proposal_parameter_code(code: i64) -> bool {
+        // Matches java-tron's ProposalUtil.ProposalType enum codes.
+        matches!(
+            code,
+            0 | 1
+                | 2
+                | 3
+                | 4
+                | 5
+                | 6
+                | 7
+                | 8
+                | 9
+                | 10
+                | 11
+                | 12
+                | 13
+                | 14
+                | 15
+                | 16
+                | 17
+                | 18
+                | 19
+                | 20
+                | 21
+                | 22
+                | 23
+                | 24
+                | 25
+                | 26
+                | 29
+                | 30
+                | 31
+                | 32
+                | 33
+                | 35
+                | 39
+                | 40
+                | 41
+                | 44
+                | 45
+                | 46
+                | 47
+                | 48
+                | 49
+                | 51
+                | 52
+                | 53
+                | 59
+                | 60
+                | 61
+                | 62
+                | 63
+                | 65
+                | 66
+                | 67
+                | 68
+                | 69
+                | 70
+                | 71
+                | 72
+                | 73
+                | 74
+                | 75
+                | 76
+                | 77
+                | 78
+                | 79
+                | 81
+                | 82
+                | 83
+                | 87
+                | 88
+                | 89
+        )
+    }
+
     /// Execute a PROPOSAL_CREATE_CONTRACT
     /// Creates a new proposal with specified parameters
     ///
@@ -2461,18 +2538,27 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
         use tron_backend_execution::protocol::Proposal;
-        use prost::Message;
 
-        let owner = transaction.from;
-        let owner_tron = tron_backend_common::to_tron_address(&owner);
-        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
+        // 1. Parse ProposalCreateContract from transaction.data
+        // ProposalCreateContract:
+        //   bytes owner_address = 1;
+        //   map<int64, int64> parameters = 2;
+        let (owner_address_bytes, parameters) = self.parse_proposal_create_contract(&transaction.data)?;
         let readable_owner_address = hex::encode(&owner_address_bytes);
+
+        // 2. Validate owner address (java-tron: DecodeUtil.addressValid)
+        if owner_address_bytes.len() != 21 || owner_address_bytes[0] != storage_adapter.address_prefix() {
+            return Err("Invalid address".to_string());
+        }
+        let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
 
         info!("ProposalCreate owner={}", owner_tron);
 
-        // 1. Validate owner exists and is a witness
+        // 3. Validate owner exists and is a witness
         // Java: AccountStore.has(owner) then WitnessStore.has(owner)
-        let account_exists = storage_adapter.get_account_proto(&owner)
+        let account_exists = storage_adapter
+            .get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .is_some();
         if !account_exists {
@@ -2480,18 +2566,13 @@ impl BackendService {
             return Err(format!("Account[{}] not exists", readable_owner_address));
         }
 
-        let is_witness = storage_adapter.is_witness(&owner)
+        let is_witness = storage_adapter
+            .is_witness(&owner)
             .map_err(|e| format!("Failed to check witness status: {}", e))?;
         if !is_witness {
             warn!("Witness {} does not exist", owner_tron);
             return Err(format!("Witness[{}] not exists", readable_owner_address));
         }
-
-        // 2. Parse ProposalCreateContract from transaction.data
-        // ProposalCreateContract:
-        //   bytes owner_address = 1;
-        //   map<int64, int64> parameters = 2;
-        let parameters = self.parse_proposal_create_contract(&transaction.data)?;
 
         if parameters.is_empty() {
             warn!("ProposalCreate: empty parameters");
@@ -2500,12 +2581,76 @@ impl BackendService {
 
         info!("ProposalCreate: {} parameters", parameters.len());
 
-        // 3. Get next proposal ID
+        // 4. Validate proposal parameter values (java-tron: ProposalUtil.validator)
+        const LONG_VALUE: i64 = 100_000_000_000_000_000;
+        for (&code, &value) in parameters.iter() {
+            match code {
+                0 => {
+                    if value < 3 * 27 * 1000 || value > 24 * 3600 * 1000 {
+                        return Err("Bad chain parameter value, valid range is [3 * 27 * 1000,24 * 3600 * 1000]".to_string());
+                    }
+                }
+                1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 => {
+                    if value < 0 || value > LONG_VALUE {
+                        return Err(format!(
+                            "Bad chain parameter value, valid range is [0,{}]",
+                            LONG_VALUE
+                        ));
+                    }
+                }
+                9 => {
+                    if value != 1 {
+                        return Err(
+                            "This value[ALLOW_CREATION_OF_CONTRACTS] is only allowed to be 1"
+                                .to_string(),
+                        );
+                    }
+                }
+                10 => {
+                    let remove_power = storage_adapter
+                        .get_remove_the_power_of_the_gr()
+                        .map_err(|e| format!("Failed to get REMOVE_THE_POWER_OF_THE_GR: {}", e))?;
+                    if remove_power == -1 {
+                        return Err(
+                            "This proposal has been executed before and is only allowed to be executed once"
+                                .to_string(),
+                        );
+                    }
+                    if value != 1 {
+                        return Err(
+                            "This value[REMOVE_THE_POWER_OF_THE_GR] is only allowed to be 1"
+                                .to_string(),
+                        );
+                    }
+                }
+                18 => {
+                    if value != 1 {
+                        return Err(
+                            "This value[ALLOW_TVM_TRANSFER_TRC10] is only allowed to be 1"
+                                .to_string(),
+                        );
+                    }
+                    let allow_same_token_name = storage_adapter
+                        .get_allow_same_token_name()
+                        .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
+                    if allow_same_token_name == 0 {
+                        return Err("[ALLOW_SAME_TOKEN_NAME] proposal must be approved before [ALLOW_TVM_TRANSFER_TRC10] can be proposed".to_string());
+                    }
+                }
+                _ => {
+                    if !Self::is_supported_proposal_parameter_code(code) {
+                        return Err(format!("Does not support code : {}", code));
+                    }
+                }
+            }
+        }
+
+        // 5. Get next proposal ID
         let latest_proposal_num = storage_adapter.get_latest_proposal_num()
             .map_err(|e| format!("Failed to get LATEST_PROPOSAL_NUM: {}", e))?;
         let new_proposal_id = latest_proposal_num + 1;
 
-        // 4. Calculate create/expiration time (java-tron parity)
+        // 6. Calculate create/expiration time (java-tron parity)
         // Java reference: ProposalCreateActuator.execute()
         //   now = dynamicStore.getLatestBlockHeaderTimestamp()
         //   currentMaintenanceTime = dynamicStore.getNextMaintenanceTime()
@@ -2527,7 +2672,7 @@ impl BackendService {
         let round = (now3 - current_maintenance_time) / maintenance_time_interval;
         let expiration_time = current_maintenance_time + (round + 1) * maintenance_time_interval;
 
-        // 5. Create new Proposal
+        // 7. Create new Proposal
         let proposal = Proposal {
             proposal_id: new_proposal_id,
             proposer_address: owner_address_bytes,
@@ -2538,11 +2683,11 @@ impl BackendService {
             state: 0, // PENDING
         };
 
-        // 6. Persist proposal
+        // 8. Persist proposal
         storage_adapter.put_proposal(&proposal)
             .map_err(|e| format!("Failed to persist proposal: {}", e))?;
 
-        // 7. Update LATEST_PROPOSAL_NUM
+        // 9. Update LATEST_PROPOSAL_NUM
         storage_adapter.set_latest_proposal_num(new_proposal_id)
             .map_err(|e| format!("Failed to update LATEST_PROPOSAL_NUM: {}", e))?;
 
@@ -2580,7 +2725,8 @@ impl BackendService {
     fn parse_proposal_create_contract(
         &self,
         data: &[u8],
-    ) -> Result<std::collections::BTreeMap<i64, i64>, String> {
+    ) -> Result<(Vec<u8>, std::collections::BTreeMap<i64, i64>), String> {
+        let mut owner_address_bytes: Vec<u8> = Vec::new();
         let mut parameters = std::collections::BTreeMap::new();
         let mut pos = 0;
 
@@ -2594,10 +2740,15 @@ impl BackendService {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address (bytes) - skip, use transaction.from
+                    // owner_address (bytes)
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                    pos += bytes_read;
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid ownerAddress".to_string());
+                    }
+                    owner_address_bytes = data[pos..pos + length as usize].to_vec();
+                    pos += length as usize;
                 }
                 (2, 2) => {
                     // parameters (map<int64, int64>) - each entry is length-delimited
@@ -2624,7 +2775,7 @@ impl BackendService {
             }
         }
 
-        Ok(parameters)
+        Ok((owner_address_bytes, parameters))
     }
 
     /// Parse a map entry with int64 key and int64 value

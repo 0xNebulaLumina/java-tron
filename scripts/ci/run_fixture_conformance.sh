@@ -143,7 +143,6 @@ market_cancel_order_contract|\
 market_sell_asset_contract|\
 participate_asset_issue_contract|\
 proposal_approve_contract|\
-proposal_create_contract|\
 proposal_delete_contract|\
 trigger_smart_contract|\
 undelegate_resource_contract|\

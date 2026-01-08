@@ -3051,6 +3051,31 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get REMOVE_THE_POWER_OF_THE_GR dynamic property.
+    ///
+    /// java-tron uses this as a tri-state flag:
+    /// - 0: not yet executed
+    /// - 1: enabled
+    /// - -1: executed (one-time proposal)
+    ///
+    /// Default: 0 if not found.
+    pub fn get_remove_the_power_of_the_gr(&self) -> Result<i64> {
+        let key = b"REMOVE_THE_POWER_OF_THE_GR";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
     // ==========================================================================
     // Phase 2.B: AccountIdIndex Store Methods
     // ==========================================================================
