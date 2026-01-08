@@ -61,6 +61,7 @@ impl BackendService {
                 | Some(tron_backend_execution::TronContractType::CancelAllUnfreezeV2Contract)
                 | Some(tron_backend_execution::TronContractType::TransferAssetContract)
                 | Some(tron_backend_execution::TronContractType::TransferContract)
+                | Some(tron_backend_execution::TronContractType::WitnessCreateContract)
         );
         let from = match strip_tron_address_prefix(&tx.from) {
             Ok(from_bytes) => revm_primitives::Address::from_slice(from_bytes),
@@ -577,5 +578,40 @@ impl BackendService {
                 })
                 .unwrap_or_default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BackendService;
+    use crate::backend::{ContractType, TronTransaction as ProtoTx, TxKind};
+    use tron_backend_common::ExecutionConfig;
+    use tron_backend_common::ModuleManager;
+    use tron_backend_execution::ExecutionModule;
+
+    #[test]
+    fn test_convert_protobuf_transaction_allows_empty_from_for_witness_create() {
+        let config = ExecutionConfig::default();
+        let mut module_manager = ModuleManager::new();
+        module_manager.register("execution", Box::new(ExecutionModule::new(config)));
+
+        let backend_service = BackendService::new(module_manager);
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![];
+        proto_tx.tx_kind = TxKind::NonVm as i32;
+        proto_tx.contract_type = ContractType::WitnessCreateContract as i32;
+
+        let (transaction, tx_kind) = backend_service
+            .convert_protobuf_transaction(Some(&proto_tx))
+            .unwrap();
+
+        assert_eq!(tx_kind, TxKind::NonVm);
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WitnessCreateContract)
+        );
+        assert_eq!(transaction.metadata.from_raw, Some(vec![]));
     }
 }

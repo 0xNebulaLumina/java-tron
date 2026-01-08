@@ -1148,10 +1148,29 @@ impl BackendService {
         let execution_config = self.get_execution_config()?;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
-        // Extract URL from transaction data
+        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.WitnessCreateContract") {
+                return Err(
+                    "contract type error, expected type [WitnessCreateContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        // 1. Validate owner address (java-tron: DecodeUtil.addressValid)
+        let prefix = storage_adapter.address_prefix();
+        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        if owner_from_field.len() != 21 || owner_from_field[0] != prefix {
+            return Err("Invalid address".to_string());
+        }
+
+        let readable_owner = hex::encode(owner_from_field);
+
+        // 2. Extract URL from transaction data
         // For WitnessCreateContract, the data contains the URL bytes
         let url_bytes = &transaction.data;
-        // 1. Validate URL format (java-tron TransactionUtil.validUrl with allowEmpty=false)
+        // Validate URL format (java-tron TransactionUtil.validUrl with allowEmpty=false)
         if url_bytes.is_empty() || url_bytes.len() > 256 {
             return Err("Invalid url".to_string());
         }
@@ -1161,22 +1180,18 @@ impl BackendService {
 
         debug!("WitnessCreate URL: {}", url);
 
-        // Precompute readable owner address (21-byte TRON address hex) for parity error messages.
-        let owner_tron_21 = storage_adapter.to_tron_address_21(&transaction.from);
-        let readable_owner = revm_primitives::hex::encode(owner_tron_21);
-
-        // 2. Load owner account
+        // 3. Load owner account
         let owner_account = storage_adapter.get_account(&transaction.from)
             .map_err(|e| format!("Failed to load owner account: {}", e))?
             .ok_or_else(|| format!("account[{}] not exists", readable_owner))?;
 
-        // 3. Check if owner is already a witness
+        // 4. Check if owner is already a witness
         if storage_adapter.is_witness(&transaction.from)
             .map_err(|e| format!("Failed to check witness status: {}", e))? {
             return Err(format!("Witness[{}] has existed", readable_owner));
         }
 
-        // 4. Get dynamic properties
+        // 5. Get dynamic properties
         let account_upgrade_cost = storage_adapter.get_account_upgrade_cost()
             .map_err(|e| format!("Failed to get AccountUpgradeCost: {}", e))?;
         let allow_multi_sign = storage_adapter.get_allow_multi_sign()
@@ -1191,15 +1206,15 @@ impl BackendService {
             support_blackhole
         );
 
-        // 5. Validate sufficient balance
+        // 6. Validate sufficient balance
         if owner_account.balance < revm_primitives::U256::from(account_upgrade_cost) {
             return Err("balance < AccountUpgradeCost".to_string());
         }
 
-        // 6. Prepare state changes
+        // 7. Prepare state changes
         let mut state_changes = Vec::new();
 
-        // 7. Create witness entry
+        // 8. Create witness entry
         let witness_info = tron_backend_execution::WitnessInfo::new(
             transaction.from,
             url,
@@ -1211,7 +1226,7 @@ impl BackendService {
 
         debug!("Created witness entry for address {:?}", transaction.from);
 
-        // 8. Mark owner account as witness (Account.is_witness = true)
+        // 9. Mark owner account as witness (Account.is_witness = true)
         let mut owner_account_proto = storage_adapter.get_account_proto(&transaction.from)
             .map_err(|e| format!("Failed to load owner account proto: {}", e))?
             .ok_or_else(|| format!("account[{}] not exists", readable_owner))?;
@@ -1219,7 +1234,7 @@ impl BackendService {
         storage_adapter.put_account_proto(&transaction.from, &owner_account_proto)
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
-        // 9. Update owner account - deduct cost
+        // 10. Update owner account - deduct cost
         let new_owner_account = revm_primitives::AccountInfo {
             balance: owner_account.balance - revm_primitives::U256::from(account_upgrade_cost),
             nonce: owner_account.nonce,
