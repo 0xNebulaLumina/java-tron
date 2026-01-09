@@ -4,7 +4,7 @@
   "caseName": "edge_multiple_entries_same_resource_sums",
   "caseCategory": "happy",
   "description": "Multiple unexpired entries of same resource: amounts sum for refreeze",
-  "generatedAt": "2026-01-08T06:30:41.936Z",
+  "generatedAt": "2026-01-09T04:18:05.864Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

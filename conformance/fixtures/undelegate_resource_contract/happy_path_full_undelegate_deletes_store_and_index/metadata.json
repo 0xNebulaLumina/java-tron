@@ -4,7 +4,7 @@
   "caseName": "happy_path_full_undelegate_deletes_store_and_index",
   "caseCategory": "happy",
   "description": "Full undelegate removes DelegatedResourceStore entry and updates DelegatedResourceAccountIndex",
-  "generatedAt": "2026-01-08T06:30:41.893Z",
+  "generatedAt": "2026-01-09T04:18:05.760Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

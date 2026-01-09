@@ -4,7 +4,7 @@
   "caseName": "validate_fail_receiver_equals_owner",
   "caseCategory": "validate_fail",
   "description": "Fail when receiver address equals owner address",
-  "generatedAt": "2026-01-08T06:30:42.051Z",
+  "generatedAt": "2026-01-09T04:18:06.019Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,
