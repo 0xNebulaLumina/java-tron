@@ -6231,25 +6231,6 @@ impl BackendService {
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        let owner = transaction.from;
-        let owner_tron = add_tron_address_prefix(&owner);
-
-        // Parse contract data
-        let undelegate_info = self.parse_undelegate_resource_contract(&transaction.data)?;
-
-        let receiver_address = if undelegate_info.receiver_address.len() == 21 {
-            revm_primitives::Address::from_slice(&undelegate_info.receiver_address[1..])
-        } else if undelegate_info.receiver_address.len() == 20 {
-            revm_primitives::Address::from_slice(&undelegate_info.receiver_address)
-        } else {
-            return Err("Invalid receiver address length".to_string());
-        };
-        let receiver_tron = add_tron_address_prefix(&receiver_address);
-
-        debug!("UnDelegateResource: owner={}, receiver={}, balance={}, resource={}",
-               hex::encode(&owner_tron), hex::encode(&receiver_tron),
-               undelegate_info.balance, undelegate_info.resource);
-
         // 1. Gate checks
         let support_dr = storage_adapter.support_dr()
             .map_err(|e| format!("Failed to check supportDR: {}", e))?;
@@ -6263,44 +6244,107 @@ impl BackendService {
             return Err("Not support unDelegate resource transaction, need to be opened by the committee".to_string());
         }
 
-        // 2. Validate owner exists
+        // 2. Validate owner address (DecodeUtil.addressValid)
+        let expected_prefix = storage_adapter.address_prefix();
+        let owner_raw = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        if owner_raw.len() != 21 || owner_raw[0] != expected_prefix {
+            return Err("Invalid address".to_string());
+        }
+        let owner = revm_primitives::Address::from_slice(&owner_raw[1..]);
+        let readable_owner_address = hex::encode(owner_raw);
+
+        // 3. Validate owner exists
         let owner_account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&owner_tron)))?;
+            .ok_or_else(|| format!("Account[{}] does not exist", readable_owner_address))?;
 
-        // 3. Validate balance > 0
-        if undelegate_info.balance <= 0 {
-            return Err("unDelegateBalance must be more than 0 TRX".to_string());
+        // Parse contract data
+        let undelegate_info = self.parse_undelegate_resource_contract(&transaction.data)?;
+
+        // 4. Validate receiver address (DecodeUtil.addressValid)
+        let receiver_raw = undelegate_info.receiver_address.as_slice();
+        if receiver_raw.len() != 21 || receiver_raw[0] != expected_prefix {
+            return Err("Invalid receiverAddress".to_string());
         }
+        let receiver_address = revm_primitives::Address::from_slice(&receiver_raw[1..]);
+        let readable_receiver_address = hex::encode(receiver_raw);
 
-        // 4. Validate receiver different from owner
+        // 5. Validate receiver different from owner
         if owner == receiver_address {
             return Err("receiverAddress must not be the same as ownerAddress".to_string());
         }
 
-        // 5. Get timestamp
+        // 6. Get timestamp
         let now = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
 
-        // 6. Check DelegatedResource exists and has sufficient balance
-        let delegate_balance = storage_adapter.get_available_delegate_balance(
-            &owner,
-            &receiver_address,
-            undelegate_info.resource == 0,
-            now as i64,
-        ).map_err(|e| format!("Failed to get delegated balance: {}", e))?;
-
-        if delegate_balance < undelegate_info.balance {
-            let resource_name = if undelegate_info.resource == 0 { "BANDWIDTH" } else { "Energy" };
-            return Err(format!("insufficient delegatedFrozenBalance({}), request={}, unlock_balance={}",
-                               resource_name, undelegate_info.balance, delegate_balance));
+        // 7. Load DelegatedResource records and validate existence
+        let unlock_resource = storage_adapter
+            .get_delegated_resource(&owner, &receiver_address, false)
+            .map_err(|e| format!("Failed to get DelegatedResource: {}", e))?;
+        let lock_resource = storage_adapter
+            .get_delegated_resource(&owner, &receiver_address, true)
+            .map_err(|e| format!("Failed to get DelegatedResource: {}", e))?;
+        if unlock_resource.is_none() && lock_resource.is_none() {
+            return Err("delegated Resource does not exist".to_string());
         }
 
-        // 7. Get receiver account (might not exist if contract was destroyed)
+        // 8. Validate balance > 0
+        if undelegate_info.balance <= 0 {
+            return Err("unDelegateBalance must be more than 0 TRX".to_string());
+        }
+
+        // 9. Validate resource and available balance
+        match undelegate_info.resource {
+            0 => { // BANDWIDTH
+                let mut delegate_balance = unlock_resource
+                    .as_ref()
+                    .map(|r| r.frozen_balance_for_bandwidth)
+                    .unwrap_or(0);
+                if let Some(lock) = lock_resource.as_ref() {
+                    if lock.expire_time_for_bandwidth < now {
+                        delegate_balance += lock.frozen_balance_for_bandwidth;
+                    }
+                }
+                if delegate_balance < undelegate_info.balance {
+                    return Err(format!(
+                        "insufficient delegatedFrozenBalance(BANDWIDTH), request={}, unlock_balance={}",
+                        undelegate_info.balance, delegate_balance
+                    ));
+                }
+            }
+            1 => { // ENERGY
+                let mut delegate_balance = unlock_resource
+                    .as_ref()
+                    .map(|r| r.frozen_balance_for_energy)
+                    .unwrap_or(0);
+                if let Some(lock) = lock_resource.as_ref() {
+                    if lock.expire_time_for_energy < now {
+                        delegate_balance += lock.frozen_balance_for_energy;
+                    }
+                }
+                if delegate_balance < undelegate_info.balance {
+                    return Err(format!(
+                        "insufficient delegateFrozenBalance(Energy), request={}, unlock_balance={}",
+                        undelegate_info.balance, delegate_balance
+                    ));
+                }
+            }
+            _ => {
+                return Err("ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]".to_string());
+            }
+        }
+
+        debug!(
+            "UnDelegateResource: owner={}, receiver={}, balance={}, resource={}",
+            readable_owner_address, readable_receiver_address, undelegate_info.balance, undelegate_info.resource
+        );
+
+        // 10. Get receiver account (might not exist if contract was destroyed)
         let receiver_account_opt = storage_adapter.get_account_proto(&receiver_address)
             .map_err(|e| format!("Failed to get receiver account: {}", e))?;
 
-        // 8. Update receiver if exists (reduce acquired balance)
+        // 11. Update receiver if exists (reduce acquired balance)
         let mut updated_receiver_opt = None;
         if let Some(receiver_account) = receiver_account_opt.as_ref() {
             let mut updated_receiver = receiver_account.clone();
@@ -6351,7 +6395,7 @@ impl BackendService {
             updated_receiver_opt = Some(updated_receiver);
         }
 
-        // 9. Update DelegatedResourceStore
+        // 12. Update DelegatedResourceStore
         storage_adapter.undelegate_resource(
             &owner,
             &receiver_address,
@@ -6360,7 +6404,20 @@ impl BackendService {
             now as i64,
         ).map_err(|e| format!("Failed to update DelegatedResource: {}", e))?;
 
-        // 10. Update owner account (add back to frozen, reduce delegated)
+        // 13. If both lock/unlock records are gone, remove DelegatedResourceAccountIndex entries.
+        let unlock_after = storage_adapter
+            .get_delegated_resource(&owner, &receiver_address, false)
+            .map_err(|e| format!("Failed to load DelegatedResource: {}", e))?;
+        let lock_after = storage_adapter
+            .get_delegated_resource(&owner, &receiver_address, true)
+            .map_err(|e| format!("Failed to load DelegatedResource: {}", e))?;
+        if unlock_after.is_none() && lock_after.is_none() {
+            storage_adapter
+                .undelegate_resource_account_index(&owner, &receiver_address)
+                .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex: {}", e))?;
+        }
+
+        // 14. Update owner account (add back to frozen, reduce delegated)
         let mut updated_owner = owner_account.clone();
         match undelegate_info.resource {
             0 => { // BANDWIDTH
@@ -6374,7 +6431,7 @@ impl BackendService {
             _ => {}
         }
 
-        // 11. Persist accounts
+        // 15. Persist accounts
         storage_adapter.put_account_proto(&owner, &updated_owner)
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
@@ -6383,7 +6440,7 @@ impl BackendService {
                 .map_err(|e| format!("Failed to persist receiver account: {}", e))?;
         }
 
-        // 12. Build state changes
+        // 16. Build state changes
         let mut state_changes = vec![
             TronStateChange::AccountChange {
                 address: owner,
@@ -6424,7 +6481,7 @@ impl BackendService {
 
         debug!("UnDelegateResource: undelegated {} SUN of resource {} from {} back to {}",
                undelegate_info.balance, undelegate_info.resource,
-               hex::encode(&receiver_tron), hex::encode(&owner_tron));
+               readable_receiver_address, readable_owner_address);
 
         Ok(TronExecutionResult {
             success: true,
@@ -6603,7 +6660,7 @@ impl BackendService {
         }
 
         if receiver_address.is_empty() {
-            return Err("receiver_address is required".to_string());
+            return Err("Invalid receiverAddress".to_string());
         }
 
         Ok(UnDelegateResourceInfo {

@@ -1437,6 +1437,9 @@ public class ResourceDelegationFixtureGeneratorTest extends BaseTest {
 
   @Test
   public void generateUnDelegateResource_unDelegateBalanceZero() throws Exception {
+    // Seed a delegation so validation reaches the balance check.
+    createDelegation(OWNER_ADDRESS, RECEIVER_ADDRESS, ResourceCode.BANDWIDTH, 10_000_000_000L);
+
     UnDelegateResourceContract contract = UnDelegateResourceContract.newBuilder()
         .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
         .setReceiverAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
@@ -1455,6 +1458,7 @@ public class ResourceDelegationFixtureGeneratorTest extends BaseTest {
         .caseCategory("validate_fail")
         .description("Fail when unDelegateBalance is zero")
         .database("account")
+        .database("DelegatedResource")
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("unDelegateBalance must be more than 0 TRX")

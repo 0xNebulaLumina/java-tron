@@ -3485,7 +3485,7 @@ impl EngineBackedEvmStateStore {
                        hex::encode(owner), hex::encode(receiver), is_bandwidth, balance, lock, expire_time);
 
         // Get or create DelegatedResource
-        let mut dr = match self.storage_engine.get(self.delegated_resource_database(), &key)? {
+        let mut dr = match self.buffered_get(self.delegated_resource_database(), &key)? {
             Some(data) => {
                 crate::protocol::DelegatedResource::decode(&data[..])
                     .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?
@@ -3524,7 +3524,7 @@ impl EngineBackedEvmStateStore {
         let lock_key = self.delegated_resource_key_v2(from, to, true);
         let unlock_key = self.delegated_resource_key_v2(from, to, false);
 
-        let Some(lock_data) = self.storage_engine.get(self.delegated_resource_database(), &lock_key)? else {
+        let Some(lock_data) = self.buffered_get(self.delegated_resource_database(), &lock_key)? else {
             return Ok(());
         };
 
@@ -3536,7 +3536,7 @@ impl EngineBackedEvmStateStore {
             return Ok(());
         }
 
-        let mut unlock_resource = match self.storage_engine.get(self.delegated_resource_database(), &unlock_key)? {
+        let mut unlock_resource = match self.buffered_get(self.delegated_resource_database(), &unlock_key)? {
             Some(data) => crate::protocol::DelegatedResource::decode(&data[..])
                 .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource unlock record: {}", e))?,
             None => crate::protocol::DelegatedResource {
@@ -3599,7 +3599,7 @@ impl EngineBackedEvmStateStore {
                        hex::encode(owner), hex::encode(receiver), is_bandwidth, balance);
 
         // Get existing DelegatedResource
-        let data = self.storage_engine.get(self.delegated_resource_database(), &key)?
+        let data = self.buffered_get(self.delegated_resource_database(), &key)?
             .ok_or_else(|| anyhow::anyhow!("DelegatedResource not found"))?;
 
         let mut dr = crate::protocol::DelegatedResource::decode(&data[..])
@@ -3640,7 +3640,7 @@ impl EngineBackedEvmStateStore {
 
         let mut balance = 0i64;
 
-        if let Some(data) = self.storage_engine.get(self.delegated_resource_database(), &unlock_key)? {
+        if let Some(data) = self.buffered_get(self.delegated_resource_database(), &unlock_key)? {
             let dr = crate::protocol::DelegatedResource::decode(&data[..])
                 .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
             if is_bandwidth {
@@ -3650,7 +3650,7 @@ impl EngineBackedEvmStateStore {
             }
         }
 
-        if let Some(data) = self.storage_engine.get(self.delegated_resource_database(), &lock_key)? {
+        if let Some(data) = self.buffered_get(self.delegated_resource_database(), &lock_key)? {
             let dr = crate::protocol::DelegatedResource::decode(&data[..])
                 .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
             if is_bandwidth {
