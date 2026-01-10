@@ -61,6 +61,7 @@ impl BackendService {
                 | Some(tron_backend_execution::TronContractType::CancelAllUnfreezeV2Contract)
                 | Some(tron_backend_execution::TronContractType::TransferAssetContract)
                 | Some(tron_backend_execution::TronContractType::TransferContract)
+                | Some(tron_backend_execution::TronContractType::VoteWitnessContract)
                 | Some(tron_backend_execution::TronContractType::WitnessCreateContract)
                 | Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
         );

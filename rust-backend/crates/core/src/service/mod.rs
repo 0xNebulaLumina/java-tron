@@ -1531,7 +1531,7 @@ impl BackendService {
 
     /// Parse VoteWitnessContract from protobuf bytes
     /// message VoteWitnessContract {
-    ///   bytes owner_address = 1;     // field 1 (informational, use transaction.from)
+    ///   bytes owner_address = 1;     // field 1 (validated; used as owner)
     ///   repeated Vote votes = 2;     // field 2
     ///   bool support = 3;            // field 3 (not used)
     /// }
@@ -1539,7 +1539,8 @@ impl BackendService {
     ///   bytes vote_address = 1;      // field 1
     ///   int64 vote_count = 2;        // field 2
     /// }
-    fn parse_vote_witness_contract(data: &[u8]) -> Result<Vec<(revm::primitives::Address, u64)>, String> {
+    fn parse_vote_witness_contract(data: &[u8]) -> Result<(Vec<u8>, Vec<(Vec<u8>, i64)>), String> {
+        let mut owner_address = Vec::new();
         let mut votes = Vec::new();
         let mut pos = 0;
 
@@ -1553,11 +1554,18 @@ impl BackendService {
             let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
-                (1, 2) => { // owner_address (length-delimited) - skip, use transaction.from
+                (1, 2) => { // owner_address (length-delimited)
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
-                    pos += bytes_read + length as usize;
-                },
+                    pos += bytes_read;
+
+                    if pos + length as usize > data.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+
+                    owner_address = data[pos..pos + length as usize].to_vec();
+                    pos += length as usize;
+                }
                 (2, 2) => { // votes (length-delimited, repeated)
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read vote length: {}", e))?;
@@ -1573,7 +1581,7 @@ impl BackendService {
                     // Parse Vote message
                     let (vote_address, vote_count) = Self::parse_vote(vote_data)?;
                     votes.push((vote_address, vote_count));
-                },
+                }
                 (3, 0) => { // support (bool, varint) - not used, skip
                     let (_, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read support: {}", e))?;
@@ -1581,21 +1589,20 @@ impl BackendService {
                 },
                 _ => {
                     // Skip unknown field
-                    pos = Self::skip_protobuf_field(&data[pos..], wire_type)
+                    let bytes_to_skip = Self::skip_protobuf_field(&data[pos..], wire_type)
                         .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += bytes_to_skip;
                 }
             }
         }
 
-        Ok(votes)
+        Ok((owner_address, votes))
     }
 
     /// Parse a single Vote message from protobuf bytes
-    fn parse_vote(data: &[u8]) -> Result<(revm::primitives::Address, u64), String> {
-        use revm::primitives::Address;
-
-        let mut vote_address: Option<Address> = None;
-        let mut vote_count: Option<u64> = None;
+    fn parse_vote(data: &[u8]) -> Result<(Vec<u8>, i64), String> {
+        let mut vote_address = Vec::new();
+        let mut vote_count: Option<i64> = None;
         let mut pos = 0;
 
         while pos < data.len() {
@@ -1617,46 +1624,25 @@ impl BackendService {
                         return Err("Invalid vote_address length".to_string());
                     }
 
-                    let addr_bytes = &data[pos..pos + length as usize];
+                    vote_address = data[pos..pos + length as usize].to_vec();
                     pos += length as usize;
-
-                    // Remove TRON address prefix if present (0x41 mainnet / 0xa0 testnet)
-                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
-                        &addr_bytes[1..]
-                    } else if addr_bytes.len() == 20 {
-                        addr_bytes
-                    } else {
-                        return Err(format!("Invalid vote_address length: {}", addr_bytes.len()));
-                    };
-
-                    if evm_addr.len() != 20 {
-                        return Err(format!("Invalid EVM address length: {}", evm_addr.len()));
-                    }
-
-                    let mut addr = [0u8; 20];
-                    addr.copy_from_slice(evm_addr);
-                    vote_address = Some(Address::from(addr));
                 },
                 (2, 0) => { // vote_count (varint)
                     let (count, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read vote_count: {}", e))?;
                     pos += bytes_read;
-                    vote_count = Some(count);
+                    vote_count = Some(count as i64);
                 },
                 _ => {
                     // Skip unknown field
-                    let new_pos = Self::skip_protobuf_field(&data[pos..], wire_type)
+                    let bytes_to_skip = Self::skip_protobuf_field(&data[pos..], wire_type)
                         .map_err(|e| format!("Failed to skip vote field: {}", e))?;
-                    pos = new_pos;
+                    pos += bytes_to_skip;
                 }
             }
         }
 
-        Ok((
-            vote_address.ok_or_else(|| "Missing vote_address".to_string())?,
-            // proto3 default for missing numeric fields is 0; allow validation to reject it.
-            vote_count.unwrap_or(0),
-        ))
+        Ok((vote_address, vote_count.unwrap_or(0)))
     }
 
     /// Skip a protobuf field based on wire type
@@ -1688,50 +1674,64 @@ impl BackendService {
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
+        use revm_primitives::Address;
         use tron_backend_execution::{TronExecutionResult, TronStateChange, VotesRecord};
 
         let execution_config = self.get_execution_config()?;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
-        let owner = transaction.from;
-        let owner_tron = tron_backend_common::to_tron_address(&owner);
-        let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
-        let readable_owner_address = hex::encode(&owner_address_bytes);
-
-        info!("VoteWitness owner={} vote_count=?",
-              owner_tron);
+        let prefix = storage_adapter.address_prefix();
 
         // 1. Parse VoteWitnessContract from transaction data
-        let votes = Self::parse_vote_witness_contract(&transaction.data)
+        let (owner_address_raw, votes_raw) = Self::parse_vote_witness_contract(&transaction.data)
             .map_err(|e| format!("Failed to parse VoteWitnessContract: {}", e))?;
 
-        info!("Parsed {} votes from VoteWitnessContract", votes.len());
+        // 2. Validate owner address (java-tron: DecodeUtil.addressValid)
+        if owner_address_raw.len() != 21 || owner_address_raw[0] != prefix {
+            return Err("Invalid address".to_string());
+        }
+        let owner = Address::from_slice(&owner_address_raw[1..]);
 
-        // 2. Validate votes count
-        if votes.is_empty() {
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+        let readable_owner_address = hex::encode(&owner_address_raw);
+
+        info!("VoteWitness owner={} vote_count=?", owner_tron);
+        info!("Parsed {} votes from VoteWitnessContract", votes_raw.len());
+
+        // 3. Validate votes count
+        if votes_raw.is_empty() {
             warn!("VoteNumber must more than 0");
             return Err("VoteNumber must more than 0".to_string());
         }
 
-        if votes.len() > MAX_VOTE_NUMBER {
+        if votes_raw.len() > MAX_VOTE_NUMBER {
             warn!("VoteNumber more than maxVoteNumber {}", MAX_VOTE_NUMBER);
             return Err(format!("VoteNumber more than maxVoteNumber {}", MAX_VOTE_NUMBER));
         }
 
-        // 3. Validate each vote and compute total
+        // 4. Validate each vote and compute total
         let mut sum_trx: u64 = 0;
-        for (vote_address, vote_count) in &votes {
+        let mut votes: Vec<(Address, u64)> = Vec::with_capacity(votes_raw.len());
+        for (vote_address_raw, vote_count) in &votes_raw {
+            // Validate vote_address (java-tron: DecodeUtil.addressValid)
+            if vote_address_raw.len() != 21 || vote_address_raw[0] != prefix {
+                return Err("Invalid vote address!".to_string());
+            }
+            let vote_address = Address::from_slice(&vote_address_raw[1..]);
+
             // Validate vote_count > 0
-            if *vote_count == 0 {
+            if *vote_count <= 0 {
                 warn!("vote count must be greater than 0");
                 return Err("vote count must be greater than 0".to_string());
             }
+            let vote_count_u64: u64 = (*vote_count)
+                .try_into()
+                .map_err(|_| "vote count overflow".to_string())?;
 
-            let vote_address_bytes = storage_adapter.to_tron_address_21(vote_address).to_vec();
-            let readable_vote_address = hex::encode(&vote_address_bytes);
+            let readable_vote_address = hex::encode(vote_address_raw);
 
             // Validate witness exists
-            let account_exists = storage_adapter.get_account_proto(vote_address)
+            let account_exists = storage_adapter.get_account_proto(&vote_address)
                 .map_err(|e| format!("Failed to get account: {}", e))?
                 .is_some();
             if !account_exists {
@@ -1739,7 +1739,7 @@ impl BackendService {
                 return Err(format!("Account[{}] not exists", readable_vote_address));
             }
 
-            let is_witness = storage_adapter.is_witness(vote_address)
+            let is_witness = storage_adapter.is_witness(&vote_address)
                 .map_err(|e| format!("Failed to check witness status: {}", e))?;
             if !is_witness {
                 warn!("Witness {} not exists", readable_vote_address);
@@ -1747,11 +1747,12 @@ impl BackendService {
             }
 
             // Add to sum
-            sum_trx = sum_trx.checked_add(*vote_count)
+            sum_trx = sum_trx.checked_add(vote_count_u64)
                 .ok_or_else(|| "Vote count overflow".to_string())?;
+            votes.push((vote_address, vote_count_u64));
         }
 
-        // 3.5 Validate owner exists
+        // 4.5 Validate owner exists
         let owner_exists = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .is_some();
