@@ -3430,6 +3430,17 @@ impl EngineBackedEvmStateStore {
         db_names::delegation::DELEGATED_RESOURCE_ACCOUNT_INDEX
     }
 
+    /// Create V1 key for DelegatedResource store (from -> to).
+    /// Java reference: DelegatedResourceCapsule.createDbKey(from, to)
+    fn delegated_resource_key_v1(&self, from: &Address, to: &Address) -> Vec<u8> {
+        let from_tron = self.to_tron_address_21(from);
+        let to_tron = self.to_tron_address_21(to);
+        let mut key = Vec::with_capacity(42);
+        key.extend_from_slice(&from_tron);
+        key.extend_from_slice(&to_tron);
+        key
+    }
+
     /// Create V2 key for DelegatedResource store (from -> to).
     /// Lock semantics match Java: lock=false uses 0x01 prefix, lock=true uses 0x02 prefix.
     fn delegated_resource_key_v2(&self, from: &Address, to: &Address, lock: bool) -> Vec<u8> {
@@ -3445,6 +3456,131 @@ impl EngineBackedEvmStateStore {
         tron_addr[0] = self.address_prefix;
         tron_addr[1..].copy_from_slice(address.as_slice());
         tron_addr
+    }
+
+    /// Get a DelegatedResource record for V1 delegation (FreezeBalanceContract delegation).
+    pub fn get_delegated_resource_v1(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+    ) -> Result<Option<crate::protocol::DelegatedResource>> {
+        let key = self.delegated_resource_key_v1(owner, receiver);
+        match self.buffered_get(self.delegated_resource_database(), &key)? {
+            Some(data) => {
+                let dr = crate::protocol::DelegatedResource::decode(data.as_slice())
+                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+                Ok(Some(dr))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Delegate resource (V1 semantics, used by FreezeBalanceContract delegation).
+    ///
+    /// Java oracle: FreezeBalanceActuator#delegateResource (DelegatedResourceCapsule.createDbKey)
+    pub fn delegate_resource_v1(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        is_bandwidth: bool,
+        balance: i64,
+        expire_time: i64,
+    ) -> Result<()> {
+        let key = self.delegated_resource_key_v1(owner, receiver);
+        let owner_tron = self.to_tron_address_21(owner);
+        let receiver_tron = self.to_tron_address_21(receiver);
+
+        let mut dr = match self.buffered_get(self.delegated_resource_database(), &key)? {
+            Some(data) => crate::protocol::DelegatedResource::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?,
+            None => crate::protocol::DelegatedResource {
+                from: owner_tron.to_vec(),
+                to: receiver_tron.to_vec(),
+                ..Default::default()
+            },
+        };
+
+        if is_bandwidth {
+            dr.frozen_balance_for_bandwidth = dr
+                .frozen_balance_for_bandwidth
+                .checked_add(balance)
+                .ok_or_else(|| anyhow::anyhow!("Overflow updating frozen_balance_for_bandwidth"))?;
+            dr.expire_time_for_bandwidth = expire_time;
+        } else {
+            dr.frozen_balance_for_energy = dr
+                .frozen_balance_for_energy
+                .checked_add(balance)
+                .ok_or_else(|| anyhow::anyhow!("Overflow updating frozen_balance_for_energy"))?;
+            dr.expire_time_for_energy = expire_time;
+        }
+
+        self.buffered_put(
+            self.delegated_resource_database(),
+            key,
+            dr.encode_to_vec(),
+        )?;
+
+        Ok(())
+    }
+
+    /// Update DelegatedResourceAccountIndex for V1 delegation (FreezeBalanceContract delegation).
+    ///
+    /// Java oracle: FreezeBalanceActuator#delegateResource when supportAllowDelegateOptimization == false.
+    pub fn delegate_resource_account_index_v1(&self, owner: &Address, receiver: &Address) -> Result<()> {
+        let owner_tron = self.to_tron_address_21(owner).to_vec();
+        let receiver_tron = self.to_tron_address_21(receiver).to_vec();
+
+        // Owner index: add receiver to to_accounts.
+        let owner_key = owner_tron.clone();
+        let mut owner_index = match self
+            .buffered_get(self.delegated_resource_account_index_database(), &owner_key)?
+        {
+            Some(data) => crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?,
+            None => crate::protocol::DelegatedResourceAccountIndex {
+                account: owner_tron.clone(),
+                from_accounts: Vec::new(),
+                to_accounts: Vec::new(),
+                ..Default::default()
+            },
+        };
+
+        if !owner_index.to_accounts.iter().any(|a| a == &receiver_tron) {
+            owner_index.to_accounts.push(receiver_tron.clone());
+        }
+
+        self.buffered_put(
+            self.delegated_resource_account_index_database(),
+            owner_key,
+            owner_index.encode_to_vec(),
+        )?;
+
+        // Receiver index: add owner to from_accounts.
+        let receiver_key = receiver_tron.clone();
+        let mut receiver_index = match self
+            .buffered_get(self.delegated_resource_account_index_database(), &receiver_key)?
+        {
+            Some(data) => crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?,
+            None => crate::protocol::DelegatedResourceAccountIndex {
+                account: receiver_tron.clone(),
+                from_accounts: Vec::new(),
+                to_accounts: Vec::new(),
+                ..Default::default()
+            },
+        };
+
+        if !receiver_index.from_accounts.iter().any(|a| a == &owner_tron) {
+            receiver_index.from_accounts.push(owner_tron);
+        }
+
+        self.buffered_put(
+            self.delegated_resource_account_index_database(),
+            receiver_key,
+            receiver_index.encode_to_vec(),
+        )?;
+
+        Ok(())
     }
 
     /// Get a DelegatedResource record (lock/unlock) without mutating state.
@@ -4102,6 +4238,52 @@ impl EngineBackedEvmStateStore {
                 }
             },
             None => Ok(8_640_000_000) // Default value
+        }
+    }
+
+    /// Get MAX_FROZEN_TIME dynamic property (FreezeBalanceContract validation).
+    ///
+    /// Java stores this as a 4-byte big-endian int under key "MAX_FROZEN_TIME".
+    /// Default: 3 (DynamicPropertiesStore initialization).
+    pub fn get_max_frozen_time(&self) -> Result<i64> {
+        let key = b"MAX_FROZEN_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Ok(3)
+                }
+            }
+            None => Ok(3),
+        }
+    }
+
+    /// Get MIN_FROZEN_TIME dynamic property (FreezeBalanceContract validation).
+    ///
+    /// Java stores this as a 4-byte big-endian int under key "MIN_FROZEN_TIME".
+    /// Default: 3 (DynamicPropertiesStore initialization).
+    pub fn get_min_frozen_time(&self) -> Result<i64> {
+        let key = b"MIN_FROZEN_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Ok(3)
+                }
+            }
+            None => Ok(3),
         }
     }
 
