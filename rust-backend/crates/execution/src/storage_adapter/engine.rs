@@ -3583,6 +3583,69 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
+    /// Store a DelegatedResource record for V1 delegation.
+    pub fn put_delegated_resource_v1(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        resource: &crate::protocol::DelegatedResource,
+    ) -> Result<()> {
+        let key = self.delegated_resource_key_v1(owner, receiver);
+        self.buffered_put(
+            self.delegated_resource_database(),
+            key,
+            resource.encode_to_vec(),
+        )?;
+        Ok(())
+    }
+
+    /// Delete a DelegatedResource record for V1 delegation.
+    pub fn delete_delegated_resource_v1(&self, owner: &Address, receiver: &Address) -> Result<()> {
+        let key = self.delegated_resource_key_v1(owner, receiver);
+        self.buffered_delete(self.delegated_resource_database(), key)?;
+        Ok(())
+    }
+
+    /// Remove DelegatedResourceAccountIndex entries for V1 delegation (UnfreezeBalanceContract).
+    ///
+    /// Java oracle: UnfreezeBalanceActuator#execute when supportAllowDelegateOptimization == false.
+    pub fn undelegate_resource_account_index_v1(&self, owner: &Address, receiver: &Address) -> Result<()> {
+        let owner_tron = self.to_tron_address_21(owner).to_vec();
+        let receiver_tron = self.to_tron_address_21(receiver).to_vec();
+
+        // Owner index: remove receiver from to_accounts.
+        let owner_key = owner_tron.clone();
+        if let Some(data) = self
+            .buffered_get(self.delegated_resource_account_index_database(), &owner_key)?
+        {
+            let mut owner_index = crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?;
+            owner_index.to_accounts.retain(|a| a != &receiver_tron);
+            self.buffered_put(
+                self.delegated_resource_account_index_database(),
+                owner_key,
+                owner_index.encode_to_vec(),
+            )?;
+        }
+
+        // Receiver index: remove owner from from_accounts.
+        let receiver_key = receiver_tron.clone();
+        if let Some(data) = self
+            .buffered_get(self.delegated_resource_account_index_database(), &receiver_key)?
+        {
+            let mut receiver_index = crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?;
+            receiver_index.from_accounts.retain(|a| a != &owner_tron);
+            self.buffered_put(
+                self.delegated_resource_account_index_database(),
+                receiver_key,
+                receiver_index.encode_to_vec(),
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// Get a DelegatedResource record (lock/unlock) without mutating state.
     pub fn get_delegated_resource(
         &self,
@@ -3889,6 +3952,32 @@ impl EngineBackedEvmStateStore {
             }
             None => {
                 tracing::debug!("ALLOW_TVM_CONSTANTINOPLE not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Get ALLOW_TVM_SOLIDITY_059 dynamic property
+    /// Returns 0 if Solidity 0.5.9 features are not enabled, non-zero if enabled.
+    /// Default: 0 (not enabled)
+    pub fn get_allow_tvm_solidity059(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_SOLIDITY_059";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let value = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("ALLOW_TVM_SOLIDITY_059: {}", value);
+                    Ok(value)
+                } else {
+                    tracing::warn!("ALLOW_TVM_SOLIDITY_059 has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("ALLOW_TVM_SOLIDITY_059 not found, returning 0");
                 Ok(0)
             }
         }

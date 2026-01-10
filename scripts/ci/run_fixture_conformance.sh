@@ -141,7 +141,6 @@ market_cancel_order_contract|\
 market_sell_asset_contract|\
 participate_asset_issue_contract|\
 trigger_smart_contract|\
-unfreeze_balance_contract|\
 unfreeze_balance_v2_contract|\
 vote_witness_contract|\
 withdraw_balance_contract|\

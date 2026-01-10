@@ -358,6 +358,7 @@ impl ConformanceRunner {
                     | Some(TronContractType::AccountUpdateContract)
                     | Some(TronContractType::AssetIssueContract)
                     | Some(TronContractType::FreezeBalanceContract)
+                    | Some(TronContractType::UnfreezeBalanceContract)
                     | Some(TronContractType::UnfreezeAssetContract)
                     | Some(TronContractType::UpdateAssetContract)
                     | Some(TronContractType::UpdateEnergyLimitContract)
