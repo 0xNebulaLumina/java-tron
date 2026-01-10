@@ -29,8 +29,9 @@ pub(super) struct UnfreezeParams {
 /// FreezeBalanceV2 contract parameters
 #[derive(Debug, Clone)]
 pub(super) struct FreezeV2Params {
+    pub(super) owner_address: Vec<u8>,
     pub(super) frozen_balance: i64,
-    pub(super) resource: FreezeResource,
+    pub(super) resource: Option<FreezeResource>,
 }
 
 /// UnfreezeBalanceV2 contract parameters
@@ -1403,14 +1404,6 @@ impl BackendService {
             transaction.data.len()
         );
 
-        // Parse freeze V2 parameters from transaction data
-        let params = Self::parse_freeze_balance_v2_params(&transaction.data)?;
-
-        debug!(
-            "Parsed freeze V2 params: frozen_balance={}, resource={:?}",
-            params.frozen_balance, params.resource
-        );
-
         // === Validation (match java-tron FreezeBalanceV2Actuator messages) ===
         if !storage_adapter
             .support_unfreeze_delay()
@@ -1421,6 +1414,35 @@ impl BackendService {
             );
         }
 
+        // Parse freeze V2 parameters from transaction data
+        let params = Self::parse_freeze_balance_v2_params(&transaction.data)?;
+
+        debug!(
+            "Parsed freeze V2 params: owner_len={}, frozen_balance={}, resource={:?}",
+            params.owner_address.len(),
+            params.frozen_balance,
+            params.resource
+        );
+
+        let prefix = storage_adapter.address_prefix();
+        if params.owner_address.len() != 21 || params.owner_address[0] != prefix {
+            return Err("Invalid address".to_string());
+        }
+        let readable_owner_address = hex::encode(&params.owner_address);
+        let owner_address = Address::from_slice(&params.owner_address[1..]);
+
+        // Load owner proto (we must update frozen_v2 fields for fixture parity).
+        let owner_proto = storage_adapter
+            .get_account_proto(&owner_address)
+            .map_err(|e| format!("Failed to load owner account proto: {}", e))?
+            .ok_or_else(|| format!("Account[{}] not exists", readable_owner_address))?;
+
+        // Load owner account info view for CSV parity state change tracking.
+        let owner_account = storage_adapter
+            .get_account(&owner_address)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .unwrap_or_default();
+
         if params.frozen_balance <= 0 {
             return Err("frozenBalance must be positive".to_string());
         }
@@ -1429,18 +1451,6 @@ impl BackendService {
             return Err("frozenBalance must be greater than or equal to 1 TRX".to_string());
         }
 
-        // Load owner proto (we must update frozen_v2 fields for fixture parity).
-        let owner_proto = storage_adapter
-            .get_account_proto(&transaction.from)
-            .map_err(|e| format!("Failed to load owner account proto: {}", e))?
-            .ok_or("Account not found for freeze operation")?;
-
-        // Load owner account info view for CSV parity state change tracking.
-        let owner_account = storage_adapter
-            .get_account(&transaction.from)
-            .map_err(|e| format!("Failed to load owner account: {}", e))?
-            .unwrap_or_default();
-
         if params.frozen_balance > owner_proto.balance {
             return Err("frozenBalance must be less than or equal to accountBalance".to_string());
         }
@@ -1448,9 +1458,26 @@ impl BackendService {
         let allow_new_resource_model = storage_adapter
             .support_allow_new_resource_model()
             .map_err(|e| format!("Failed to read ALLOW_NEW_RESOURCE_MODEL: {}", e))?;
-        if params.resource == FreezeResource::TronPower && !allow_new_resource_model {
-            return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
-        }
+        let resource = match params.resource {
+            Some(FreezeResource::Bandwidth) | Some(FreezeResource::Energy) => {
+                params.resource.unwrap()
+            }
+            Some(FreezeResource::TronPower) => {
+                if !allow_new_resource_model {
+                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
+                }
+                FreezeResource::TronPower
+            }
+            None => {
+                if allow_new_resource_model {
+                    return Err(
+                        "ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY、TRON_POWER]"
+                            .to_string(),
+                    );
+                }
+                return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
+            }
+        };
 
         // Apply state changes to the Account proto.
         let mut new_owner_proto = owner_proto.clone();
@@ -1458,7 +1485,7 @@ impl BackendService {
         // Java: initialize oldTronPower when the new resource model is enabled and oldTronPower==0.
         if allow_new_resource_model && new_owner_proto.old_tron_power == 0 {
             let tron_power = storage_adapter
-                .get_tron_power_in_sun(&transaction.from, false)
+                .get_tron_power_in_sun(&owner_address, false)
                 .map_err(|e| format!("Failed to compute tron power: {}", e))?;
             new_owner_proto.old_tron_power = if tron_power == 0 {
                 -1
@@ -1499,11 +1526,11 @@ impl BackendService {
             }
         }
 
-        let old_weight = frozen_v2_with_delegated(&owner_proto, params.resource)
+        let old_weight = frozen_v2_with_delegated(&owner_proto, resource)
             / super::super::TRX_PRECISION as i64;
 
         // Update frozen_v2 list (aggregate by resource type).
-        let resource_type = params.resource as i32;
+        let resource_type = resource as i32;
         let mut updated = false;
         for freeze_entry in new_owner_proto.frozen_v2.iter_mut() {
             if freeze_entry.r#type == resource_type {
@@ -1524,11 +1551,11 @@ impl BackendService {
                 });
         }
 
-        let new_weight = frozen_v2_with_delegated(&new_owner_proto, params.resource)
+        let new_weight = frozen_v2_with_delegated(&new_owner_proto, resource)
             / super::super::TRX_PRECISION as i64;
         let weight_delta = new_weight - old_weight;
 
-        match params.resource {
+        match resource {
             FreezeResource::Bandwidth => storage_adapter
                 .add_total_net_weight(weight_delta)
                 .map_err(|e| format!("Failed to update total net weight: {}", e))?,
@@ -1548,7 +1575,7 @@ impl BackendService {
 
         // Persist updated owner proto.
         storage_adapter
-            .put_account_proto(&transaction.from, &new_owner_proto)
+            .put_account_proto(&owner_address, &new_owner_proto)
             .map_err(|e| format!("Failed to persist owner account proto: {}", e))?;
 
         // Keep the Rust-side freeze ledger updated (not part of Java DB layout).
@@ -1559,8 +1586,8 @@ impl BackendService {
         // Add to freeze ledger (aggregates if previous freeze exists)
         storage_adapter
             .add_freeze_amount(
-                transaction.from,
-                params.resource as u8,
+                owner_address,
+                resource as u8,
                 freeze_amount,
                 expiration_timestamp,
             )
@@ -1573,7 +1600,7 @@ impl BackendService {
         // Emit exactly one state change for CSV parity
         let state_changes = vec![
             TronStateChange::AccountChange {
-                address: transaction.from,
+                address: owner_address,
                 old_account: Some(owner_account),
                 new_account: Some(new_owner),
             }
@@ -1588,36 +1615,36 @@ impl BackendService {
         let freeze_changes = if emit_freeze_changes {
             // Read back the total frozen amount after aggregation
             let freeze_record = storage_adapter.get_freeze_record(
-                &transaction.from,
-                params.resource as u8
+                &owner_address,
+                resource as u8
             ).map_err(|e| format!("Failed to read freeze record: {}", e))?;
 
             if let Some(record) = freeze_record {
                 // Map FreezeResource to FreezeLedgerResource
                 use tron_backend_execution::FreezeLedgerResource;
-                let resource = match params.resource {
+                let freeze_ledger_resource = match resource {
                     FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
                     FreezeResource::Energy => FreezeLedgerResource::Energy,
                     FreezeResource::TronPower => FreezeLedgerResource::TronPower,
                 };
 
                 let change = tron_backend_execution::FreezeLedgerChange {
-                    owner_address: transaction.from,
-                    resource,
+                    owner_address,
+                    resource: freeze_ledger_resource,
                     amount: record.frozen_amount as i64, // Absolute total after operation
                     expiration_ms: record.expiration_timestamp,  // Latest expiration
                     v2_model: true, // FreezeBalanceV2Contract is V2 model
                 };
 
                 info!("Emitting freeze V2 change: owner={}, resource={:?}, amount={}, expiration={}",
-                      tron_backend_common::to_tron_address(&transaction.from),
-                      resource, record.frozen_amount, record.expiration_timestamp);
+                      tron_backend_common::to_tron_address(&owner_address),
+                      freeze_ledger_resource, record.frozen_amount, record.expiration_timestamp);
 
                 vec![change]
             } else {
                 // No record found - this shouldn't happen since we just added it
                 warn!("Freeze record not found after add_freeze_amount for owner={}, resource={:?}",
-                      tron_backend_common::to_tron_address(&transaction.from), params.resource);
+                      tron_backend_common::to_tron_address(&owner_address), resource);
                 vec![]
             }
         } else {
@@ -2041,12 +2068,10 @@ impl BackendService {
     /// - frozen_balance: int64 (field 2)
     /// - resource: ResourceCode enum (field 3)
     pub(crate) fn parse_freeze_balance_v2_params(data: &revm_primitives::Bytes) -> Result<FreezeV2Params, String> {
-        if data.is_empty() {
-            return Err("FreezeBalanceV2 params cannot be empty".to_string());
-        }
-
-        let mut frozen_balance: Option<i64> = None;
-        let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
+        // Proto3 semantics: missing scalar fields read as 0.
+        let mut owner_address: Vec<u8> = Vec::new();
+        let mut frozen_balance: i64 = 0;
+        let mut resource: Option<FreezeResource> = Some(FreezeResource::Bandwidth); // Default
         let mut pos = 0;
 
         while pos < data.len() {
@@ -2059,16 +2084,22 @@ impl BackendService {
 
             match field_number {
                 1 => {
-                    // owner_address (bytes) - skip, we use transaction.from
+                    // owner_address (bytes)
                     if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos = pos + new_pos;
+                    let len = len as usize;
+                    if pos + len > data.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_address = data[pos..pos + len].to_vec();
+                    pos = pos + len;
                 },
                 2 => {
                     // frozen_balance (int64)
                     if wire_type != 0 { return Err("Invalid wire type for frozen_balance".to_string()); }
                     let (value, new_pos) = read_varint(&data[pos..])?;
-                    frozen_balance = Some(value as i64);
+                    frozen_balance = value as i64;
                     pos = pos + new_pos;
                 },
                 3 => {
@@ -2076,10 +2107,10 @@ impl BackendService {
                     if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
                     let (value, new_pos) = read_varint(&data[pos..])?;
                     resource = match value {
-                        0 => FreezeResource::Bandwidth,
-                        1 => FreezeResource::Energy,
-                        2 => FreezeResource::TronPower,
-                        _ => return Err(format!("Invalid resource code: {}", value)),
+                        0 => Some(FreezeResource::Bandwidth),
+                        1 => Some(FreezeResource::Energy),
+                        2 => Some(FreezeResource::TronPower),
+                        _ => None,
                     };
                     pos = pos + new_pos;
                 },
@@ -2100,10 +2131,8 @@ impl BackendService {
             }
         }
 
-        // Validate required fields
-        let frozen_balance = frozen_balance.ok_or("Missing frozen_balance field")?;
-
         Ok(FreezeV2Params {
+            owner_address,
             frozen_balance,
             resource,
         })
