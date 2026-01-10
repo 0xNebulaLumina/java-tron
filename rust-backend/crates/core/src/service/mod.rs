@@ -7046,15 +7046,22 @@ impl BackendService {
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        let owner = transaction.from;
-        let owner_tron = add_tron_address_prefix(&owner);
+        // Validation parity: DecodeUtil.addressValid(ownerAddress)
+        let expected_prefix = storage_adapter.address_prefix();
+        let owner_raw = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        if owner_raw.len() != 21 || owner_raw[0] != expected_prefix {
+            return Err("Invalid address".to_string());
+        }
+        let owner = revm_primitives::Address::from_slice(&owner_raw[1..]);
+        let readable_owner_address = hex::encode(owner_raw);
 
-        debug!("UnfreezeAsset: owner={}", hex::encode(&owner_tron));
+        debug!("UnfreezeAsset: owner={}", readable_owner_address);
 
         // 1. Validate owner account exists
-        let account = storage_adapter.get_account_proto(&owner)
+        let account = storage_adapter
+            .get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
-            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&owner_tron)))?;
+            .ok_or_else(|| format!("Account[{}] does not exist", readable_owner_address))?;
 
         // 2. Validate account has frozen supply
         if account.frozen_supply.is_empty() {
