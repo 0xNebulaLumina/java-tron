@@ -369,6 +369,7 @@ impl ConformanceRunner {
                     | Some(TronContractType::SetAccountIdContract)
                     | Some(TronContractType::ClearAbiContract)
                     | Some(TronContractType::CancelAllUnfreezeV2Contract)
+                    | Some(TronContractType::WithdrawExpireUnfreezeContract)
                     | Some(TronContractType::DelegateResourceContract)
                     | Some(TronContractType::UndelegateResourceContract)
                     | Some(TronContractType::TransferAssetContract)

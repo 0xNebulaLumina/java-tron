@@ -5648,30 +5648,75 @@ impl BackendService {
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        use contracts::proto::TransactionResultBuilder;
+        // 1. Validate contract parameter type (Any.is)
+        let any = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .ok_or_else(|| "No contract!".to_string())?;
+        if !Self::any_type_url_matches(&any.type_url, "protocol.WithdrawExpireUnfreezeContract") {
+            return Err(
+                "contract type error, expected type [WithdrawExpireUnfreezeContract], real type[class com.google.protobuf.Any]"
+                    .to_string(),
+            );
+        }
 
-        let owner = transaction.from;
-        let owner_tron = add_tron_address_prefix(&owner);
-
-        debug!("WithdrawExpireUnfreeze: owner={}", hex::encode(&owner_tron));
-
-        // 1. Gate check: supportUnfreezeDelay() must be true
+        // 2. Gate check: supportUnfreezeDelay() must be true
         let support_unfreeze_delay = storage_adapter.support_unfreeze_delay()
             .map_err(|e| format!("Failed to check supportUnfreezeDelay: {}", e))?;
         if !support_unfreeze_delay {
             return Err("Not support WithdrawExpireUnfreeze transaction, need to be opened by the committee".to_string());
         }
 
-        // 2. Validate owner account exists
+        // 3. WithdrawExpireUnfreezeContract: bytes owner_address = 1 (field 1, length-delimited)
+        let mut owner_tron: Vec<u8> = Vec::new();
+        let mut pos = 0;
+        while pos < any.value.len() {
+            let (field_header, bytes_read) = read_varint(&any.value[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    let (length, bytes_read) = read_varint(&any.value[pos..])
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += bytes_read;
+                    if pos + length as usize > any.value.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_tron = any.value[pos..pos + length as usize].to_vec();
+                    pos += length as usize;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&any.value[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
+            }
+        }
+
+        // 4. Validate owner address
+        let expected_prefix = storage_adapter.address_prefix();
+        if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
+            return Err("Invalid address".to_string());
+        }
+        let owner = revm_primitives::Address::from_slice(&owner_tron[1..]);
+
+        debug!("WithdrawExpireUnfreeze: owner={}", hex::encode(&owner_tron));
+
+        // 5. Validate owner account exists
         let account_proto = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
-            .ok_or_else(|| format!("Account[{}] does not exist", hex::encode(&owner_tron)))?;
+            .ok_or_else(|| format!("Account[{}] not exists", hex::encode(&owner_tron)))?;
 
-        // 3. Get latest block timestamp
+        // 6. Get latest block timestamp
         let now = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
 
-        // 4. Calculate total withdrawable amount from expired unfrozenV2 entries
+        // 7. Calculate total withdrawable amount from expired unfrozenV2 entries
         let unfrozen_v2_list = &account_proto.unfrozen_v2;
         let mut total_withdraw: i64 = 0;
         let mut remaining_unfrozen: Vec<tron_backend_execution::protocol::account::UnFreezeV2> = Vec::new();
@@ -5679,24 +5724,30 @@ impl BackendService {
         for entry in unfrozen_v2_list.iter() {
             if entry.unfreeze_expire_time <= now as i64 {
                 // Expired - add to withdraw amount
-                total_withdraw = total_withdraw.checked_add(entry.unfreeze_amount)
-                    .ok_or("Overflow calculating withdraw amount")?;
+                total_withdraw = total_withdraw.wrapping_add(entry.unfreeze_amount);
             } else {
                 // Not expired - keep in list
                 remaining_unfrozen.push(entry.clone());
             }
         }
 
-        // 5. Validate there's something to withdraw
+        // 8. Validate there's something to withdraw
         if total_withdraw <= 0 {
             return Err("no unFreeze balance to withdraw ".to_string());
         }
 
-        // 6. Check for overflow
-        let new_balance = account_proto.balance.checked_add(total_withdraw)
-            .ok_or("Balance overflow")?;
+        // 9. Check for overflow (java-tron: LongMath.checkedAdd)
+        let new_balance = account_proto
+            .balance
+            .checked_add(total_withdraw)
+            .ok_or_else(|| {
+                format!(
+                    "overflow: checkedAdd({}, {})",
+                    account_proto.balance, total_withdraw
+                )
+            })?;
 
-        // 7. Update account: balance += total_withdraw, clear and replace unfrozenV2 list
+        // 10. Update account: balance += total_withdraw, clear and replace unfrozenV2 list
         let mut updated_account = account_proto.clone();
         updated_account.balance = new_balance;
         updated_account.unfrozen_v2.clear();
@@ -5704,11 +5755,11 @@ impl BackendService {
             updated_account.unfrozen_v2.push(entry);
         }
 
-        // 8. Persist updated account
+        // 11. Persist updated account
         storage_adapter.put_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to persist account: {}", e))?;
 
-        // 9. Build state change for CSV parity
+        // 12. Build state change for CSV parity
         let old_account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(account_proto.balance as u64),
             nonce: 0,
@@ -5728,7 +5779,7 @@ impl BackendService {
             new_account: Some(new_account_info),
         }];
 
-        // 10. Build receipt with withdraw_expire_amount
+        // 13. Build receipt with withdraw_expire_amount
         let receipt_bytes = TransactionResultBuilder::new()
             .with_withdraw_expire_amount(total_withdraw)
             .build();
