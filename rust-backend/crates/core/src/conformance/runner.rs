@@ -382,6 +382,7 @@ impl ConformanceRunner {
                     | Some(TronContractType::WitnessCreateContract)
                     | Some(TronContractType::WitnessUpdateContract)
                     | Some(TronContractType::WithdrawBalanceContract)
+                    | Some(TronContractType::MarketCancelOrderContract)
             );
 
             let (from_bytes, from_is_valid) = if tx.from.len() == 21 {

@@ -219,16 +219,20 @@ impl EngineBackedEvmStateStore {
         ];
 
         for db_name in candidate_dbs {
-            let entries = match storage_engine.get_next(db_name, &Vec::new(), 1) {
+            // Scan more than one entry because some fixtures include non-address keys at the
+            // beginning of the Account DB (e.g. intentionally malformed addresses for validation
+            // tests). The first valid address prefix found determines the network prefix.
+            let entries = match storage_engine.get_next(db_name, &Vec::new(), 256) {
                 Ok(e) => e,
                 Err(_) => continue,
             };
-            if let Some(first) = entries.first() {
-                if first.key.len() == 21 {
-                    let prefix = first.key[0];
-                    if prefix == 0x41 || prefix == 0xa0 {
-                        return prefix;
-                    }
+            for entry in entries {
+                if entry.key.len() != 21 {
+                    continue;
+                }
+                let prefix = entry.key[0];
+                if prefix == 0x41 || prefix == 0xa0 {
+                    return prefix;
                 }
             }
         }

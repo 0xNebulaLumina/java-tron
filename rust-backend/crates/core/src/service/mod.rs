@@ -8927,13 +8927,12 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing MARKET_CANCEL_ORDER_CONTRACT");
 
-        let owner = transaction.from;
-        let execution_config = self.get_execution_config()?;
-        let fee_config = &execution_config.fees;
-
         // Parse the contract
-        let tx_info = self.parse_market_cancel_order_contract(&transaction.data)?;
-        debug!("MarketCancelOrder: order_id={:?}", hex::encode(&tx_info.order_id));
+        let MarketCancelOrderInfo {
+            owner_address,
+            order_id,
+        } = self.parse_market_cancel_order_contract(&transaction.data)?;
+        debug!("MarketCancelOrder: order_id={:?}", hex::encode(&order_id));
 
         // 1. Validate: market transactions must be enabled
         let allow_market = storage_adapter.allow_market_transaction()
@@ -8942,31 +8941,33 @@ impl BackendService {
             return Err("Not support Market Transaction, need to be opened by the committee".to_string());
         }
 
-        // 2. Get the order
-        let order = storage_adapter.get_market_order(&tx_info.order_id)
+        // 2. Validate: owner address
+        let address_prefix = storage_adapter.address_prefix();
+        if owner_address.len() != 21 || owner_address[0] != address_prefix {
+            return Err("Invalid address".to_string());
+        }
+        let owner = revm_primitives::Address::from_slice(&owner_address[1..]);
+
+        // 3. Whether the account exist
+        let mut account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or("Account does not exist!")?;
+
+        // 4. Whether the order exist
+        let order = storage_adapter.get_market_order(&order_id)
             .map_err(|e| format!("Failed to get order: {}", e))?
             .ok_or("orderId not exists")?;
 
-        // 3. Validate: order must be active
+        // 5. Validate: order must be active
         if order.state != 0 { // 0 = ACTIVE
             return Err("Order is not active!".to_string());
         }
 
-        // 4. Validate: owner must match
-        let order_owner_20 = if order.owner_address.len() == 21
-            && (order.owner_address[0] == 0x41 || order.owner_address[0] == 0xa0) {
-            &order.owner_address[1..]
-        } else {
-            &order.owner_address[..]
-        };
-        if order_owner_20 != owner.as_slice() {
+        // 6. Validate: order owner must match
+        let order_owner = Self::market_owner_address(&order.owner_address)?;
+        if order_owner != owner {
             return Err("Order does not belong to the account!".to_string());
         }
-
-        // 5. Get account and validate fee
-        let mut account = storage_adapter.get_account_proto(&owner)
-            .map_err(|e| format!("Failed to get account: {}", e))?
-            .ok_or("Account does not exist")?;
 
         let fee = storage_adapter.get_market_cancel_fee()
             .map_err(|e| format!("Failed to get MARKET_CANCEL_FEE: {}", e))?;
@@ -8981,14 +8982,19 @@ impl BackendService {
             .ok_or("Balance underflow")?;
 
         // Handle fee: burn or credit to blackhole
-        let state_changes = if fee_config.support_black_hole_optimization {
-            // Burn: no additional state change
+        let support_blackhole = storage_adapter.support_black_hole_optimization()
+            .map_err(|e| format!("Failed to check ALLOW_BLACKHOLE_OPTIMIZATION: {}", e))?;
+        let state_changes = if fee > 0 {
+            if support_blackhole {
+                storage_adapter.burn_trx(fee as u64)
+                    .map_err(|e| format!("Failed to burn TRX: {}", e))?;
+            } else {
+                let blackhole = storage_adapter.get_blackhole_address_evm();
+                storage_adapter.add_balance(&blackhole, fee as u64)
+                    .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+            }
             vec![]
         } else {
-            // Credit to blackhole
-            let blackhole = storage_adapter.get_blackhole_address_evm();
-            storage_adapter.add_balance(&blackhole, fee as u64)
-                .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
             vec![]
         };
 
@@ -9004,7 +9010,8 @@ impl BackendService {
                 // TRC-10 token
                 let token_key = String::from_utf8_lossy(sell_token_id).to_string();
                 let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
-                account.asset_v2.insert(token_key, current + sell_token_remain);
+                let updated = current.checked_add(sell_token_remain).ok_or("Token balance overflow")?;
+                account.asset_v2.insert(token_key, updated);
             }
         }
 
@@ -9017,8 +9024,8 @@ impl BackendService {
         if let Some(mut account_order) = storage_adapter.get_market_account_order(&owner)
             .map_err(|e| format!("Failed to get account order: {}", e))? {
             // Remove order_id from the list
-            account_order.orders.retain(|id| id != &tx_info.order_id);
-            account_order.count = account_order.count.saturating_sub(1);
+            account_order.orders.retain(|id| id != &order_id);
+            account_order.count -= 1;
             storage_adapter.put_market_account_order(&owner, &account_order)
                 .map_err(|e| format!("Failed to update account order: {}", e))?;
         }
@@ -9067,8 +9074,12 @@ impl BackendService {
             }
         }
 
+        // Keep `updated_order` consistent with what was persisted during linked-list removal.
+        updated_order.prev = vec![];
+        updated_order.next = vec![];
+
         // 11. Save order and account
-        storage_adapter.put_market_order(&tx_info.order_id, &updated_order)
+        storage_adapter.put_market_order(&order_id, &updated_order)
             .map_err(|e| format!("Failed to update order: {}", e))?;
         storage_adapter.set_account_proto(&owner, &account)
             .map_err(|e| format!("Failed to update account: {}", e))?;
@@ -9960,6 +9971,7 @@ impl BackendService {
     fn parse_market_cancel_order_contract(&self, data: &[u8]) -> Result<MarketCancelOrderInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut order_id = Vec::new();
 
         let mut pos = 0;
@@ -9971,11 +9983,13 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip)
+                // owner_address = 1
                 1 => {
                     if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // order_id = 2
                 2 => {
@@ -9995,7 +10009,7 @@ impl BackendService {
             }
         }
 
-        Ok(MarketCancelOrderInfo { order_id })
+        Ok(MarketCancelOrderInfo { owner_address, order_id })
     }
 
     /// Parse MarketSellAssetContract protobuf bytes
@@ -10310,6 +10324,7 @@ struct UnDelegateResourceInfo {
 /// Parsed MarketCancelOrderContract information
 #[derive(Debug, Clone)]
 struct MarketCancelOrderInfo {
+    owner_address: Vec<u8>,
     order_id: Vec<u8>,
 }
 
