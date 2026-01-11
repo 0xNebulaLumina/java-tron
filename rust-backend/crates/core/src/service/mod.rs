@@ -6855,7 +6855,6 @@ impl BackendService {
         } else {
             return Err("Invalid to address length".to_string());
         };
-        let to_tron = add_tron_address_prefix(&to_address);
 
         if owner == to_address {
             return Err("Cannot participate asset Issue yourself !".to_string());
@@ -6893,7 +6892,10 @@ impl BackendService {
             &asset_issue.owner_address[..]
         };
         if to_address.as_slice() != asset_owner_address {
-            return Err(format!("The asset is not issued by {}", hex::encode(&to_tron)));
+            return Err(format!(
+                "The asset is not issued by {}",
+                hex::encode(&participate_info.to_address)
+            ));
         }
 
         // 7. Validate time window

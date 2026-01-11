@@ -138,7 +138,6 @@ if [ "$GENERATE_ONLY" = false ]; then
 create_smart_contract|\
 market_cancel_order_contract|\
 market_sell_asset_contract|\
-participate_asset_issue_contract|\
 trigger_smart_contract|\
 withdraw_balance_contract|\
 withdraw_expire_unfreeze_contract)
