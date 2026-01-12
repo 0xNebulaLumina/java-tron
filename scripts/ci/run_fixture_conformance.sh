@@ -173,7 +173,6 @@ if [ "$GENERATE_ONLY" = false ]; then
         should_exclude_fixture_contract_dir() {
                 case "$1" in
 create_smart_contract|\
-market_sell_asset_contract|\
 trigger_smart_contract)
                     return 0
                     ;;

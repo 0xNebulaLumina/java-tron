@@ -507,10 +507,13 @@ impl EngineBackedEvmStateStore {
         // Two java-specific behaviors matter for Account.assetV2 (field 56):
         // 1) Map entry order preserves insertion/parse order (not sorted by key).
         // 2) Map entry `key` is serialized even when empty ("") as `0x0A 0x00`.
+        // 3) Map entry `value` is serialized even when it is the default `0` as `0x10 0x00`.
         //
         // Prost uses `BTreeMap` for deterministic ordering (sorted by key) and skips encoding
-        // default string fields (empty key), so we need a small compatibility rewrite.
-        let needs_asset_v2_rewrite = proto_account.asset_v2.len() >= 2 || proto_account.asset_v2.contains_key("");
+        // default fields (empty key and zero value), so we need a small compatibility rewrite.
+        let needs_asset_v2_rewrite = proto_account.asset_v2.len() >= 2
+            || proto_account.asset_v2.contains_key("")
+            || proto_account.asset_v2.values().any(|v| *v == 0);
         if !needs_asset_v2_rewrite {
             return Ok(data);
         }
@@ -661,6 +664,16 @@ impl EngineBackedEvmStateStore {
                 patched.extend_from_slice(payload);
                 patched
             };
+            let entry_bytes = if self.map_entry_has_int64_value(entry_bytes.as_slice())? {
+                entry_bytes
+            } else {
+                // Ensure zero values serialize the `value` field: `0x10 0x00`.
+                let mut patched = Vec::with_capacity(entry_bytes.len() + 2);
+                patched.extend_from_slice(&entry_bytes);
+                patched.extend_from_slice(&[0x10, 0x00]);
+                patched
+            };
+
             entries_by_key.insert(key, entry_bytes);
         }
 
@@ -754,6 +767,25 @@ impl EngineBackedEvmStateStore {
             let wire_type = tag & 0x7;
 
             if field_number == 1 && wire_type == 2 {
+                return Ok(true);
+            }
+
+            pos = self.skip_field(entry, pos, wire_type)?;
+        }
+
+        Ok(false)
+    }
+
+    fn map_entry_has_int64_value(&self, entry: &[u8]) -> Result<bool> {
+        let mut pos = 0usize;
+        while pos < entry.len() {
+            let (tag, new_pos) = self.read_varint(entry, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            if field_number == 2 && wire_type == 0 {
                 return Ok(true);
             }
 
@@ -4767,17 +4799,7 @@ impl EngineBackedEvmStateStore {
 
     /// Set/update account from proto
     pub fn set_account_proto(&mut self, address: &Address, account: &crate::protocol::Account) -> Result<()> {
-        use prost::Message;
-
-        // Encode account to protobuf bytes
-        let mut buf = Vec::new();
-        account.encode(&mut buf)?;
-
-        // Write to account store using TRON 21-byte address
-        let tron_addr = self.to_tron_address_21(address);
-        self.buffered_put(self.account_database(), tron_addr.to_vec(), buf)?;
-
-        Ok(())
+        self.put_account_proto(address, account)
     }
 
     /// Add balance to an account (for crediting blackhole, etc.)

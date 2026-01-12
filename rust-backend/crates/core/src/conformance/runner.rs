@@ -291,6 +291,32 @@ impl ConformanceRunner {
         Ok(())
     }
 
+    /// Seed common TRC-10 asset definitions that Java fixture generators rely on.
+    ///
+    /// Some fixture generators pre-populate `AssetIssueV2Store` for shared token IDs (e.g. 1000001/1000002)
+    /// but omit dumping that store in each fixture to keep pre_db small. Market validation logic
+    /// requires these assets to exist, so we mirror that baseline in the isolated Rust runner DB.
+    fn seed_common_asset_issues(storage_engine: &StorageEngine) -> Result<(), String> {
+        use prost::Message;
+        use tron_backend_execution::protocol::AssetIssueContractData;
+
+        const ASSET_ISSUE_V2_DB: &str = "asset-issue-v2";
+        const SEEDED_TOKEN_IDS: [&str; 2] = ["1000001", "1000002"];
+
+        for token_id in SEEDED_TOKEN_IDS {
+            let mut asset = AssetIssueContractData::default();
+            asset.id = token_id.to_string();
+            let value = asset.encode_to_vec();
+            let key = token_id.as_bytes();
+
+            storage_engine
+                .put(ASSET_ISSUE_V2_DB, key, &value)
+                .map_err(|e| format!("Failed to seed {}: {:?}", ASSET_ISSUE_V2_DB, e))?;
+        }
+
+        Ok(())
+    }
+
     /// Dump current state from storage engine for specified databases.
     fn dump_storage_state(
         &self,
@@ -382,6 +408,7 @@ impl ConformanceRunner {
                     | Some(TronContractType::WitnessCreateContract)
                     | Some(TronContractType::WitnessUpdateContract)
                     | Some(TronContractType::WithdrawBalanceContract)
+                    | Some(TronContractType::MarketSellAssetContract)
                     | Some(TronContractType::MarketCancelOrderContract)
             );
 
@@ -585,6 +612,12 @@ impl ConformanceRunner {
 
         if let Err(e) = self.load_pre_state_into_storage(&storage_engine, &pre_state) {
             return ConformanceResult::failure(metadata, e);
+        }
+
+        if metadata.contract_type_num == tron_backend_execution::TronContractType::MarketSellAssetContract as i32 {
+            if let Err(e) = Self::seed_common_asset_issues(&storage_engine) {
+                return ConformanceResult::failure(metadata, e);
+            }
         }
 
         // Create a BackendService instance configured for conformance.
@@ -1237,6 +1270,32 @@ mod tests {
         assert_eq!(
             transaction.metadata.contract_type,
             Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
+        );
+    }
+
+    #[test]
+    fn test_convert_request_to_transaction_allows_empty_from_for_market_sell_asset() {
+        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
+        proto_tx.contract_type = 52; // MarketSellAssetContract
+
+        let request = ExecuteTransactionRequest {
+            transaction: Some(proto_tx),
+            context: Some(ExecutionContext {
+                block_number: 1,
+                block_timestamp: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let transaction = ConformanceRunner::convert_request_to_transaction(&request).unwrap();
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::MarketSellAssetContract)
         );
     }
 

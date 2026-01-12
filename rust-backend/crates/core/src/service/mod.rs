@@ -9143,6 +9143,16 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing MARKET_SELL_ASSET_CONTRACT");
 
+        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.MarketSellAssetContract") {
+                return Err(
+                    "contract type error,expected type [MarketSellAssetContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
         let owner = transaction.from;
         let execution_config = self.get_execution_config()?;
         let fee_config = &execution_config.fees;
@@ -9162,12 +9172,34 @@ impl BackendService {
             return Err("Not support Market Transaction, need to be opened by the committee".to_string());
         }
 
-        // 2. Validate token IDs
+        // 2. Validate owner address (java-tron: DecodeUtil.addressValid)
+        let prefix = storage_adapter.address_prefix();
+        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        if owner_from_field.len() != 21 || owner_from_field[0] != prefix {
+            return Err("Invalid address".to_string());
+        }
+
+        // 3. Validate account exists (java-tron: AccountStore.get)
+        let mut account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get account: {}", e))?
+            .ok_or("Account does not exist!")?;
+
+        // 4. Validate token ID format (java-tron: TransactionUtil.isNumber)
+        use contracts::exchange::{is_number, is_trx};
+
+        if !is_trx(&tx_info.sell_token_id) && !is_number(&tx_info.sell_token_id) {
+            return Err("sellTokenId is not a valid number".to_string());
+        }
+        if !is_trx(&tx_info.buy_token_id) && !is_number(&tx_info.buy_token_id) {
+            return Err("buyTokenId is not a valid number".to_string());
+        }
+
+        // 5. Validate token IDs
         if tx_info.sell_token_id == tx_info.buy_token_id {
             return Err("cannot exchange same tokens".to_string());
         }
 
-        // 3. Validate quantities
+        // 6. Validate quantities
         if tx_info.sell_token_quantity <= 0 || tx_info.buy_token_quantity <= 0 {
             return Err("token quantity must greater than zero".to_string());
         }
@@ -9178,7 +9210,7 @@ impl BackendService {
             return Err(format!("token quantity must less than {}", quantity_limit));
         }
 
-        // 4. Validate order count limit
+        // 7. Validate order count limit
         let max_active_orders: i64 = 100;
         if let Some(account_order) = storage_adapter.get_market_account_order(&owner)
             .map_err(|e| format!("Failed to get account order: {}", e))? {
@@ -9187,15 +9219,16 @@ impl BackendService {
             }
         }
 
-        // 5. Get account and validate balance
-        let mut account = storage_adapter.get_account_proto(&owner)
-            .map_err(|e| format!("Failed to get account: {}", e))?
-            .ok_or("Account does not exist!")?;
-
+        // 8. Validate balance and token existence (java-tron: MarketSellAssetActuator.validate)
         let fee = storage_adapter.get_market_sell_fee()
             .map_err(|e| format!("Failed to get MARKET_SELL_FEE: {}", e))?;
 
-        let is_sell_trx = tx_info.sell_token_id == b"_" || tx_info.sell_token_id.is_empty();
+        let is_sell_trx = is_trx(&tx_info.sell_token_id);
+        let is_buy_trx = is_trx(&tx_info.buy_token_id);
+
+        let allow_same_token_name = storage_adapter
+            .get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
 
         if is_sell_trx {
             // Selling TRX: need sell_qty + fee
@@ -9209,6 +9242,15 @@ impl BackendService {
             if account.balance < fee {
                 return Err("No enough balance !".to_string());
             }
+
+            // Must exist in the AssetIssue store
+            let sell_asset = storage_adapter
+                .get_asset_issue(&tx_info.sell_token_id, allow_same_token_name)
+                .map_err(|e| format!("Failed to get sell token: {}", e))?;
+            if sell_asset.is_none() {
+                return Err("No sellTokenId !".to_string());
+            }
+
             let token_key = String::from_utf8_lossy(&tx_info.sell_token_id).to_string();
             let token_balance = account.asset_v2.get(&token_key).copied().unwrap_or(0);
             if token_balance < tx_info.sell_token_quantity {
@@ -9216,7 +9258,16 @@ impl BackendService {
             }
         }
 
-        // 6. Deduct fee
+        if !is_buy_trx {
+            let buy_asset = storage_adapter
+                .get_asset_issue(&tx_info.buy_token_id, allow_same_token_name)
+                .map_err(|e| format!("Failed to get buy token: {}", e))?;
+            if buy_asset.is_none() {
+                return Err("No buyTokenId !".to_string());
+            }
+        }
+
+        // 9. Deduct fee
         let old_balance = account.balance;
         account.balance = account.balance.checked_sub(fee)
             .ok_or("Balance underflow")?;
@@ -9228,7 +9279,7 @@ impl BackendService {
                 .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
         }
 
-        // 7. Transfer sell tokens from account to order (escrow)
+        // 10. Transfer sell tokens from account to order (escrow)
         if is_sell_trx {
             account.balance = account.balance.checked_sub(tx_info.sell_token_quantity)
                 .ok_or("Balance underflow")?;
@@ -9238,7 +9289,7 @@ impl BackendService {
             account.asset_v2.insert(token_key, current - tx_info.sell_token_quantity);
         }
 
-        // 8. Create order (persisted before matching, matching java-tron behavior)
+        // 11. Create order (persisted before matching, matching java-tron behavior)
         let owner_tron_addr = storage_adapter.to_tron_address_21(&owner).to_vec();
         let mut account_order = storage_adapter.get_market_account_order(&owner)
             .map_err(|e| format!("Failed to get account order: {}", e))?
@@ -9276,26 +9327,26 @@ impl BackendService {
             next: vec![],
         };
 
-        // 9. Update account order
+        // 12. Update account order
         account_order.orders.push(order_id.clone());
         account_order.count += 1;
         account_order.total_count += 1;
 
-        // 10. Save order + account-order (java-tron does this before matching).
+        // 13. Save order + account-order (java-tron does this before matching).
         storage_adapter.put_market_order(&order_id, &order)
             .map_err(|e| format!("Failed to save order: {}", e))?;
         storage_adapter.put_market_account_order(&owner, &account_order)
             .map_err(|e| format!("Failed to save account order: {}", e))?;
 
-        // 11. Match order (updates maker-side state as it goes).
+        // 14. Match order (updates maker-side state as it goes).
         self.match_market_sell_order(storage_adapter, &mut order, &mut account)?;
 
-        // 12. Save remain order into order book (only if still active with non-zero remain).
+        // 15. Save remain order into order book (only if still active with non-zero remain).
         if order.sell_token_quantity_remain != 0 {
             self.save_remain_market_order(storage_adapter, &mut order)?;
         }
 
-        // 13. Persist final taker order + account.
+        // 16. Persist final taker order + account.
         storage_adapter.put_market_order(&order_id, &order)
             .map_err(|e| format!("Failed to update order: {}", e))?;
         storage_adapter.set_account_proto(&owner, &account)

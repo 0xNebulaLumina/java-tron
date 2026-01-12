@@ -246,6 +246,9 @@ pub fn is_number(token_id: &[u8]) -> bool {
     if token_id.is_empty() {
         return false;
     }
+    if token_id.len() > 1 && token_id[0] == b'0' {
+        return false;
+    }
     token_id.iter().all(|&b| b.is_ascii_digit())
 }
 

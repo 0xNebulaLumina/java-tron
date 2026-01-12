@@ -65,6 +65,8 @@ impl BackendService {
                 | Some(tron_backend_execution::TronContractType::WitnessCreateContract)
                 | Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
                 | Some(tron_backend_execution::TronContractType::WithdrawBalanceContract)
+                | Some(tron_backend_execution::TronContractType::MarketSellAssetContract)
+                | Some(tron_backend_execution::TronContractType::MarketCancelOrderContract)
         );
         let from = match strip_tron_address_prefix(&tx.from) {
             Ok(from_bytes) => revm_primitives::Address::from_slice(from_bytes),
