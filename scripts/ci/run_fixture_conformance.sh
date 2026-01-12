@@ -49,6 +49,40 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Check for required Rust build dependencies
+check_rust_dependencies() {
+    local missing=()
+
+    # Check for protoc (required for protobuf compilation)
+    if ! command -v protoc &> /dev/null; then
+        missing+=("protoc (protobuf-compiler)")
+    fi
+
+    # Check for C compiler (required for native dependencies)
+    if ! command -v cc &> /dev/null && ! command -v gcc &> /dev/null; then
+        missing+=("C compiler (build-essential)")
+    fi
+
+    # Check for clang/libclang (required for bindgen)
+    if ! command -v clang &> /dev/null; then
+        missing+=("clang (clang, libclang-dev)")
+    fi
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "ERROR: Missing required build dependencies:"
+        for dep in "${missing[@]}"; do
+            echo "  - $dep"
+        done
+        echo ""
+        echo "On Debian/Ubuntu, install with:"
+        echo "  apt-get install -y protobuf-compiler build-essential clang libclang-dev"
+        echo ""
+        echo "On macOS, install with:"
+        echo "  brew install protobuf llvm"
+        exit 3
+    fi
+}
+
 echo "========================================"
 echo "Fixture Conformance Test Suite"
 echo "========================================"
@@ -118,6 +152,9 @@ if [ "$GENERATE_ONLY" = false ]; then
     echo "========================================"
     echo "Step 2: Running Rust Conformance Tests"
     echo "========================================"
+
+    # Check build dependencies before attempting Rust build
+    check_rust_dependencies
 
     cd "$RUST_BACKEND"
 
