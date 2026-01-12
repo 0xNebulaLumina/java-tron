@@ -153,6 +153,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -187,6 +188,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -221,6 +223,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -257,6 +260,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -299,6 +303,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -340,6 +345,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -381,6 +387,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -421,6 +428,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -469,6 +477,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when market transactions are disabled")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("market")
         .build();
@@ -503,6 +512,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when sell and buy tokens are the same")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("same")
         .build();
@@ -534,6 +544,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when owner has insufficient balance for sell token")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("balance")
         .build();
@@ -567,6 +578,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when sell quantity exceeds market quantity limit")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .dynamicProperty("MARKET_QUANTITY_LIMIT", 1_000_000L)
         .expectedError("limit")
@@ -602,6 +614,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when sell quantity is zero")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("quantity")
         .build();
@@ -637,6 +650,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when owner address is empty")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .expectedError("Invalid address")
         .build();
 
@@ -669,6 +683,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when owner account does not exist")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .expectedError("Account does not exist!")
         .build();
 
@@ -699,6 +714,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when sellTokenId is not a valid number")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("sellTokenId is not a valid number")
         .build();
@@ -730,6 +746,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when buyTokenId is not a valid number")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("buyTokenId is not a valid number")
         .build();
@@ -763,6 +780,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when sellTokenId does not exist")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("No sellTokenId !")
         .build();
@@ -796,6 +814,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when buyTokenId does not exist")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("No buyTokenId !")
         .build();
@@ -827,6 +846,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when buy quantity is zero")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("token quantity must greater than zero")
         .build();
@@ -858,6 +878,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when buy quantity is negative")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("token quantity must greater than zero")
         .build();
@@ -891,6 +912,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when buy quantity exceeds market quantity limit")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .dynamicProperty("MARKET_QUANTITY_LIMIT", 1_000_000L)
         .expectedError("token quantity must less than")
@@ -926,6 +948,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when token balance is insufficient for sell quantity")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("SellToken balance is not enough !")
         .build();
@@ -967,6 +990,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("Maximum number of orders exceeded")
         .build();
@@ -1008,6 +1032,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1050,6 +1075,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when TRX sell + fee exceeds balance")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .dynamicProperty("MARKET_SELL_FEE", 1_000_000_000L)
         .expectedError("No enough balance !")
         .build();
@@ -1097,6 +1123,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .description("Fail when selling token but TRX balance insufficient for fee")
         .database("account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .dynamicProperty("MARKET_SELL_FEE", 1_000_000_000L)
         .expectedError("No enough balance !")
         .build();
@@ -1144,6 +1171,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1188,6 +1216,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1228,6 +1257,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1273,6 +1303,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1318,6 +1349,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1359,6 +1391,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1412,6 +1445,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1454,6 +1488,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1489,6 +1524,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1522,6 +1558,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_order")
         .database("market_account")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OTHER_ADDRESS)
         .expectedError("owner")
         .build();
@@ -1554,6 +1591,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("market_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not exist")
         .build();
@@ -1592,6 +1630,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("market_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("cancel")
         .build();
@@ -1628,6 +1667,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("market_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("market")
         .build();
@@ -1668,6 +1708,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("market_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .expectedError("Invalid address")
         .build();
 
@@ -1702,6 +1743,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("market_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .expectedError("Account does not exist!")
         .build();
 
@@ -1739,6 +1781,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("market_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("Order is not active!")
         .build();
@@ -1786,6 +1829,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("market_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .dynamicProperty("MARKET_CANCEL_FEE", 1_000_000_000L)
         .expectedError("No enough balance !")
         .build();
@@ -1833,6 +1877,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1880,6 +1925,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1928,6 +1974,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1979,6 +2026,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -2021,6 +2069,7 @@ public class MarketFixtureGeneratorTest extends BaseTest {
         .database("market_pair_to_price")
         .database("market_pair_price_to_order")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
