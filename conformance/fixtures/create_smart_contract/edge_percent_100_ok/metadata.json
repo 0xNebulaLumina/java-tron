@@ -4,7 +4,7 @@
   "caseName": "edge_percent_100_ok",
   "caseCategory": "edge",
   "description": "Success when consumeUserResourcePercent = 100",
-  "generatedAt": "2026-01-08T06:30:47.722Z",
+  "generatedAt": "2026-01-12T11:53:35.138Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

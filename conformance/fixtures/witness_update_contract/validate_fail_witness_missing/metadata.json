@@ -4,7 +4,7 @@
   "caseName": "validate_fail_witness_missing",
   "caseCategory": "validate_fail",
   "description": "Fail when account exists but witness entry is missing",
-  "generatedAt": "2026-01-08T06:31:36.797Z",
+  "generatedAt": "2026-01-12T11:54:05.701Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

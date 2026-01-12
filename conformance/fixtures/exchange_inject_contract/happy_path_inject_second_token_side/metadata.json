@@ -4,7 +4,7 @@
   "caseName": "happy_path_inject_second_token_side",
   "caseCategory": "happy",
   "description": "Inject liquidity on the second token side",
-  "generatedAt": "2026-01-08T06:30:33.007Z",
+  "generatedAt": "2026-01-12T11:53:26.698Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

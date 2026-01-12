@@ -4,7 +4,7 @@
   "caseName": "validate_fail_exchange_amount_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when exchange amount rounds down to zero",
-  "generatedAt": "2026-01-08T06:30:45.535Z",
+  "generatedAt": "2026-01-12T11:53:34.078Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

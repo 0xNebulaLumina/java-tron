@@ -4,7 +4,7 @@
   "caseName": "validate_fail_to_self",
   "caseCategory": "validate_fail",
   "description": "Fail when transferring to self",
-  "generatedAt": "2026-01-08T06:30:43.920Z",
+  "generatedAt": "2026-01-12T11:53:33.139Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "edge_no_match_price_too_low",
   "caseCategory": "edge",
   "description": "Taker price does not satisfy maker price; no match, taker added to book",
-  "generatedAt": "2026-01-08T06:30:38.615Z",
+  "generatedAt": "2026-01-12T11:53:30.039Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
@@ -14,7 +14,8 @@
     "market_account",
     "market_pair_to_price",
     "market_pair_price_to_order",
-    "dynamic-properties"
+    "dynamic-properties",
+    "asset-issue-v2"
   ],
   "expectedStatus": "SUCCESS",
   "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",

@@ -4,7 +4,7 @@
   "caseName": "happy_path_strict_math_enabled",
   "caseCategory": "happy",
   "description": "Execute swap with strict math mode enabled (affects AMM rounding)",
-  "generatedAt": "2026-01-08T06:30:32.657Z",
+  "generatedAt": "2026-01-12T11:53:26.584Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

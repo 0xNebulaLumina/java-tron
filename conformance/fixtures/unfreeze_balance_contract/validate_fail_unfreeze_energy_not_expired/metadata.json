@@ -4,7 +4,7 @@
   "caseName": "validate_fail_unfreeze_energy_not_expired",
   "caseCategory": "validate_fail",
   "description": "Fail when ENERGY frozen balance has not expired yet",
-  "generatedAt": "2026-01-08T06:30:34.629Z",
+  "generatedAt": "2026-01-12T11:53:27.704Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

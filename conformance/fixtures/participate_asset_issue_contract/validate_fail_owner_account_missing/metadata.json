@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_account_missing",
   "caseCategory": "validate_fail",
   "description": "Fail when owner account does not exist",
-  "generatedAt": "2026-01-08T06:30:45.669Z",
+  "generatedAt": "2026-01-12T11:53:34.161Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

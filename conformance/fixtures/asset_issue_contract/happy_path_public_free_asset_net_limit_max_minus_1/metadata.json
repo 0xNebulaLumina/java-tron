@@ -4,7 +4,7 @@
   "caseName": "happy_path_public_free_asset_net_limit_max_minus_1",
   "caseCategory": "happy",
   "description": "Success when public_free_asset_net_limit is oneDayNetLimit - 1 (boundary-happy)",
-  "generatedAt": "2026-01-08T06:30:24.345Z",
+  "generatedAt": "2026-01-12T11:53:22.005Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

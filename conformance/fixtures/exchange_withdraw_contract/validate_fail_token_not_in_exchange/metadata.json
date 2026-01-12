@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_not_in_exchange",
   "caseCategory": "validate_fail",
   "description": "Fail when token is not in the exchange",
-  "generatedAt": "2026-01-08T06:30:32.667Z",
+  "generatedAt": "2026-01-12T11:53:26.590Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

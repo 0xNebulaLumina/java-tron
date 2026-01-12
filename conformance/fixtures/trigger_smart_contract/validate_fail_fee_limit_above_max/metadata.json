@@ -4,7 +4,7 @@
   "caseName": "validate_fail_fee_limit_above_max",
   "caseCategory": "validate_fail",
   "description": "Trigger with feeLimit > maxFeeLimit should fail validation",
-  "generatedAt": "2026-01-08T06:30:52.134Z",
+  "generatedAt": "2026-01-12T11:53:38.053Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_delegate_balance_lt_1_trx",
   "caseCategory": "validate_fail",
   "description": "Fail when delegateBalance < 1 TRX",
-  "generatedAt": "2026-01-09T04:18:05.983Z",
+  "generatedAt": "2026-01-12T11:53:32.153Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

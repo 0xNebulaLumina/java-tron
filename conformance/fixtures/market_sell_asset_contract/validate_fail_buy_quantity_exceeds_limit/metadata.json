@@ -4,13 +4,14 @@
   "caseName": "validate_fail_buy_quantity_exceeds_limit",
   "caseCategory": "validate_fail",
   "description": "Fail when buy quantity exceeds market quantity limit",
-  "generatedAt": "2026-01-08T06:30:38.393Z",
+  "generatedAt": "2026-01-12T11:53:29.977Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
   "databasesTouched": [
     "account",
-    "dynamic-properties"
+    "dynamic-properties",
+    "asset-issue-v2"
   ],
   "expectedStatus": "VALIDATION_FAILED",
   "expectedErrorMessage": "token quantity must less than 1000000",

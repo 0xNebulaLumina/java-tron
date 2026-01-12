@@ -4,7 +4,7 @@
   "caseName": "edge_perfect_transfer_drains_owner",
   "caseCategory": "happy",
   "description": "Boundary: transfer exact balance, owner ends with 0 TRX",
-  "generatedAt": "2026-01-08T06:30:43.912Z",
+  "generatedAt": "2026-01-12T11:53:33.136Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

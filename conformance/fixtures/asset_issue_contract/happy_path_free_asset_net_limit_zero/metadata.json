@@ -4,7 +4,7 @@
   "caseName": "happy_path_free_asset_net_limit_zero",
   "caseCategory": "happy",
   "description": "Success when free_asset_net_limit is 0 (boundary-happy)",
-  "generatedAt": "2026-01-08T06:30:24.332Z",
+  "generatedAt": "2026-01-12T11:53:21.986Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

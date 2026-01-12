@@ -4,7 +4,7 @@
   "caseName": "happy_path_maintenance_interval_min_bound",
   "caseCategory": "happy",
   "description": "Create proposal with MAINTENANCE_TIME_INTERVAL at minimum boundary",
-  "generatedAt": "2026-01-08T06:30:40.297Z",
+  "generatedAt": "2026-01-12T11:53:31.041Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

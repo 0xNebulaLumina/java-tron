@@ -4,7 +4,7 @@
   "caseName": "edge_max_match_num_exceeded",
   "caseCategory": "edge",
   "description": "MAX_MATCH_NUM boundary: exceeding limit should revert",
-  "generatedAt": "2026-01-08T06:30:38.414Z",
+  "generatedAt": "2026-01-12T11:53:29.984Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
@@ -14,7 +14,8 @@
     "market_account",
     "market_pair_to_price",
     "market_pair_price_to_order",
-    "dynamic-properties"
+    "dynamic-properties",
+    "asset-issue-v2"
   ],
   "expectedStatus": "REVERT",
   "expectedErrorMessage": "Too many matches. MAX_MATCH_NUM = 20",

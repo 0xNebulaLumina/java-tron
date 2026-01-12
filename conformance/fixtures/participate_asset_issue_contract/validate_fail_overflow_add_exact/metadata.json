@@ -4,7 +4,7 @@
   "caseName": "validate_fail_overflow_add_exact",
   "caseCategory": "validate_fail",
   "description": "Fail when amount is Long.MAX_VALUE causing overflow in balance operations",
-  "generatedAt": "2026-01-08T06:30:45.685Z",
+  "generatedAt": "2026-01-12T11:53:34.166Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

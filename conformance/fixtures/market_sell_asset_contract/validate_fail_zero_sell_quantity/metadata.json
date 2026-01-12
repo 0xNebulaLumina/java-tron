@@ -4,13 +4,14 @@
   "caseName": "validate_fail_zero_sell_quantity",
   "caseCategory": "validate_fail",
   "description": "Fail when sell quantity is zero",
-  "generatedAt": "2026-01-08T06:30:38.332Z",
+  "generatedAt": "2026-01-12T11:53:29.963Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
   "databasesTouched": [
     "account",
-    "dynamic-properties"
+    "dynamic-properties",
+    "asset-issue-v2"
   ],
   "expectedStatus": "VALIDATION_FAILED",
   "expectedErrorMessage": "token quantity must greater than zero",

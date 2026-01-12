@@ -4,7 +4,7 @@
   "caseName": "validate_fail_create_recipient_insufficient_trx_fee",
   "caseCategory": "validate_fail",
   "description": "Fail when owner has tokens but not enough TRX for create-account fee",
-  "generatedAt": "2026-01-08T06:30:43.738Z",
+  "generatedAt": "2026-01-12T11:53:33.084Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

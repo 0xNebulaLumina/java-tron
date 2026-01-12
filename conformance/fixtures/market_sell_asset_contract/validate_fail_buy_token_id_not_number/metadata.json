@@ -4,13 +4,14 @@
   "caseName": "validate_fail_buy_token_id_not_number",
   "caseCategory": "validate_fail",
   "description": "Fail when buyTokenId is not a valid number",
-  "generatedAt": "2026-01-08T06:30:38.656Z",
+  "generatedAt": "2026-01-12T11:53:30.054Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
   "databasesTouched": [
     "account",
-    "dynamic-properties"
+    "dynamic-properties",
+    "asset-issue-v2"
   ],
   "expectedStatus": "VALIDATION_FAILED",
   "expectedErrorMessage": "buyTokenId is not a valid number",

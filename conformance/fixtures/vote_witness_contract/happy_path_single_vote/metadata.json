@@ -4,7 +4,7 @@
   "caseName": "happy_path_single_vote",
   "caseCategory": "happy",
   "description": "Vote for a single witness with sufficient TRON power",
-  "generatedAt": "2026-01-08T06:31:36.854Z",
+  "generatedAt": "2026-01-12T11:54:05.726Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

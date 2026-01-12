@@ -4,7 +4,7 @@
   "caseName": "validate_fail_insufficient_asset_balance",
   "caseCategory": "validate_fail",
   "description": "Fail when owner has insufficient asset balance",
-  "generatedAt": "2026-01-08T06:30:43.924Z",
+  "generatedAt": "2026-01-12T11:53:33.140Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

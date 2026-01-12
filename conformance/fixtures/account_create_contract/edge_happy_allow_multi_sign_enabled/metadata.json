@@ -4,7 +4,7 @@
   "caseName": "edge_happy_allow_multi_sign_enabled",
   "caseCategory": "edge",
   "description": "Success with ALLOW_MULTI_SIGN=1, new account gets default owner+active permissions",
-  "generatedAt": "2026-01-08T06:30:30.829Z",
+  "generatedAt": "2026-01-12T11:53:25.563Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

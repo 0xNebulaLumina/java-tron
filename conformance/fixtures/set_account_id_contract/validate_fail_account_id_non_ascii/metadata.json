@@ -4,7 +4,7 @@
   "caseName": "validate_fail_account_id_non_ascii",
   "caseCategory": "validate_fail",
   "description": "Fail when account ID contains non-ASCII byte (> 0x7E)",
-  "generatedAt": "2026-01-08T06:30:21.368Z",
+  "generatedAt": "2026-01-12T11:53:20.516Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

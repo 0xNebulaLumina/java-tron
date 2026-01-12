@@ -4,7 +4,7 @@
   "caseName": "edge_sweep_expired_unfrozen_v2",
   "caseCategory": "edge",
   "description": "Unfreeze V2 with existing expired unfrozenV2 entry (tests withdrawExpireAmount)",
-  "generatedAt": "2026-01-08T06:30:36.423Z",
+  "generatedAt": "2026-01-12T11:53:28.836Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

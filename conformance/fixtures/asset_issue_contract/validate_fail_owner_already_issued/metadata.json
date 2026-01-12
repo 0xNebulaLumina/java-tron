@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_already_issued",
   "caseCategory": "validate_fail",
   "description": "Fail when owner has already issued an asset",
-  "generatedAt": "2026-01-08T06:30:24.310Z",
+  "generatedAt": "2026-01-12T11:53:21.972Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

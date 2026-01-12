@@ -4,7 +4,7 @@
   "caseName": "validate_fail_duplicate_name_updates_disabled",
   "caseCategory": "validate_fail",
   "description": "Fail when name is already taken and updates are disabled",
-  "generatedAt": "2026-01-08T06:30:30.851Z",
+  "generatedAt": "2026-01-12T11:53:25.571Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

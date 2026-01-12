@@ -4,7 +4,7 @@
   "caseName": "edge_all_entries_expired_withdraw_only",
   "caseCategory": "happy",
   "description": "All entries expired: withdraw-only behavior with cancel amounts = 0",
-  "generatedAt": "2026-01-09T04:18:05.954Z",
+  "generatedAt": "2026-01-12T11:53:32.140Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

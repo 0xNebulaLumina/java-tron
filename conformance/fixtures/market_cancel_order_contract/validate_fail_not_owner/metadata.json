@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_owner",
   "caseCategory": "validate_fail",
   "description": "Fail when non-owner tries to cancel an order",
-  "generatedAt": "2026-01-08T06:30:38.589Z",
+  "generatedAt": "2026-01-12T11:53:30.032Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
@@ -12,7 +12,8 @@
     "account",
     "market_order",
     "market_account",
-    "dynamic-properties"
+    "dynamic-properties",
+    "asset-issue-v2"
   ],
   "expectedStatus": "VALIDATION_FAILED",
   "expectedErrorMessage": "Order does not belong to the account!",

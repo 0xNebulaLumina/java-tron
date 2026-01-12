@@ -4,7 +4,7 @@
   "caseName": "edge_expire_time_equals_now_is_withdrawable",
   "caseCategory": "happy",
   "description": "Entry with expireTime == now is treated as expired and withdrawable (<= now)",
-  "generatedAt": "2026-01-09T04:18:06.065Z",
+  "generatedAt": "2026-01-12T11:53:32.180Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

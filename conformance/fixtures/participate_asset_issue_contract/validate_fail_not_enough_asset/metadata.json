@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_enough_asset",
   "caseCategory": "validate_fail",
   "description": "Fail when issuer does not have enough asset balance",
-  "generatedAt": "2026-01-08T06:30:45.557Z",
+  "generatedAt": "2026-01-12T11:53:34.094Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

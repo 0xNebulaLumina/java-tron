@@ -4,7 +4,7 @@
   "caseName": "validate_fail_exchange_closed_balance_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when exchange is closed (balance is zero)",
-  "generatedAt": "2026-01-08T06:30:32.905Z",
+  "generatedAt": "2026-01-12T11:53:26.639Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

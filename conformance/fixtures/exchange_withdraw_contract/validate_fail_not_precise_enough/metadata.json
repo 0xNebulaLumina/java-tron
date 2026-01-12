@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_precise_enough",
   "caseCategory": "validate_fail",
   "description": "Fail due to precision guard on withdrawal",
-  "generatedAt": "2026-01-08T06:30:33.004Z",
+  "generatedAt": "2026-01-12T11:53:26.696Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

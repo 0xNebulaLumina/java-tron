@@ -4,7 +4,7 @@
   "caseName": "validate_fail_num_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when num is 0",
-  "generatedAt": "2026-01-08T06:30:24.372Z",
+  "generatedAt": "2026-01-12T11:53:22.020Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

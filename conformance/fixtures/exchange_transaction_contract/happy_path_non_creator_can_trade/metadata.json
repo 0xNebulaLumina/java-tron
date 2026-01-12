@@ -4,7 +4,7 @@
   "caseName": "happy_path_non_creator_can_trade",
   "caseCategory": "happy",
   "description": "Non-creator can successfully trade on exchange (permissionless)",
-  "generatedAt": "2026-01-08T06:30:32.643Z",
+  "generatedAt": "2026-01-12T11:53:26.574Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

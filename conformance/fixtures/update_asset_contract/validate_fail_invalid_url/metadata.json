@@ -4,7 +4,7 @@
   "caseName": "validate_fail_invalid_url",
   "caseCategory": "validate_fail",
   "description": "Fail when URL is invalid",
-  "generatedAt": "2026-01-08T06:30:45.623Z",
+  "generatedAt": "2026-01-12T11:53:34.117Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,
