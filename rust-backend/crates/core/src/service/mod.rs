@@ -245,20 +245,15 @@ impl BackendService {
 
             // java-tron stores SmartContract.code_hash as keccak256(runtime_code) (CodeStore),
             // not keccak256(deployment_bytecode) (SmartContract.bytecode).
-            let mut code_bytes: Vec<u8> = Vec::new();
-            if let Ok(Some(code)) = storage_adapter.get_code(created_address) {
-                code_bytes.extend_from_slice(code.original_byte_slice());
-            }
+            let runtime_code = storage_adapter
+                .get_code(created_address)
+                .map_err(|e| format!("Failed to read contract runtime code: {}", e))?
+                .map(|code| code.original_byte_slice().to_vec())
+                .unwrap_or_default();
 
-            if code_bytes.is_empty() {
-                code_bytes = smart_contract.bytecode.clone();
-            }
-
-            if !code_bytes.is_empty() {
-                let mut hasher = Keccak256::new();
-                hasher.update(&code_bytes);
-                smart_contract.code_hash = hasher.finalize().to_vec();
-            }
+            let mut hasher = Keccak256::new();
+            hasher.update(&runtime_code);
+            smart_contract.code_hash = hasher.finalize().to_vec();
         }
 
         // ContractStore stores SmartContract metadata WITHOUT ABI; ABI is stored separately in AbiStore.

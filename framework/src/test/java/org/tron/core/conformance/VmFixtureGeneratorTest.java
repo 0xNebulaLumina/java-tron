@@ -1483,6 +1483,7 @@ public class VmFixtureGeneratorTest extends BaseTest {
           .database("abi")
           .database("contract-state")
           .database("dynamic-properties")
+          .database("asset-issue-v2")
           .ownerAddress(OWNER_ADDRESS)
           .expectedError(errorMessage != null ? errorMessage : "unknown")
           .build();
@@ -1544,7 +1545,6 @@ public class VmFixtureGeneratorTest extends BaseTest {
       String caseName,
       String category,
       String description) throws Exception {
-
     File fixtureDir = new File(outputDir, contractTypeName + "/" + caseName);
     fixtureDir.mkdirs();
 
@@ -1620,6 +1620,7 @@ public class VmFixtureGeneratorTest extends BaseTest {
         .database("abi")
         .database("contract-state")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -1698,7 +1699,8 @@ public class VmFixtureGeneratorTest extends BaseTest {
   }
 
   private void captureVmDatabases(File outputDir) throws Exception {
-    String[] databases = {"account", "contract", "code", "abi", "contract-state", "dynamic-properties"};
+    String[] databases = {"account", "contract", "code", "abi", "contract-state",
+        "dynamic-properties", "asset-issue-v2"};
 
     for (String dbName : databases) {
       SortedMap<byte[], byte[]> kvData = new TreeMap<>(KvFileFormat.BYTE_ARRAY_COMPARATOR);
@@ -1727,6 +1729,8 @@ public class VmFixtureGeneratorTest extends BaseTest {
       switch (dbName) {
         case "account":
           return convertIterator(chainBaseManager.getAccountStore().iterator());
+        case "asset-issue-v2":
+          return convertIterator(chainBaseManager.getAssetIssueV2Store().iterator());
         case "contract":
           return convertIterator(chainBaseManager.getContractStore().iterator());
         case "code":

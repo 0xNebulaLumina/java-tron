@@ -4268,6 +4268,40 @@ impl EvmStateStore for EngineBackedEvmStateStore {
             Ok(Some(fee))
         }
     }
+
+    fn tron_address_prefix(&self) -> Result<u8> {
+        Ok(self.address_prefix)
+    }
+
+    fn tron_dynamic_property_i64(&self, key: &[u8]) -> Result<Option<i64>> {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(Some(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ])))
+                } else if !data.is_empty() {
+                    Ok(Some(data[0] as i64))
+                } else {
+                    Ok(Some(0))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn tron_get_asset_issue(
+        &self,
+        key: &[u8],
+        allow_same_token_name: i64,
+    ) -> Result<Option<crate::protocol::AssetIssueContractData>> {
+        EngineBackedEvmStateStore::get_asset_issue(self, key, allow_same_token_name)
+    }
+
+    fn tron_get_asset_balance_v2(&self, address: &Address, token_id: &[u8]) -> Result<i64> {
+        EngineBackedEvmStateStore::get_asset_balance_v2(self, address, token_id)
+    }
 }
 
 // ==========================================================================

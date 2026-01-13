@@ -15,18 +15,13 @@ pub fn keccak256(data: &[u8]) -> B256 {
     B256::from_slice(&hasher.finalize())
 }
 
-/// Convert an EVM address to a proper Tron format address (base58 with checksum)
-pub fn to_tron_address(address: &Address) -> String {
+/// Encode a 21-byte TRON address (prefix + 20 bytes) as Base58Check.
+pub fn tron_address_to_base58(tron_addr: &[u8; 21]) -> String {
     use sha2::{Digest, Sha256};
-
-    // Create 21-byte address with 0x41 prefix
-    let mut tron_addr = Vec::with_capacity(21);
-    tron_addr.push(0x41);
-    tron_addr.extend_from_slice(address.as_slice());
 
     // Calculate double SHA256 for checksum
     let mut hasher1 = Sha256::new();
-    hasher1.update(&tron_addr);
+    hasher1.update(tron_addr);
     let hash1 = hasher1.finalize();
 
     let mut hasher2 = Sha256::new();
@@ -34,11 +29,28 @@ pub fn to_tron_address(address: &Address) -> String {
     let hash2 = hasher2.finalize();
 
     // Take first 4 bytes as checksum
-    let mut addr_with_checksum = tron_addr;
+    let mut addr_with_checksum = Vec::with_capacity(25);
+    addr_with_checksum.extend_from_slice(tron_addr);
     addr_with_checksum.extend_from_slice(&hash2[..4]);
 
     // Encode with base58
     bs58::encode(&addr_with_checksum).into_string()
+}
+
+/// Convert an EVM address to a proper Tron format address (base58 with checksum)
+pub fn to_tron_address(address: &Address) -> String {
+    let mut tron_addr = [0u8; 21];
+    tron_addr[0] = 0x41;
+    tron_addr[1..].copy_from_slice(address.as_slice());
+    tron_address_to_base58(&tron_addr)
+}
+
+/// Convert an EVM address to a TRON Base58Check address using the provided prefix.
+pub fn to_tron_address_with_prefix(address: &Address, prefix: u8) -> String {
+    let mut tron_addr = [0u8; 21];
+    tron_addr[0] = prefix;
+    tron_addr[1..].copy_from_slice(address.as_slice());
+    tron_address_to_base58(&tron_addr)
 }
 
 /// Convert a Tron format address (base58 with checksum) back to EVM address for testing

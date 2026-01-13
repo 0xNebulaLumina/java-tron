@@ -171,9 +171,8 @@ if [ "$GENERATE_ONLY" = false ]; then
     FIXTURES_DIR_FOR_RUST="$FIXTURES_DIR"
     if [ "${FIXTURE_CONFORMANCE_INCLUDE_UNSUPPORTED:-0}" != "1" ]; then
         should_exclude_fixture_contract_dir() {
-                case "$1" in
-create_smart_contract|\
-trigger_smart_contract)
+            case "$1" in
+                trigger_smart_contract)
                     return 0
                     ;;
                 *)
