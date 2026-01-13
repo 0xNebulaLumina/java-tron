@@ -4,7 +4,7 @@
   "caseName": "validate_fail_to_not_issuer",
   "caseCategory": "validate_fail",
   "description": "Fail when toAddress is not the asset issuer",
-  "generatedAt": "2026-01-12T11:53:34.095Z",
+  "generatedAt": "2026-01-13T05:27:46.800Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_unfreeze_balance_negative",
   "caseCategory": "validate_fail",
   "description": "Fail when unfreezeBalance is negative",
-  "generatedAt": "2026-01-12T11:53:28.920Z",
+  "generatedAt": "2026-01-13T05:27:41.742Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

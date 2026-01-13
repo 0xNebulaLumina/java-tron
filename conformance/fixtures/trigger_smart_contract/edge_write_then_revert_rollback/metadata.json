@@ -4,7 +4,7 @@
   "caseName": "edge_write_then_revert_rollback",
   "caseCategory": "edge",
   "description": "Contract writes to storage then reverts - verify storage is rolled back",
-  "generatedAt": "2026-01-12T11:53:49.422Z",
+  "generatedAt": "2026-01-13T05:28:02.062Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

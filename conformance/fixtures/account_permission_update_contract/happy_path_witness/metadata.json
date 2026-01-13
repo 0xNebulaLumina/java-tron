@@ -4,7 +4,7 @@
   "caseName": "happy_path_witness",
   "caseCategory": "happy",
   "description": "Update permissions including witness permission for a witness account",
-  "generatedAt": "2026-01-12T11:53:20.634Z",
+  "generatedAt": "2026-01-13T05:27:34.320Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

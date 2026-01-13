@@ -4,7 +4,7 @@
   "caseName": "validate_fail_precision_high_7",
   "caseCategory": "validate_fail",
   "description": "Fail when precision is 7 (max is 6)",
-  "generatedAt": "2026-01-12T11:53:22.076Z",
+  "generatedAt": "2026-01-13T05:27:35.635Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

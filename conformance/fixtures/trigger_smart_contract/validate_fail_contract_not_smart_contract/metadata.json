@@ -4,7 +4,7 @@
   "caseName": "validate_fail_contract_not_smart_contract",
   "caseCategory": "validate_fail",
   "description": "Trigger a valid address that exists but is not a smart contract",
-  "generatedAt": "2026-01-12T11:53:51.147Z",
+  "generatedAt": "2026-01-13T05:28:03.658Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

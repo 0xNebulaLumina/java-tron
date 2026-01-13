@@ -4,7 +4,7 @@
   "caseName": "view_function",
   "caseCategory": "happy",
   "description": "Call view function int2str(66) to read stored value",
-  "generatedAt": "2026-01-12T11:53:48.560Z",
+  "generatedAt": "2026-01-13T05:28:01.217Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

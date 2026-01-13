@@ -4,7 +4,7 @@
   "caseName": "validate_fail_insufficient_balance",
   "caseCategory": "validate_fail",
   "description": "Fail when trying to withdraw more than available balance",
-  "generatedAt": "2026-01-12T11:53:26.682Z",
+  "generatedAt": "2026-01-13T05:27:39.673Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

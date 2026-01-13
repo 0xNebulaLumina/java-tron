@@ -4,7 +4,7 @@
   "caseName": "happy_path_set_name_first_time",
   "caseCategory": "happy",
   "description": "Set account name for the first time (allowUpdateAccountName=0)",
-  "generatedAt": "2026-01-12T11:53:25.561Z",
+  "generatedAt": "2026-01-13T05:27:38.645Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

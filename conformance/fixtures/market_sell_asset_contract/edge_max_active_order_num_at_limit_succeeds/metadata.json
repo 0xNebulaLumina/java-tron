@@ -4,7 +4,7 @@
   "caseName": "edge_max_active_order_num_at_limit_succeeds",
   "caseCategory": "edge",
   "description": "Creating the 100th order succeeds when starting from 99 active orders",
-  "generatedAt": "2026-01-12T11:53:29.943Z",
+  "generatedAt": "2026-01-13T05:27:42.719Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

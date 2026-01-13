@@ -4,7 +4,7 @@
   "caseName": "validate_fail_insufficient_balance",
   "caseCategory": "validate_fail",
   "description": "Fail when owner has insufficient balance for upgrade cost",
-  "generatedAt": "2026-01-12T11:54:05.717Z",
+  "generatedAt": "2026-01-13T05:28:17.686Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

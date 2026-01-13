@@ -4,7 +4,7 @@
   "caseName": "validate_fail_invalid_owner_address",
   "caseCategory": "validate_fail",
   "description": "Fail when owner address has invalid format",
-  "generatedAt": "2026-01-12T11:53:34.120Z",
+  "generatedAt": "2026-01-13T05:27:46.824Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

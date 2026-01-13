@@ -4,7 +4,7 @@
   "caseName": "edge_unfreeze_v1_succeeds_when_v2_open",
   "caseCategory": "edge",
   "description": "V1 unfreeze succeeds even when V2 is open (legacy frozen entry)",
-  "generatedAt": "2026-01-12T11:53:27.793Z",
+  "generatedAt": "2026-01-13T05:27:40.717Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

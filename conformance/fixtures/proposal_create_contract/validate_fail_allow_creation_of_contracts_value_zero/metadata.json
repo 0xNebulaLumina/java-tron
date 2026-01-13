@@ -4,7 +4,7 @@
   "caseName": "validate_fail_allow_creation_of_contracts_value_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when ALLOW_CREATION_OF_CONTRACTS is not 1",
-  "generatedAt": "2026-01-12T11:53:31.086Z",
+  "generatedAt": "2026-01-13T05:27:43.767Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

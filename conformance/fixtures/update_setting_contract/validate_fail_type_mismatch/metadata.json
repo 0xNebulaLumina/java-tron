@@ -4,7 +4,7 @@
   "caseName": "validate_fail_type_mismatch",
   "caseCategory": "validate_fail",
   "description": "Fail when contract type is UpdateSettingContract but payload is different protobuf",
-  "generatedAt": "2026-01-12T11:53:24.471Z",
+  "generatedAt": "2026-01-13T05:27:37.700Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

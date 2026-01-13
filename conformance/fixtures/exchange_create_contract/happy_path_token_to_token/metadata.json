@@ -4,7 +4,7 @@
   "caseName": "happy_path_token_to_token",
   "caseCategory": "happy",
   "description": "Create a new TRC-10 token to TRC-10 token exchange",
-  "generatedAt": "2026-01-12T11:53:26.622Z",
+  "generatedAt": "2026-01-13T05:27:39.635Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

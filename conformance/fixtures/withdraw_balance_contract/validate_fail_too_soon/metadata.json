@@ -4,7 +4,7 @@
   "caseName": "validate_fail_too_soon",
   "caseCategory": "validate_fail",
   "description": "Fail when withdrawing before cooldown period ends",
-  "generatedAt": "2026-01-12T11:54:05.702Z",
+  "generatedAt": "2026-01-13T05:28:17.671Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_unDelegate_balance_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when unDelegateBalance is zero",
-  "generatedAt": "2026-01-12T11:53:32.129Z",
+  "generatedAt": "2026-01-13T05:27:44.803Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

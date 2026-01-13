@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_account_not_exists",
   "caseCategory": "validate_fail",
   "description": "Fail when owner account does not exist in AccountStore",
-  "generatedAt": "2026-01-12T11:53:22.012Z",
+  "generatedAt": "2026-01-13T05:27:35.570Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

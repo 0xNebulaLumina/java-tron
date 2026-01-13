@@ -4,7 +4,7 @@
   "caseName": "validate_fail_active_permission_missing",
   "caseCategory": "validate_fail",
   "description": "Fail when no active permissions are provided",
-  "generatedAt": "2026-01-12T11:53:20.564Z",
+  "generatedAt": "2026-01-13T05:27:34.251Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

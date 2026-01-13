@@ -4,7 +4,7 @@
   "caseName": "validate_fail_expired",
   "caseCategory": "validate_fail",
   "description": "Fail when trying to delete an expired proposal",
-  "generatedAt": "2026-01-12T11:53:31.034Z",
+  "generatedAt": "2026-01-13T05:27:43.738Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

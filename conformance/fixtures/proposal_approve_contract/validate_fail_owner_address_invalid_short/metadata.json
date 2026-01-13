@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_address_invalid_short",
   "caseCategory": "validate_fail",
   "description": "Fail when owner address is invalid (too short)",
-  "generatedAt": "2026-01-12T11:53:31.043Z",
+  "generatedAt": "2026-01-13T05:27:43.746Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_witness_exists",
   "caseCategory": "validate_fail",
   "description": "Fail when witness already exists for the account",
-  "generatedAt": "2026-01-12T11:54:05.705Z",
+  "generatedAt": "2026-01-13T05:28:17.674Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_receiver_address_invalid_empty",
   "caseCategory": "validate_fail",
   "description": "Fail when receiver address is empty/invalid",
-  "generatedAt": "2026-01-12T11:53:32.173Z",
+  "generatedAt": "2026-01-13T05:27:44.831Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

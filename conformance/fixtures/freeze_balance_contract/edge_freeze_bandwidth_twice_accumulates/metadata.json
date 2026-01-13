@@ -4,7 +4,7 @@
   "caseName": "edge_freeze_bandwidth_twice_accumulates",
   "caseCategory": "edge",
   "description": "Second freeze accumulates on existing frozen balance",
-  "generatedAt": "2026-01-12T11:53:27.754Z",
+  "generatedAt": "2026-01-13T05:27:40.692Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000002,
   "blockTimestamp": 1700000006000,

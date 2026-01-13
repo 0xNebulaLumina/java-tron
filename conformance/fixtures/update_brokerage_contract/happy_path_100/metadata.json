@@ -4,7 +4,7 @@
   "caseName": "happy_path_100",
   "caseCategory": "happy",
   "description": "Set brokerage to 100% (witness takes all commission)",
-  "generatedAt": "2026-01-12T11:53:23.270Z",
+  "generatedAt": "2026-01-13T05:27:36.679Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

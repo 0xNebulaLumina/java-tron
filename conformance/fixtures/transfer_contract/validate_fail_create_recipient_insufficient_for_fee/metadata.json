@@ -4,7 +4,7 @@
   "caseName": "validate_fail_create_recipient_insufficient_for_fee",
   "caseCategory": "validate_fail",
   "description": "Fail when owner has enough for amount but not amount + create-account fee",
-  "generatedAt": "2026-01-12T11:53:33.138Z",
+  "generatedAt": "2026-01-13T05:27:45.849Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

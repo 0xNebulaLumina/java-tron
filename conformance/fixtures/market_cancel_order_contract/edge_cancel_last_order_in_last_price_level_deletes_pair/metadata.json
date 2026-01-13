@@ -4,7 +4,7 @@
   "caseName": "edge_cancel_last_order_in_last_price_level_deletes_pair",
   "caseCategory": "edge",
   "description": "Cancel last order in last price level; pairToPriceStore deletes pair",
-  "generatedAt": "2026-01-12T11:53:29.978Z",
+  "generatedAt": "2026-01-13T05:27:42.771Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

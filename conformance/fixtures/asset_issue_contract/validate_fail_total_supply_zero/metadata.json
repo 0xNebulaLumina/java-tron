@@ -4,7 +4,7 @@
   "caseName": "validate_fail_total_supply_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when total_supply is zero",
-  "generatedAt": "2026-01-12T11:53:22.108Z",
+  "generatedAt": "2026-01-13T05:27:35.664Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

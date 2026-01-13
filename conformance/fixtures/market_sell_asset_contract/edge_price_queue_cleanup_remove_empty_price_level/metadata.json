@@ -4,7 +4,7 @@
   "caseName": "edge_price_queue_cleanup_remove_empty_price_level",
   "caseCategory": "edge",
   "description": "Price queue cleanup: delete empty price level after matching",
-  "generatedAt": "2026-01-12T11:53:30.025Z",
+  "generatedAt": "2026-01-13T05:27:42.839Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

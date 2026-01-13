@@ -4,7 +4,7 @@
   "caseName": "validate_fail_no_reward",
   "caseCategory": "validate_fail",
   "description": "Fail when there is no allowance/reward to withdraw",
-  "generatedAt": "2026-01-12T11:54:05.714Z",
+  "generatedAt": "2026-01-13T05:28:17.684Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_percent_negative",
   "caseCategory": "validate_fail",
   "description": "Fail when consumeUserResourcePercent < 0",
-  "generatedAt": "2026-01-12T11:53:35.161Z",
+  "generatedAt": "2026-01-13T05:27:48.007Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,
@@ -14,7 +14,8 @@
     "code",
     "abi",
     "contract-state",
-    "dynamic-properties"
+    "dynamic-properties",
+    "asset-issue-v2"
   ],
   "expectedStatus": "VALIDATION_FAILED",
   "expectedErrorMessage": "percent must be >= 0 and <= 100",

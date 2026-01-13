@@ -4,7 +4,7 @@
   "caseName": "validate_fail_account_address_wrong_length",
   "caseCategory": "validate_fail",
   "description": "Fail when target account address is not 21 bytes (22 bytes)",
-  "generatedAt": "2026-01-12T11:53:25.587Z",
+  "generatedAt": "2026-01-13T05:27:38.677Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "happy_path_fee_burn_enabled",
   "caseCategory": "happy",
   "description": "Fee burn mode: fee is burned via dynamicStore.burnTrx() instead of crediting blackhole",
-  "generatedAt": "2026-01-12T11:53:22.016Z",
+  "generatedAt": "2026-01-13T05:27:35.586Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

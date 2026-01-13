@@ -4,7 +4,7 @@
   "caseName": "edge_sweep_expire_time_equals_now",
   "caseCategory": "edge",
   "description": "Sweep entry with expireTime == now (boundary: <= now is expired)",
-  "generatedAt": "2026-01-12T11:53:28.929Z",
+  "generatedAt": "2026-01-13T05:27:41.745Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

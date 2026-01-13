@@ -4,7 +4,7 @@
   "caseName": "edge_multiple_expired_entries_unfreeze_sum",
   "caseCategory": "edge",
   "description": "Multiple expired entries: unfreeze amount equals the sum",
-  "generatedAt": "2026-01-12T11:53:27.799Z",
+  "generatedAt": "2026-01-13T05:27:40.723Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

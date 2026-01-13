@@ -4,7 +4,7 @@
   "caseName": "validate_fail_order_not_active_inactive_filled",
   "caseCategory": "validate_fail",
   "description": "Fail when trying to cancel a filled (INACTIVE) order",
-  "generatedAt": "2026-01-12T11:53:29.971Z",
+  "generatedAt": "2026-01-13T05:27:42.762Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

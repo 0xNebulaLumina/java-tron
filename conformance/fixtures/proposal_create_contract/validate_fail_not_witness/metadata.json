@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_witness",
   "caseCategory": "validate_fail",
   "description": "Fail when owner is not a witness",
-  "generatedAt": "2026-01-12T11:53:31.052Z",
+  "generatedAt": "2026-01-13T05:27:43.754Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

@@ -4,7 +4,7 @@
   "caseName": "edge_no_match_price_too_low",
   "caseCategory": "edge",
   "description": "Taker price does not satisfy maker price; no match, taker added to book",
-  "generatedAt": "2026-01-12T11:53:30.039Z",
+  "generatedAt": "2026-01-13T05:27:42.854Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

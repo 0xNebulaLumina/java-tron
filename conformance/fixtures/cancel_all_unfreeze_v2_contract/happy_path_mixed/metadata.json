@@ -4,7 +4,7 @@
   "caseName": "happy_path_mixed",
   "caseCategory": "happy",
   "description": "Cancel with mixed expired/unexpired entries (expired goes to withdraw, unexpired re-freezes)",
-  "generatedAt": "2026-01-12T11:53:32.170Z",
+  "generatedAt": "2026-01-13T05:27:44.829Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_balance_not_enough",
   "caseCategory": "validate_fail",
   "description": "Fail when token balance is not enough for trade",
-  "generatedAt": "2026-01-12T11:53:26.637Z",
+  "generatedAt": "2026-01-13T05:27:39.647Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

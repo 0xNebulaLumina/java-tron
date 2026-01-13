@@ -4,7 +4,7 @@
   "caseName": "edge_invalid_bytecode",
   "caseCategory": "edge",
   "description": "Deploy with invalid/malformed bytecode",
-  "generatedAt": "2026-01-12T11:53:35.135Z",
+  "generatedAt": "2026-01-13T05:27:47.989Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,
@@ -14,7 +14,8 @@
     "code",
     "abi",
     "contract-state",
-    "dynamic-properties"
+    "dynamic-properties",
+    "asset-issue-v2"
   ],
   "expectedStatus": "REVERT",
   "expectedErrorMessage": "Invalid operation code: opCode[de];",
