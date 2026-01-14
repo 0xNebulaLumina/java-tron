@@ -84,4 +84,13 @@ pub trait EvmStateStore: Send + Sync {
     fn tron_get_asset_balance_v2(&self, _address: &Address, _token_id: &[u8]) -> Result<i64> {
         Ok(0)
     }
+
+    /// Best-effort smart contract existence check (ContractStore).
+    ///
+    /// Returns:
+    /// - `Ok(Some(true/false))` when the store can answer using ContractStore.
+    /// - `Ok(None)` when unsupported/unavailable (caller may fall back to other heuristics).
+    fn tron_has_smart_contract(&self, _contract_address: &[u8]) -> Result<Option<bool>> {
+        Ok(None)
+    }
 }

@@ -4114,7 +4114,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
     fn get_code(&self, address: &Address) -> Result<Option<Bytecode>> {
         let key = self.code_key(address);
         match self.buffered_get(self.code_database(), &key)? {
-            Some(data) => Ok(Some(Bytecode::new_raw(data.into()))),
+            Some(data) => Ok((!data.is_empty()).then(|| Bytecode::new_raw(data.into()))),
             None => Ok(None),
         }
     }
@@ -4195,8 +4195,14 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn set_storage(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         let storage_key = self.contract_storage_key(&address, &key);
-        let data = value.to_be_bytes::<32>();
-        self.buffered_put(self.storage_row_database(), storage_key, data.to_vec())?;
+        if value == U256::ZERO {
+            // TRON parity: Contract storage is a sparse KV store. Zero values are represented
+            // by the absence of a key (deletion), not by an explicit 32-byte zero blob.
+            self.buffered_delete(self.storage_row_database(), storage_key)?;
+        } else {
+            let data = value.to_be_bytes::<32>();
+            self.buffered_put(self.storage_row_database(), storage_key, data.to_vec())?;
+        }
         Ok(())
     }
 
@@ -4301,6 +4307,13 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn tron_get_asset_balance_v2(&self, address: &Address, token_id: &[u8]) -> Result<i64> {
         EngineBackedEvmStateStore::get_asset_balance_v2(self, address, token_id)
+    }
+
+    fn tron_has_smart_contract(&self, contract_address: &[u8]) -> Result<Option<bool>> {
+        Ok(Some(
+            self.buffered_get(self.contract_database(), contract_address)?
+                .is_some(),
+        ))
     }
 }
 

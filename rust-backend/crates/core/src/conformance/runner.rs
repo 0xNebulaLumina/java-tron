@@ -357,6 +357,7 @@ impl ConformanceRunner {
                     | Some(TronContractType::AccountPermissionUpdateContract)
                     | Some(TronContractType::AccountUpdateContract)
                     | Some(TronContractType::AssetIssueContract)
+                    | Some(TronContractType::TriggerSmartContract)
                     | Some(TronContractType::FreezeBalanceContract)
                     | Some(TronContractType::FreezeBalanceV2Contract)
                     | Some(TronContractType::UnfreezeBalanceContract)
@@ -418,7 +419,7 @@ impl ConformanceRunner {
             None
         } else {
             let allow_malformed_to =
-                matches!(contract_type, Some(TronContractType::TransferContract));
+                matches!(contract_type, Some(TronContractType::TransferContract) | Some(TronContractType::TriggerSmartContract));
 
             let (to_bytes, to_is_valid) = if tx.to.len() == 21 {
                 if tx.to[0] == 0x41 || tx.to[0] == 0xa0 {

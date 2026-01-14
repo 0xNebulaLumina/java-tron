@@ -165,20 +165,20 @@ if [ "$GENERATE_ONLY" = false ]; then
         exit 2
     fi
 
-    # Some fixture families are not yet supported by the Rust backend.
+    # Some fixture families may not be supported by the Rust backend.
     # Exclude them by default so `--rust-only` can run against the supported set.
     # Set FIXTURE_CONFORMANCE_INCLUDE_UNSUPPORTED=1 to include everything.
     FIXTURES_DIR_FOR_RUST="$FIXTURES_DIR"
     if [ "${FIXTURE_CONFORMANCE_INCLUDE_UNSUPPORTED:-0}" != "1" ]; then
         should_exclude_fixture_contract_dir() {
-            case "$1" in
-                trigger_smart_contract)
-                    return 0
-                    ;;
-                *)
-                    return 1
-                    ;;
-            esac
+            # Add unsupported fixture families here (none by default).
+            # Example:
+            #   case "$1" in
+            #     some_contract_family｜\
+            #     another_contract_family) return 0 ;;
+            #     *) return 1 ;;
+            #   esac
+            return 1
         }
 
         FILTERED_FIXTURES_DIR="$(mktemp -d)"

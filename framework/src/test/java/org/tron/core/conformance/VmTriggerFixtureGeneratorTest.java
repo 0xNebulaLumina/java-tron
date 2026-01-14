@@ -1743,85 +1743,82 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
     // Disable VM support
     manager.getDynamicPropertiesStore().saveAllowCreationOfContracts(0);
 
-    // Capture pre-state
-    File fixtureDir = new File(outputDir, "trigger_smart_contract/validate_fail_vm_disabled");
-    fixtureDir.mkdirs();
-    File preDbDir = new File(fixtureDir, "pre_db");
-    preDbDir.mkdirs();
-    captureVmDatabases(preDbDir);
-
-    String expectedError = "VM work is off, need to be opened by the committee";
-    String errorMessage = null;
-    TVMTestResult result = null;
-
-    try {
-      String params = "0000000000000000000000000000000000000000000000000000000000000001"
-          + "0000000000000000000000000000000000000000000000000000000000000040"
-          + "0000000000000000000000000000000000000000000000000000000000000005"
-          + "68656c6c6f000000000000000000000000000000000000000000000000000000";
-      byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
-
-      result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
-          ownerBytes, contractAddress, triggerData, 0, DEFAULT_FEE_LIMIT, manager, null);
-      if (result.getRuntime().getRuntimeError() != null) {
-        errorMessage = result.getRuntime().getRuntimeError();
-      }
-    } catch (org.tron.core.exception.ContractValidateException e) {
-      errorMessage = e.getMessage();
-      log.info("Got expected validation error: {}", errorMessage);
-    } catch (Exception e) {
-      errorMessage = e.getMessage();
-    } finally {
-      // Restore original VM support setting
-      manager.getDynamicPropertiesStore().saveAllowCreationOfContracts(originalAllowCreation);
-    }
-
-    log.info("VM disabled trigger result: error={}", errorMessage);
-
-    // Build request
     String params = "0000000000000000000000000000000000000000000000000000000000000001"
         + "0000000000000000000000000000000000000000000000000000000000000040"
         + "0000000000000000000000000000000000000000000000000000000000000005"
         + "68656c6c6f000000000000000000000000000000000000000000000000000000";
     byte[] triggerData = TvmTestUtils.parseAbi("testPut(uint256,string)", params);
 
-    TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
-        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
-        .setContractAddress(ByteString.copyFrom(contractAddress))
-        .setData(ByteString.copyFrom(triggerData))
-        .setCallValue(0)
-        .build();
+    File fixtureDir = new File(outputDir, "trigger_smart_contract/validate_fail_vm_disabled");
+    fixtureDir.mkdirs();
 
-    ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
-    File requestFile = new File(fixtureDir, "request.pb");
-    try (FileOutputStream fos = new FileOutputStream(requestFile)) {
-      request.writeTo(fos);
+    String expectedError = "VM work is off, need to be opened by the committee";
+    String errorMessage = null;
+    TVMTestResult result = null;
+
+    try {
+      // Capture pre-state (VM disabled)
+      File preDbDir = new File(fixtureDir, "pre_db");
+      preDbDir.mkdirs();
+      captureVmDatabases(preDbDir);
+
+      try {
+        result = TvmTestUtils.triggerContractAndReturnTvmTestResult(
+            ownerBytes, contractAddress, triggerData, 0, DEFAULT_FEE_LIMIT, manager, null);
+        if (result.getRuntime().getRuntimeError() != null) {
+          errorMessage = result.getRuntime().getRuntimeError();
+        }
+      } catch (org.tron.core.exception.ContractValidateException e) {
+        errorMessage = e.getMessage();
+        log.info("Got expected validation error: {}", errorMessage);
+      } catch (Exception e) {
+        errorMessage = e.getMessage();
+      }
+
+      log.info("VM disabled trigger result: error={}", errorMessage);
+
+      // Build request
+      TriggerSmartContract triggerContract = TriggerSmartContract.newBuilder()
+          .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+          .setContractAddress(ByteString.copyFrom(contractAddress))
+          .setData(ByteString.copyFrom(triggerData))
+          .setCallValue(0)
+          .build();
+
+      ExecuteTransactionRequest request = buildTriggerRequest(triggerContract, null);
+      File requestFile = new File(fixtureDir, "request.pb");
+      try (FileOutputStream fos = new FileOutputStream(requestFile)) {
+        request.writeTo(fos);
+      }
+
+      // Capture post-state (still VM disabled)
+      File expectedDir = new File(fixtureDir, "expected");
+      File postDbDir = new File(expectedDir, "post_db");
+      postDbDir.mkdirs();
+      captureVmDatabases(postDbDir);
+
+      // Save metadata
+      FixtureMetadata metadata = FixtureMetadata.builder()
+          .contractType("TRIGGER_SMART_CONTRACT", 31)
+          .caseName("validate_fail_vm_disabled")
+          .caseCategory("validate_fail")
+          .description("Trigger when VM support is disabled via committee")
+          .database("account")
+          .database("contract")
+          .database("code")
+          .database("abi")
+          .database("contract-state")
+          .database("dynamic-properties")
+          .ownerAddress(OWNER_ADDRESS)
+          .expectedError(expectedError)
+          .build();
+
+      metadata.toFile(new File(fixtureDir, "metadata.json"));
+      log.info("Generated TriggerSmartContract validate_fail_vm_disabled fixture");
+    } finally {
+      // Restore original VM support setting
+      manager.getDynamicPropertiesStore().saveAllowCreationOfContracts(originalAllowCreation);
     }
-
-    // Capture post-state
-    File expectedDir = new File(fixtureDir, "expected");
-    File postDbDir = new File(expectedDir, "post_db");
-    postDbDir.mkdirs();
-    captureVmDatabases(postDbDir);
-
-    // Save metadata
-    FixtureMetadata metadata = FixtureMetadata.builder()
-        .contractType("TRIGGER_SMART_CONTRACT", 31)
-        .caseName("validate_fail_vm_disabled")
-        .caseCategory("validate_fail")
-        .description("Trigger when VM support is disabled via committee")
-        .database("account")
-        .database("contract")
-        .database("code")
-        .database("abi")
-        .database("contract-state")
-        .database("dynamic-properties")
-        .ownerAddress(OWNER_ADDRESS)
-        .expectedError(expectedError)
-        .build();
-
-    metadata.toFile(new File(fixtureDir, "metadata.json"));
-    log.info("Generated TriggerSmartContract validate_fail_vm_disabled fixture");
   }
 
   @Test
@@ -2785,6 +2782,7 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
         .caseCategory("validate_fail")
         .description("Trigger with callTokenValue > owner's token balance should fail")
         .database("account")
+        .database("asset-issue-v2")
         .database("contract")
         .database("code")
         .database("abi")
@@ -2839,15 +2837,18 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
         + "\"outputs\":[],\"payable\":false,\"stateMutability\":\"pure\",\"type\":\"function\"}]";
 
     // Minimal bytecode that reverts with reason "test"
-    // This is hand-crafted bytecode that:
-    // 1. Checks function selector
-    // 2. If matches testRevert(), executes REVERT with reason
-    String simpleRevertCode = "608060405234801561001057600080fd5b5060c48061001f6000396000f3fe60"
-        + "80604052348015600f57600080fd5b506004361060285760003560e01c80633bccbbc914602d575b600080"
-        + "fd5b60336035565b005b6040517f08c379a00000000000000000000000000000000000000000000000000"
-        + "000000000815260040180806020018281038252601281526020017f74657374207265766572742072656173"
-        + "6f6e000000000000000000000000000081525060200191505060405180910390fdfea265627a7a72305820"
-        + "bb7d4e3e3e7c7d0e3b4f9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f";
+    //
+    // NOTE: These fixtures run with `ALLOW_TVM_CONSTANTINOPLE = 0`, where java-tron derives the
+    // contract runtime code by scanning for the historical delimiter "f300" (RETURN, STOP) and
+    // taking the remaining bytes as the executable runtime. Use a Tron-style deploy bytecode with
+    // this delimiter so the generated fixture CodeStore contains the real runtime code (instead
+    // of the 32-byte zero placeholder produced when the delimiter is missing).
+    // Runtime: ABI-encodes Error(string) and reverts with "test revert reason", without using
+    // Constantinople opcodes (e.g. SHR/SHL) so it runs under `ALLOW_TVM_CONSTANTINOPLE = 0`.
+    String simpleRevertRuntime = "7f08c379a000000000000000000000000000000000000000000000000000000000"
+        + "600052602060045260126024527f746573742072657665727420726561736f6e000000000000000000"
+        + "000000000060445260646000fd";
+    String simpleRevertCode = "605780600c6000396000f300" + simpleRevertRuntime;
 
     // Deploy the revert contract
     Transaction deployTx = TvmTestUtils.generateDeploySmartContractAndGetTransaction(
@@ -2947,8 +2948,26 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
 
     if (errorMessage != null) {
       metadataBuilder.expectedRevert(errorMessage);
+    } else if (result != null && result.getReceipt() != null) {
+      String expectedStatus;
+      switch (result.getReceipt().getResult()) {
+        case SUCCESS:
+          expectedStatus = "SUCCESS";
+          break;
+        case REVERT:
+          expectedStatus = "REVERT";
+          break;
+        case OUT_OF_ENERGY:
+        case OUT_OF_TIME:
+          expectedStatus = "OUT_OF_ENERGY";
+          break;
+        default:
+          expectedStatus = "REVERT";
+          break;
+      }
+      metadataBuilder.expectedStatus(expectedStatus);
     } else {
-      metadataBuilder.expectedStatus("REVERT");
+      metadataBuilder.expectedStatus("SUCCESS");
     }
 
     FixtureMetadata metadata = metadataBuilder.build();
@@ -2973,18 +2992,7 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
       + "\"stateMutability\":\"view\",\"type\":\"function\"}]";
 
   // Bytecode for WriteThenRevert contract
-  private static final String WRITE_REVERT_CODE = "608060405234801561001057600080fd5b5061015c8061002060"
-      + "00396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80633fa4f24"
-      + "51461003b578063e803c3d814610059575b600080fd5b610043610087565b604051610050919061010a565b"
-      + "60405180910390f35b610073600480360381019061006e91906100c6565b61008d565b005b60005481565b8"
-      + "060008190555060006040517f08c379a00000000000000000000000000000000000000000000000000000000"
-      + "081526004016100c390610125565b60405180910390fd5b6000813590506100d58161010f565b9291505056"
-      + "5b6000602082840312156100ed57600080fd5b60006100fb848285016100c6565b91505092915050565b600"
-      + "0819050919050565b61011781610104565b82525050565b600060208201905061013260008301846100fe56"
-      + "5b92915050565b600082825260208201905092915050565b7f526576657274656420616674657220777269746"
-      + "5000000000000000000000000600082015250565b600061017b60148361013b565b91506101868261014b565"
-      + "b602082019050919050565b600060208201905081810360008301526101a88161016e565b905091905056fea"
-      + "265627a7a72305820";
+  private static final String WRITE_REVERT_CODE = "600b80600c6000396000f30060043560005560006000fd";
 
   @Test
   public void generateTriggerSmartContract_edgeWriteThenRevertRollback() throws Exception {
@@ -3094,8 +3102,26 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
 
     if (errorMessage != null) {
       metadataBuilder.expectedRevert(errorMessage);
+    } else if (result != null && result.getReceipt() != null) {
+      String expectedStatus;
+      switch (result.getReceipt().getResult()) {
+        case SUCCESS:
+          expectedStatus = "SUCCESS";
+          break;
+        case REVERT:
+          expectedStatus = "REVERT";
+          break;
+        case OUT_OF_ENERGY:
+        case OUT_OF_TIME:
+          expectedStatus = "OUT_OF_ENERGY";
+          break;
+        default:
+          expectedStatus = "REVERT";
+          break;
+      }
+      metadataBuilder.expectedStatus(expectedStatus);
     } else {
-      metadataBuilder.expectedStatus("REVERT");
+      metadataBuilder.expectedStatus("SUCCESS");
     }
 
     FixtureMetadata metadata = metadataBuilder.build();
@@ -3341,6 +3367,8 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
   private void captureVmDatabases(File outputDir) throws Exception {
     String[] databases = {
         "account",
+        "asset-issue",
+        "asset-issue-v2",
         "contract",
         "code",
         "abi",
@@ -3376,6 +3404,10 @@ public class VmTriggerFixtureGeneratorTest extends VMTestBase {
       switch (dbName) {
         case "account":
           return convertIterator(manager.getAccountStore().iterator());
+        case "asset-issue":
+          return convertIterator(manager.getAssetIssueStore().iterator());
+        case "asset-issue-v2":
+          return convertIterator(manager.getAssetIssueV2Store().iterator());
         case "contract":
           return convertIterator(manager.getContractStore().iterator());
         case "code":

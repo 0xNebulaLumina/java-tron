@@ -648,6 +648,8 @@ where
     fn setup_environment(&mut self, tx: &TronTransaction, context: &TronExecutionContext) {
         // Set transaction environment
         self.evm.context.external.reset_energy_counters();
+        // Ensure per-tx config flags don't leak between executions.
+        self.evm.context.evm.inner.env.cfg.disable_balance_check = false;
         self.evm.context.evm.inner.env.tx.caller = tx.from;
         self.evm.context.evm.inner.env.tx.transact_to = match tx.to {
             Some(to) => revm::primitives::TransactTo::Call(to),
@@ -728,6 +730,13 @@ where
                 Ok(trigger_contract) => {
                     self.evm.context.evm.inner.env.tx.data =
                         revm::primitives::Bytes::from(trigger_contract.data);
+                    // TRON parity: java-tron does not pre-reject malformed negative callValue in
+                    // all forks, but still passes the value into TVM, which can trigger REVERT
+                    // paths (e.g., nonpayable checks). Allow execution to proceed without
+                    // balance prechecks for these fixtures.
+                    if trigger_contract.call_value < 0 {
+                        self.evm.context.evm.inner.env.cfg.disable_balance_check = true;
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(
