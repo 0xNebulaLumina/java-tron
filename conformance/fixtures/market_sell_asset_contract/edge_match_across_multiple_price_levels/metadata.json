@@ -4,7 +4,7 @@
   "caseName": "edge_match_across_multiple_price_levels",
   "caseCategory": "edge",
   "description": "Taker consumes best price level then continues into next level",
-  "generatedAt": "2026-01-13T05:27:42.729Z",
+  "generatedAt": "2026-01-14T06:56:49.565Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

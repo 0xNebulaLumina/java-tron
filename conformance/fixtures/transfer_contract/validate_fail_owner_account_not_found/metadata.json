@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_account_not_found",
   "caseCategory": "validate_fail",
   "description": "Fail when owner address is valid but account not in store",
-  "generatedAt": "2026-01-13T05:27:45.791Z",
+  "generatedAt": "2026-01-14T06:56:52.904Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

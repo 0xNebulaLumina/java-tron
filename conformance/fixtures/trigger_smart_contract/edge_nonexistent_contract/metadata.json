@@ -4,7 +4,7 @@
   "caseName": "edge_nonexistent_contract",
   "caseCategory": "edge",
   "description": "Trigger a contract address that does not exist",
-  "generatedAt": "2026-01-13T05:28:02.846Z",
+  "generatedAt": "2026-01-14T06:57:10.099Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

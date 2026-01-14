@@ -4,7 +4,7 @@
   "caseName": "validate_fail_expired",
   "caseCategory": "validate_fail",
   "description": "Fail when trying to approve an expired proposal",
-  "generatedAt": "2026-01-13T05:27:43.773Z",
+  "generatedAt": "2026-01-14T06:56:50.853Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

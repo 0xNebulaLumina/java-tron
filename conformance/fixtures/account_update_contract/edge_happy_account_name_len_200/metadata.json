@@ -4,7 +4,7 @@
   "caseName": "edge_happy_account_name_len_200",
   "caseCategory": "edge",
   "description": "Success when account name is exactly 200 bytes (max allowed)",
-  "generatedAt": "2026-01-13T05:27:38.648Z",
+  "generatedAt": "2026-01-14T06:56:45.262Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "edge_full_pair_cleanup_last_price_level_consumed",
   "caseCategory": "edge",
   "description": "Last price level consumed; pairToPriceStore deletes the pair key",
-  "generatedAt": "2026-01-13T05:27:42.858Z",
+  "generatedAt": "2026-01-14T06:56:49.663Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

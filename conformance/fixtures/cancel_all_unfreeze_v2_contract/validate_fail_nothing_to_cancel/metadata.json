@@ -4,7 +4,7 @@
   "caseName": "validate_fail_nothing_to_cancel",
   "caseCategory": "validate_fail",
   "description": "Fail when there are no pending unfreeze operations to cancel",
-  "generatedAt": "2026-01-13T05:27:44.740Z",
+  "generatedAt": "2026-01-14T06:56:51.890Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

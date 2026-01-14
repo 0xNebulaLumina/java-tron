@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_owner",
   "caseCategory": "validate_fail",
   "description": "Fail when caller is not the contract owner (origin_address)",
-  "generatedAt": "2026-01-13T05:27:37.715Z",
+  "generatedAt": "2026-01-14T06:56:44.218Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

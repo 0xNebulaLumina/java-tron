@@ -4,7 +4,7 @@
   "caseName": "edge_read_nonexistent_key_returns_empty",
   "caseCategory": "edge",
   "description": "Read storage key that was never set (returns empty string)",
-  "generatedAt": "2026-01-13T05:27:55.957Z",
+  "generatedAt": "2026-01-14T06:57:03.040Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

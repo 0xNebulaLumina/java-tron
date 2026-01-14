@@ -4,7 +4,7 @@
   "caseName": "validate_fail_start_time_equals_head_block_time",
   "caseCategory": "validate_fail",
   "description": "Fail when start_time equals latestBlockHeaderTimestamp",
-  "generatedAt": "2026-01-13T05:27:35.642Z",
+  "generatedAt": "2026-01-14T06:56:41.972Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

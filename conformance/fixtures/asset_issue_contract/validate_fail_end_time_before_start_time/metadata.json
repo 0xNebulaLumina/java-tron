@@ -4,7 +4,7 @@
   "caseName": "validate_fail_end_time_before_start_time",
   "caseCategory": "validate_fail",
   "description": "Fail when end_time < start_time",
-  "generatedAt": "2026-01-13T05:27:35.651Z",
+  "generatedAt": "2026-01-14T06:56:41.979Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

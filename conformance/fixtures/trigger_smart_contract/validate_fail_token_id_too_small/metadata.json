@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_id_too_small",
   "caseCategory": "validate_fail",
   "description": "Trigger with tokenId <= MIN_TOKEN_ID (1000000) should fail",
-  "generatedAt": "2026-01-13T05:27:56.789Z",
+  "generatedAt": "2026-01-14T06:57:03.966Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

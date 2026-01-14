@@ -4,7 +4,7 @@
   "caseName": "happy_path_unfreeze_balance_equal_frozen_amount",
   "caseCategory": "happy",
   "description": "V2 unfreeze with unfreezeBalance == frozenAmount (unfreeze all)",
-  "generatedAt": "2026-01-13T05:27:41.727Z",
+  "generatedAt": "2026-01-14T06:56:48.504Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

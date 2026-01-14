@@ -4,7 +4,7 @@
   "caseName": "validate_fail_votes_exceed_tron_power",
   "caseCategory": "validate_fail",
   "description": "Fail when total votes exceed TRON power",
-  "generatedAt": "2026-01-13T05:28:17.693Z",
+  "generatedAt": "2026-01-14T06:57:25.723Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

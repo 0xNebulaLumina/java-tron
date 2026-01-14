@@ -4,7 +4,7 @@
   "caseName": "validate_fail_new_limit_negative",
   "caseCategory": "validate_fail",
   "description": "Fail when newLimit is negative",
-  "generatedAt": "2026-01-13T05:27:46.830Z",
+  "generatedAt": "2026-01-14T06:56:53.849Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_frozen_balance_gt_balance",
   "caseCategory": "validate_fail",
   "description": "Fail when freeze amount exceeds account balance",
-  "generatedAt": "2026-01-13T05:27:41.737Z",
+  "generatedAt": "2026-01-14T06:56:48.520Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

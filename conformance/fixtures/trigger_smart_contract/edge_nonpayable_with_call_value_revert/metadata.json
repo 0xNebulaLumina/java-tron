@@ -4,7 +4,7 @@
   "caseName": "edge_nonpayable_with_call_value_revert",
   "caseCategory": "edge",
   "description": "Call nonpayable function with callValue > 0 (should revert)",
-  "generatedAt": "2026-01-13T05:28:12.269Z",
+  "generatedAt": "2026-01-14T06:57:20.160Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

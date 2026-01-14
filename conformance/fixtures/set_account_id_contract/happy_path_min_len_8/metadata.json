@@ -4,7 +4,7 @@
   "caseName": "happy_path_min_len_8",
   "caseCategory": "edge",
   "description": "Success with account ID at minimum length (exactly 8 bytes)",
-  "generatedAt": "2026-01-13T05:27:34.365Z",
+  "generatedAt": "2026-01-14T06:56:40.788Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

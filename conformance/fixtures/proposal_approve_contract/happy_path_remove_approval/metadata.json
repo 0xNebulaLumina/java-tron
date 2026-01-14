@@ -4,7 +4,7 @@
   "caseName": "happy_path_remove_approval",
   "caseCategory": "happy",
   "description": "Remove approval from a proposal that was previously approved",
-  "generatedAt": "2026-01-13T05:27:43.728Z",
+  "generatedAt": "2026-01-14T06:56:50.799Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

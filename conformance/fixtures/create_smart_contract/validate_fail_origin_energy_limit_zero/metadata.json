@@ -4,7 +4,7 @@
   "caseName": "validate_fail_origin_energy_limit_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when originEnergyLimit is 0 (energy limit hard fork enabled)",
-  "generatedAt": "2026-01-13T05:27:47.999Z",
+  "generatedAt": "2026-01-14T06:56:54.921Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

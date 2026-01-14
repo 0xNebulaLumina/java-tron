@@ -4,7 +4,7 @@
   "caseName": "validate_fail_votes_list_empty",
   "caseCategory": "validate_fail",
   "description": "Fail when votes list is empty (VoteNumber must more than 0)",
-  "generatedAt": "2026-01-13T05:28:17.704Z",
+  "generatedAt": "2026-01-14T06:57:25.738Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

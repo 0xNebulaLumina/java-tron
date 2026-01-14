@@ -4,7 +4,7 @@
   "caseName": "validate_fail_receiver_account_not_exist",
   "caseCategory": "validate_fail",
   "description": "Fail when receiver account does not exist",
-  "generatedAt": "2026-01-13T05:27:40.681Z",
+  "generatedAt": "2026-01-14T06:56:47.390Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

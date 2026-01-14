@@ -4,7 +4,7 @@
   "caseName": "validate_fail_sale_not_started",
   "caseCategory": "validate_fail",
   "description": "Fail when asset sale has not started yet",
-  "generatedAt": "2026-01-13T05:27:46.778Z",
+  "generatedAt": "2026-01-14T06:56:53.790Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

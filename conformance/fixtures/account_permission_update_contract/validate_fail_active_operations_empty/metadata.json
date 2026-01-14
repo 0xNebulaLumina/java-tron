@@ -4,7 +4,7 @@
   "caseName": "validate_fail_active_operations_empty",
   "caseCategory": "validate_fail",
   "description": "Fail when active permission operations is empty",
-  "generatedAt": "2026-01-13T05:27:34.271Z",
+  "generatedAt": "2026-01-14T06:56:40.688Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

@@ -4,7 +4,7 @@
   "caseName": "happy_path_withdraw_allowance",
   "caseCategory": "happy",
   "description": "Withdraw witness allowance after cooldown period",
-  "generatedAt": "2026-01-13T05:28:17.679Z",
+  "generatedAt": "2026-01-14T06:57:25.708Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
