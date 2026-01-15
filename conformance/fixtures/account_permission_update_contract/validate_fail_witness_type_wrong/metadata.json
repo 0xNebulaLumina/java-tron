@@ -1,0 +1,21 @@
+{
+  "contractType": "ACCOUNT_PERMISSION_UPDATE_CONTRACT",
+  "contractTypeNum": 46,
+  "caseName": "validate_fail_witness_type_wrong",
+  "caseCategory": "validate_fail",
+  "description": "Fail when witness permission has wrong type (Active instead of Witness)",
+  "generatedAt": "2026-01-14T06:56:40.716Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "witness permission type is error",
+  "ownerAddress": "a0548794500882809695a8a687866e76d4271a1abc",
+  "dynamicProperties": {},
+  "notes": []
+}

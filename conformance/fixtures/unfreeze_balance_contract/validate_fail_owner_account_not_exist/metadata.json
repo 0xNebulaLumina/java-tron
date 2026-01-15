@@ -1,0 +1,20 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "validate_fail_owner_account_not_exist",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner account does not exist in AccountStore",
+  "generatedAt": "2026-01-14T06:56:47.455Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Account[a06e6f6e5f65786973745f756e667265657a655f30] does not exist",
+  "dynamicProperties": {},
+  "notes": []
+}

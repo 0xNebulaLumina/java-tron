@@ -1,0 +1,25 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "edge_sweep_mixed_expired_and_unexpired_unfrozen_v2_entries",
+  "caseCategory": "edge",
+  "description": "Sweep mixed expired/unexpired entries (expired swept, unexpired preserved)",
+  "generatedAt": "2026-01-14T06:56:48.492Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76325f6d69786564000000",
+  "dynamicProperties": {
+    "UNFREEZE_DELAY_DAYS": 14,
+    "expired_amount": 25000000,
+    "unexpired_amount": 30000000
+  },
+  "notes": [
+    "Tests selective sweep: expired removed, unexpired kept"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "contractType": "WITHDRAW_EXPIRE_UNFREEZE_CONTRACT",
+  "contractTypeNum": 56,
+  "caseName": "validate_fail_feature_not_enabled",
+  "caseCategory": "validate_fail",
+  "description": "Fail when unfreeze delay feature is not enabled (unfreezeDelayDays == 0)",
+  "generatedAt": "2026-01-14T06:56:51.985Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Not support WithdrawExpireUnfreeze transaction, need to be opened by the committee",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

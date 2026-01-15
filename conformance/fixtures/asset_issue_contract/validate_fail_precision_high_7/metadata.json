@@ -1,0 +1,23 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_precision_high_7",
+  "caseCategory": "validate_fail",
+  "description": "Fail when precision is 7 (max is 6)",
+  "generatedAt": "2026-01-14T06:56:41.962Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "precision cannot exceed 6",
+  "ownerAddress": "a0707265636973696f6e5f686967685f6973737565",
+  "dynamicProperties": {
+    "ALLOW_SAME_TOKEN_NAME": 1
+  },
+  "notes": []
+}

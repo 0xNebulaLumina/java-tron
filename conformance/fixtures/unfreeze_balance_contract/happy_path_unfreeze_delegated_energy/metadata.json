@@ -1,0 +1,25 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "happy_path_unfreeze_delegated_energy",
+  "caseCategory": "happy",
+  "description": "Delegated unfreeze for expired ENERGY delegation",
+  "generatedAt": "2026-01-14T06:56:47.381Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties",
+    "DelegatedResource",
+    "DelegatedResourceAccountIndex"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f64656c5f656e5f6f776e00",
+  "dynamicProperties": {
+    "ALLOW_DELEGATE_RESOURCE": 1,
+    "delegated_amount": 80000000
+  },
+  "notes": []
+}

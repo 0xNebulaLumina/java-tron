@@ -4,7 +4,7 @@
   "caseName": "happy_path_transfer_asset_creates_recipient",
   "caseCategory": "happy",
   "description": "Transfer TRC-10 asset that creates recipient account",
-  "generatedAt": "2025-12-28T11:46:30.333Z",
+  "generatedAt": "2026-01-14T06:56:52.911Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
@@ -16,9 +16,9 @@
   "expectedStatus": "SUCCESS",
   "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
   "dynamicProperties": {
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000,
     "amount": 1000,
-    "token_id": "1000001",
-    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000
+    "token_id": "1000001"
   },
   "notes": []
 }

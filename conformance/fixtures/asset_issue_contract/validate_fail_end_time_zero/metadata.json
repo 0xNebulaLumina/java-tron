@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_end_time_zero",
+  "caseCategory": "validate_fail",
+  "description": "Fail when end_time is 0",
+  "generatedAt": "2026-01-14T06:56:41.924Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "End time should be not empty",
+  "ownerAddress": "a0656e645f7a65726f5f6973737565720000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

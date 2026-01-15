@@ -1,0 +1,24 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "edge_partial_unfreeze_one_expired_one_not",
+  "caseCategory": "edge",
+  "description": "Partial unfreeze: only expired entry is unfrozen, not-expired remains",
+  "generatedAt": "2026-01-14T06:56:47.438Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76315f7061727469616c00",
+  "dynamicProperties": {
+    "expected_unfreeze_amount": 50000000,
+    "expired_amount": 50000000,
+    "not_expired_amount": 30000000
+  },
+  "notes": []
+}

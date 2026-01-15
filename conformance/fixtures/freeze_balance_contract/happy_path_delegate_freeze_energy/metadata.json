@@ -1,0 +1,25 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "happy_path_delegate_freeze_energy",
+  "caseCategory": "happy",
+  "description": "Delegated freeze for ENERGY resource",
+  "generatedAt": "2026-01-14T06:56:47.408Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties",
+    "DelegatedResource",
+    "DelegatedResourceAccountIndex"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0667265657a655f64656c5f656e5f6f776e000000",
+  "dynamicProperties": {
+    "ALLOW_DELEGATE_RESOURCE": 1,
+    "freeze_amount": 80000000,
+    "receiver_address": "a0667265657a655f64656c5f656e5f726376000000"
+  },
+  "notes": []
+}

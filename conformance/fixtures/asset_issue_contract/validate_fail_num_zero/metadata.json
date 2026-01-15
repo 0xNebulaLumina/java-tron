@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_num_zero",
+  "caseCategory": "validate_fail",
+  "description": "Fail when num is 0",
+  "generatedAt": "2026-01-14T06:56:41.920Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Num must greater than 0!",
+  "ownerAddress": "a06e756d5f7a65726f5f6973737565720000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_url_empty",
+  "caseCategory": "validate_fail",
+  "description": "Fail when URL is empty (URL is required)",
+  "generatedAt": "2026-01-14T06:56:41.893Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid url",
+  "ownerAddress": "a075726c5f656d7074795f69737375657200000000",
+  "dynamicProperties": {},
+  "notes": []
+}

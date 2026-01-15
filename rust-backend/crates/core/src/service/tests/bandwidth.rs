@@ -16,6 +16,7 @@ fn test_calculate_bandwidth_usage() {
         metadata: TxMetadata {
             contract_type: None,
             asset_id: None,
+            ..Default::default()
         },
     };
 
@@ -34,6 +35,7 @@ fn test_calculate_bandwidth_usage() {
         metadata: TxMetadata {
             contract_type: None,
             asset_id: None,
+            ..Default::default()
         },
     };
 

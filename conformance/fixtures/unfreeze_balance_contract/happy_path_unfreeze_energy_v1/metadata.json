@@ -1,0 +1,20 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "happy_path_unfreeze_energy_v1",
+  "caseCategory": "happy",
+  "description": "V1 unfreeze expired ENERGY frozen balance",
+  "generatedAt": "2026-01-14T06:56:47.387Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76315f656e657267795f6f",
+  "dynamicProperties": {},
+  "notes": []
+}

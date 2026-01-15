@@ -1,18 +1,24 @@
 package org.tron.core.conformance;
 
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.DEFAULT_BLOCK_TIMESTAMP;
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.DEFAULT_TX_EXPIRATION;
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.DEFAULT_TX_TIMESTAMP;
+import static org.tron.core.conformance.ConformanceFixtureTestSupport.INITIAL_BALANCE;
+
 import com.google.protobuf.ByteString;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.SortedMap;
 import java.util.TreeMap;
 import org.bouncycastle.util.encoders.Hex;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.tron.common.BaseTest;
-import org.tron.common.runtime.Runtime;
 import org.tron.common.runtime.RuntimeImpl;
 import org.tron.common.runtime.TVMTestResult;
 import org.tron.common.runtime.TvmTestUtils;
@@ -23,7 +29,10 @@ import org.tron.core.Wallet;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.common.parameter.CommonParameter;
 import org.tron.core.config.args.Args;
+import org.tron.core.vm.config.ConfigLoader;
+import org.tron.core.vm.config.VMConfig;
 import org.tron.core.db.TransactionTrace;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
@@ -32,6 +41,7 @@ import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
+import org.tron.protos.contract.SmartContractOuterClass.SmartContract;
 import org.tron.protos.contract.SmartContractOuterClass.TriggerSmartContract;
 import tron.backend.BackendOuterClass.ContractType;
 import tron.backend.BackendOuterClass.ExecuteTransactionRequest;
@@ -54,8 +64,8 @@ public class VmFixtureGeneratorTest extends BaseTest {
   private static final Logger log = LoggerFactory.getLogger(VmFixtureGeneratorTest.class);
   private static final String OWNER_ADDRESS;
   private static final String OTHER_ADDRESS;
-  private static final long INITIAL_BALANCE = 100_000_000_000_000L; // 100,000 TRX
   private static final long DEFAULT_FEE_LIMIT = 1_000_000_000L; // 1000 TRX
+  private static final long DEFAULT_MAX_FEE_LIMIT = 10_000_000_000L; // 10,000 TRX
 
   private File outputDir;
 
@@ -165,13 +175,18 @@ public class VmFixtureGeneratorTest extends BaseTest {
         INITIAL_BALANCE);
     dbManager.getAccountStore().put(otherAccount.getAddress().toByteArray(), otherAccount);
 
-    // Enable TVM features
+    // Enable TVM features (VM creation enabled by default)
+    dbManager.getDynamicPropertiesStore().saveAllowCreationOfContracts(1);
     dbManager.getDynamicPropertiesStore().saveAllowTvmConstantinople(1);
     dbManager.getDynamicPropertiesStore().saveAllowTvmTransferTrc10(1);
     dbManager.getDynamicPropertiesStore().saveAllowMultiSign(1);
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
 
-    // Set block properties
-    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(1000000);
+    // Set maxFeeLimit to a known value for deterministic feeLimit validation
+    dbManager.getDynamicPropertiesStore().saveMaxFeeLimit(DEFAULT_MAX_FEE_LIMIT);
+
+    // Set deterministic block properties (from ConformanceFixtureTestSupport)
+    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(DEFAULT_BLOCK_TIMESTAMP);
     dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(10);
   }
 
@@ -197,20 +212,8 @@ public class VmFixtureGeneratorTest extends BaseTest {
         10_000_000L // origin energy limit
     );
 
-    // Create transaction with fee limit
-    TransactionCapsule trxCap = new TransactionCapsule(createContract,
-        Transaction.Contract.ContractType.CreateSmartContract);
-    Transaction.Builder txBuilder = trxCap.getInstance().toBuilder();
-    Transaction.raw.Builder rawBuilder = trxCap.getInstance().getRawData().toBuilder();
-    rawBuilder.setFeeLimit(DEFAULT_FEE_LIMIT);
-    rawBuilder.setTimestamp(System.currentTimeMillis());
-    rawBuilder.setExpiration(System.currentTimeMillis() + 3600000);
-    txBuilder.setRawData(rawBuilder);
-    if (txBuilder.getRetCount() == 0) {
-      txBuilder.addRet(Transaction.Result.newBuilder().build());
-    }
-    trxCap = new TransactionCapsule(txBuilder.build());
-
+    // Create transaction with fee limit and deterministic timestamps
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
     BlockCapsule blockCap = createBlockContext();
 
     // Generate fixture
@@ -222,9 +225,11 @@ public class VmFixtureGeneratorTest extends BaseTest {
         "Deploy a simple storage demo contract"
     );
 
+    Assert.assertTrue("happy_path should succeed", result.isSuccess());
+    Assert.assertNotNull("Contract address should be set", result.getContractAddress());
     log.info("CreateSmartContract happy path: success={}, contractAddress={}",
         result.isSuccess(),
-        result.getContractAddress() != null ? Hex.toHexString(result.getContractAddress()) : "null");
+        Hex.toHexString(result.getContractAddress()));
   }
 
   @Test
@@ -245,19 +250,7 @@ public class VmFixtureGeneratorTest extends BaseTest {
         10_000_000L
     );
 
-    TransactionCapsule trxCap = new TransactionCapsule(createContract,
-        Transaction.Contract.ContractType.CreateSmartContract);
-    Transaction.Builder txBuilder = trxCap.getInstance().toBuilder();
-    Transaction.raw.Builder rawBuilder = trxCap.getInstance().getRawData().toBuilder();
-    rawBuilder.setFeeLimit(DEFAULT_FEE_LIMIT);
-    rawBuilder.setTimestamp(System.currentTimeMillis());
-    rawBuilder.setExpiration(System.currentTimeMillis() + 3600000);
-    txBuilder.setRawData(rawBuilder);
-    if (txBuilder.getRetCount() == 0) {
-      txBuilder.addRet(Transaction.Result.newBuilder().build());
-    }
-    trxCap = new TransactionCapsule(txBuilder.build());
-
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
     BlockCapsule blockCap = createBlockContext();
 
     VmFixtureResult result = generateVmFixture(
@@ -268,6 +261,7 @@ public class VmFixtureGeneratorTest extends BaseTest {
         "Deploy contract with TRX call value"
     );
 
+    Assert.assertTrue("happy_path_with_value should succeed", result.isSuccess());
     log.info("CreateSmartContract with value: success={}", result.isSuccess());
   }
 
@@ -297,19 +291,7 @@ public class VmFixtureGeneratorTest extends BaseTest {
         10_000_000L
     );
 
-    TransactionCapsule trxCap = new TransactionCapsule(createContract,
-        Transaction.Contract.ContractType.CreateSmartContract);
-    Transaction.Builder txBuilder = trxCap.getInstance().toBuilder();
-    Transaction.raw.Builder rawBuilder = trxCap.getInstance().getRawData().toBuilder();
-    rawBuilder.setFeeLimit(DEFAULT_FEE_LIMIT);
-    rawBuilder.setTimestamp(System.currentTimeMillis());
-    rawBuilder.setExpiration(System.currentTimeMillis() + 3600000);
-    txBuilder.setRawData(rawBuilder);
-    if (txBuilder.getRetCount() == 0) {
-      txBuilder.addRet(Transaction.Result.newBuilder().build());
-    }
-    trxCap = new TransactionCapsule(txBuilder.build());
-
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
     BlockCapsule blockCap = createBlockContext();
 
     VmFixtureResult result = generateVmFixture(
@@ -320,6 +302,8 @@ public class VmFixtureGeneratorTest extends BaseTest {
         "Fail when account has insufficient balance for deployment"
     );
 
+    Assert.assertFalse("validate_fail_insufficient_balance should fail", result.isSuccess());
+    Assert.assertNotNull("Error message should be set", result.getError());
     log.info("CreateSmartContract insufficient balance: error={}", result.getError());
   }
 
@@ -343,19 +327,7 @@ public class VmFixtureGeneratorTest extends BaseTest {
         10_000_000L
     );
 
-    TransactionCapsule trxCap = new TransactionCapsule(createContract,
-        Transaction.Contract.ContractType.CreateSmartContract);
-    Transaction.Builder txBuilder = trxCap.getInstance().toBuilder();
-    Transaction.raw.Builder rawBuilder = trxCap.getInstance().getRawData().toBuilder();
-    rawBuilder.setFeeLimit(DEFAULT_FEE_LIMIT);
-    rawBuilder.setTimestamp(System.currentTimeMillis());
-    rawBuilder.setExpiration(System.currentTimeMillis() + 3600000);
-    txBuilder.setRawData(rawBuilder);
-    if (txBuilder.getRetCount() == 0) {
-      txBuilder.addRet(Transaction.Result.newBuilder().build());
-    }
-    trxCap = new TransactionCapsule(txBuilder.build());
-
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
     BlockCapsule blockCap = createBlockContext();
 
     VmFixtureResult result = generateVmFixture(
@@ -371,41 +343,1006 @@ public class VmFixtureGeneratorTest extends BaseTest {
   }
 
   // ==========================================================================
+  // Phase 1: VALIDATION_FAILED fixtures
+  // ==========================================================================
+
+  @Test
+  public void generateCreateSmartContract_vmDisabled() throws Exception {
+    log.info("Generating CreateSmartContract VM disabled fixture");
+
+    // Temporarily disable VM
+    dbManager.getDynamicPropertiesStore().saveAllowCreationOfContracts(0);
+
+    try {
+      byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+      CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+          "Test",
+          ownerBytes,
+          STORAGE_ABI,
+          STORAGE_CODE,
+          0,
+          50,
+          null,
+          10_000_000L
+      );
+
+      TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+      BlockCapsule blockCap = createBlockContext();
+
+      VmFixtureResult result = generateVmFixture(
+          trxCap, blockCap, createContract,
+          "create_smart_contract",
+          "validate_fail_vm_disabled",
+          "validate_fail",
+          "Fail when VM/contract creation is disabled"
+      );
+
+      Assert.assertFalse("validate_fail_vm_disabled should fail", result.isSuccess());
+      Assert.assertTrue("Error should mention VM being off",
+          result.getError() != null && result.getError().contains("vm work is off"));
+      log.info("CreateSmartContract VM disabled: error={}", result.getError());
+    } finally {
+      // Re-enable VM for other tests
+      dbManager.getDynamicPropertiesStore().saveAllowCreationOfContracts(1);
+    }
+  }
+
+  @Test
+  public void generateCreateSmartContract_ownerOriginMismatch() throws Exception {
+    log.info("Generating CreateSmartContract owner/origin mismatch fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+    byte[] otherBytes = ByteArray.fromHexString(OTHER_ADDRESS);
+
+    // Build CreateSmartContract manually with different owner and origin addresses
+    SmartContract.Builder builder = SmartContract.newBuilder();
+    builder.setName("MismatchContract");
+    builder.setOriginAddress(ByteString.copyFrom(otherBytes)); // origin = OTHER
+    builder.setAbi(SmartContract.ABI.getDefaultInstance());
+    builder.setConsumeUserResourcePercent(50);
+    builder.setOriginEnergyLimit(10_000_000L);
+    builder.setBytecode(ByteString.copyFrom(Hex.decode(MINIMAL_BYTECODE)));
+
+    CreateSmartContract createContract = CreateSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes)) // owner = OWNER
+        .setNewContract(builder.build())
+        .build();
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_owner_origin_mismatch",
+        "validate_fail",
+        "Fail when ownerAddress != originAddress"
+    );
+
+    Assert.assertFalse("validate_fail_owner_origin_mismatch should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention owner/origin mismatch",
+        result.getError() != null && result.getError().contains("OwnerAddress is not equals OriginAddress"));
+    log.info("CreateSmartContract owner/origin mismatch: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_nameTooLong() throws Exception {
+    log.info("Generating CreateSmartContract name too long fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Create a name with 33 ASCII bytes (exceeds 32 limit)
+    String longName = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567"; // 33 chars
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        longName,
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_contract_name_too_long",
+        "validate_fail",
+        "Fail when contract name exceeds 32 bytes"
+    );
+
+    Assert.assertFalse("validate_fail_contract_name_too_long should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention name length",
+        result.getError() != null && result.getError().contains("contractName's length cannot be greater than 32"));
+    log.info("CreateSmartContract name too long: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_nameLen32Ok() throws Exception {
+    log.info("Generating CreateSmartContract name exactly 32 bytes fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Create a name with exactly 32 ASCII bytes (at the boundary)
+    String exactName = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"; // 32 chars
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        exactName,
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "edge_contract_name_len_32_ok",
+        "edge",
+        "Success when contract name is exactly 32 bytes"
+    );
+
+    Assert.assertTrue("edge_contract_name_len_32_ok should succeed", result.isSuccess());
+    log.info("CreateSmartContract name 32 bytes: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateCreateSmartContract_percentNegative() throws Exception {
+    log.info("Generating CreateSmartContract percent negative fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Build CreateSmartContract with negative percent (must build manually)
+    SmartContract.Builder builder = SmartContract.newBuilder();
+    builder.setName("NegPercent");
+    builder.setOriginAddress(ByteString.copyFrom(ownerBytes));
+    builder.setAbi(SmartContract.ABI.getDefaultInstance());
+    builder.setConsumeUserResourcePercent(-1); // Invalid: negative
+    builder.setOriginEnergyLimit(10_000_000L);
+    builder.setBytecode(ByteString.copyFrom(Hex.decode(MINIMAL_BYTECODE)));
+
+    CreateSmartContract createContract = CreateSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setNewContract(builder.build())
+        .build();
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_percent_negative",
+        "validate_fail",
+        "Fail when consumeUserResourcePercent < 0"
+    );
+
+    Assert.assertFalse("validate_fail_percent_negative should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention percent range",
+        result.getError() != null && result.getError().contains("percent must be >= 0 and <= 100"));
+    log.info("CreateSmartContract percent negative: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_percentGt100() throws Exception {
+    log.info("Generating CreateSmartContract percent > 100 fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Build CreateSmartContract with percent > 100 (must build manually)
+    SmartContract.Builder builder = SmartContract.newBuilder();
+    builder.setName("HighPercent");
+    builder.setOriginAddress(ByteString.copyFrom(ownerBytes));
+    builder.setAbi(SmartContract.ABI.getDefaultInstance());
+    builder.setConsumeUserResourcePercent(101); // Invalid: > 100
+    builder.setOriginEnergyLimit(10_000_000L);
+    builder.setBytecode(ByteString.copyFrom(Hex.decode(MINIMAL_BYTECODE)));
+
+    CreateSmartContract createContract = CreateSmartContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setNewContract(builder.build())
+        .build();
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_percent_gt_100",
+        "validate_fail",
+        "Fail when consumeUserResourcePercent > 100"
+    );
+
+    Assert.assertFalse("validate_fail_percent_gt_100 should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention percent range",
+        result.getError() != null && result.getError().contains("percent must be >= 0 and <= 100"));
+    log.info("CreateSmartContract percent > 100: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_percent0Ok() throws Exception {
+    log.info("Generating CreateSmartContract percent = 0 fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "Percent0",
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        0, // Boundary: percent = 0
+        null,
+        10_000_000L
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "edge_percent_0_ok",
+        "edge",
+        "Success when consumeUserResourcePercent = 0"
+    );
+
+    Assert.assertTrue("edge_percent_0_ok should succeed", result.isSuccess());
+    log.info("CreateSmartContract percent 0: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateCreateSmartContract_percent100Ok() throws Exception {
+    log.info("Generating CreateSmartContract percent = 100 fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "Percent100",
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        100, // Boundary: percent = 100
+        null,
+        10_000_000L
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "edge_percent_100_ok",
+        "edge",
+        "Success when consumeUserResourcePercent = 100"
+    );
+
+    Assert.assertTrue("edge_percent_100_ok should succeed", result.isSuccess());
+    log.info("CreateSmartContract percent 100: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateCreateSmartContract_feeLimitNegative() throws Exception {
+    log.info("Generating CreateSmartContract feeLimit negative fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "NegFeeLimit",
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    // Create transaction with negative feeLimit
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, -1L);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_fee_limit_negative",
+        "validate_fail",
+        "Fail when feeLimit < 0"
+    );
+
+    Assert.assertFalse("validate_fail_fee_limit_negative should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention feeLimit range",
+        result.getError() != null && result.getError().contains("feeLimit must be >= 0"));
+    log.info("CreateSmartContract feeLimit negative: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_feeLimitAboveMax() throws Exception {
+    log.info("Generating CreateSmartContract feeLimit above max fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "HighFeeLimit",
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    // Create transaction with feeLimit > maxFeeLimit
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_MAX_FEE_LIMIT + 1);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_fee_limit_above_max",
+        "validate_fail",
+        "Fail when feeLimit > maxFeeLimit"
+    );
+
+    Assert.assertFalse("validate_fail_fee_limit_above_max should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention feeLimit range",
+        result.getError() != null && result.getError().contains("feeLimit must be >= 0"));
+    log.info("CreateSmartContract feeLimit above max: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_contractAddressAlreadyExists() throws Exception {
+    log.info("Generating CreateSmartContract contract address already exists fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "Collision",
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+
+    // Pre-create an account at the derived contract address
+    byte[] contractAddress = WalletUtil.generateContractAddress(trxCap.getInstance());
+    AccountCapsule existingAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("existing"),
+        ByteString.copyFrom(contractAddress),
+        AccountType.Normal,
+        1_000_000L);
+    dbManager.getAccountStore().put(existingAccount.getAddress().toByteArray(), existingAccount);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_contract_address_already_exists",
+        "validate_fail",
+        "Fail when contract address already exists"
+    );
+
+    Assert.assertFalse("validate_fail_contract_address_already_exists should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention existing contract address",
+        result.getError() != null && result.getError().contains("Trying to create a contract with existing contract address"));
+    log.info("CreateSmartContract contract address exists: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_tokenIdTooSmall() throws Exception {
+    log.info("Generating CreateSmartContract tokenId too small fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Build CreateSmartContract with tokenId = 1_000_000 (boundary: must be > 1_000_000)
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "TokenSmall",
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L,
+        1L, // tokenValue > 0
+        1_000_000L // tokenId = MIN_TOKEN_ID (invalid: must be > 1_000_000)
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_token_id_too_small",
+        "validate_fail",
+        "Fail when tokenId <= 1_000_000 and tokenId != 0"
+    );
+
+    Assert.assertFalse("validate_fail_token_id_too_small should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention tokenId",
+        result.getError() != null && result.getError().contains("tokenId must be > 1000000"));
+    log.info("CreateSmartContract tokenId too small: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_tokenValuePositiveTokenIdZero() throws Exception {
+    log.info("Generating CreateSmartContract tokenValue > 0 with tokenId = 0 fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Build CreateSmartContract with tokenValue > 0 but tokenId = 0
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "TokenZeroId",
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L,
+        100L, // tokenValue > 0
+        0L // tokenId = 0 (invalid when tokenValue > 0)
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_token_value_positive_token_id_zero",
+        "validate_fail",
+        "Fail when tokenValue > 0 and tokenId = 0"
+    );
+
+    Assert.assertFalse("validate_fail_token_value_positive_token_id_zero should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention invalid tokenValue/tokenId",
+        result.getError() != null && result.getError().contains("invalid arguments with tokenValue"));
+    log.info("CreateSmartContract tokenValue > 0, tokenId = 0: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_tokenAssetMissing() throws Exception {
+    log.info("Generating CreateSmartContract token asset missing fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Use a valid tokenId that doesn't exist in the asset store
+    long nonExistentTokenId = 1_000_001L;
+
+    // Build CreateSmartContract with non-existent token
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "TokenMissing",
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L,
+        100L, // tokenValue > 0
+        nonExistentTokenId // tokenId points to non-existent asset
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_token_asset_missing",
+        "validate_fail",
+        "Fail when tokenId points to non-existent TRC-10 asset"
+    );
+
+    Assert.assertFalse("validate_fail_token_asset_missing should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention missing asset",
+        result.getError() != null && result.getError().contains("No asset"));
+    log.info("CreateSmartContract token asset missing: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_tokenBalanceInsufficient() throws Exception {
+    log.info("Generating CreateSmartContract token balance insufficient fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+    long tokenId = 1_000_002L;
+
+    // Create the TRC-10 asset in the store
+    ConformanceFixtureTestSupport.putAssetIssueV2(
+        dbManager,
+        String.valueOf(tokenId),
+        OWNER_ADDRESS,
+        "TestToken",
+        1_000_000_000L
+    );
+
+    // Owner has no token balance (balance not added to account)
+
+    // Build CreateSmartContract with token transfer that owner doesn't have
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "TokenInsuff",
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L,
+        100L, // tokenValue > 0, owner has 0
+        tokenId
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_token_balance_insufficient",
+        "validate_fail",
+        "Fail when owner has insufficient TRC-10 token balance"
+    );
+
+    Assert.assertFalse("validate_fail_token_balance_insufficient should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention insufficient asset balance",
+        result.getError() != null &&
+            (result.getError().contains("assetBalance must greater than 0")
+                || result.getError().contains("assetBalance is not sufficient")));
+    log.info("CreateSmartContract token balance insufficient: error={}", result.getError());
+  }
+
+  // ==========================================================================
+  // Phase 2: Execution / runtime parity fixtures
+  // ==========================================================================
+
+  @Test
+  public void generateCreateSmartContract_constructorRevert() throws Exception {
+    log.info("Generating CreateSmartContract constructor REVERT fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Bytecode that immediately reverts: PUSH1 0x00 PUSH1 0x00 REVERT
+    // 0x6000 6000 fd
+    String revertBytecode = "60006000fd";
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "Reverter",
+        ownerBytes,
+        "[]",
+        revertBytecode,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "edge_constructor_revert",
+        "edge",
+        "Constructor executes REVERT opcode"
+    );
+
+    // REVERT in constructor should result in runtime error
+    Assert.assertFalse("edge_constructor_revert should fail", result.isSuccess());
+    log.info("CreateSmartContract constructor revert: success={}, error={}",
+        result.isSuccess(), result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_outOfEnergy() throws Exception {
+    log.info("Generating CreateSmartContract out of energy fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Bytecode with infinite loop: JUMPDEST PUSH1 0x00 JUMP
+    // label: JUMPDEST (0x5b), PUSH1 0x00 (0x6000), JUMP (0x56)
+    // This will run until energy is exhausted
+    String infiniteLoopBytecode = "5b600056";
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "InfiniteLoop",
+        ownerBytes,
+        "[]",
+        infiniteLoopBytecode,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    // Use a very low feeLimit to trigger OOG quickly
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, 1_000L);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "edge_constructor_out_of_energy",
+        "edge",
+        "Constructor runs out of energy (OOG)"
+    );
+
+    // OOG should result in runtime error
+    Assert.assertFalse("edge_constructor_out_of_energy should fail", result.isSuccess());
+    log.info("CreateSmartContract out of energy: success={}, error={}",
+        result.isSuccess(), result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_nameMultibyteOver32Bytes() throws Exception {
+    log.info("Generating CreateSmartContract multibyte name over 32 bytes fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Create a name with fewer than 32 visible chars but > 32 bytes in UTF-8
+    // Chinese characters are 3 bytes each in UTF-8
+    // 11 Chinese chars = 33 bytes > 32 byte limit
+    String multibyteNname = "中文合约名称测试一二三"; // 11 chars, 33 bytes
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        multibyteNname,
+        ownerBytes,
+        "[]",
+        MINIMAL_BYTECODE,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "validate_fail_contract_name_multibyte_over_32_bytes",
+        "validate_fail",
+        "Fail when contract name has < 32 chars but > 32 bytes (UTF-8)"
+    );
+
+    Assert.assertFalse("validate_fail_contract_name_multibyte_over_32_bytes should fail", result.isSuccess());
+    Assert.assertTrue("Error should mention name length",
+        result.getError() != null && result.getError().contains("contractName's length cannot be greater than 32"));
+    log.info("CreateSmartContract multibyte name: error={}", result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_notEnoughEnergyToSaveCode() throws Exception {
+    log.info("Generating CreateSmartContract not enough energy to save code fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Init code that returns a non-trivial runtime code (32 bytes of zeros)
+    // PUSH32 0x00...00 (32 zeros), PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN
+    // This returns 32 bytes of runtime code
+    // Save cost = 32 * 200 = 6400 energy
+    // We set feeLimit just enough for init but not for saving
+    String initCodeReturns32Bytes =
+        "7F0000000000000000000000000000000000000000000000000000000000000000" // PUSH32 zeros
+        + "6000" // PUSH1 0x00
+        + "52"   // MSTORE
+        + "6020" // PUSH1 0x20 (32 bytes)
+        + "6000" // PUSH1 0x00
+        + "F3";  // RETURN
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "SaveCodeFail",
+        ownerBytes,
+        "[]",
+        initCodeReturns32Bytes,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    // Use a feeLimit that allows init to run but not save 32 bytes (6400 energy needed)
+    // Init code costs: ~200 (PUSH32) + 3 (PUSH1) + 3 (MSTORE base) + memory expansion + 3 (PUSH1) + 3 (PUSH1) + 0 (RETURN)
+    // Set feeLimit to around 1000 which should be enough for init but not for 6400 save cost
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, 5000L);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "edge_not_enough_energy_to_save_code",
+        "edge",
+        "Not enough energy to save returned runtime code"
+    );
+
+    // This should fail with "save just created contract code" error
+    Assert.assertFalse("edge_not_enough_energy_to_save_code should fail", result.isSuccess());
+    log.info("CreateSmartContract not enough energy to save code: success={}, error={}",
+        result.isSuccess(), result.getError());
+  }
+
+  @Test
+  public void generateCreateSmartContract_londonInvalidCodePrefix0xEF() throws Exception {
+    log.info("Generating CreateSmartContract London invalid code prefix 0xEF fixture");
+
+    // Enable TVM London for this test
+    dbManager.getDynamicPropertiesStore().saveAllowTvmLondon(1);
+
+    try {
+      byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+      // Init code that returns runtime code starting with 0xEF
+      // PUSH1 0xEF, PUSH1 0x00, MSTORE8, PUSH1 0x01, PUSH1 0x00, RETURN
+      // This returns 1 byte: 0xEF (invalid under London rules)
+      String initCodeReturnsEF =
+          "60EF" // PUSH1 0xEF
+          + "6000" // PUSH1 0x00
+          + "53"   // MSTORE8 (store single byte)
+          + "6001" // PUSH1 0x01 (return 1 byte)
+          + "6000" // PUSH1 0x00
+          + "F3";  // RETURN
+
+      CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+          "EFPrefix",
+          ownerBytes,
+          "[]",
+          initCodeReturnsEF,
+          0,
+          50,
+          null,
+          10_000_000L
+      );
+
+      TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+      BlockCapsule blockCap = createBlockContext();
+
+      VmFixtureResult result = generateVmFixture(
+          trxCap, blockCap, createContract,
+          "create_smart_contract",
+          "edge_london_invalid_code_prefix_0xef",
+          "edge",
+          "Runtime code starting with 0xEF rejected under London rules"
+      );
+
+      Assert.assertFalse("edge_london_invalid_code_prefix_0xef should fail", result.isSuccess());
+      Assert.assertTrue("Error should mention invalid code 0xef",
+          result.getError() != null && result.getError().contains("0xef"));
+      log.info("CreateSmartContract London 0xEF: success={}, error={}",
+          result.isSuccess(), result.getError());
+    } finally {
+      // Disable TVM London for other tests
+      dbManager.getDynamicPropertiesStore().saveAllowTvmLondon(0);
+    }
+  }
+
+  @Test
+  public void generateCreateSmartContract_emptyRuntimeCodeSuccess() throws Exception {
+    log.info("Generating CreateSmartContract empty runtime code success fixture");
+
+    byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+    // Init code that returns empty runtime code: PUSH1 0x00, PUSH1 0x00, RETURN
+    // Returns 0 bytes (empty runtime)
+    String initCodeReturnsEmpty =
+        "6000" // PUSH1 0x00 (size = 0)
+        + "6000" // PUSH1 0x00 (offset = 0)
+        + "F3";  // RETURN
+
+    CreateSmartContract createContract = TvmTestUtils.buildCreateSmartContract(
+        "EmptyRuntime",
+        ownerBytes,
+        "[]",
+        initCodeReturnsEmpty,
+        0,
+        50,
+        null,
+        10_000_000L
+    );
+
+    TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+    BlockCapsule blockCap = createBlockContext();
+
+    VmFixtureResult result = generateVmFixture(
+        trxCap, blockCap, createContract,
+        "create_smart_contract",
+        "edge_empty_runtime_code_success",
+        "edge",
+        "Success with empty runtime code (RETURN(0,0))"
+    );
+
+    // Empty runtime code should still result in SUCCESS (contract exists but has no code)
+    Assert.assertTrue("edge_empty_runtime_code_success should succeed", result.isSuccess());
+    log.info("CreateSmartContract empty runtime: success={}", result.isSuccess());
+  }
+
+  // ==========================================================================
+  // Energy-Limit Hard Fork Gated Validations (mainnet parity)
+  // ==========================================================================
+
+  @Test
+  public void generateCreateSmartContract_originEnergyLimitZero() throws Exception {
+    log.info("Generating CreateSmartContract originEnergyLimit zero fixture (energy limit hard fork)");
+
+    // Disable ConfigLoader to prevent it from overriding VMConfig based on block number
+    ConfigLoader.disable = true;
+    // Enable energy limit hard fork for this test
+    VMConfig.initVmHardFork(true);
+
+    try {
+      byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+      // Build contract with originEnergyLimit = 0 (invalid when hard fork enabled)
+      SmartContract.Builder contractBuilder = SmartContract.newBuilder();
+      contractBuilder.setOriginAddress(ByteString.copyFrom(ownerBytes));
+      contractBuilder.setBytecode(ByteString.copyFrom(ByteArray.fromHexString(MINIMAL_BYTECODE)));
+      contractBuilder.setConsumeUserResourcePercent(50);
+      contractBuilder.setOriginEnergyLimit(0); // Invalid: must be > 0
+      contractBuilder.setName("ZeroOriginEnergy");
+
+      CreateSmartContract.Builder createBuilder = CreateSmartContract.newBuilder();
+      createBuilder.setOwnerAddress(ByteString.copyFrom(ownerBytes));
+      createBuilder.setNewContract(contractBuilder.build());
+      CreateSmartContract createContract = createBuilder.build();
+
+      TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+      BlockCapsule blockCap = createBlockContext();
+
+      VmFixtureResult result = generateVmFixture(
+          trxCap, blockCap, createContract,
+          "create_smart_contract",
+          "validate_fail_origin_energy_limit_zero",
+          "validate_fail",
+          "Fail when originEnergyLimit is 0 (energy limit hard fork enabled)"
+      );
+
+      Assert.assertFalse("validate_fail_origin_energy_limit_zero should fail", result.isSuccess());
+      Assert.assertTrue("Error should mention originEnergyLimit",
+          result.getError() != null && result.getError().contains("originEnergyLimit must be > 0"));
+      log.info("CreateSmartContract originEnergyLimit zero: error={}", result.getError());
+    } finally {
+      // Restore defaults
+      ConfigLoader.disable = false;
+      VMConfig.initVmHardFork(false);
+    }
+  }
+
+  @Test
+  public void generateCreateSmartContract_callValueNegative() throws Exception {
+    log.info("Generating CreateSmartContract callValue negative fixture (energy limit hard fork)");
+
+    // Disable ConfigLoader to prevent it from overriding VMConfig based on block number
+    ConfigLoader.disable = true;
+    // Enable energy limit hard fork for this test
+    VMConfig.initVmHardFork(true);
+
+    try {
+      byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+      // Build contract with negative callValue (SmartContract.call_value)
+      SmartContract.Builder contractBuilder = SmartContract.newBuilder();
+      contractBuilder.setOriginAddress(ByteString.copyFrom(ownerBytes));
+      contractBuilder.setBytecode(ByteString.copyFrom(ByteArray.fromHexString(MINIMAL_BYTECODE)));
+      contractBuilder.setConsumeUserResourcePercent(50);
+      contractBuilder.setOriginEnergyLimit(10_000_000L);
+      contractBuilder.setName("NegativeCallValue");
+      contractBuilder.setCallValue(-1); // Invalid: must be >= 0
+
+      CreateSmartContract.Builder createBuilder = CreateSmartContract.newBuilder();
+      createBuilder.setOwnerAddress(ByteString.copyFrom(ownerBytes));
+      createBuilder.setNewContract(contractBuilder.build());
+
+      CreateSmartContract createContract = createBuilder.build();
+
+      TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+      BlockCapsule blockCap = createBlockContext();
+
+      VmFixtureResult result = generateVmFixture(
+          trxCap, blockCap, createContract,
+          "create_smart_contract",
+          "validate_fail_call_value_negative",
+          "validate_fail",
+          "Fail when callValue is negative (energy limit hard fork enabled)"
+      );
+
+      Assert.assertFalse("validate_fail_call_value_negative should fail", result.isSuccess());
+      Assert.assertTrue("Error should mention callValue",
+          result.getError() != null && result.getError().contains("callValue must be >= 0"));
+      log.info("CreateSmartContract callValue negative: error={}", result.getError());
+    } finally {
+      // Restore defaults
+      ConfigLoader.disable = false;
+      VMConfig.initVmHardFork(false);
+    }
+  }
+
+  @Test
+  public void generateCreateSmartContract_tokenValueNegative() throws Exception {
+    log.info("Generating CreateSmartContract tokenValue negative fixture (energy limit hard fork)");
+
+    // Disable ConfigLoader to prevent it from overriding VMConfig based on block number
+    ConfigLoader.disable = true;
+    // Enable energy limit hard fork for this test
+    VMConfig.initVmHardFork(true);
+
+    try {
+      byte[] ownerBytes = ByteArray.fromHexString(OWNER_ADDRESS);
+
+      // Build contract with negative tokenValue (CreateSmartContract.call_token_value)
+      SmartContract.Builder contractBuilder = SmartContract.newBuilder();
+      contractBuilder.setOriginAddress(ByteString.copyFrom(ownerBytes));
+      contractBuilder.setBytecode(ByteString.copyFrom(ByteArray.fromHexString(MINIMAL_BYTECODE)));
+      contractBuilder.setConsumeUserResourcePercent(50);
+      contractBuilder.setOriginEnergyLimit(10_000_000L);
+      contractBuilder.setName("NegativeTokenValue");
+
+      CreateSmartContract.Builder createBuilder = CreateSmartContract.newBuilder();
+      createBuilder.setOwnerAddress(ByteString.copyFrom(ownerBytes));
+      createBuilder.setNewContract(contractBuilder.build());
+      createBuilder.setTokenId(1_000_001L); // Valid token ID
+      createBuilder.setCallTokenValue(-1); // Invalid: tokenValue must be >= 0 (TRC-10)
+
+      CreateSmartContract createContract = createBuilder.build();
+
+      TransactionCapsule trxCap = createTransactionCapsule(createContract, DEFAULT_FEE_LIMIT);
+      BlockCapsule blockCap = createBlockContext();
+
+      VmFixtureResult result = generateVmFixture(
+          trxCap, blockCap, createContract,
+          "create_smart_contract",
+          "validate_fail_token_value_negative",
+          "validate_fail",
+          "Fail when tokenValue is negative (energy limit hard fork enabled)"
+      );
+
+      Assert.assertFalse("validate_fail_token_value_negative should fail", result.isSuccess());
+      Assert.assertTrue("Error should mention tokenValue",
+          result.getError() != null && result.getError().contains("tokenValue must be >= 0"));
+      log.info("CreateSmartContract tokenValue negative: error={}", result.getError());
+    } finally {
+      // Restore defaults
+      ConfigLoader.disable = false;
+      VMConfig.initVmHardFork(false);
+    }
+  }
+
+  // ==========================================================================
   // TriggerSmartContract (31) Fixtures
   // ==========================================================================
 
-  // NOTE: TriggerSmartContract tests require VMTestBase infrastructure for proper test isolation.
-  // The tests below are marked with @Ignore until we integrate with the full TVM test harness.
-  // CreateSmartContract fixtures are generated successfully and can be used for basic VM parity testing.
-
-  @org.junit.Ignore("Requires VMTestBase infrastructure - see StorageTest for reference")
-  @Test
-  public void generateTriggerSmartContract_happyPath() throws Exception {
-    log.info("Generating TriggerSmartContract happy path fixture - SKIPPED (requires VMTestBase)");
-    // This test is skipped because TriggerSmartContract tests require:
-    // 1. Proper test isolation using VMTestBase
-    // 2. Repository-based state management
-    // 3. Block context with proper transaction receipts
-    // See: framework/src/test/java/org/tron/common/runtime/vm/StorageTest.java for reference
-  }
-
-  @org.junit.Ignore("Requires VMTestBase infrastructure - see StorageTest for reference")
-  @Test
-  public void generateTriggerSmartContract_viewFunction() throws Exception {
-    log.info("Generating TriggerSmartContract view function fixture - SKIPPED (requires VMTestBase)");
-  }
-
-  @org.junit.Ignore("Requires VMTestBase infrastructure - see StorageTest for reference")
-  @Test
-  public void generateTriggerSmartContract_nonexistentContract() throws Exception {
-    log.info("Generating TriggerSmartContract nonexistent contract fixture - SKIPPED (requires VMTestBase)");
-  }
-
-  @org.junit.Ignore("Requires VMTestBase infrastructure - see StorageTest for reference")
-  @Test
-  public void generateTriggerSmartContract_outOfEnergy() throws Exception {
-    log.info("Generating TriggerSmartContract out of energy fixture - SKIPPED (requires VMTestBase)");
-  }
+  // NOTE: TriggerSmartContract tests are implemented in VmTriggerFixtureGeneratorTest.java
+  // which extends VMTestBase for proper test isolation and TVM infrastructure.
+  // See: VmTriggerFixtureGeneratorTest for:
+  //   - generateTriggerSmartContract_happyPath
+  //   - generateTriggerSmartContract_storageWrite
+  //   - generateTriggerSmartContract_viewFunction
+  //   - generateTriggerSmartContract_deleteStorage
+  //   - generateTriggerSmartContract_nonexistentContract
+  //   - generateTriggerSmartContract_outOfEnergy
 
   // ==========================================================================
   // Helper Methods
@@ -546,6 +1483,7 @@ public class VmFixtureGeneratorTest extends BaseTest {
           .database("abi")
           .database("contract-state")
           .database("dynamic-properties")
+          .database("asset-issue-v2")
           .ownerAddress(OWNER_ADDRESS)
           .expectedError(errorMessage != null ? errorMessage : "unknown")
           .build();
@@ -607,7 +1545,6 @@ public class VmFixtureGeneratorTest extends BaseTest {
       String caseName,
       String category,
       String description) throws Exception {
-
     File fixtureDir = new File(outputDir, contractTypeName + "/" + caseName);
     fixtureDir.mkdirs();
 
@@ -683,6 +1620,7 @@ public class VmFixtureGeneratorTest extends BaseTest {
         .database("abi")
         .database("contract-state")
         .database("dynamic-properties")
+        .database("asset-issue-v2")
         .ownerAddress(OWNER_ADDRESS)
         .build();
 
@@ -761,10 +1699,11 @@ public class VmFixtureGeneratorTest extends BaseTest {
   }
 
   private void captureVmDatabases(File outputDir) throws Exception {
-    String[] databases = {"account", "contract", "code", "abi", "contract-state", "dynamic-properties"};
+    String[] databases = {"account", "contract", "code", "abi", "contract-state",
+        "dynamic-properties", "asset-issue-v2"};
 
     for (String dbName : databases) {
-      Map<byte[], byte[]> kvData = new TreeMap<>(KvFileFormat.BYTE_ARRAY_COMPARATOR);
+      SortedMap<byte[], byte[]> kvData = new TreeMap<>(KvFileFormat.BYTE_ARRAY_COMPARATOR);
 
       try {
         Iterator<Map.Entry<byte[], byte[]>> iterator = getStoreIterator(dbName);
@@ -790,6 +1729,8 @@ public class VmFixtureGeneratorTest extends BaseTest {
       switch (dbName) {
         case "account":
           return convertIterator(chainBaseManager.getAccountStore().iterator());
+        case "asset-issue-v2":
+          return convertIterator(chainBaseManager.getAssetIssueV2Store().iterator());
         case "contract":
           return convertIterator(chainBaseManager.getContractStore().iterator());
         case "code":
@@ -856,6 +1797,25 @@ public class VmFixtureGeneratorTest extends BaseTest {
         .build();
 
     return new BlockCapsule(block);
+  }
+
+  /**
+   * Create a TransactionCapsule with deterministic timestamps for reproducible fixtures.
+   */
+  private TransactionCapsule createTransactionCapsule(CreateSmartContract createContract, long feeLimit) {
+    TransactionCapsule trxCap = new TransactionCapsule(createContract,
+        Transaction.Contract.ContractType.CreateSmartContract);
+    Transaction.Builder txBuilder = trxCap.getInstance().toBuilder();
+    Transaction.raw.Builder rawBuilder = trxCap.getInstance().getRawData().toBuilder();
+    rawBuilder.setFeeLimit(feeLimit);
+    // Use deterministic timestamps from ConformanceFixtureTestSupport
+    rawBuilder.setTimestamp(DEFAULT_TX_TIMESTAMP);
+    rawBuilder.setExpiration(DEFAULT_TX_EXPIRATION);
+    txBuilder.setRawData(rawBuilder);
+    if (txBuilder.getRetCount() == 0) {
+      txBuilder.addRet(Transaction.Result.newBuilder().build());
+    }
+    return new TransactionCapsule(txBuilder.build());
   }
 
   private int getContractTypeNumber(String typeName) {

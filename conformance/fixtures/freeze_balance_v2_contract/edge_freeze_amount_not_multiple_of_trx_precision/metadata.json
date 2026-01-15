@@ -1,0 +1,24 @@
+{
+  "contractType": "FREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 54,
+  "caseName": "edge_freeze_amount_not_multiple_of_trx_precision",
+  "caseCategory": "edge",
+  "description": "Freeze amount not multiple of TRX_PRECISION (5 TRX + 1 SUN)",
+  "generatedAt": "2026-01-14T06:56:48.484Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0667265657a655f76325f6f646400000000000000",
+  "dynamicProperties": {
+    "UNFREEZE_DELAY_DAYS": 14,
+    "freeze_amount": 5000001
+  },
+  "notes": [
+    "Tests weight rounding via floor division by TRX_PRECISION"
+  ]
+}

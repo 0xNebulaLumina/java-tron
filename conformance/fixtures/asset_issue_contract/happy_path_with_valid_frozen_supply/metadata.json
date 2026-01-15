@@ -1,0 +1,25 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "happy_path_with_valid_frozen_supply",
+  "caseCategory": "happy",
+  "description": "Success with valid frozen supply entries",
+  "generatedAt": "2026-01-14T06:56:41.958Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "End time should be greater than start time",
+  "ownerAddress": "a066726f7a656e5f737570706c795f697373756572",
+  "dynamicProperties": {
+    "ALLOW_SAME_TOKEN_NAME": 1,
+    "MAX_FROZEN_SUPPLY_TIME": 3652,
+    "MIN_FROZEN_SUPPLY_TIME": 1
+  },
+  "notes": []
+}

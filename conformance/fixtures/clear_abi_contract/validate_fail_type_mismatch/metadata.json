@@ -1,0 +1,21 @@
+{
+  "contractType": "CLEAR_ABI_CONTRACT",
+  "contractTypeNum": 48,
+  "caseName": "validate_fail_type_mismatch",
+  "caseCategory": "validate_fail",
+  "description": "Fail when contract type is ClearABIContract but payload is different protobuf",
+  "generatedAt": "2026-01-14T06:56:44.187Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "abi",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use tracing::info;
 use async_trait::async_trait;
+use prost::Message;
 
 use tron_backend_common::{Module, ModuleHealth, ExecutionConfig};
 
@@ -13,7 +14,7 @@ pub mod protocol {
 }
 
 // Re-export key types for external use
-pub use tron_evm::{TronEvm, TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, TronContractType, TxMetadata, FreezeLedgerChange, FreezeLedgerResource, GlobalResourceTotalsChange, Trc10Change, Trc10AssetIssued, Trc10AssetTransferred, VoteChange, VoteEntry, WithdrawChange};
+pub use tron_evm::{TronContractParameter, TronContractType, TronEvm, TronExecutionContext, TronExecutionResult, TronStateChange, TronTransaction, TxMetadata, FreezeLedgerChange, FreezeLedgerResource, GlobalResourceTotalsChange, Trc10Change, Trc10AssetIssued, Trc10AssetTransferred, VoteChange, VoteEntry, WithdrawChange};
 pub use precompiles::TronPrecompiles;
 pub use storage_adapter::{EvmStateStore, InMemoryEvmStateStore, EngineBackedEvmStateStore, EvmStateDatabase, StateChangeRecord, WitnessInfo, FreezeRecord, VotesRecord, Vote, AccountAext, ResourceTracker, BandwidthPath, ExecutionWriteBuffer, WriteOp, TouchedKey};
 
@@ -46,6 +47,53 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
+        // TRON parity: TriggerSmartContract must target an existing smart contract account.
+        // java-tron rejects missing/non-contract targets during validation with:
+        // "No contract or not a smart contract"
+        if tx.metadata.contract_type == Some(TronContractType::TriggerSmartContract) {
+            if let Some(to) = tx.to {
+                let mut tron_contract_key = Vec::with_capacity(21);
+                let prefix = storage.tron_address_prefix()?;
+                tron_contract_key.push(prefix);
+                tron_contract_key.extend_from_slice(to.as_slice());
+
+                let is_smart_contract = match storage.tron_has_smart_contract(&tron_contract_key)? {
+                    Some(v) => v,
+                    None => storage.get_code(&to)?.is_some(),
+                };
+
+                if !is_smart_contract {
+                    return Ok(TronExecutionResult {
+                        success: false,
+                        return_data: revm::primitives::Bytes::new(),
+                        energy_used: 0,
+                        bandwidth_used: 32 + tx.data.len() as u64,
+                        logs: Vec::new(),
+                        state_changes: Vec::new(),
+                        error: Some("No contract or not a smart contract".to_string()),
+                        aext_map: HashMap::new(),
+                        freeze_changes: Vec::new(),
+                        global_resource_changes: Vec::new(),
+                        trc10_changes: Vec::new(),
+                        vote_changes: Vec::new(),
+                        withdraw_changes: Vec::new(),
+                        tron_transaction_result: None,
+                        contract_address: None,
+                    });
+                }
+            }
+        }
+
+        // TRON parity: TriggerSmartContract validation must match java-tron's VMActuator.call().
+        if tx.metadata.contract_type == Some(TronContractType::TriggerSmartContract) {
+            Self::validate_trigger_smart_contract(&storage, tx)?;
+        }
+
+        // TRON parity: CreateSmartContract validation must match java-tron's VMActuator.create().
+        if tx.metadata.contract_type == Some(TronContractType::CreateSmartContract) {
+            Self::validate_create_smart_contract(&storage, tx, context)?;
+        }
+
         let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
         let spec_id = storage
             .tvm_spec_id()?
@@ -55,13 +103,296 @@ impl ExecutionModule {
         // gas limit (energy units) using the dynamic property ENERGY_FEE (SUN per energy).
         let mut adjusted_tx = tx.clone();
         if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = std::cmp::max(1, adjusted_tx.gas_limit / energy_fee_rate);
+            adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
         }
 
         let database = EvmStateDatabase::new_with_persist(storage, self.config.remote.rust_persist_enabled);
         let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
         // Use the new state tracking method
         evm.execute_transaction_with_state_tracking(&adjusted_tx, context)
+    }
+
+    fn validate_create_smart_contract<S: EvmStateStore>(
+        storage: &S,
+        tx: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<()> {
+        const MAX_CONTRACT_NAME_BYTES: usize = 32;
+        const ONE_HUNDRED: i64 = 100;
+        const MIN_TOKEN_ID: i64 = 1_000_000;
+
+        let dynamic_i64 = |key: &[u8], default: i64| -> Result<i64> {
+            Ok(storage.tron_dynamic_property_i64(key)?.unwrap_or(default))
+        };
+
+        // 1) VM enabled (java: DynamicPropertiesStore.supportVM()).
+        if dynamic_i64(b"ALLOW_CREATION_OF_CONTRACTS", 1)? != 1 {
+            return Err(anyhow::anyhow!(
+                "vm work is off, need to be opened by the committee"
+            ));
+        }
+
+        // 2) Decode CreateSmartContract.
+        let create_contract = crate::protocol::CreateSmartContract::decode(tx.data.as_ref())
+            .map_err(|_| anyhow::anyhow!("Cannot get CreateSmartContract from transaction"))?;
+        let new_contract = create_contract
+            .new_contract
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Cannot get CreateSmartContract from transaction"))?;
+
+        // 3) ownerAddress == originAddress.
+        if create_contract.owner_address != new_contract.origin_address {
+            return Err(anyhow::anyhow!("OwnerAddress is not equals OriginAddress"));
+        }
+
+        // 4) contractName byte length <= 32.
+        if new_contract.name.as_bytes().len() > MAX_CONTRACT_NAME_BYTES {
+            return Err(anyhow::anyhow!(
+                "contractName's length cannot be greater than 32"
+            ));
+        }
+
+        // 5) consumeUserResourcePercent in [0, 100].
+        let percent = new_contract.consume_user_resource_percent;
+        if percent < 0 || percent > ONE_HUNDRED {
+            return Err(anyhow::anyhow!("percent must be >= 0 and <= 100"));
+        }
+
+        // 6) Derive CreateSmartContract address (txid + owner) and ensure it doesn't exist.
+        if let (Some(txid), owner_address) =
+            (context.transaction_id, create_contract.owner_address.as_slice())
+        {
+            if owner_address.len() == 21 {
+                let mut combined = Vec::with_capacity(32 + owner_address.len());
+                combined.extend_from_slice(txid.as_slice());
+                combined.extend_from_slice(owner_address);
+                let hash = crate::storage_adapter::utils::keccak256(&combined);
+                let addr_bytes = &hash.as_slice()[12..32];
+                let derived_address = revm::primitives::Address::from_slice(addr_bytes);
+
+                if storage.get_account(&derived_address)?.is_some() {
+                    let prefix = storage.tron_address_prefix()?;
+                    let base58 =
+                        crate::storage_adapter::utils::to_tron_address_with_prefix(&derived_address, prefix);
+                    return Err(anyhow::anyhow!(
+                        "Trying to create a contract with existing contract address: {}",
+                        base58
+                    ));
+                }
+            }
+        }
+
+        // 7) feeLimit validation (java: trx.raw_data.fee_limit).
+        let max_fee_limit = dynamic_i64(b"MAX_FEE_LIMIT", i64::MAX)?;
+        let max_fee_limit_u64 = if max_fee_limit < 0 {
+            0u64
+        } else {
+            max_fee_limit as u64
+        };
+        if tx.gas_limit > max_fee_limit_u64 {
+            return Err(anyhow::anyhow!(
+                "feeLimit must be >= 0 and <= {}",
+                max_fee_limit_u64
+            ));
+        }
+
+        // 8) Energy limit hard fork validations (java: StorageUtils.getEnergyLimitHardFork()).
+        let call_value = new_contract.call_value;
+        if call_value < 0 {
+            return Err(anyhow::anyhow!("callValue must be >= 0"));
+        }
+
+        let allow_tvm_transfer_trc10 = dynamic_i64(b"ALLOW_TVM_TRANSFER_TRC10", 0)? != 0;
+        let (token_value, token_id) = if allow_tvm_transfer_trc10 {
+            (create_contract.call_token_value, create_contract.token_id)
+        } else {
+            (0, 0)
+        };
+
+        if token_value < 0 {
+            return Err(anyhow::anyhow!("tokenValue must be >= 0"));
+        }
+
+        if new_contract.origin_energy_limit <= 0 {
+            return Err(anyhow::anyhow!("The originEnergyLimit must be > 0"));
+        }
+
+        // 9) checkTokenValueAndId parity (java: VMActuator.checkTokenValueAndId()).
+        let allow_multi_sign = dynamic_i64(b"ALLOW_MULTI_SIGN", 1)? != 0;
+        if allow_tvm_transfer_trc10 && allow_multi_sign {
+            if token_id <= MIN_TOKEN_ID && token_id != 0 {
+                return Err(anyhow::anyhow!("tokenId must be > {}", MIN_TOKEN_ID));
+            }
+            if token_value > 0 && token_id == 0 {
+                return Err(anyhow::anyhow!(
+                    "invalid arguments with tokenValue = {}, tokenId = {}",
+                    token_value,
+                    token_id
+                ));
+            }
+        }
+
+        // 10) callValue transfer validation (java: VMUtils.validateInternalTransfer()).
+        if call_value > 0 {
+            let balance = storage
+                .get_account(&tx.from)?
+                .map(|a| a.balance)
+                .unwrap_or(revm::primitives::U256::ZERO);
+            if balance < revm::primitives::U256::from(call_value as u64) {
+                return Err(anyhow::anyhow!(
+                    "Validate InternalTransfer error, balance is not sufficient."
+                ));
+            }
+        }
+
+        // 11) TRC-10 token transfer validation (java: VMUtils.validateForSmartContract()).
+        if allow_tvm_transfer_trc10 && token_value > 0 {
+            let allow_same_token_name = dynamic_i64(b" ALLOW_SAME_TOKEN_NAME", 0)?;
+            let token_id_bytes = token_id.to_string().into_bytes();
+
+            if storage
+                .tron_get_asset_issue(&token_id_bytes, allow_same_token_name)?
+                .is_none()
+            {
+                return Err(anyhow::anyhow!("No asset !"));
+            }
+
+            let asset_balance = storage.tron_get_asset_balance_v2(&tx.from, &token_id_bytes)?;
+            if asset_balance <= 0 {
+                return Err(anyhow::anyhow!("assetBalance must greater than 0."));
+            }
+            if token_value > asset_balance {
+                return Err(anyhow::anyhow!("assetBalance is not sufficient."));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_trigger_smart_contract<S: EvmStateStore>(
+        storage: &S,
+        tx: &TronTransaction,
+    ) -> Result<()> {
+        use revm::primitives::{Address, U256};
+
+        const MIN_TOKEN_ID: i64 = 1_000_000;
+
+        let dynamic_i64 = |key: &[u8], default: i64| -> Result<i64> {
+            Ok(storage.tron_dynamic_property_i64(key)?.unwrap_or(default))
+        };
+
+        // 1) VM enabled (java: DynamicPropertiesStore.supportVM()).
+        if dynamic_i64(b"ALLOW_CREATION_OF_CONTRACTS", 1)? != 1 {
+            return Err(anyhow::anyhow!(
+                "VM work is off, need to be opened by the committee"
+            ));
+        }
+
+        // 2) Decode TriggerSmartContract.
+        let trigger = crate::protocol::TriggerSmartContract::decode(tx.data.as_ref())
+            .map_err(|e| anyhow::anyhow!("Failed to decode TriggerSmartContract: {}", e))?;
+
+        let parse_tron_address = |bytes: &[u8]| -> Option<Address> {
+            if bytes.len() == 21 && (bytes[0] == 0x41 || bytes[0] == 0xa0) {
+                Some(Address::from_slice(&bytes[1..]))
+            } else if bytes.len() == 20 {
+                Some(Address::from_slice(bytes))
+            } else {
+                None
+            }
+        };
+
+        // 3) Owner address format + existence.
+        let owner = parse_tron_address(&trigger.owner_address)
+            .ok_or_else(|| anyhow::anyhow!("Invalid ownerAddress"))?;
+
+        let owner_account = storage
+            .get_account(&owner)?
+            .ok_or_else(|| anyhow::anyhow!("Account not exists"))?;
+
+        // 4) Contract address presence + format.
+        if trigger.contract_address.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Cannot get contract address from TriggerContract"
+            ));
+        }
+        if parse_tron_address(&trigger.contract_address).is_none() {
+            return Err(anyhow::anyhow!("Invalid contract address"));
+        }
+
+        // 5) feeLimit bounds (java: feeLimit < 0 || feeLimit > maxFeeLimit).
+        let max_fee_limit = dynamic_i64(b"MAX_FEE_LIMIT", i64::MAX)?;
+        let max_fee_limit_u64 = if max_fee_limit < 0 {
+            0u64
+        } else {
+            max_fee_limit as u64
+        };
+        if tx.gas_limit > max_fee_limit_u64 {
+            return Err(anyhow::anyhow!(
+                "feeLimit must be >= 0 and <= {}",
+                max_fee_limit_u64
+            ));
+        }
+
+        // 6) callValue checks.
+        if trigger.call_value > 0 {
+            let call_value = U256::from(trigger.call_value as u64);
+            if owner_account.balance < call_value {
+                return Err(anyhow::anyhow!(
+                    "Validate InternalTransfer error, balance is not sufficient."
+                ));
+            }
+        }
+
+        // 7) Token checks (java: VMActuator.checkTokenValueAndId + VMUtils.validateForSmartContract).
+        let allow_tvm_transfer_trc10 = dynamic_i64(b"ALLOW_TVM_TRANSFER_TRC10", 0)? != 0;
+        let allow_multi_sign = dynamic_i64(b"ALLOW_MULTI_SIGN", 1)? != 0;
+
+        let token_value = if allow_tvm_transfer_trc10 {
+            trigger.call_token_value
+        } else {
+            0
+        };
+        let token_id = if allow_tvm_transfer_trc10 {
+            trigger.token_id
+        } else {
+            0
+        };
+
+        if allow_tvm_transfer_trc10 && allow_multi_sign {
+            if token_id <= MIN_TOKEN_ID && token_id != 0 {
+                return Err(anyhow::anyhow!("tokenId must be > {}", MIN_TOKEN_ID));
+            }
+            if token_value > 0 && token_id == 0 {
+                return Err(anyhow::anyhow!(
+                    "invalid arguments with tokenValue = {}, tokenId = {}",
+                    token_value,
+                    token_id
+                ));
+            }
+        }
+
+        if allow_tvm_transfer_trc10 && token_value > 0 {
+            let allow_same_token_name = dynamic_i64(b" ALLOW_SAME_TOKEN_NAME", 0)?;
+            let token_key = token_id.to_string();
+
+            if storage
+                .tron_get_asset_issue(token_key.as_bytes(), allow_same_token_name)?
+                .is_none()
+            {
+                return Err(anyhow::anyhow!("No asset !"));
+            }
+
+            let balance = storage.tron_get_asset_balance_v2(&owner, token_key.as_bytes())?;
+            if balance <= 0 {
+                return Err(anyhow::anyhow!("assetBalance must greater than 0."));
+            }
+            if token_value > balance {
+                return Err(anyhow::anyhow!("assetBalance is not sufficient"));
+            }
+        }
+
+        Ok(())
     }
 
     /// Call a contract without state changes
@@ -77,7 +408,7 @@ impl ExecutionModule {
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
         let mut adjusted_tx = tx.clone();
         if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = std::cmp::max(1, adjusted_tx.gas_limit / energy_fee_rate);
+            adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
         }
         let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
@@ -97,7 +428,7 @@ impl ExecutionModule {
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
         let mut adjusted_tx = tx.clone();
         if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = std::cmp::max(1, adjusted_tx.gas_limit / energy_fee_rate);
+            adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
         }
         let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
@@ -414,6 +745,7 @@ mod witness_tests {
             metadata: TxMetadata {
                 contract_type: Some(TronContractType::WitnessCreateContract),
                 asset_id: None,
+                ..Default::default()
             },
         };
 
@@ -505,6 +837,7 @@ mod witness_tests {
             metadata: TxMetadata {
                 contract_type: Some(TronContractType::WitnessCreateContract),
                 asset_id: None,
+                ..Default::default()
             },
         };
 

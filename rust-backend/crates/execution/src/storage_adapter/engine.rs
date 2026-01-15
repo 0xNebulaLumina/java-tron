@@ -51,6 +51,11 @@ pub struct EngineBackedEvmStateStore {
 }
 
 impl EngineBackedEvmStateStore {
+    /// TRON address prefix byte used by this database (0x41 mainnet, 0xa0 testnets).
+    pub fn address_prefix(&self) -> u8 {
+        self.address_prefix
+    }
+
     pub fn new(storage_engine: StorageEngine) -> Self {
         let address_prefix = Self::detect_address_prefix(&storage_engine);
         Self {
@@ -214,16 +219,20 @@ impl EngineBackedEvmStateStore {
         ];
 
         for db_name in candidate_dbs {
-            let entries = match storage_engine.get_next(db_name, &Vec::new(), 1) {
+            // Scan more than one entry because some fixtures include non-address keys at the
+            // beginning of the Account DB (e.g. intentionally malformed addresses for validation
+            // tests). The first valid address prefix found determines the network prefix.
+            let entries = match storage_engine.get_next(db_name, &Vec::new(), 256) {
                 Ok(e) => e,
                 Err(_) => continue,
             };
-            if let Some(first) = entries.first() {
-                if first.key.len() == 21 {
-                    let prefix = first.key[0];
-                    if prefix == 0x41 || prefix == 0xa0 {
-                        return prefix;
-                    }
+            for entry in entries {
+                if entry.key.len() != 21 {
+                    continue;
+                }
+                let prefix = entry.key[0];
+                if prefix == 0x41 || prefix == 0xa0 {
+                    return prefix;
                 }
             }
         }
@@ -481,9 +490,341 @@ impl EngineBackedEvmStateStore {
     /// making complex modifications to multiple fields.
     pub fn put_account_proto(&self, address: &Address, proto_account: &ProtoAccount) -> Result<()> {
         let key = self.account_key(address);
-        let data = proto_account.encode_to_vec();
+        let prev = self.buffered_get(self.account_database(), &key)?;
+        let data = self.encode_account_proto_java_compatible(proto_account, prev.as_deref())?;
         self.buffered_put(self.account_database(), key, data)?;
         Ok(())
+    }
+
+    fn encode_account_proto_java_compatible(
+        &self,
+        proto_account: &ProtoAccount,
+        prev_bytes: Option<&[u8]>,
+    ) -> Result<Vec<u8>> {
+        let data = proto_account.encode_to_vec();
+
+        // Conformance fixtures assert raw DB bytes produced by java-tron's protobuf encoder.
+        // Two java-specific behaviors matter for Account.assetV2 (field 56):
+        // 1) Map entry order preserves insertion/parse order (not sorted by key).
+        // 2) Map entry `key` is serialized even when empty ("") as `0x0A 0x00`.
+        // 3) Map entry `value` is serialized even when it is the default `0` as `0x10 0x00`.
+        //
+        // Prost uses `BTreeMap` for deterministic ordering (sorted by key) and skips encoding
+        // default fields (empty key and zero value), so we need a small compatibility rewrite.
+        let needs_asset_v2_rewrite = proto_account.asset_v2.len() >= 2
+            || proto_account.asset_v2.contains_key("")
+            || proto_account.asset_v2.values().any(|v| *v == 0);
+        if !needs_asset_v2_rewrite {
+            return Ok(data);
+        }
+
+        let prev_order = match prev_bytes {
+            Some(bytes) => Some(self.extract_account_asset_v2_key_order(bytes)?),
+            None => None,
+        };
+
+        self.rewrite_account_asset_v2(&data, prev_order.as_deref())
+    }
+
+    fn rewrite_account_asset_v2(&self, data: &[u8], prev_order: Option<&[String]>) -> Result<Vec<u8>> {
+        // Account.assetV2 field number in protocol.tron.proto is 56.
+        const ACCOUNT_ASSET_V2_FIELD_NUMBER: u64 = 56;
+
+        let (entries_by_key, current_order) = self.collect_account_asset_v2_entries(data)?;
+        if entries_by_key.is_empty() {
+            return Ok(data.to_vec());
+        }
+
+        let desired_order = self.merge_asset_v2_order(prev_order, &current_order, &entries_by_key)?;
+
+        let mut out = Vec::with_capacity(data.len() + 8);
+        let mut pos = 0usize;
+        let mut emitted_asset_v2 = false;
+
+        while pos < data.len() {
+            let (tag, new_pos) = self.read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            match wire_type {
+                0 => {
+                    self.write_varint(&mut out, tag);
+                    let (value, next_pos) = self.read_varint(data, pos)?;
+                    pos = next_pos;
+                    self.write_varint(&mut out, value);
+                }
+                1 => {
+                    self.write_varint(&mut out, tag);
+                    out.extend_from_slice(&data[pos..pos + 8]);
+                    pos += 8;
+                }
+                2 => {
+                    let (length, next_pos) = self.read_varint(data, pos)?;
+                    pos = next_pos;
+                    let length_usize = length as usize;
+
+                    if pos + length_usize > data.len() {
+                        return Err(anyhow::anyhow!(
+                            "Length-delimited field exceeds buffer: pos={} len={} total={}",
+                            pos,
+                            length_usize,
+                            data.len()
+                        ));
+                    }
+
+                    let payload = &data[pos..pos + length_usize];
+                    pos += length_usize;
+
+                    if field_number == ACCOUNT_ASSET_V2_FIELD_NUMBER {
+                        // Skip all existing assetV2 entries; emit the rewritten entries exactly once.
+                        if !emitted_asset_v2 {
+                            emitted_asset_v2 = true;
+                            for key in &desired_order {
+                                if let Some(entry_bytes) = entries_by_key.get(key) {
+                                    // field 56, wire type 2
+                                    self.write_varint(&mut out, tag);
+                                    self.write_varint(&mut out, entry_bytes.len() as u64);
+                                    out.extend_from_slice(entry_bytes);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    self.write_varint(&mut out, tag);
+                    self.write_varint(&mut out, length);
+                    out.extend_from_slice(payload);
+                }
+                5 => {
+                    self.write_varint(&mut out, tag);
+                    out.extend_from_slice(&data[pos..pos + 4]);
+                    pos += 4;
+                }
+                _ => return Err(anyhow::anyhow!("Unknown wire type: {}", wire_type)),
+            }
+        }
+
+        Ok(out)
+    }
+
+    fn collect_account_asset_v2_entries(
+        &self,
+        data: &[u8],
+    ) -> Result<(BTreeMap<String, Vec<u8>>, Vec<String>)> {
+        const ACCOUNT_ASSET_V2_FIELD_NUMBER: u64 = 56;
+
+        let mut entries_by_key: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        let mut order = Vec::new();
+
+        let mut pos = 0usize;
+        while pos < data.len() {
+            let (tag, new_pos) = self.read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            if wire_type != 2 {
+                pos = self.skip_field(data, pos, wire_type)?;
+                continue;
+            }
+
+            let (length, next_pos) = self.read_varint(data, pos)?;
+            pos = next_pos;
+            let length_usize = length as usize;
+            if pos + length_usize > data.len() {
+                return Err(anyhow::anyhow!(
+                    "Length-delimited field exceeds buffer: pos={} len={} total={}",
+                    pos,
+                    length_usize,
+                    data.len()
+                ));
+            }
+
+            let payload = &data[pos..pos + length_usize];
+            pos += length_usize;
+
+            if field_number != ACCOUNT_ASSET_V2_FIELD_NUMBER {
+                continue;
+            }
+
+            let key = self.map_entry_string_key(payload)?;
+            if !entries_by_key.contains_key(&key) {
+                order.push(key.clone());
+            }
+
+            let entry_bytes = if self.map_entry_has_string_key(payload)? {
+                payload.to_vec()
+            } else {
+                // Ensure empty-string keys serialize the `key` field: `0x0A 0x00`.
+                let mut patched = Vec::with_capacity(payload.len() + 2);
+                patched.extend_from_slice(&[0x0A, 0x00]);
+                patched.extend_from_slice(payload);
+                patched
+            };
+            let entry_bytes = if self.map_entry_has_int64_value(entry_bytes.as_slice())? {
+                entry_bytes
+            } else {
+                // Ensure zero values serialize the `value` field: `0x10 0x00`.
+                let mut patched = Vec::with_capacity(entry_bytes.len() + 2);
+                patched.extend_from_slice(&entry_bytes);
+                patched.extend_from_slice(&[0x10, 0x00]);
+                patched
+            };
+
+            entries_by_key.insert(key, entry_bytes);
+        }
+
+        Ok((entries_by_key, order))
+    }
+
+    fn merge_asset_v2_order(
+        &self,
+        prev_order: Option<&[String]>,
+        current_order: &[String],
+        entries_by_key: &BTreeMap<String, Vec<u8>>,
+    ) -> Result<Vec<String>> {
+        let mut desired = Vec::with_capacity(entries_by_key.len());
+        let mut seen = std::collections::BTreeSet::<String>::new();
+
+        if let Some(prev) = prev_order {
+            for key in prev {
+                if entries_by_key.contains_key(key) && !seen.contains(key) {
+                    desired.push(key.clone());
+                    seen.insert(key.clone());
+                }
+            }
+        }
+
+        for key in current_order {
+            if entries_by_key.contains_key(key) && !seen.contains(key) {
+                desired.push(key.clone());
+                seen.insert(key.clone());
+            }
+        }
+
+        // Safety net: append any remaining keys deterministically.
+        for key in entries_by_key.keys() {
+            if !seen.contains(key) {
+                desired.push(key.clone());
+                seen.insert(key.clone());
+            }
+        }
+
+        Ok(desired)
+    }
+
+    fn extract_account_asset_v2_key_order(&self, data: &[u8]) -> Result<Vec<String>> {
+        const ACCOUNT_ASSET_V2_FIELD_NUMBER: u64 = 56;
+
+        let mut order = Vec::new();
+        let mut pos = 0usize;
+
+        while pos < data.len() {
+            let (tag, new_pos) = self.read_varint(data, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            if wire_type != 2 {
+                pos = self.skip_field(data, pos, wire_type)?;
+                continue;
+            }
+
+            let (length, next_pos) = self.read_varint(data, pos)?;
+            pos = next_pos;
+            let length_usize = length as usize;
+            if pos + length_usize > data.len() {
+                return Err(anyhow::anyhow!(
+                    "Length-delimited field exceeds buffer: pos={} len={} total={}",
+                    pos,
+                    length_usize,
+                    data.len()
+                ));
+            }
+
+            let payload = &data[pos..pos + length_usize];
+            pos += length_usize;
+
+            if field_number == ACCOUNT_ASSET_V2_FIELD_NUMBER {
+                order.push(self.map_entry_string_key(payload)?);
+            }
+        }
+
+        Ok(order)
+    }
+
+    fn map_entry_has_string_key(&self, entry: &[u8]) -> Result<bool> {
+        let mut pos = 0usize;
+        while pos < entry.len() {
+            let (tag, new_pos) = self.read_varint(entry, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            if field_number == 1 && wire_type == 2 {
+                return Ok(true);
+            }
+
+            pos = self.skip_field(entry, pos, wire_type)?;
+        }
+
+        Ok(false)
+    }
+
+    fn map_entry_has_int64_value(&self, entry: &[u8]) -> Result<bool> {
+        let mut pos = 0usize;
+        while pos < entry.len() {
+            let (tag, new_pos) = self.read_varint(entry, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            if field_number == 2 && wire_type == 0 {
+                return Ok(true);
+            }
+
+            pos = self.skip_field(entry, pos, wire_type)?;
+        }
+
+        Ok(false)
+    }
+
+    fn map_entry_string_key(&self, entry: &[u8]) -> Result<String> {
+        let mut pos = 0usize;
+        while pos < entry.len() {
+            let (tag, new_pos) = self.read_varint(entry, pos)?;
+            pos = new_pos;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x7;
+
+            if field_number == 1 {
+                if wire_type != 2 {
+                    return Err(anyhow::anyhow!(
+                        "Invalid wire type for map key: expected 2, got {}",
+                        wire_type
+                    ));
+                }
+                let (length, next_pos) = self.read_varint(entry, pos)?;
+                pos = next_pos;
+                let length_usize = length as usize;
+                if pos + length_usize > entry.len() {
+                    return Err(anyhow::anyhow!("Map key extends past entry bounds"));
+                }
+                let bytes = &entry[pos..pos + length_usize];
+                return Ok(String::from_utf8_lossy(bytes).to_string());
+            }
+
+            pos = self.skip_field(entry, pos, wire_type)?;
+        }
+
+        Ok(String::new())
     }
 
     /// Write a varint to the output buffer (kept for manual proto parsing elsewhere)
@@ -654,6 +995,71 @@ impl EngineBackedEvmStateStore {
             None => {
                 Ok(true) // Default enabled
             }
+        }
+    }
+
+    /// Get ACTIVE_DEFAULT_OPERATIONS dynamic property.
+    ///
+    /// Java reference: `DynamicPropertiesStore.getActiveDefaultOperations()`, with default value
+    /// "7fff1fc0033e0000000000000000000000000000000000000000000000000000" when missing.
+    pub fn get_active_default_operations(&self) -> Result<Vec<u8>> {
+        const DEFAULT_ACTIVE_DEFAULT_OPERATIONS: [u8; 32] = [
+            0x7f, 0xff, 0x1f, 0xc0, 0x03, 0x3e, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+
+        let key = b"ACTIVE_DEFAULT_OPERATIONS";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if !data.is_empty() => Ok(data),
+            _ => Ok(DEFAULT_ACTIVE_DEFAULT_OPERATIONS.to_vec()),
+        }
+    }
+
+    /// Get FORBID_TRANSFER_TO_CONTRACT dynamic property.
+    ///
+    /// Java reference: `DynamicPropertiesStore.getForbidTransferToContract()`.
+    /// Default: 0 when missing/invalid.
+    pub fn get_forbid_transfer_to_contract(&self) -> Result<u64> {
+        let key = b"FORBID_TRANSFER_TO_CONTRACT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if !data.is_empty() {
+                    Ok(data[0] as u64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_TVM_COMPATIBLE_EVM dynamic property.
+    ///
+    /// Java reference: `DynamicPropertiesStore.getAllowTvmCompatibleEvm()`.
+    /// Default: 0 when missing/invalid.
+    pub fn get_allow_tvm_compatible_evm(&self) -> Result<u64> {
+        let key = b"ALLOW_TVM_COMPATIBLE_EVM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if !data.is_empty() {
+                    Ok(data[0] as u64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
         }
     }
 
@@ -835,6 +1241,40 @@ impl EngineBackedEvmStateStore {
             }
             None => Ok(0),
         }
+    }
+
+    /// Get MAX_DELEGATE_LOCK_PERIOD dynamic property (in blocks).
+    ///
+    /// Java parity:
+    /// - getMaxDelegateLockPeriod() defaults to DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL (86400)
+    ///   when missing
+    /// - supportMaxDelegateLockPeriod() requires max > default and UNFREEZE_DELAY_DAYS > 0
+    pub fn get_max_delegate_lock_period(&self) -> Result<i64> {
+        const DEFAULT_MAX_DELEGATE_LOCK_PERIOD: i64 = 86400; // DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL
+        let key = b"MAX_DELEGATE_LOCK_PERIOD";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if !data.is_empty() {
+                    Ok(data[0] as i64)
+                } else {
+                    Ok(DEFAULT_MAX_DELEGATE_LOCK_PERIOD)
+                }
+            }
+            None => Ok(DEFAULT_MAX_DELEGATE_LOCK_PERIOD),
+        }
+    }
+
+    /// Check supportMaxDelegateLockPeriod() (DynamicPropertiesStore.supportMaxDelegateLockPeriod).
+    pub fn support_max_delegate_lock_period(&self) -> Result<bool> {
+        const DEFAULT_MAX_DELEGATE_LOCK_PERIOD: i64 = 86400; // DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL
+        let max_lock_period = self.get_max_delegate_lock_period()?;
+        let unfreeze_delay_days = self.get_unfreeze_delay_days()?;
+        Ok(max_lock_period > DEFAULT_MAX_DELEGATE_LOCK_PERIOD && unfreeze_delay_days > 0)
     }
 
     /// Get blackhole address (if crediting instead of burning)
@@ -1305,22 +1745,27 @@ impl EngineBackedEvmStateStore {
     /// Default: false
     pub fn support_allow_cancel_all_unfreeze_v2(&self) -> Result<bool> {
         let key = b"ALLOW_CANCEL_ALL_UNFREEZE_V2";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        let allow_cancel = match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7]
                     ]);
-                    Ok(val > 0)
+                    val == 1
                 } else if !data.is_empty() {
-                    Ok(data[0] != 0)
+                    data[0] == 1
                 } else {
-                    Ok(false)
+                    false
                 }
             },
-            None => Ok(false) // Default disabled
-        }
+            None => false, // Default disabled
+        };
+
+        // Java parity: enabled only when ALLOW_CANCEL_ALL_UNFREEZE_V2 == 1
+        // and UNFREEZE_DELAY_DAYS > 0.
+        let unfreeze_delay_days = self.get_unfreeze_delay_days()?;
+        Ok(allow_cancel && unfreeze_delay_days > 0)
     }
 
     /// Check SUPPORT_DR dynamic property (delegate resource)
@@ -2676,6 +3121,31 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get REMOVE_THE_POWER_OF_THE_GR dynamic property.
+    ///
+    /// java-tron uses this as a tri-state flag:
+    /// - 0: not yet executed
+    /// - 1: enabled
+    /// - -1: executed (one-time proposal)
+    ///
+    /// Default: 0 if not found.
+    pub fn get_remove_the_power_of_the_gr(&self) -> Result<i64> {
+        let key = b"REMOVE_THE_POWER_OF_THE_GR";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
     // ==========================================================================
     // Phase 2.B: AccountIdIndex Store Methods
     // ==========================================================================
@@ -2996,6 +3466,17 @@ impl EngineBackedEvmStateStore {
         db_names::delegation::DELEGATED_RESOURCE_ACCOUNT_INDEX
     }
 
+    /// Create V1 key for DelegatedResource store (from -> to).
+    /// Java reference: DelegatedResourceCapsule.createDbKey(from, to)
+    fn delegated_resource_key_v1(&self, from: &Address, to: &Address) -> Vec<u8> {
+        let from_tron = self.to_tron_address_21(from);
+        let to_tron = self.to_tron_address_21(to);
+        let mut key = Vec::with_capacity(42);
+        key.extend_from_slice(&from_tron);
+        key.extend_from_slice(&to_tron);
+        key
+    }
+
     /// Create V2 key for DelegatedResource store (from -> to).
     /// Lock semantics match Java: lock=false uses 0x01 prefix, lock=true uses 0x02 prefix.
     fn delegated_resource_key_v2(&self, from: &Address, to: &Address, lock: bool) -> Vec<u8> {
@@ -3011,6 +3492,212 @@ impl EngineBackedEvmStateStore {
         tron_addr[0] = self.address_prefix;
         tron_addr[1..].copy_from_slice(address.as_slice());
         tron_addr
+    }
+
+    /// Get a DelegatedResource record for V1 delegation (FreezeBalanceContract delegation).
+    pub fn get_delegated_resource_v1(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+    ) -> Result<Option<crate::protocol::DelegatedResource>> {
+        let key = self.delegated_resource_key_v1(owner, receiver);
+        match self.buffered_get(self.delegated_resource_database(), &key)? {
+            Some(data) => {
+                let dr = crate::protocol::DelegatedResource::decode(data.as_slice())
+                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+                Ok(Some(dr))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Delegate resource (V1 semantics, used by FreezeBalanceContract delegation).
+    ///
+    /// Java oracle: FreezeBalanceActuator#delegateResource (DelegatedResourceCapsule.createDbKey)
+    pub fn delegate_resource_v1(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        is_bandwidth: bool,
+        balance: i64,
+        expire_time: i64,
+    ) -> Result<()> {
+        let key = self.delegated_resource_key_v1(owner, receiver);
+        let owner_tron = self.to_tron_address_21(owner);
+        let receiver_tron = self.to_tron_address_21(receiver);
+
+        let mut dr = match self.buffered_get(self.delegated_resource_database(), &key)? {
+            Some(data) => crate::protocol::DelegatedResource::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?,
+            None => crate::protocol::DelegatedResource {
+                from: owner_tron.to_vec(),
+                to: receiver_tron.to_vec(),
+                ..Default::default()
+            },
+        };
+
+        if is_bandwidth {
+            dr.frozen_balance_for_bandwidth = dr
+                .frozen_balance_for_bandwidth
+                .checked_add(balance)
+                .ok_or_else(|| anyhow::anyhow!("Overflow updating frozen_balance_for_bandwidth"))?;
+            dr.expire_time_for_bandwidth = expire_time;
+        } else {
+            dr.frozen_balance_for_energy = dr
+                .frozen_balance_for_energy
+                .checked_add(balance)
+                .ok_or_else(|| anyhow::anyhow!("Overflow updating frozen_balance_for_energy"))?;
+            dr.expire_time_for_energy = expire_time;
+        }
+
+        self.buffered_put(
+            self.delegated_resource_database(),
+            key,
+            dr.encode_to_vec(),
+        )?;
+
+        Ok(())
+    }
+
+    /// Update DelegatedResourceAccountIndex for V1 delegation (FreezeBalanceContract delegation).
+    ///
+    /// Java oracle: FreezeBalanceActuator#delegateResource when supportAllowDelegateOptimization == false.
+    pub fn delegate_resource_account_index_v1(&self, owner: &Address, receiver: &Address) -> Result<()> {
+        let owner_tron = self.to_tron_address_21(owner).to_vec();
+        let receiver_tron = self.to_tron_address_21(receiver).to_vec();
+
+        // Owner index: add receiver to to_accounts.
+        let owner_key = owner_tron.clone();
+        let mut owner_index = match self
+            .buffered_get(self.delegated_resource_account_index_database(), &owner_key)?
+        {
+            Some(data) => crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?,
+            None => crate::protocol::DelegatedResourceAccountIndex {
+                account: owner_tron.clone(),
+                from_accounts: Vec::new(),
+                to_accounts: Vec::new(),
+                ..Default::default()
+            },
+        };
+
+        if !owner_index.to_accounts.iter().any(|a| a == &receiver_tron) {
+            owner_index.to_accounts.push(receiver_tron.clone());
+        }
+
+        self.buffered_put(
+            self.delegated_resource_account_index_database(),
+            owner_key,
+            owner_index.encode_to_vec(),
+        )?;
+
+        // Receiver index: add owner to from_accounts.
+        let receiver_key = receiver_tron.clone();
+        let mut receiver_index = match self
+            .buffered_get(self.delegated_resource_account_index_database(), &receiver_key)?
+        {
+            Some(data) => crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?,
+            None => crate::protocol::DelegatedResourceAccountIndex {
+                account: receiver_tron.clone(),
+                from_accounts: Vec::new(),
+                to_accounts: Vec::new(),
+                ..Default::default()
+            },
+        };
+
+        if !receiver_index.from_accounts.iter().any(|a| a == &owner_tron) {
+            receiver_index.from_accounts.push(owner_tron);
+        }
+
+        self.buffered_put(
+            self.delegated_resource_account_index_database(),
+            receiver_key,
+            receiver_index.encode_to_vec(),
+        )?;
+
+        Ok(())
+    }
+
+    /// Store a DelegatedResource record for V1 delegation.
+    pub fn put_delegated_resource_v1(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        resource: &crate::protocol::DelegatedResource,
+    ) -> Result<()> {
+        let key = self.delegated_resource_key_v1(owner, receiver);
+        self.buffered_put(
+            self.delegated_resource_database(),
+            key,
+            resource.encode_to_vec(),
+        )?;
+        Ok(())
+    }
+
+    /// Delete a DelegatedResource record for V1 delegation.
+    pub fn delete_delegated_resource_v1(&self, owner: &Address, receiver: &Address) -> Result<()> {
+        let key = self.delegated_resource_key_v1(owner, receiver);
+        self.buffered_delete(self.delegated_resource_database(), key)?;
+        Ok(())
+    }
+
+    /// Remove DelegatedResourceAccountIndex entries for V1 delegation (UnfreezeBalanceContract).
+    ///
+    /// Java oracle: UnfreezeBalanceActuator#execute when supportAllowDelegateOptimization == false.
+    pub fn undelegate_resource_account_index_v1(&self, owner: &Address, receiver: &Address) -> Result<()> {
+        let owner_tron = self.to_tron_address_21(owner).to_vec();
+        let receiver_tron = self.to_tron_address_21(receiver).to_vec();
+
+        // Owner index: remove receiver from to_accounts.
+        let owner_key = owner_tron.clone();
+        if let Some(data) = self
+            .buffered_get(self.delegated_resource_account_index_database(), &owner_key)?
+        {
+            let mut owner_index = crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?;
+            owner_index.to_accounts.retain(|a| a != &receiver_tron);
+            self.buffered_put(
+                self.delegated_resource_account_index_database(),
+                owner_key,
+                owner_index.encode_to_vec(),
+            )?;
+        }
+
+        // Receiver index: remove owner from from_accounts.
+        let receiver_key = receiver_tron.clone();
+        if let Some(data) = self
+            .buffered_get(self.delegated_resource_account_index_database(), &receiver_key)?
+        {
+            let mut receiver_index = crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?;
+            receiver_index.from_accounts.retain(|a| a != &owner_tron);
+            self.buffered_put(
+                self.delegated_resource_account_index_database(),
+                receiver_key,
+                receiver_index.encode_to_vec(),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Get a DelegatedResource record (lock/unlock) without mutating state.
+    pub fn get_delegated_resource(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        lock: bool,
+    ) -> Result<Option<crate::protocol::DelegatedResource>> {
+        let key = self.delegated_resource_key_v2(owner, receiver, lock);
+        match self.buffered_get(self.delegated_resource_database(), &key)? {
+            Some(data) => {
+                let dr = crate::protocol::DelegatedResource::decode(data.as_slice())
+                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
+                Ok(Some(dr))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Delegate resource from owner to receiver
@@ -3033,7 +3720,7 @@ impl EngineBackedEvmStateStore {
                        hex::encode(owner), hex::encode(receiver), is_bandwidth, balance, lock, expire_time);
 
         // Get or create DelegatedResource
-        let mut dr = match self.storage_engine.get(self.delegated_resource_database(), &key)? {
+        let mut dr = match self.buffered_get(self.delegated_resource_database(), &key)? {
             Some(data) => {
                 crate::protocol::DelegatedResource::decode(&data[..])
                     .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?
@@ -3072,7 +3759,7 @@ impl EngineBackedEvmStateStore {
         let lock_key = self.delegated_resource_key_v2(from, to, true);
         let unlock_key = self.delegated_resource_key_v2(from, to, false);
 
-        let Some(lock_data) = self.storage_engine.get(self.delegated_resource_database(), &lock_key)? else {
+        let Some(lock_data) = self.buffered_get(self.delegated_resource_database(), &lock_key)? else {
             return Ok(());
         };
 
@@ -3084,7 +3771,7 @@ impl EngineBackedEvmStateStore {
             return Ok(());
         }
 
-        let mut unlock_resource = match self.storage_engine.get(self.delegated_resource_database(), &unlock_key)? {
+        let mut unlock_resource = match self.buffered_get(self.delegated_resource_database(), &unlock_key)? {
             Some(data) => crate::protocol::DelegatedResource::decode(&data[..])
                 .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource unlock record: {}", e))?,
             None => crate::protocol::DelegatedResource {
@@ -3147,7 +3834,7 @@ impl EngineBackedEvmStateStore {
                        hex::encode(owner), hex::encode(receiver), is_bandwidth, balance);
 
         // Get existing DelegatedResource
-        let data = self.storage_engine.get(self.delegated_resource_database(), &key)?
+        let data = self.buffered_get(self.delegated_resource_database(), &key)?
             .ok_or_else(|| anyhow::anyhow!("DelegatedResource not found"))?;
 
         let mut dr = crate::protocol::DelegatedResource::decode(&data[..])
@@ -3188,7 +3875,7 @@ impl EngineBackedEvmStateStore {
 
         let mut balance = 0i64;
 
-        if let Some(data) = self.storage_engine.get(self.delegated_resource_database(), &unlock_key)? {
+        if let Some(data) = self.buffered_get(self.delegated_resource_database(), &unlock_key)? {
             let dr = crate::protocol::DelegatedResource::decode(&data[..])
                 .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
             if is_bandwidth {
@@ -3198,7 +3885,7 @@ impl EngineBackedEvmStateStore {
             }
         }
 
-        if let Some(data) = self.storage_engine.get(self.delegated_resource_database(), &lock_key)? {
+        if let Some(data) = self.buffered_get(self.delegated_resource_database(), &lock_key)? {
             let dr = crate::protocol::DelegatedResource::decode(&data[..])
                 .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?;
             if is_bandwidth {
@@ -3306,6 +3993,32 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get ALLOW_TVM_SOLIDITY_059 dynamic property
+    /// Returns 0 if Solidity 0.5.9 features are not enabled, non-zero if enabled.
+    /// Default: 0 (not enabled)
+    pub fn get_allow_tvm_solidity059(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_SOLIDITY_059";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let value = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]);
+                    tracing::debug!("ALLOW_TVM_SOLIDITY_059: {}", value);
+                    Ok(value)
+                } else {
+                    tracing::warn!("ALLOW_TVM_SOLIDITY_059 has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("ALLOW_TVM_SOLIDITY_059 not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
     /// Get LATEST_BLOCK_HEADER_NUMBER dynamic property
     /// Returns the latest block number
     /// Default: 0
@@ -3401,7 +4114,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
     fn get_code(&self, address: &Address) -> Result<Option<Bytecode>> {
         let key = self.code_key(address);
         match self.buffered_get(self.code_database(), &key)? {
-            Some(data) => Ok(Some(Bytecode::new_raw(data.into()))),
+            Some(data) => Ok((!data.is_empty()).then(|| Bytecode::new_raw(data.into()))),
             None => Ok(None),
         }
     }
@@ -3482,8 +4195,14 @@ impl EvmStateStore for EngineBackedEvmStateStore {
 
     fn set_storage(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         let storage_key = self.contract_storage_key(&address, &key);
-        let data = value.to_be_bytes::<32>();
-        self.buffered_put(self.storage_row_database(), storage_key, data.to_vec())?;
+        if value == U256::ZERO {
+            // TRON parity: Contract storage is a sparse KV store. Zero values are represented
+            // by the absence of a key (deletion), not by an explicit 32-byte zero blob.
+            self.buffered_delete(self.storage_row_database(), storage_key)?;
+        } else {
+            let data = value.to_be_bytes::<32>();
+            self.buffered_put(self.storage_row_database(), storage_key, data.to_vec())?;
+        }
         Ok(())
     }
 
@@ -3554,6 +4273,47 @@ impl EvmStateStore for EngineBackedEvmStateStore {
         } else {
             Ok(Some(fee))
         }
+    }
+
+    fn tron_address_prefix(&self) -> Result<u8> {
+        Ok(self.address_prefix)
+    }
+
+    fn tron_dynamic_property_i64(&self, key: &[u8]) -> Result<Option<i64>> {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(Some(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ])))
+                } else if !data.is_empty() {
+                    Ok(Some(data[0] as i64))
+                } else {
+                    Ok(Some(0))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn tron_get_asset_issue(
+        &self,
+        key: &[u8],
+        allow_same_token_name: i64,
+    ) -> Result<Option<crate::protocol::AssetIssueContractData>> {
+        EngineBackedEvmStateStore::get_asset_issue(self, key, allow_same_token_name)
+    }
+
+    fn tron_get_asset_balance_v2(&self, address: &Address, token_id: &[u8]) -> Result<i64> {
+        EngineBackedEvmStateStore::get_asset_balance_v2(self, address, token_id)
+    }
+
+    fn tron_has_smart_contract(&self, contract_address: &[u8]) -> Result<Option<bool>> {
+        Ok(Some(
+            self.buffered_get(self.contract_database(), contract_address)?
+                .is_some(),
+        ))
     }
 }
 
@@ -3650,6 +4410,121 @@ impl EngineBackedEvmStateStore {
                 }
             },
             None => Ok(8_640_000_000) // Default value
+        }
+    }
+
+    /// Get MAX_FROZEN_TIME dynamic property (FreezeBalanceContract validation).
+    ///
+    /// Java stores this as a 4-byte big-endian int under key "MAX_FROZEN_TIME".
+    /// Default: 3 (DynamicPropertiesStore initialization).
+    pub fn get_max_frozen_time(&self) -> Result<i64> {
+        let key = b"MAX_FROZEN_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Ok(3)
+                }
+            }
+            None => Ok(3),
+        }
+    }
+
+    /// Get MIN_FROZEN_TIME dynamic property (FreezeBalanceContract validation).
+    ///
+    /// Java stores this as a 4-byte big-endian int under key "MIN_FROZEN_TIME".
+    /// Default: 3 (DynamicPropertiesStore initialization).
+    pub fn get_min_frozen_time(&self) -> Result<i64> {
+        let key = b"MIN_FROZEN_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Ok(3)
+                }
+            }
+            None => Ok(3),
+        }
+    }
+
+    /// Get MAX_FROZEN_SUPPLY_NUMBER dynamic property (AssetIssueContract validation).
+    ///
+    /// Java stores this as a 4-byte big-endian int under key "MAX_FROZEN_SUPPLY_NUMBER".
+    /// Default: 10 (DynamicPropertiesStore initialization).
+    pub fn get_max_frozen_supply_number(&self) -> Result<i64> {
+        let key = b"MAX_FROZEN_SUPPLY_NUMBER";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Ok(10)
+                }
+            }
+            None => Ok(10),
+        }
+    }
+
+    /// Get MAX_FROZEN_SUPPLY_TIME dynamic property (AssetIssueContract validation).
+    ///
+    /// Java stores this as a 4-byte big-endian int under key "MAX_FROZEN_SUPPLY_TIME".
+    /// Default: 3652 (DynamicPropertiesStore initialization).
+    pub fn get_max_frozen_supply_time(&self) -> Result<i64> {
+        let key = b"MAX_FROZEN_SUPPLY_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Ok(3652)
+                }
+            }
+            None => Ok(3652),
+        }
+    }
+
+    /// Get MIN_FROZEN_SUPPLY_TIME dynamic property (AssetIssueContract validation).
+    ///
+    /// Java stores this as a 4-byte big-endian int under key "MIN_FROZEN_SUPPLY_TIME".
+    /// Default: 1 (DynamicPropertiesStore initialization).
+    pub fn get_min_frozen_supply_time(&self) -> Result<i64> {
+        let key = b"MIN_FROZEN_SUPPLY_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Ok(1)
+                }
+            }
+            None => Ok(1),
         }
     }
 
@@ -3971,17 +4846,7 @@ impl EngineBackedEvmStateStore {
 
     /// Set/update account from proto
     pub fn set_account_proto(&mut self, address: &Address, account: &crate::protocol::Account) -> Result<()> {
-        use prost::Message;
-
-        // Encode account to protobuf bytes
-        let mut buf = Vec::new();
-        account.encode(&mut buf)?;
-
-        // Write to account store using TRON 21-byte address
-        let tron_addr = self.to_tron_address_21(address);
-        self.buffered_put(self.account_database(), tron_addr.to_vec(), buf)?;
-
-        Ok(())
+        self.put_account_proto(address, account)
     }
 
     /// Add balance to an account (for crediting blackhole, etc.)

@@ -1,0 +1,20 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "validate_fail_receiver_invalid_address",
+  "caseCategory": "validate_fail",
+  "description": "Fail when receiver address is invalid",
+  "generatedAt": "2026-01-14T06:56:47.440Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid receiverAddress",
+  "ownerAddress": "a0667265657a655f64656c5f696e765f7263760000",
+  "dynamicProperties": {},
+  "notes": []
+}

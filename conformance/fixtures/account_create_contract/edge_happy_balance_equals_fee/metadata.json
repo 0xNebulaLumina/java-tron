@@ -1,0 +1,21 @@
+{
+  "contractType": "ACCOUNT_CREATE_CONTRACT",
+  "contractTypeNum": 0,
+  "caseName": "edge_happy_balance_equals_fee",
+  "caseCategory": "edge",
+  "description": "Success when owner balance exactly equals create account fee",
+  "generatedAt": "2026-01-14T06:56:45.255Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0626f756e646172795f6f776e5f65713100000000",
+  "dynamicProperties": {
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000
+  },
+  "notes": []
+}

@@ -1,0 +1,25 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "edge_unfreezing_times_at_31_succeeds",
+  "caseCategory": "edge",
+  "description": "Success when unfreezing times = 31 (under limit, can add one more)",
+  "generatedAt": "2026-01-14T06:56:48.474Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76325f3331000000000000",
+  "dynamicProperties": {
+    "UNFREEZE_DELAY_DAYS": 14,
+    "pending_unfreezes": 31,
+    "unfreeze_amount": 1000000
+  },
+  "notes": [
+    "Boundary case: 31 pending entries, one more allowed"
+  ]
+}

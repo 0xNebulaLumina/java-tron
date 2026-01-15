@@ -45,7 +45,7 @@ Each entry consists of:
 |-------|------|-------------|
 | Key Length | 4 | Length of key in bytes (big-endian uint32) |
 | Key Data | variable | Raw key bytes |
-| Value Length | 4 | Length of value in bytes (big-endian uint32, 0 for deletion marker) |
+| Value Length | 4 | Length of value in bytes (big-endian uint32, 0 for empty value) |
 | Value Data | variable | Raw value bytes (omitted if length is 0) |
 
 ## Ordering
@@ -59,8 +59,8 @@ Lexicographic ordering means comparing keys byte-by-byte as unsigned integers (0
 
 ## Value Semantics
 
-- **Value Length = 0**: Represents a key that exists in the database with an empty value, or a deletion marker (context-dependent)
-- **Key not present**: The key does not exist in the database
+- **Value Length = 0**: Represents a key that exists in the database with an empty value
+- **Key not present**: The key does not exist in the database (deletion is represented by absence)
 
 ## Example
 
@@ -113,8 +113,8 @@ public void writeKvFile(File file, Map<byte[], byte[]> data) throws IOException 
             byte[] value = data.get(key);
             out.writeInt(key.length);
             out.write(key);
-            out.writeInt(value != null ? value.length : 0);
-            if (value != null && value.length > 0) {
+            out.writeInt(value.length);
+            if (value.length > 0) {
                 out.write(value);
             }
         }

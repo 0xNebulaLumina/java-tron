@@ -1,0 +1,22 @@
+{
+  "contractType": "UPDATE_BROKERAGE_CONTRACT",
+  "contractTypeNum": 49,
+  "caseName": "validate_fail_owner_address_empty",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner_address is empty (0 bytes)",
+  "generatedAt": "2026-01-14T06:56:43.117Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "witness",
+    "delegation",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid ownerAddress",
+  "ownerAddress": "",
+  "dynamicProperties": {},
+  "notes": []
+}

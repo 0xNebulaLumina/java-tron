@@ -5,13 +5,13 @@ use revm_primitives::Address;
 
 /// Strip Tron address prefix (0x41) from 21-byte address to get 20-byte EVM address
 pub(in crate::service) fn strip_tron_address_prefix(address_bytes: &[u8]) -> Result<&[u8], String> {
-    if address_bytes.len() == 21 && address_bytes[0] == 0x41 {
+    if address_bytes.len() == 21 && (address_bytes[0] == 0x41 || address_bytes[0] == 0xa0) {
         Ok(&address_bytes[1..]) // Skip the 0x41 prefix, return 20 bytes
     } else if address_bytes.len() == 20 {
         Ok(address_bytes) // Already 20 bytes, no prefix
     } else {
         Err(format!(
-            "Invalid address length: expected 20 or 21 bytes (with 0x41 prefix), got {}",
+            "Invalid address length: expected 20 or 21 bytes (with 0x41/0xa0 prefix), got {}",
             address_bytes.len()
         ))
     }

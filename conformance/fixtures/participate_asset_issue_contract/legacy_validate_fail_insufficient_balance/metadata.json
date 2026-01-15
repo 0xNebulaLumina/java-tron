@@ -1,0 +1,21 @@
+{
+  "contractType": "PARTICIPATE_ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 9,
+  "caseName": "legacy_validate_fail_insufficient_balance",
+  "caseCategory": "validate_fail",
+  "description": "Legacy mode (allowSameTokenName=0): Fail when participant has insufficient TRX balance",
+  "generatedAt": "2026-01-14T06:56:53.824Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "No enough balance !",
+  "ownerAddress": "a0cccccccccccccccccccccccccccccccccccccccc",
+  "dynamicProperties": {},
+  "notes": []
+}

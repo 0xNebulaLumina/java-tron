@@ -1,0 +1,19 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "validate_fail_owner_account_not_exist",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner account does not exist in AccountStore",
+  "generatedAt": "2026-01-14T06:56:47.452Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Account[a06e6f6e5f65786973745f667265657a655f303100] not exists",
+  "dynamicProperties": {},
+  "notes": []
+}

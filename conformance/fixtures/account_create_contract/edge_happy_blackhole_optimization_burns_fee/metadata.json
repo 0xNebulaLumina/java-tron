@@ -1,0 +1,22 @@
+{
+  "contractType": "ACCOUNT_CREATE_CONTRACT",
+  "contractTypeNum": 0,
+  "caseName": "edge_happy_blackhole_optimization_burns_fee",
+  "caseCategory": "edge",
+  "description": "Success with ALLOW_BLACKHOLE_OPTIMIZATION=1, fee is burned (BURN_TRX_AMOUNT incremented)",
+  "generatedAt": "2026-01-14T06:56:45.285Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a06275726e5f6f776e65725f303030310000000000",
+  "dynamicProperties": {
+    "ALLOW_BLACKHOLE_OPTIMIZATION": 1,
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000
+  },
+  "notes": []
+}

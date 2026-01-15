@@ -1,0 +1,25 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "happy_path_issue_asset_v1",
+  "caseCategory": "happy",
+  "description": "V1 mode issuance: writes to both asset-issue and asset-issue-v2, v2 precision forced to 0",
+  "generatedAt": "2026-01-14T06:56:41.954Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "End time should be greater than start time",
+  "ownerAddress": "a076315f6973737565720000000000000000000000",
+  "dynamicProperties": {
+    "ALLOW_SAME_TOKEN_NAME": 0,
+    "ASSET_ISSUE_FEE": 1024000000
+  },
+  "notes": []
+}

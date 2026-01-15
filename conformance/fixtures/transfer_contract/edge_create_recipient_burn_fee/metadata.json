@@ -1,0 +1,22 @@
+{
+  "contractType": "TRANSFER_CONTRACT",
+  "contractTypeNum": 1,
+  "caseName": "edge_create_recipient_burn_fee",
+  "caseCategory": "happy",
+  "description": "Create recipient with allowBlackHoleOptimization=1 (fee is burned)",
+  "generatedAt": "2026-01-14T06:56:52.906Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
+  "dynamicProperties": {
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000,
+    "allowBlackHoleOptimization": 1
+  },
+  "notes": []
+}

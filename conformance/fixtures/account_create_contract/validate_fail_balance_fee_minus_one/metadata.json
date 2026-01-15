@@ -1,0 +1,22 @@
+{
+  "contractType": "ACCOUNT_CREATE_CONTRACT",
+  "contractTypeNum": 0,
+  "caseName": "validate_fail_balance_fee_minus_one",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner balance is exactly fee - 1",
+  "generatedAt": "2026-01-14T06:56:45.244Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Validate CreateAccountActuator error, insufficient fee.",
+  "ownerAddress": "a0626f756e646172795f6f776e5f6d313100000000",
+  "dynamicProperties": {
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000
+  },
+  "notes": []
+}

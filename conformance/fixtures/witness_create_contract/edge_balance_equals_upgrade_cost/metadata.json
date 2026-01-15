@@ -1,0 +1,22 @@
+{
+  "contractType": "WITNESS_CREATE_CONTRACT",
+  "contractTypeNum": 5,
+  "caseName": "edge_balance_equals_upgrade_cost",
+  "caseCategory": "edge",
+  "description": "Edge case: balance exactly equals ACCOUNT_UPGRADE_COST (boundary check for < vs <=)",
+  "generatedAt": "2026-01-14T06:57:25.690Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a065786163745f62616c616e63655f776974000000",
+  "dynamicProperties": {
+    "ACCOUNT_UPGRADE_COST": 9999000000
+  },
+  "notes": []
+}

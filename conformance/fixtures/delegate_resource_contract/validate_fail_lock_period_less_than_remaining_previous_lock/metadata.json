@@ -1,0 +1,21 @@
+{
+  "contractType": "DELEGATE_RESOURCE_CONTRACT",
+  "contractTypeNum": 57,
+  "caseName": "validate_fail_lock_period_less_than_remaining_previous_lock",
+  "caseCategory": "validate_fail",
+  "description": "Fail when new lock period is less than remaining time of previous lock",
+  "generatedAt": "2026-01-14T06:56:51.937Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "DelegatedResource",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "The lock period for BANDWIDTH this time cannot be less than the remaining time[2591997000ms] of the last lock period for BANDWIDTH!",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

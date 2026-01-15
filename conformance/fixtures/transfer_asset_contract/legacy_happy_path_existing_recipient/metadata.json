@@ -1,0 +1,24 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "legacy_happy_path_existing_recipient",
+  "caseCategory": "happy",
+  "description": "Legacy mode (V1): Transfer TRC-10 asset by name to existing account",
+  "generatedAt": "2026-01-14T06:56:52.918Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
+  "dynamicProperties": {
+    "allowSameTokenName": 0,
+    "amount": 1000,
+    "token_name": "LegacyToken"
+  },
+  "notes": []
+}

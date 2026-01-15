@@ -1,0 +1,23 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "validate_fail_recipient_asset_balance_overflow",
+  "caseCategory": "validate_fail",
+  "description": "Fail when recipient asset balance + amount would overflow Long.MAX_VALUE",
+  "generatedAt": "2026-01-14T06:56:52.914Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "long overflow",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
+  "dynamicProperties": {
+    "token_id": "1000001"
+  },
+  "notes": []
+}

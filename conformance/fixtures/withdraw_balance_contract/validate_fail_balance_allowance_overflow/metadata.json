@@ -1,0 +1,20 @@
+{
+  "contractType": "WITHDRAW_BALANCE_CONTRACT",
+  "contractTypeNum": 13,
+  "caseName": "validate_fail_balance_allowance_overflow",
+  "caseCategory": "validate_fail",
+  "description": "Fail when balance + allowance would overflow (LongMath.checkedAdd)",
+  "generatedAt": "2026-01-14T06:57:25.685Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "overflow: checkedAdd(9223372036854774807, 2000)",
+  "ownerAddress": "a07769746e6573735f6f766572666c6f7731000000",
+  "dynamicProperties": {},
+  "notes": []
+}

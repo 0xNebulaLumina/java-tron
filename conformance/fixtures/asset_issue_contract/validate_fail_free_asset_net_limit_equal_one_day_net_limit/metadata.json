@@ -1,0 +1,23 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_free_asset_net_limit_equal_one_day_net_limit",
+  "caseCategory": "validate_fail",
+  "description": "Fail when free_asset_net_limit equals oneDayNetLimit",
+  "generatedAt": "2026-01-14T06:56:41.934Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid FreeAssetNetLimit",
+  "ownerAddress": "a0667265655f6e65745f65715f6973737565720000",
+  "dynamicProperties": {
+    "ONE_DAY_NET_LIMIT": 300000000
+  },
+  "notes": []
+}

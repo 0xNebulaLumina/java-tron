@@ -1,0 +1,20 @@
+{
+  "contractType": "ACCOUNT_PERMISSION_UPDATE_CONTRACT",
+  "contractTypeNum": 46,
+  "caseName": "validate_fail_non_active_has_operations",
+  "caseCategory": "validate_fail",
+  "description": "Fail when non-Active permission has operations set",
+  "generatedAt": "2026-01-14T06:56:40.762Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Owner permission needn't operations",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1,0 +1,22 @@
+{
+  "contractType": "VOTE_WITNESS_CONTRACT",
+  "contractTypeNum": 4,
+  "caseName": "validate_fail_vote_address_invalid",
+  "caseCategory": "validate_fail",
+  "description": "Fail when vote address is invalid (wrong length bytes)",
+  "generatedAt": "2026-01-14T06:57:25.697Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid vote address!",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049152",
+  "dynamicProperties": {},
+  "notes": []
+}
