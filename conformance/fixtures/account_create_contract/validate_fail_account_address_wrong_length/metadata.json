@@ -1,0 +1,20 @@
+{
+  "contractType": "ACCOUNT_CREATE_CONTRACT",
+  "contractTypeNum": 0,
+  "caseName": "validate_fail_account_address_wrong_length",
+  "caseCategory": "validate_fail",
+  "description": "Fail when target account address is not 21 bytes (22 bytes)",
+  "generatedAt": "2026-01-14T06:56:45.282Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid account address",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049150",
+  "dynamicProperties": {},
+  "notes": []
+}

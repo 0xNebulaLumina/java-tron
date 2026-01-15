@@ -1,0 +1,24 @@
+{
+  "contractType": "TRIGGER_SMART_CONTRACT",
+  "contractTypeNum": 31,
+  "caseName": "edge_nonexistent_contract",
+  "caseCategory": "edge",
+  "description": "Trigger a contract address that does not exist",
+  "generatedAt": "2026-01-14T06:57:10.099Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 0,
+  "blockTimestamp": 0,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "code",
+    "abi",
+    "contract-state",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "REVERT",
+  "expectedErrorMessage": "No contract or not a smart contract",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

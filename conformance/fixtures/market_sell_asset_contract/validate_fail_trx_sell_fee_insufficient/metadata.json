@@ -1,0 +1,22 @@
+{
+  "contractType": "MARKET_SELL_ASSET_CONTRACT",
+  "contractTypeNum": 52,
+  "caseName": "validate_fail_trx_sell_fee_insufficient",
+  "caseCategory": "validate_fail",
+  "description": "Fail when TRX sell + fee exceeds balance",
+  "generatedAt": "2026-01-14T06:56:49.661Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties",
+    "asset-issue-v2"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid address",
+  "dynamicProperties": {
+    "MARKET_SELL_FEE": 1000000000
+  },
+  "notes": []
+}

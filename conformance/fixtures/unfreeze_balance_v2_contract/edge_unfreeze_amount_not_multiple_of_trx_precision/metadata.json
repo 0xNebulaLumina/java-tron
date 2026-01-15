@@ -1,0 +1,24 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "edge_unfreeze_amount_not_multiple_of_trx_precision",
+  "caseCategory": "edge",
+  "description": "Unfreeze 1 SUN (not multiple of TRX_PRECISION)",
+  "generatedAt": "2026-01-14T06:56:48.481Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76325f6f64640000000000",
+  "dynamicProperties": {
+    "UNFREEZE_DELAY_DAYS": 14,
+    "unfreeze_amount": 1
+  },
+  "notes": [
+    "Tests rounding behavior in total weight updates"
+  ]
+}

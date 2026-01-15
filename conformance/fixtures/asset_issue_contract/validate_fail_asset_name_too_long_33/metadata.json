@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_asset_name_too_long_33",
+  "caseCategory": "validate_fail",
+  "description": "Fail when asset name length is 33 bytes (max is 32)",
+  "generatedAt": "2026-01-14T06:56:42.012Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid assetName",
+  "ownerAddress": "a06e616d655f6c6f6e675f69737375657200000000",
+  "dynamicProperties": {},
+  "notes": []
+}

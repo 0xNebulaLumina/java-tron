@@ -1,0 +1,22 @@
+{
+  "contractType": "FREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 54,
+  "caseName": "validate_fail_resource_unrecognized_value",
+  "caseCategory": "validate_fail",
+  "description": "Fail when resource code is unrecognized (999)",
+  "generatedAt": "2026-01-14T06:56:48.443Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY、TRON_POWER]",
+  "ownerAddress": "a0667265657a655f76325f6261645f726573000000",
+  "dynamicProperties": {
+    "ALLOW_NEW_RESOURCE_MODEL": 1
+  },
+  "notes": []
+}

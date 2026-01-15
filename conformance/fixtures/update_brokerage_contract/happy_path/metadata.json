@@ -4,10 +4,10 @@
   "caseName": "happy_path",
   "caseCategory": "happy",
   "description": "Update brokerage rate for a witness to 20%",
-  "generatedAt": "2025-12-28T11:46:15.457Z",
+  "generatedAt": "2026-01-14T06:56:43.127Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
-  "blockTimestamp": 1003000,
+  "blockTimestamp": 1700000003000,
   "databasesTouched": [
     "account",
     "witness",

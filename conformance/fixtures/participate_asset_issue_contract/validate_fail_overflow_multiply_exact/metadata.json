@@ -1,0 +1,21 @@
+{
+  "contractType": "PARTICIPATE_ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 9,
+  "caseName": "validate_fail_overflow_multiply_exact",
+  "caseCategory": "validate_fail",
+  "description": "Fail when multiplyExact(amount, num) overflows",
+  "generatedAt": "2026-01-14T06:56:53.863Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "No enough balance !",
+  "ownerAddress": "a01111111111111111111111111111111111111111",
+  "dynamicProperties": {},
+  "notes": []
+}

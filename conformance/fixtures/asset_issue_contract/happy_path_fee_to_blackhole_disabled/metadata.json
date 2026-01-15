@@ -1,0 +1,25 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "happy_path_fee_to_blackhole_disabled",
+  "caseCategory": "happy",
+  "description": "Blackhole mode: fee is credited to blackhole account instead of being burned",
+  "generatedAt": "2026-01-14T06:56:41.981Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "End time should be greater than start time",
+  "ownerAddress": "a06665655f626c61636b686f6c655f697373756572",
+  "dynamicProperties": {
+    "ALLOW_BLACK_HOLE_OPTIMIZATION": 0,
+    "ALLOW_SAME_TOKEN_NAME": 1,
+    "ASSET_ISSUE_FEE": 1024000000
+  },
+  "notes": []
+}

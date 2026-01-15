@@ -1,0 +1,21 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "validate_fail_unfreeze_energy_not_expired",
+  "caseCategory": "validate_fail",
+  "description": "Fail when ENERGY frozen balance has not expired yet",
+  "generatedAt": "2026-01-14T06:56:47.361Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "It's not time to unfreeze(Energy).",
+  "ownerAddress": "a0756e667265657a655f76315f656e657267795f6e",
+  "dynamicProperties": {},
+  "notes": []
+}

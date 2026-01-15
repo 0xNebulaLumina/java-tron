@@ -49,6 +49,40 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Check for required Rust build dependencies
+check_rust_dependencies() {
+    local missing=()
+
+    # Check for protoc (required for protobuf compilation)
+    if ! command -v protoc &> /dev/null; then
+        missing+=("protoc (protobuf-compiler)")
+    fi
+
+    # Check for C compiler (required for native dependencies)
+    if ! command -v cc &> /dev/null && ! command -v gcc &> /dev/null; then
+        missing+=("C compiler (build-essential)")
+    fi
+
+    # Check for clang/libclang (required for bindgen)
+    if ! command -v clang &> /dev/null; then
+        missing+=("clang (clang, libclang-dev)")
+    fi
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "ERROR: Missing required build dependencies:"
+        for dep in "${missing[@]}"; do
+            echo "  - $dep"
+        done
+        echo ""
+        echo "On Debian/Ubuntu, install with:"
+        echo "  apt-get install -y protobuf-compiler build-essential clang libclang-dev"
+        echo ""
+        echo "On macOS, install with:"
+        echo "  brew install protobuf llvm"
+        exit 3
+    fi
+}
+
 echo "========================================"
 echo "Fixture Conformance Test Suite"
 echo "========================================"
@@ -119,6 +153,9 @@ if [ "$GENERATE_ONLY" = false ]; then
     echo "Step 2: Running Rust Conformance Tests"
     echo "========================================"
 
+    # Check build dependencies before attempting Rust build
+    check_rust_dependencies
+
     cd "$RUST_BACKEND"
 
     # Check if fixtures exist
@@ -128,17 +165,20 @@ if [ "$GENERATE_ONLY" = false ]; then
         exit 2
     fi
 
-    # Some fixture families are not yet supported by the Rust backend.
+    # Some fixture families may not be supported by the Rust backend.
     # Exclude them by default so `--rust-only` can run against the supported set.
     # Set FIXTURE_CONFORMANCE_INCLUDE_UNSUPPORTED=1 to include everything.
     FIXTURES_DIR_FOR_RUST="$FIXTURES_DIR"
     if [ "${FIXTURE_CONFORMANCE_INCLUDE_UNSUPPORTED:-0}" != "1" ]; then
         should_exclude_fixture_contract_dir() {
-            case "$1" in
-                *)
-                    return 1
-                    ;;
-            esac
+            # Add unsupported fixture families here (none by default).
+            # Example:
+            #   case "$1" in
+            #     some_contract_family｜\
+            #     another_contract_family) return 0 ;;
+            #     *) return 1 ;;
+            #   esac
+            return 1
         }
 
         FILTERED_FIXTURES_DIR="$(mktemp -d)"

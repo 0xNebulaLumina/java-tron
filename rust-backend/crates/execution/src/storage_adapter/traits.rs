@@ -4,6 +4,7 @@
 //! interface for account, code, and storage operations needed by the EVM execution engine.
 
 use anyhow::Result;
+use crate::protocol::AssetIssueContractData;
 use revm::primitives::{AccountInfo, Bytecode, Address, SpecId, U256};
 
 /// Minimal EVM-facing state interface for account, code, and storage operations.
@@ -48,6 +49,48 @@ pub trait EvmStateStore: Send + Sync {
     ///
     /// Default: `None` (caller should fall back to the raw value they were given).
     fn energy_fee_rate(&self) -> Result<Option<u64>> {
+        Ok(None)
+    }
+
+    /// Best-effort TRON address prefix (0x41 mainnet, 0xa0 testnets).
+    ///
+    /// Engine-backed stores can detect the prefix from database keys for fixture parity.
+    /// Default: 0x41.
+    fn tron_address_prefix(&self) -> Result<u8> {
+        Ok(0x41)
+    }
+
+    /// Best-effort TRON dynamic property lookup (big-endian i64 stored under string keys).
+    ///
+    /// Default: `None` (caller should fall back to safe defaults).
+    fn tron_dynamic_property_i64(&self, _key: &[u8]) -> Result<Option<i64>> {
+        Ok(None)
+    }
+
+    /// Best-effort TRC-10 asset issue lookup.
+    ///
+    /// Default: `None` (caller should treat as missing/unavailable).
+    fn tron_get_asset_issue(
+        &self,
+        _key: &[u8],
+        _allow_same_token_name: i64,
+    ) -> Result<Option<AssetIssueContractData>> {
+        Ok(None)
+    }
+
+    /// Best-effort TRC-10 asset balance lookup (V2 format; allowSameTokenName=1).
+    ///
+    /// Default: 0.
+    fn tron_get_asset_balance_v2(&self, _address: &Address, _token_id: &[u8]) -> Result<i64> {
+        Ok(0)
+    }
+
+    /// Best-effort smart contract existence check (ContractStore).
+    ///
+    /// Returns:
+    /// - `Ok(Some(true/false))` when the store can answer using ContractStore.
+    /// - `Ok(None)` when unsupported/unavailable (caller may fall back to other heuristics).
+    fn tron_has_smart_contract(&self, _contract_address: &[u8]) -> Result<Option<bool>> {
         Ok(None)
     }
 }

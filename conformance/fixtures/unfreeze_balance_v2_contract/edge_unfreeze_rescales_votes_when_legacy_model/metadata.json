@@ -1,0 +1,28 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "edge_unfreeze_rescales_votes_when_legacy_model",
+  "caseCategory": "edge",
+  "description": "Unfreeze rescales votes when tron power becomes insufficient (legacy model)",
+  "generatedAt": "2026-01-14T06:56:48.478Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties",
+    "votes"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76325f766f74655f73636c",
+  "dynamicProperties": {
+    "ALLOW_NEW_RESOURCE_MODEL": 0,
+    "UNFREEZE_DELAY_DAYS": 14,
+    "pre_frozen": 100000000,
+    "pre_votes": 80,
+    "unfreeze_amount": 80000000
+  },
+  "notes": [
+    "Tests vote rescaling when owned tron power < total votes after unfreeze"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "contractType": "MARKET_CANCEL_ORDER_CONTRACT",
+  "contractTypeNum": 53,
+  "caseName": "edge_cancel_last_order_in_last_price_level_deletes_pair",
+  "caseCategory": "edge",
+  "description": "Cancel last order in last price level; pairToPriceStore deletes pair",
+  "generatedAt": "2026-01-14T06:56:49.600Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "market_order",
+    "market_account",
+    "market_pair_to_price",
+    "market_pair_price_to_order",
+    "dynamic-properties",
+    "asset-issue-v2"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

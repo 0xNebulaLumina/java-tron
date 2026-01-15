@@ -1,4 +1,36 @@
 {
+    "files.watcherExclude": {
+        "**/.git/**": true,
+        "**/target/**": true,
+        "**/build/**": true,
+        "**/dist/**": true,
+        "**/.gradle/**": true,
+        "**/.mvn/**": true,
+        "**/out/**": true,
+        "**/conformance/fixtures/**": true,
+        "**/logs/**": true,
+        "**/output-directory/**": true
+    },
+    "search.exclude": {
+        "**/target/**": true,
+        "**/build/**": true,
+        "**/conformance/fixtures/**": true,
+        "**/output-directory/**": true
+    },
+
     "java.compile.nullAnalysis.mode": "disabled",
-    "java.configuration.updateBuildConfiguration": "automatic"
+    "java.configuration.updateBuildConfiguration": "automatic",
+    "java.autobuild.enabled": false,
+    "java.import.maven.enabled": false,
+    "java.import.gradle.enabled": false,
+
+    "rust-analyzer.files.exclude": [
+        ".git",
+        "rust-backend/target",
+        "build",
+        "dist",
+        "logs",
+        "output-directory",
+        "conformance/fixtures/"
+    ]
 }

@@ -16,6 +16,7 @@ use tron_backend_storage::StorageEngine;
 use tron_backend_execution::{
     EngineBackedEvmStateStore, ExecutionModule, TronTransaction, TronExecutionContext,
     EvmStateStore, TronContractType, TxMetadata, ExecutionWriteBuffer,
+    TronContractParameter,
 };
 use std::sync::{Arc, Mutex};
 use revm_primitives::{hex, Address, B256, Bytes, U256};
@@ -344,15 +345,71 @@ impl ConformanceRunner {
         let tx = request.transaction.as_ref()
             .ok_or("Transaction is required")?;
 
+        // Parse contract type early so we can handle special validation fixtures where
+        // `from` is intentionally malformed (e.g. ownerAddress validation cases).
+        let contract_type = TronContractType::try_from(tx.contract_type).ok();
+
         // Parse from address (strip 0x41 TRON prefix if present)
-        let from_bytes = if tx.from.len() == 21 && (tx.from[0] == 0x41 || tx.from[0] == 0xa0) {
-            &tx.from[1..]
-        } else if tx.from.len() == 20 {
-            &tx.from[..]
-        } else {
-            return Err(format!("Invalid from address length: {}", tx.from.len()));
+        let from = {
+            let allow_malformed_from = matches!(
+                contract_type,
+                Some(TronContractType::AccountCreateContract)
+                    | Some(TronContractType::AccountPermissionUpdateContract)
+                    | Some(TronContractType::AccountUpdateContract)
+                    | Some(TronContractType::AssetIssueContract)
+                    | Some(TronContractType::TriggerSmartContract)
+                    | Some(TronContractType::FreezeBalanceContract)
+                    | Some(TronContractType::FreezeBalanceV2Contract)
+                    | Some(TronContractType::UnfreezeBalanceContract)
+                    | Some(TronContractType::UnfreezeBalanceV2Contract)
+                    | Some(TronContractType::UnfreezeAssetContract)
+                    | Some(TronContractType::UpdateAssetContract)
+                    | Some(TronContractType::UpdateEnergyLimitContract)
+                    | Some(TronContractType::UpdateSettingContract)
+                    | Some(TronContractType::UpdateBrokerageContract)
+                    | Some(TronContractType::SetAccountIdContract)
+                    | Some(TronContractType::ClearAbiContract)
+                    | Some(TronContractType::CancelAllUnfreezeV2Contract)
+                    | Some(TronContractType::WithdrawExpireUnfreezeContract)
+                    | Some(TronContractType::DelegateResourceContract)
+                    | Some(TronContractType::UndelegateResourceContract)
+                    | Some(TronContractType::TransferAssetContract)
+                    | Some(TronContractType::TransferContract)
+                    | Some(TronContractType::ExchangeCreateContract)
+                    | Some(TronContractType::ProposalCreateContract)
+                    | Some(TronContractType::ProposalApproveContract)
+                    | Some(TronContractType::ProposalDeleteContract)
+                    | Some(TronContractType::VoteWitnessContract)
+                    | Some(TronContractType::WitnessCreateContract)
+                    | Some(TronContractType::WitnessUpdateContract)
+                    | Some(TronContractType::WithdrawBalanceContract)
+                    | Some(TronContractType::MarketSellAssetContract)
+                    | Some(TronContractType::MarketCancelOrderContract)
+            );
+
+            let (from_bytes, from_is_valid) = if tx.from.len() == 21 {
+                if tx.from[0] == 0x41 || tx.from[0] == 0xa0 {
+                    (&tx.from[1..], true)
+                } else {
+                    (&[][..], false)
+                }
+            } else if tx.from.len() == 20 {
+                (&tx.from[..], true)
+            } else {
+                (&[][..], false)
+            };
+
+            if !from_is_valid && !allow_malformed_from {
+                return Err(format!("Invalid from address length: {}", tx.from.len()));
+            }
+
+            if from_is_valid {
+                Address::from_slice(from_bytes)
+            } else {
+                // Keep conversion alive for fixtures where ownerAddress is intentionally malformed.
+                Address::ZERO
+            }
         };
-        let from = Address::from_slice(from_bytes);
 
         // Parse to address
         //
@@ -361,21 +418,37 @@ impl ConformanceRunner {
         let to = if tx.to.is_empty() {
             None
         } else {
-            let to_bytes = if tx.to.len() == 21 && (tx.to[0] == 0x41 || tx.to[0] == 0xa0) {
-                &tx.to[1..]
-            } else if tx.to.len() == 20 {
-                &tx.to[..]
-            } else {
-                return Err(format!("Invalid to address length: {}", tx.to.len()));
-            };
-            let to_address = Address::from_slice(to_bytes);
+            let allow_malformed_to =
+                matches!(contract_type, Some(TronContractType::TransferContract) | Some(TronContractType::TriggerSmartContract));
 
-            let is_vm_create = tx.tx_kind == crate::backend::TxKind::Vm as i32
-                && tx.contract_type == TronContractType::CreateSmartContract as i32;
-            if is_vm_create && to_address == Address::ZERO {
-                None
+            let (to_bytes, to_is_valid) = if tx.to.len() == 21 {
+                if tx.to[0] == 0x41 || tx.to[0] == 0xa0 {
+                    (&tx.to[1..], true)
+                } else {
+                    (&[][..], false)
+                }
+            } else if tx.to.len() == 20 {
+                (&tx.to[..], true)
             } else {
-                Some(to_address)
+                (&[][..], false)
+            };
+
+            if !to_is_valid {
+                if allow_malformed_to {
+                    None
+                } else {
+                    return Err(format!("Invalid to address length: {}", tx.to.len()));
+                }
+            } else {
+                let to_address = Address::from_slice(to_bytes);
+
+                let is_vm_create = tx.tx_kind == crate::backend::TxKind::Vm as i32
+                    && tx.contract_type == TronContractType::CreateSmartContract as i32;
+                if is_vm_create && to_address == Address::ZERO {
+                    None
+                } else {
+                    Some(to_address)
+                }
             }
         };
 
@@ -385,9 +458,6 @@ impl ConformanceRunner {
         } else {
             return Err("Invalid value length".to_string());
         };
-
-        // Parse contract type
-        let contract_type = TronContractType::try_from(tx.contract_type).ok();
 
         // Parse asset_id
         let asset_id = if tx.asset_id.is_empty() {
@@ -407,6 +477,11 @@ impl ConformanceRunner {
             metadata: TxMetadata {
                 contract_type,
                 asset_id,
+                from_raw: Some(tx.from.clone()),
+                contract_parameter: tx.contract_parameter.as_ref().map(|any| TronContractParameter {
+                    type_url: any.type_url.clone(),
+                    value: any.value.clone(),
+                }),
             },
         })
     }
@@ -1087,6 +1162,110 @@ mod tests {
         assert_eq!(transaction.from.as_slice()[0], 0x01); // TRON prefix stripped
         assert_eq!(transaction.gas_limit, 100000);
         assert!(transaction.to.is_none()); // Empty to field
+    }
+
+    #[test]
+    fn test_convert_request_to_transaction_allows_empty_from_for_account_permission_update() {
+        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
+        proto_tx.contract_type = 46; // AccountPermissionUpdateContract
+
+        let request = ExecuteTransactionRequest {
+            transaction: Some(proto_tx),
+            context: Some(ExecutionContext {
+                block_number: 1,
+                block_timestamp: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let transaction = ConformanceRunner::convert_request_to_transaction(&request).unwrap();
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract)
+        );
+    }
+
+    #[test]
+    fn test_convert_request_to_transaction_allows_empty_from_for_witness_create() {
+        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
+        proto_tx.contract_type = 5; // WitnessCreateContract
+
+        let request = ExecuteTransactionRequest {
+            transaction: Some(proto_tx),
+            context: Some(ExecutionContext {
+                block_number: 1,
+                block_timestamp: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let transaction = ConformanceRunner::convert_request_to_transaction(&request).unwrap();
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WitnessCreateContract)
+        );
+    }
+
+    #[test]
+    fn test_convert_request_to_transaction_allows_empty_from_for_witness_update() {
+        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
+        proto_tx.contract_type = 8; // WitnessUpdateContract
+
+        let request = ExecuteTransactionRequest {
+            transaction: Some(proto_tx),
+            context: Some(ExecutionContext {
+                block_number: 1,
+                block_timestamp: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let transaction = ConformanceRunner::convert_request_to_transaction(&request).unwrap();
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
+        );
+    }
+
+    #[test]
+    fn test_convert_request_to_transaction_allows_empty_from_for_market_sell_asset() {
+        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
+        proto_tx.contract_type = 52; // MarketSellAssetContract
+
+        let request = ExecuteTransactionRequest {
+            transaction: Some(proto_tx),
+            context: Some(ExecutionContext {
+                block_number: 1,
+                block_timestamp: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let transaction = ConformanceRunner::convert_request_to_transaction(&request).unwrap();
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::MarketSellAssetContract)
+        );
     }
 
     #[test]

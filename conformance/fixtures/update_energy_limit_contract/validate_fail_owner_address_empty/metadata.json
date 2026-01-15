@@ -1,0 +1,20 @@
+{
+  "contractType": "UPDATE_ENERGY_LIMIT_CONTRACT",
+  "contractTypeNum": 45,
+  "caseName": "validate_fail_owner_address_empty",
+  "caseCategory": "validate_fail",
+  "description": "Fail when ownerAddress is empty (ByteString.EMPTY)",
+  "generatedAt": "2026-01-14T06:56:44.224Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "contract type error, unexpected type [UpdateEnergyLimitContract]",
+  "dynamicProperties": {},
+  "notes": []
+}

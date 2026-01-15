@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_url_too_long_257",
+  "caseCategory": "validate_fail",
+  "description": "Fail when URL length is 257 bytes (max is 256)",
+  "generatedAt": "2026-01-14T06:56:41.999Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid url",
+  "ownerAddress": "a075726c5f6c6f6e675f6973737565720000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

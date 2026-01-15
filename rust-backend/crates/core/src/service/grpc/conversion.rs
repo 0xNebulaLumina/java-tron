@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use tracing::{debug, warn};
 use revm_primitives::hex;
-use tron_backend_execution::{TronTransaction, TronExecutionContext, TronExecutionResult, TronStateChange, AccountAext, TouchedKey};
+use tron_backend_execution::{TronContractParameter, TronExecutionContext, TronExecutionResult, TronStateChange, TronTransaction, AccountAext, TouchedKey};
 use crate::backend::*;
 use super::super::BackendService;
 use super::address::{strip_tron_address_prefix, add_tron_address_prefix};
@@ -18,9 +18,64 @@ impl BackendService {
         debug!("Raw transaction from Java - energy_limit: {}, energy_price: {}, data_len: {}, contract_type: {}, asset_id_len: {}",
                tx.energy_limit, tx.energy_price, tx.data.len(), tx.contract_type, tx.asset_id.len());
 
-        // Convert bytes to Address (strip Tron 0x41 prefix if present)
-        let from_bytes = strip_tron_address_prefix(&tx.from)?;
-        let from = revm_primitives::Address::from_slice(from_bytes);
+        // Extract tx_kind first - needed to properly handle contract_type and special-case parsing.
+        let tx_kind = crate::backend::TxKind::try_from(tx.tx_kind).unwrap_or(crate::backend::TxKind::Vm);
+
+        // Extract contract_type and asset_id from protobuf for TRON system contracts
+        // NOTE: AccountCreateContract has enum value 0, which is proto3's default.
+        // For NON_VM transactions, we must always try to parse contract_type since 0 is valid.
+        // For VM transactions, contract_type=0 genuinely means "unset" (not AccountCreateContract).
+        let contract_type = if tx_kind == crate::backend::TxKind::NonVm || tx.contract_type != 0 {
+            match tron_backend_execution::TronContractType::try_from(tx.contract_type) {
+                Ok(ct) => {
+                    debug!("Parsed contract type: {:?}", ct);
+                    Some(ct)
+                }
+                Err(e) => {
+                    warn!("Invalid contract type {}: {}, ignoring", tx.contract_type, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Convert bytes to Address (strip Tron 0x41 prefix if present).
+        //
+        // Some conformance fixtures intentionally include malformed owner addresses, while java-tron
+        // still serializes `request.pb` with the malformed bytes in `from`. Allow conversion to
+        // proceed for those system contracts so contract-level validation can produce the expected
+        // error messages.
+        let allow_malformed_from = matches!(
+            contract_type,
+            Some(tron_backend_execution::TronContractType::AccountCreateContract)
+                | Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract)
+                | Some(tron_backend_execution::TronContractType::AccountUpdateContract)
+                | Some(tron_backend_execution::TronContractType::AssetIssueContract)
+                | Some(tron_backend_execution::TronContractType::UpdateAssetContract)
+                | Some(tron_backend_execution::TronContractType::UpdateEnergyLimitContract)
+                | Some(tron_backend_execution::TronContractType::UpdateSettingContract)
+                | Some(tron_backend_execution::TronContractType::UpdateBrokerageContract)
+                | Some(tron_backend_execution::TronContractType::SetAccountIdContract)
+                | Some(tron_backend_execution::TronContractType::ClearAbiContract)
+                | Some(tron_backend_execution::TronContractType::CancelAllUnfreezeV2Contract)
+                | Some(tron_backend_execution::TronContractType::TransferAssetContract)
+                | Some(tron_backend_execution::TronContractType::TransferContract)
+                | Some(tron_backend_execution::TronContractType::VoteWitnessContract)
+                | Some(tron_backend_execution::TronContractType::WitnessCreateContract)
+                | Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
+                | Some(tron_backend_execution::TronContractType::WithdrawBalanceContract)
+                | Some(tron_backend_execution::TronContractType::MarketSellAssetContract)
+                | Some(tron_backend_execution::TronContractType::MarketCancelOrderContract)
+        );
+        let from = match strip_tron_address_prefix(&tx.from) {
+            Ok(from_bytes) => revm_primitives::Address::from_slice(from_bytes),
+            Err(e) if allow_malformed_from => {
+                debug!("Allowing malformed from address for {:?}: {}", contract_type, e);
+                revm_primitives::Address::ZERO
+            }
+            Err(e) => return Err(e),
+        };
 
         // Phase 0.5: Fix CreateSmartContract toAddress semantics
         // When tx_kind=VM and contract_type=CREATE_SMART_CONTRACT (30), Java sends a 20-byte
@@ -34,8 +89,8 @@ impl BackendService {
 
             // For VM contract creation, treat all-zero address as None
             // This is needed because Java sends new byte[20] (all zeros) for CreateSmartContract
-            let is_vm_create = tx.tx_kind == crate::backend::TxKind::Vm as i32
-                && tx.contract_type == 30; // CREATE_SMART_CONTRACT = 30
+            let is_vm_create =
+                tx_kind == crate::backend::TxKind::Vm && tx.contract_type == 30; // CREATE_SMART_CONTRACT = 30
 
             if is_vm_create && to_address == revm_primitives::Address::ZERO {
                 debug!("CreateSmartContract detected: treating zero address as contract creation (to=None)");
@@ -88,28 +143,6 @@ impl BackendService {
             tx.energy_limit as u64
         };
 
-        // Extract tx_kind first - needed to properly handle contract_type
-        let tx_kind = crate::backend::TxKind::try_from(tx.tx_kind).unwrap_or(crate::backend::TxKind::Vm);
-
-        // Extract contract_type and asset_id from protobuf for TRON system contracts
-        // NOTE: AccountCreateContract has enum value 0, which is proto3's default.
-        // For NON_VM transactions, we must always try to parse contract_type since 0 is valid.
-        // For VM transactions, contract_type=0 genuinely means "unset" (not AccountCreateContract).
-        let contract_type = if tx_kind == crate::backend::TxKind::NonVm || tx.contract_type != 0 {
-            match tron_backend_execution::TronContractType::try_from(tx.contract_type) {
-                Ok(ct) => {
-                    debug!("Parsed contract type: {:?}", ct);
-                    Some(ct)
-                },
-                Err(e) => {
-                    warn!("Invalid contract type {}: {}, ignoring", tx.contract_type, e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
         let asset_id = if !tx.asset_id.is_empty() {
             debug!("Parsed asset_id: {} bytes", tx.asset_id.len());
             Some(tx.asset_id.clone())
@@ -117,9 +150,16 @@ impl BackendService {
             None
         };
 
+        let contract_parameter = tx.contract_parameter.as_ref().map(|any| TronContractParameter {
+            type_url: any.type_url.clone(),
+            value: any.value.clone(),
+        });
+
         let metadata = tron_backend_execution::TxMetadata {
             contract_type,
             asset_id,
+            from_raw: Some(tx.from.clone()),
+            contract_parameter,
         };
 
         let transaction = TronTransaction {
@@ -543,5 +583,66 @@ impl BackendService {
                 })
                 .unwrap_or_default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BackendService;
+    use crate::backend::{ContractType, TronTransaction as ProtoTx, TxKind};
+    use tron_backend_common::ExecutionConfig;
+    use tron_backend_common::ModuleManager;
+    use tron_backend_execution::ExecutionModule;
+
+    #[test]
+    fn test_convert_protobuf_transaction_allows_empty_from_for_witness_create() {
+        let config = ExecutionConfig::default();
+        let mut module_manager = ModuleManager::new();
+        module_manager.register("execution", Box::new(ExecutionModule::new(config)));
+
+        let backend_service = BackendService::new(module_manager);
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![];
+        proto_tx.tx_kind = TxKind::NonVm as i32;
+        proto_tx.contract_type = ContractType::WitnessCreateContract as i32;
+
+        let (transaction, tx_kind) = backend_service
+            .convert_protobuf_transaction(Some(&proto_tx))
+            .unwrap();
+
+        assert_eq!(tx_kind, TxKind::NonVm);
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WitnessCreateContract)
+        );
+        assert_eq!(transaction.metadata.from_raw, Some(vec![]));
+    }
+
+    #[test]
+    fn test_convert_protobuf_transaction_allows_empty_from_for_witness_update() {
+        let config = ExecutionConfig::default();
+        let mut module_manager = ModuleManager::new();
+        module_manager.register("execution", Box::new(ExecutionModule::new(config)));
+
+        let backend_service = BackendService::new(module_manager);
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![];
+        proto_tx.tx_kind = TxKind::NonVm as i32;
+        proto_tx.contract_type = ContractType::WitnessUpdateContract as i32;
+
+        let (transaction, tx_kind) = backend_service
+            .convert_protobuf_transaction(Some(&proto_tx))
+            .unwrap();
+
+        assert_eq!(tx_kind, TxKind::NonVm);
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
+        );
+        assert_eq!(transaction.metadata.from_raw, Some(vec![]));
     }
 }

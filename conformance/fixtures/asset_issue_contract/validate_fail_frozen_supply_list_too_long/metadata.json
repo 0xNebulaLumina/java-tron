@@ -1,0 +1,23 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_frozen_supply_list_too_long",
+  "caseCategory": "validate_fail",
+  "description": "Fail when frozen supply list has more than maxFrozenSupplyNumber entries",
+  "generatedAt": "2026-01-14T06:56:41.984Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Frozen supply list length is too long",
+  "ownerAddress": "a066726f7a656e5f6c6973745f6c6f6e675f697373",
+  "dynamicProperties": {
+    "MAX_FROZEN_SUPPLY_NUMBER": 10
+  },
+  "notes": []
+}

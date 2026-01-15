@@ -1,0 +1,20 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "edge_expire_time_equals_now_is_unfreezable_bandwidth",
+  "caseCategory": "edge",
+  "description": "Unfreeze succeeds when expireTime == now (boundary condition, uses <=)",
+  "generatedAt": "2026-01-14T06:56:47.450Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76315f656467655f657870",
+  "dynamicProperties": {},
+  "notes": []
+}

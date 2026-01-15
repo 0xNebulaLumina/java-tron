@@ -4,7 +4,7 @@
   "caseName": "happy_path_creates_recipient",
   "caseCategory": "happy",
   "description": "TRX transfer that creates the recipient account (pays create-account-fee)",
-  "generatedAt": "2025-12-28T11:46:30.325Z",
+  "generatedAt": "2026-01-14T06:56:52.902Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
@@ -15,8 +15,8 @@
   "expectedStatus": "SUCCESS",
   "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
   "dynamicProperties": {
-    "transfer_amount": 10000000,
-    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000,
+    "transfer_amount": 10000000
   },
   "notes": []
 }

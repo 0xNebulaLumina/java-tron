@@ -1,0 +1,21 @@
+{
+  "contractType": "ACCOUNT_CREATE_CONTRACT",
+  "contractTypeNum": 0,
+  "caseName": "edge_happy_fee_zero",
+  "caseCategory": "edge",
+  "description": "Success when CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT=0, zero balance owner can create",
+  "generatedAt": "2026-01-14T06:56:45.250Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a07a65726f6665655f6f776e5f3030310000000000",
+  "dynamicProperties": {
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 0
+  },
+  "notes": []
+}

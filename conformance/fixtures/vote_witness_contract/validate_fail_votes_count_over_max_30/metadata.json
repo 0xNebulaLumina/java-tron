@@ -1,0 +1,22 @@
+{
+  "contractType": "VOTE_WITNESS_CONTRACT",
+  "contractTypeNum": 4,
+  "caseName": "validate_fail_votes_count_over_max_30",
+  "caseCategory": "validate_fail",
+  "description": "Fail when votes count exceeds MAX_VOTE_NUMBER (30)",
+  "generatedAt": "2026-01-14T06:57:25.717Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "VoteNumber more than maxVoteNumber 30",
+  "ownerAddress": "a0766f7465725f33315f656e747269657300000000",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -712,4 +712,51 @@ mod tests {
             .allow_change_delegation()
             .expect("allow_change_delegation should succeed"));
     }
+
+    #[test]
+    fn test_account_asset_v2_zero_value_encodes_value_field() {
+        use crate::protocol::Account as ProtoAccount;
+        use crate::storage_adapter::db_names;
+
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
+            .expect("Failed to create storage engine");
+
+        let adapter = EngineBackedEvmStateStore::new(storage_engine.clone());
+        let prefix = adapter.address_prefix();
+
+        let evm_address = Address::from([0x01u8; 20]);
+        let mut tron_address = Vec::with_capacity(21);
+        tron_address.push(prefix);
+        tron_address.extend_from_slice(evm_address.as_slice());
+
+        let mut account = ProtoAccount::default();
+        account.account_name = b"other".to_vec();
+        account.address = tron_address;
+        account.balance = 1_001_000_000_000;
+        account.asset_v2.insert("1000001".to_string(), 0);
+
+        adapter
+            .put_account_proto(&evm_address, &account)
+            .expect("Failed to write account");
+
+        let mut key = Vec::with_capacity(21);
+        key.push(prefix);
+        key.extend_from_slice(evm_address.as_slice());
+
+        let stored = storage_engine
+            .get(db_names::account::ACCOUNT, &key)
+            .expect("Failed to read account bytes")
+            .expect("Account bytes missing");
+
+        // Field 56 (assetV2) tag + entry (len=11) + key + value(0)
+        let expected_bytes = hex::decode("c2030b0a07313030303030311000").unwrap();
+        assert!(
+            stored
+                .windows(expected_bytes.len())
+                .any(|window| window == expected_bytes.as_slice()),
+            "assetV2 entry did not encode the value field for 0: {}",
+            hex::encode(stored)
+        );
+    }
 }

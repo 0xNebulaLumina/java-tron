@@ -1,0 +1,23 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "edge_receiver_address_ignored_when_delegation_off",
+  "caseCategory": "edge",
+  "description": "Receiver address is ignored when delegation is OFF (self-unfreeze)",
+  "generatedAt": "2026-01-14T06:56:47.425Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76315f7263765f6f666600",
+  "dynamicProperties": {
+    "CHANGE_DELEGATION": 0,
+    "receiver_address_set_but_ignored": 1
+  },
+  "notes": []
+}

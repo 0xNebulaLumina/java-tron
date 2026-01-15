@@ -1,0 +1,24 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "legacy_validate_fail_insufficient_balance",
+  "caseCategory": "validate_fail",
+  "description": "Legacy mode (V1): Fail when owner has insufficient token balance",
+  "generatedAt": "2026-01-14T06:56:52.908Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "assetBalance is not sufficient.",
+  "ownerAddress": "a06c65676163795f736d616c6c5f6f776e00000000",
+  "dynamicProperties": {
+    "allowSameTokenName": 0,
+    "token_name": "LegacyInsuf"
+  },
+  "notes": []
+}

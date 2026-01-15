@@ -13,7 +13,6 @@ import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.db.Manager;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol;
-import org.tron.protos.Protocol.Account;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
@@ -33,6 +32,9 @@ public final class ConformanceFixtureTestSupport {
   public static final long DEFAULT_BLOCK_TIMESTAMP = 1700000000000L; // 2023-11-14 22:13:20 UTC
   public static final long DEFAULT_TX_TIMESTAMP = 1700000000000L;
   public static final long DEFAULT_TX_EXPIRATION = DEFAULT_TX_TIMESTAMP + 3600000L; // +1 hour
+  public static final long DEFAULT_BLOCK_INTERVAL_MS = 3000L;
+  public static final long DEFAULT_TX_FEE_LIMIT = 1_000_000_000L; // 1000 TRX
+  private static final ByteString ZERO_BLOCK_HASH = ByteString.copyFrom(new byte[32]);
 
   // Common balance values
   public static final long ONE_TRX = 1_000_000L;
@@ -71,6 +73,20 @@ public final class ConformanceFixtureTestSupport {
       Message contract,
       long timestampMs,
       long expirationMs) {
+    return createTransaction(type, contract, timestampMs, expirationMs, DEFAULT_TX_FEE_LIMIT);
+  }
+
+  public static TransactionCapsule createTransaction(
+      Transaction.Contract.ContractType type,
+      Message contract,
+      long timestampMs,
+      long expirationMs,
+      long feeLimit) {
+
+    long refBlockNum = Math.max(0, timestampMs / 1000);
+    byte[] refBlockNumBytes = ByteArray.fromLong(refBlockNum);
+    ByteString refBlockBytes = ByteString.copyFrom(ByteArray.subArray(refBlockNumBytes, 6, 8));
+    ByteString refBlockHash = ByteString.copyFrom(ByteArray.fromLong(timestampMs));
 
     Transaction.Contract protoContract = Transaction.Contract.newBuilder()
         .setType(type)
@@ -80,6 +96,10 @@ public final class ConformanceFixtureTestSupport {
     Transaction transaction = Transaction.newBuilder()
         .setRawData(Transaction.raw.newBuilder()
             .addContract(protoContract)
+            .setFeeLimit(feeLimit)
+            .setRefBlockNum(refBlockNum)
+            .setRefBlockBytes(refBlockBytes)
+            .setRefBlockHash(refBlockHash)
             .setTimestamp(timestampMs)
             .setExpiration(expirationMs)
             .build())
@@ -100,9 +120,18 @@ public final class ConformanceFixtureTestSupport {
       long blockNumber,
       long blockTimestamp,
       String witnessHexAddress) {
+    return createBlockContext(blockNumber, blockTimestamp, witnessHexAddress, ZERO_BLOCK_HASH);
+  }
+
+  public static BlockCapsule createBlockContext(
+      long blockNumber,
+      long blockTimestamp,
+      String witnessHexAddress,
+      ByteString parentHash) {
 
     Protocol.BlockHeader.raw rawHeader = Protocol.BlockHeader.raw.newBuilder()
         .setNumber(blockNumber)
+        .setParentHash(parentHash)
         .setTimestamp(blockTimestamp)
         .setWitnessAddress(ByteString.copyFrom(ByteArray.fromHexString(witnessHexAddress)))
         .build();
@@ -128,8 +157,22 @@ public final class ConformanceFixtureTestSupport {
   public static BlockCapsule createBlockContext(Manager dbManager, String witnessHexAddress) {
     DynamicPropertiesStore dynamicStore = dbManager.getDynamicPropertiesStore();
     long blockNum = dynamicStore.getLatestBlockHeaderNumber() + 1;
-    long blockTime = dynamicStore.getLatestBlockHeaderTimestamp() + 3000;
-    return createBlockContext(blockNum, blockTime, witnessHexAddress);
+    long blockTime = dynamicStore.getLatestBlockHeaderTimestamp() + DEFAULT_BLOCK_INTERVAL_MS;
+    ByteString parentHash;
+    try {
+      parentHash = dynamicStore.getLatestBlockHeaderHash().getByteString();
+    } catch (IllegalArgumentException e) {
+      parentHash = ZERO_BLOCK_HASH;
+    }
+    BlockCapsule blockCap = createBlockContext(blockNum, blockTime, witnessHexAddress, parentHash);
+
+    // Embedded actuators read time/height/hash from dynamic props; keep them aligned with the
+    // "next block" context that the remote backend executes against.
+    dynamicStore.saveLatestBlockHeaderNumber(blockNum);
+    dynamicStore.saveLatestBlockHeaderTimestamp(blockTime);
+    dynamicStore.saveLatestBlockHeaderHash(blockCap.getBlockId().getByteString());
+
+    return blockCap;
   }
 
   /**
@@ -213,14 +256,44 @@ public final class ConformanceFixtureTestSupport {
       String name,
       long totalSupply) {
 
+    long nowMs;
+    try {
+      nowMs = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    } catch (IllegalArgumentException e) {
+      nowMs = DEFAULT_BLOCK_TIMESTAMP;
+    }
+    long startTime = nowMs - DEFAULT_BLOCK_INTERVAL_MS;
+    long endTime = nowMs + 86400000L * 365;
+    return putAssetIssueV2(
+        dbManager, tokenId, ownerHexAddress, name, totalSupply, startTime, endTime);
+  }
+
+  public static AssetIssueCapsule putAssetIssueV2(
+      Manager dbManager,
+      String tokenId,
+      String ownerHexAddress,
+      String name,
+      long totalSupply,
+      long startTime,
+      long endTime) {
+
+    String abbr = name.length() <= 5 ? name : name.substring(0, 5);
+
     AssetIssueContract assetIssue = AssetIssueContract.newBuilder()
         .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(ownerHexAddress)))
         .setName(ByteString.copyFromUtf8(name))
+        .setAbbr(ByteString.copyFromUtf8(abbr))
         .setId(tokenId)
         .setTotalSupply(totalSupply)
         .setPrecision(6)
         .setTrxNum(1)
         .setNum(1)
+        .setStartTime(startTime)
+        .setEndTime(endTime)
+        .setDescription(ByteString.copyFromUtf8("Seeded TRC-10 asset for conformance fixtures"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
         .build();
 
     AssetIssueCapsule assetCapsule = new AssetIssueCapsule(assetIssue);
@@ -246,6 +319,25 @@ public final class ConformanceFixtureTestSupport {
     // Block header properties
     dynamicStore.saveLatestBlockHeaderNumber(headBlockNum);
     dynamicStore.saveLatestBlockHeaderTimestamp(headBlockTime);
+    BlockCapsule headBlockCap =
+        createBlockContext(headBlockNum, headBlockTime, generateAddress(0L), ZERO_BLOCK_HASH);
+    dynamicStore.saveLatestBlockHeaderHash(headBlockCap.getBlockId().getByteString());
+
+    // Behavior-affecting feature flags should be explicit so fixtures don't drift with defaults.
+    dynamicStore.saveForbidTransferToContract(0);
+    dynamicStore.saveAllowTvmCompatibleEvm(0);
+    dynamicStore.saveAllowUpdateAccountName(0);
+    dynamicStore.saveAllowSameTokenName(0);
+    dynamicStore.saveAllowTvmTransferTrc10(0);
+    dynamicStore.saveAllowTvmConstantinople(0);
+    dynamicStore.saveAllowTvmSolidity059(0);
+    dynamicStore.saveAllowTvmIstanbul(0);
+    dynamicStore.saveAllowTvmLondon(0);
+    dynamicStore.saveAllowTvmFreeze(0);
+    dynamicStore.saveAllowTvmVote(0);
+    dynamicStore.saveAllowTvmShangHai(0);
+    dynamicStore.saveAllowTvmCancun(0);
+    dynamicStore.saveAllowTvmBlob(0);
 
     // Account creation fees
     dynamicStore.saveCreateNewAccountFeeInSystemContract(ONE_TRX);

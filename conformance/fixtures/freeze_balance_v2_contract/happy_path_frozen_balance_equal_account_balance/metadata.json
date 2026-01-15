@@ -1,0 +1,23 @@
+{
+  "contractType": "FREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 54,
+  "caseName": "happy_path_frozen_balance_equal_account_balance",
+  "caseCategory": "happy",
+  "description": "V2 freeze with frozenBalance == accountBalance (post balance is 0)",
+  "generatedAt": "2026-01-14T06:56:48.491Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0667265657a655f76325f616c6c00000000000000",
+  "dynamicProperties": {
+    "UNFREEZE_DELAY_DAYS": 14,
+    "account_balance": 50000000,
+    "freeze_amount": 50000000
+  },
+  "notes": []
+}

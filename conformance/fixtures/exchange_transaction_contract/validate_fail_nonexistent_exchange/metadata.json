@@ -1,0 +1,21 @@
+{
+  "contractType": "EXCHANGE_TRANSACTION_CONTRACT",
+  "contractTypeNum": 44,
+  "caseName": "validate_fail_nonexistent_exchange",
+  "caseCategory": "validate_fail",
+  "description": "Fail when trading on non-existent exchange",
+  "generatedAt": "2026-01-14T06:56:46.397Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "exchange-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Exchange[99999] not exists",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1,0 +1,21 @@
+{
+  "contractType": "WITHDRAW_BALANCE_CONTRACT",
+  "contractTypeNum": 13,
+  "caseName": "edge_withdraw_at_exact_cooldown_boundary",
+  "caseCategory": "edge",
+  "description": "Edge case: withdraw exactly at cooldown boundary (tests < vs <= validation)",
+  "generatedAt": "2026-01-14T06:57:25.703Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a07769746e6573735f626f756e6461727931000000",
+  "dynamicProperties": {
+    "WITNESS_ALLOWANCE_FROZEN_TIME": 1
+  },
+  "notes": []
+}

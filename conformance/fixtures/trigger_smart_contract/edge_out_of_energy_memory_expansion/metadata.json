@@ -1,0 +1,25 @@
+{
+  "contractType": "TRIGGER_SMART_CONTRACT",
+  "contractTypeNum": 31,
+  "caseName": "edge_out_of_energy_memory_expansion",
+  "caseCategory": "edge",
+  "description": "Large string storage (4KB) with limited energy to stress memory expansion",
+  "generatedAt": "2026-01-14T06:57:02.176Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 0,
+  "blockTimestamp": 0,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "code",
+    "abi",
+    "contract-state",
+    "storage-row",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "OUT_OF_ENERGY",
+  "expectedErrorMessage": "Not enough energy for 'SSTORE' operation executing: curInvokeEnergyLimit[5000], curOpEnergy[20000], usedEnergy[1466]",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1,0 +1,21 @@
+{
+  "contractType": "UPDATE_ASSET_CONTRACT",
+  "contractTypeNum": 15,
+  "caseName": "validate_fail_invalid_owner_address",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner address has invalid format",
+  "generatedAt": "2026-01-14T06:56:53.843Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid ownerAddress",
+  "ownerAddress": "000000000000000000000000000000",
+  "dynamicProperties": {},
+  "notes": []
+}

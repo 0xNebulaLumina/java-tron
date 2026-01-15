@@ -1,0 +1,23 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "edge_freeze_bandwidth_twice_accumulates",
+  "caseCategory": "edge",
+  "description": "Second freeze accumulates on existing frozen balance",
+  "generatedAt": "2026-01-14T06:56:47.401Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000002,
+  "blockTimestamp": 1700000006000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0667265657a655f76315f6d756c74690000000000",
+  "dynamicProperties": {
+    "expected_total_frozen": 80000000,
+    "first_freeze_amount": 50000000,
+    "second_freeze_amount": 30000000
+  },
+  "notes": []
+}

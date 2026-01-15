@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_frozen_amount_sum_exceeds_total_supply",
+  "caseCategory": "validate_fail",
+  "description": "Fail when cumulative frozen amounts exceed total_supply",
+  "generatedAt": "2026-01-14T06:56:41.912Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Frozen supply cannot exceed total supply",
+  "ownerAddress": "a066726f7a656e5f73756d5f6578636565645f6973",
+  "dynamicProperties": {},
+  "notes": []
+}

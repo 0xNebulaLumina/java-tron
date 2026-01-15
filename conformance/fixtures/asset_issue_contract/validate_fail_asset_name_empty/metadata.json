@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_asset_name_empty",
+  "caseCategory": "validate_fail",
+  "description": "Fail when asset name is empty",
+  "generatedAt": "2026-01-14T06:56:41.926Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid assetName",
+  "ownerAddress": "a06e616d655f656d7074795f697373756572000000",
+  "dynamicProperties": {},
+  "notes": []
+}

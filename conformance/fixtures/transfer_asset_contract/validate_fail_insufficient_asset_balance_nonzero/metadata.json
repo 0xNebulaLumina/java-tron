@@ -1,0 +1,23 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "validate_fail_insufficient_asset_balance_nonzero",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner has nonzero but insufficient token balance",
+  "generatedAt": "2026-01-14T06:56:52.900Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "assetBalance is not sufficient.",
+  "ownerAddress": "a0736d616c6c5f746f6b656e5f6f776e3100000000",
+  "dynamicProperties": {
+    "token_id": "1000001"
+  },
+  "notes": []
+}

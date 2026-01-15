@@ -1,0 +1,25 @@
+{
+  "contractType": "UNFREEZE_BALANCE_V2_CONTRACT",
+  "contractTypeNum": 55,
+  "caseName": "edge_sweep_expire_time_equals_now",
+  "caseCategory": "edge",
+  "description": "Sweep entry with expireTime == now (boundary: <= now is expired)",
+  "generatedAt": "2026-01-14T06:56:48.528Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76325f65715f6e6f770000",
+  "dynamicProperties": {
+    "UNFREEZE_DELAY_DAYS": 14,
+    "expire_time": 1700000000000,
+    "expired_amount": 40000000
+  },
+  "notes": [
+    "Tests boundary condition: expireTime == now is considered expired"
+  ]
+}

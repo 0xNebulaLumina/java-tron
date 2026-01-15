@@ -1,0 +1,23 @@
+{
+  "contractType": "ACCOUNT_UPDATE_CONTRACT",
+  "contractTypeNum": 10,
+  "caseName": "validate_fail_owner_already_named_updates_disabled",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner already has a name and ALLOW_UPDATE_ACCOUNT_NAME=0",
+  "generatedAt": "2026-01-14T06:56:45.278Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "account-index",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "This account name is already existed",
+  "ownerAddress": "a07570646174655f6f776e65725f30303400000000",
+  "dynamicProperties": {
+    "ALLOW_UPDATE_ACCOUNT_NAME": 0
+  },
+  "notes": []
+}

@@ -1,0 +1,22 @@
+{
+  "contractType": "PROPOSAL_CREATE_CONTRACT",
+  "contractTypeNum": 16,
+  "caseName": "validate_fail_remove_power_gr_value_not_one",
+  "caseCategory": "validate_fail",
+  "description": "Fail when REMOVE_THE_POWER_OF_THE_GR value is not 1",
+  "generatedAt": "2026-01-14T06:56:50.796Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "proposal",
+    "dynamic-properties",
+    "witness"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "This value[REMOVE_THE_POWER_OF_THE_GR] is only allowed to be 1",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

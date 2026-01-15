@@ -1,0 +1,23 @@
+{
+  "contractType": "VOTE_WITNESS_CONTRACT",
+  "contractTypeNum": 4,
+  "caseName": "edge_revoting_replaces_previous_votes",
+  "caseCategory": "edge",
+  "description": "Edge case: revoting clears old votes and replaces with new (not merged)",
+  "generatedAt": "2026-01-14T06:57:25.743Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a07265766f74655f766f7465725f30303100000000",
+  "dynamicProperties": {
+    "CHANGE_DELEGATION": 0
+  },
+  "notes": []
+}

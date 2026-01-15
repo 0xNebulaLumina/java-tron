@@ -1,0 +1,21 @@
+{
+  "contractType": "FREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 11,
+  "caseName": "happy_path_frozen_balance_exact_1_trx",
+  "caseCategory": "happy",
+  "description": "Freeze exactly 1 TRX (minimum allowed)",
+  "generatedAt": "2026-01-14T06:56:47.389Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0667265657a655f76315f31747278000000000000",
+  "dynamicProperties": {
+    "freeze_amount": 1000000
+  },
+  "notes": []
+}

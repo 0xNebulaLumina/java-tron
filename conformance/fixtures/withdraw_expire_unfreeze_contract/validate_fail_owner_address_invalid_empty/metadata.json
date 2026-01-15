@@ -1,0 +1,20 @@
+{
+  "contractType": "WITHDRAW_EXPIRE_UNFREEZE_CONTRACT",
+  "contractTypeNum": 56,
+  "caseName": "validate_fail_owner_address_invalid_empty",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner address is empty/invalid",
+  "generatedAt": "2026-01-14T06:56:51.934Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid address",
+  "ownerAddress": "",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1,0 +1,22 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "validate_fail_delegated_not_expired",
+  "caseCategory": "validate_fail",
+  "description": "Fail when delegated resource has not expired yet",
+  "generatedAt": "2026-01-14T06:56:47.406Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties",
+    "DelegatedResource"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "receiverAddress must not be the same as ownerAddress",
+  "ownerAddress": "a0756e667265657a655f64656c5f6e6f745f657870",
+  "dynamicProperties": {},
+  "notes": []
+}

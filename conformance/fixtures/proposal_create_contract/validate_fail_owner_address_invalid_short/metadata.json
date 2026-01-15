@@ -1,0 +1,21 @@
+{
+  "contractType": "PROPOSAL_CREATE_CONTRACT",
+  "contractTypeNum": 16,
+  "caseName": "validate_fail_owner_address_invalid_short",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner address is invalid (too short)",
+  "generatedAt": "2026-01-14T06:56:50.840Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "proposal",
+    "dynamic-properties",
+    "witness"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid address",
+  "dynamicProperties": {},
+  "notes": []
+}

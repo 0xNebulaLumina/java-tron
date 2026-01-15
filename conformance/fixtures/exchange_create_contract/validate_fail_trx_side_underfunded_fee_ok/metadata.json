@@ -1,0 +1,21 @@
+{
+  "contractType": "EXCHANGE_CREATE_CONTRACT",
+  "contractTypeNum": 41,
+  "caseName": "validate_fail_trx_side_underfunded_fee_ok",
+  "caseCategory": "validate_fail",
+  "description": "Fail when TRX balance covers fee but not deposit amount",
+  "generatedAt": "2026-01-14T06:56:46.378Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "exchange-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "balance is not enough",
+  "ownerAddress": "a0abcd123456789012345678901234567890123456",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1,0 +1,23 @@
+{
+  "contractType": "WITNESS_CREATE_CONTRACT",
+  "contractTypeNum": 5,
+  "caseName": "edge_blackhole_optimization_burns_trx",
+  "caseCategory": "edge",
+  "description": "Edge case: with ALLOW_BLACK_HOLE_OPTIMIZATION=1, TRX is burned instead of credited to blackhole",
+  "generatedAt": "2026-01-14T06:57:25.713Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "witness",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a06275726e5f7769746e6573735f6f776e31000000",
+  "dynamicProperties": {
+    "ACCOUNT_UPGRADE_COST": 9999000000,
+    "ALLOW_BLACK_HOLE_OPTIMIZATION": 1
+  },
+  "notes": []
+}

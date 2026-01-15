@@ -909,7 +909,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               .setNonce(nonce)
               .setTxKind(txKind) // Set the transaction kind for proper processing
               .setContractType(contractType) // Phase 3: Add detailed contract type
-              .setAssetId(ByteString.copyFrom(assetId)); // Phase 3: Add asset ID for TRC-10
+              .setAssetId(ByteString.copyFrom(assetId)) // Phase 3: Add asset ID for TRC-10
+              // Preserve raw Any (type_url + value) for java-tron-compatible any.is/any.unpack checks.
+              .setContractParameter(contractParameter);
 
       // Build the execution context - Phase 3 Fix: Require BlockCapsule for deterministic context
       BlockCapsule blockCap = context.getBlockCap();

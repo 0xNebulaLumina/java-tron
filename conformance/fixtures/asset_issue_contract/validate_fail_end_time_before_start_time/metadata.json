@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_end_time_before_start_time",
+  "caseCategory": "validate_fail",
+  "description": "Fail when end_time < start_time",
+  "generatedAt": "2026-01-14T06:56:41.979Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "End time should be greater than start time",
+  "ownerAddress": "a0656e645f6265666f72655f73746172745f697373",
+  "dynamicProperties": {},
+  "notes": []
+}

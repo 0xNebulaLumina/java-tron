@@ -1,0 +1,21 @@
+{
+  "contractType": "ASSET_ISSUE_CONTRACT",
+  "contractTypeNum": 6,
+  "caseName": "validate_fail_description_too_long_201",
+  "caseCategory": "validate_fail",
+  "description": "Fail when description length is 201 bytes (max is 200)",
+  "generatedAt": "2026-01-14T06:56:41.932Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid description",
+  "ownerAddress": "a0646573635f6c6f6e675f69737375657200000000",
+  "dynamicProperties": {},
+  "notes": []
+}

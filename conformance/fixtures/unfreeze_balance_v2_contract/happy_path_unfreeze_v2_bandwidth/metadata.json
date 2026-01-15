@@ -4,7 +4,7 @@
   "caseName": "happy_path_unfreeze_v2_bandwidth",
   "caseCategory": "happy",
   "description": "V2 unfreeze BANDWIDTH (creates pending unfrozen entry)",
-  "generatedAt": "2025-12-28T11:46:23.549Z",
+  "generatedAt": "2026-01-14T06:56:48.488Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
@@ -15,8 +15,8 @@
   "expectedStatus": "SUCCESS",
   "ownerAddress": "a0756e667265657a655f76325f3031000000000000",
   "dynamicProperties": {
-    "unfreeze_amount": 50000000,
-    "UNFREEZE_DELAY_DAYS": 14
+    "UNFREEZE_DELAY_DAYS": 14,
+    "unfreeze_amount": 50000000
   },
   "notes": []
 }
