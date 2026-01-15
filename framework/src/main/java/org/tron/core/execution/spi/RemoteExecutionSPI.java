@@ -366,8 +366,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
           org.tron.protos.contract.AssetIssueContractOuterClass.ParticipateAssetIssueContract participateAssetContract =
               contractParameter.unpack(org.tron.protos.contract.AssetIssueContractOuterClass.ParticipateAssetIssueContract.class);
-          toAddress = new byte[0]; // System contract, receiver is in contract data
+          toAddress = participateAssetContract.getToAddress().toByteArray();
           value = participateAssetContract.getAmount(); // TRX amount to spend
+          assetId = participateAssetContract.getAssetName().toByteArray();
           data = participateAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // TRC-10 participation
           contractType = tron.backend.BackendOuterClass.ContractType.PARTICIPATE_ASSET_ISSUE_CONTRACT;
@@ -1515,6 +1516,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       switch (contractType) {
         case TransferContract:
         case TransferAssetContract:
+        case ParticipateAssetIssueContract:
           addressesToSnapshot.add(toAddress);
           break;
         default:
