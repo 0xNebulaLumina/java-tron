@@ -72,6 +72,11 @@ vote_witness_enabled = true
 # TRC-10 transfers (requires additional storage support)
 trc10_enabled = true
 
+# TRC-10 extension contracts (Phase 2.E)
+participate_asset_issue_enabled = true
+unfreeze_asset_enabled = true
+update_asset_enabled = true
+
 # FreezeBalanceContract execution (Phase 2: balance delta + resource ledger)
 # Set to true to enable remote execution of FreezeBalanceContract
 # Default: false for safe rollout - falls back to Java embedded execution when disabled
