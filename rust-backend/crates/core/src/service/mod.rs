@@ -7066,6 +7066,17 @@ impl BackendService {
 
         debug!("ParticipateAssetIssue: exchanged {} TRX for {} tokens", participate_info.amount, exchange_amount);
 
+        // Emit TRC-10 semantic change (issuer -> participant) for CSV parity and Java-side apply (Phase 2)
+        let trc10_change = tron_backend_execution::Trc10Change::AssetTransferred(
+            tron_backend_execution::Trc10AssetTransferred {
+                owner_address: to_address, // issuer (sender of tokens)
+                to_address: owner, // participant (receiver of tokens)
+                asset_name: participate_info.asset_name.clone(),
+                token_id: Some(token_id_str.clone()),
+                amount: exchange_amount,
+            },
+        );
+
         Ok(TronExecutionResult {
             success: true,
             return_data: revm_primitives::Bytes::new(),
@@ -7077,7 +7088,7 @@ impl BackendService {
             aext_map: std::collections::HashMap::new(),
             freeze_changes: vec![],
             global_resource_changes: vec![],
-            trc10_changes: vec![],
+            trc10_changes: vec![trc10_change],
             vote_changes: vec![],
             withdraw_changes: vec![],
             tron_transaction_result: None,
