@@ -532,13 +532,13 @@ impl BackendService {
             .unwrap_or(false);
 
         let global_resource_changes = if emit_global_changes {
-            // Compute current global totals from all freeze records
-            let total_net_weight = storage_adapter.compute_total_net_weight()
-                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            // Read current global totals from DynamicProperties (already updated in-buffer).
+            let total_net_weight = storage_adapter.get_total_net_weight()
+                .map_err(|e| format!("Failed to get total net weight: {}", e))?;
             let total_net_limit = storage_adapter.get_total_net_limit()
                 .map_err(|e| format!("Failed to get total net limit: {}", e))?;
-            let total_energy_weight = storage_adapter.compute_total_energy_weight()
-                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
+            let total_energy_weight = storage_adapter.get_total_energy_weight()
+                .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
             let total_energy_limit = storage_adapter.get_total_energy_limit()
                 .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
 
@@ -1265,14 +1265,15 @@ impl BackendService {
             .unwrap_or(false);
 
         let global_resource_changes = if emit_global_changes {
-            // Compute current global totals from all freeze records
-            let total_net_weight = storage_adapter.compute_total_net_weight()
-                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            // Read current global totals from DynamicProperties (already updated in-buffer).
+            let total_net_weight = storage_adapter.get_total_net_weight()
+                .map_err(|e| format!("Failed to get total net weight: {}", e))?;
             let total_net_limit = storage_adapter.get_total_net_limit()
                 .map_err(|e| format!("Failed to get total net limit: {}", e))?;
-            let total_energy_weight = storage_adapter.compute_total_energy_weight()
-                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
-            let total_energy_limit = 0i64; // TODO: Add getter when available
+            let total_energy_weight = storage_adapter.get_total_energy_weight()
+                .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
+            let total_energy_limit = storage_adapter.get_total_energy_limit()
+                .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
 
             let change = tron_backend_execution::GlobalResourceTotalsChange {
                 total_net_weight,
@@ -1658,14 +1659,15 @@ impl BackendService {
             .unwrap_or(false);
 
         let global_resource_changes = if emit_global_changes {
-            // Compute current global totals from all freeze records
-            let total_net_weight = storage_adapter.compute_total_net_weight()
-                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            // Read current global totals from DynamicProperties (already updated in-buffer).
+            let total_net_weight = storage_adapter.get_total_net_weight()
+                .map_err(|e| format!("Failed to get total net weight: {}", e))?;
             let total_net_limit = storage_adapter.get_total_net_limit()
                 .map_err(|e| format!("Failed to get total net limit: {}", e))?;
-            let total_energy_weight = storage_adapter.compute_total_energy_weight()
-                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
-            let total_energy_limit = 0i64; // TODO: Add getter when available
+            let total_energy_weight = storage_adapter.get_total_energy_weight()
+                .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
+            let total_energy_limit = storage_adapter.get_total_energy_limit()
+                .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
 
             let change = tron_backend_execution::GlobalResourceTotalsChange {
                 total_net_weight,
@@ -2259,14 +2261,15 @@ impl BackendService {
             .unwrap_or(false);
 
         let global_resource_changes = if emit_global_changes {
-            // Compute current global totals from all freeze records
-            let total_net_weight = storage_adapter.compute_total_net_weight()
-                .map_err(|e| format!("Failed to compute total net weight: {}", e))?;
+            // Read current global totals from DynamicProperties (already updated in-buffer).
+            let total_net_weight = storage_adapter.get_total_net_weight()
+                .map_err(|e| format!("Failed to get total net weight: {}", e))?;
             let total_net_limit = storage_adapter.get_total_net_limit()
                 .map_err(|e| format!("Failed to get total net limit: {}", e))?;
-            let total_energy_weight = storage_adapter.compute_total_energy_weight()
-                .map_err(|e| format!("Failed to compute total energy weight: {}", e))?;
-            let total_energy_limit = 0i64; // TODO: Add getter when available
+            let total_energy_weight = storage_adapter.get_total_energy_weight()
+                .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
+            let total_energy_limit = storage_adapter.get_total_energy_limit()
+                .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
 
             let change = tron_backend_execution::GlobalResourceTotalsChange {
                 total_net_weight,
