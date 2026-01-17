@@ -714,6 +714,24 @@ mod tests {
     }
 
     #[test]
+    fn test_total_net_weight_reads_buffered_writes() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
+            .expect("Failed to create storage engine");
+
+        let (adapter, _buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine);
+
+        adapter
+            .add_total_net_weight(2)
+            .expect("Should add to total net weight");
+
+        let total = adapter
+            .get_total_net_weight()
+            .expect("Should read total net weight");
+        assert_eq!(total, 2);
+    }
+
+    #[test]
     fn test_account_asset_v2_zero_value_encodes_value_field() {
         use crate::protocol::Account as ProtoAccount;
         use crate::storage_adapter::db_names;
