@@ -1632,7 +1632,7 @@ impl EngineBackedEvmStateStore {
     /// Default: 0
     pub fn get_total_net_weight(&self) -> Result<i64> {
         let key = b"TOTAL_NET_WEIGHT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
@@ -1651,7 +1651,7 @@ impl EngineBackedEvmStateStore {
     /// Default: 43_200_000_000 bytes
     pub fn get_total_net_limit(&self) -> Result<i64> {
         let key = b"TOTAL_NET_LIMIT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
@@ -1682,7 +1682,7 @@ impl EngineBackedEvmStateStore {
     /// Default: 0
     pub fn get_total_energy_weight(&self) -> Result<i64> {
         let key = b"TOTAL_ENERGY_WEIGHT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
@@ -1795,7 +1795,7 @@ impl EngineBackedEvmStateStore {
     /// Default: 50_000_000_000 (parity with early mainnet defaults)
     pub fn get_total_energy_limit(&self) -> Result<i64> {
         let key = b"TOTAL_ENERGY_CURRENT_LIMIT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
