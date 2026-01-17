@@ -7,6 +7,7 @@ import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.utils.ByteArray;
 import org.tron.consensus.ConsensusDelegate;
 import org.tron.core.capsule.AccountCapsule;
 
@@ -14,8 +15,18 @@ import org.tron.core.capsule.AccountCapsule;
 @Component
 public class IncentiveManager {
 
+  private static final String TRACE_ADDRESS_HEX_PROP = "reward.trace.address_hex";
+
   @Autowired
   private ConsensusDelegate consensusDelegate;
+
+  private static boolean isTraceAddress(byte[] address) {
+    String targetHex = System.getProperty(TRACE_ADDRESS_HEX_PROP);
+    if (targetHex == null || targetHex.trim().isEmpty() || address == null) {
+      return false;
+    }
+    return ByteArray.toHexString(address).equalsIgnoreCase(targetHex.trim());
+  }
 
   public void reward(List<ByteString> witnesses) {
     if (consensusDelegate.allowChangeDelegation()) {
@@ -32,13 +43,30 @@ public class IncentiveManager {
       return;
     }
     long totalPay = consensusDelegate.getWitnessStandbyAllowance();
-    for (ByteString witness : witnesses) {
+    for (int i = 0; i < witnesses.size(); i++) {
+      ByteString witness = witnesses.get(i);
       byte[] address = witness.toByteArray();
-      long pay = (long) (consensusDelegate.getWitness(address).getVoteCount() * ((double) totalPay
-          / voteSum));
+      long witnessVoteCount = consensusDelegate.getWitness(address).getVoteCount();
+      long pay = (long) (witnessVoteCount * ((double) totalPay / voteSum));
       AccountCapsule accountCapsule = consensusDelegate.getAccount(address);
-      accountCapsule.setAllowance(accountCapsule.getAllowance() + pay);
+      long allowanceBefore = accountCapsule.getAllowance();
+      long allowanceAfter = allowanceBefore + pay;
+      accountCapsule.setAllowance(allowanceAfter);
       consensusDelegate.saveAccount(accountCapsule);
+      if (isTraceAddress(address)) {
+        logger.info(
+            "TRACE standby_reward: blk={}, idx={}, addr={}, voteCount={}, voteSum={}, totalPay={}, "
+                + "pay={}, allowBefore={}, allowAfter={}",
+            consensusDelegate.getLatestBlockHeaderNumber(),
+            i,
+            ByteArray.toHexString(address),
+            witnessVoteCount,
+            voteSum,
+            totalPay,
+            pay,
+            allowanceBefore,
+            allowanceAfter);
+      }
     }
   }
 }

@@ -16,6 +16,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.utils.ByteArray;
 import org.tron.consensus.ConsensusDelegate;
 import org.tron.consensus.pbft.PbftManager;
 import org.tron.core.capsule.AccountCapsule;
@@ -25,10 +26,13 @@ import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.store.DelegationStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.store.VotesStore;
+import org.tron.protos.Protocol.Vote;
 
 @Slf4j(topic = "consensus")
 @Component
 public class MaintenanceManager {
+
+  private static final String TRACE_ADDRESS_HEX_PROP = "reward.trace.address_hex";
 
   @Autowired
   private ConsensusDelegate consensusDelegate;
@@ -48,6 +52,14 @@ public class MaintenanceManager {
   private final List<ByteString> currentWitness = new ArrayList<>();
   @Getter
   private long beforeMaintenanceTime;
+
+  private static boolean isTraceAddress(byte[] address) {
+    String targetHex = System.getProperty(TRACE_ADDRESS_HEX_PROP);
+    if (targetHex == null || targetHex.trim().isEmpty() || address == null) {
+      return false;
+    }
+    return ByteArray.toHexString(address).equalsIgnoreCase(targetHex.trim());
+  }
 
   public void init() {
     currentWitness.addAll(consensusDelegate.getActiveWitnesses());
@@ -119,8 +131,19 @@ public class MaintenanceManager {
           logger.warn("Witness account is null. address is {}", Hex.toHexString(witnessAddress));
           return;
         }
+        long voteCountBefore = witnessCapsule.getVoteCount();
         witnessCapsule.setVoteCount(witnessCapsule.getVoteCount() + voteCount);
         consensusDelegate.saveWitness(witnessCapsule);
+        if (isTraceAddress(witnessAddress)) {
+          logger.info(
+              "TRACE witness_vote_count: block={}, address_hex={}, voteCount_before={}, delta={}, "
+                  + "voteCount_after={}",
+              consensusDelegate.getLatestBlockHeaderNumber(),
+              ByteArray.toHexString(witnessAddress),
+              voteCountBefore,
+              voteCount,
+              witnessCapsule.getVoteCount());
+        }
         logger.info("address is {} , countVote is {}", witnessCapsule.createReadableString(),
             witnessCapsule.getVoteCount());
       });
@@ -163,9 +186,38 @@ public class MaintenanceManager {
     final Map<ByteString, Long> countWitness = Maps.newHashMap();
     Iterator<Entry<byte[], VotesCapsule>> dbIterator = votesStore.iterator();
     long sizeCount = 0;
+    String traceAddressHex = System.getProperty(TRACE_ADDRESS_HEX_PROP);
+    ByteString traceAddress = null;
+    if (traceAddressHex != null && !traceAddressHex.trim().isEmpty()) {
+      traceAddress = ByteString.copyFrom(ByteArray.fromHexString(traceAddressHex.trim()));
+    }
+    long maintenanceBlockNum = consensusDelegate.getLatestBlockHeaderNumber() + 1;
     while (dbIterator.hasNext()) {
       Entry<byte[], VotesCapsule> next = dbIterator.next();
       VotesCapsule votes = next.getValue();
+      if (traceAddress != null) {
+        long oldCount = 0;
+        long newCount = 0;
+        for (Vote v : votes.getOldVotes()) {
+          if (v.getVoteAddress().equals(traceAddress)) {
+            oldCount += v.getVoteCount();
+          }
+        }
+        for (Vote v : votes.getNewVotes()) {
+          if (v.getVoteAddress().equals(traceAddress)) {
+            newCount += v.getVoteCount();
+          }
+        }
+        if (oldCount != newCount) {
+          logger.info(
+              "TRACE maintenance_vote_delta: blk={}, voter={}, old={}, new={}, delta={}",
+              maintenanceBlockNum,
+              ByteArray.toHexString(votes.getAddress().toByteArray()),
+              oldCount,
+              newCount,
+              newCount - oldCount);
+        }
+      }
       votes.getOldVotes().forEach(vote -> {
         ByteString voteAddress = vote.getVoteAddress();
         long voteCount = vote.getVoteCount();

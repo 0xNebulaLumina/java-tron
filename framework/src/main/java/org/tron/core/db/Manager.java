@@ -2003,6 +2003,9 @@ public class Manager {
   }
 
   private void payReward(BlockCapsule block) {
+    String traceAddressHex = System.getProperty("reward.trace.address_hex");
+    boolean traceEnabled = traceAddressHex != null && !traceAddressHex.trim().isEmpty();
+
     WitnessCapsule witnessCapsule =
         chainBaseManager
             .getWitnessStore()
@@ -2035,26 +2038,49 @@ public class Manager {
       }
     } else {
       byte[] witness = block.getWitnessAddress().toByteArray();
+      boolean traceThisWitness =
+          traceEnabled
+              && ByteArray.toHexString(witness).equalsIgnoreCase(traceAddressHex.trim());
       AccountCapsule account = getAccountStore().get(witness);
-      account.setAllowance(
-          account.getAllowance()
-              + chainBaseManager.getDynamicPropertiesStore().getWitnessPayPerBlock());
+      long allowanceBefore = account != null ? account.getAllowance() : 0L;
+      long witnessPayPerBlock =
+          chainBaseManager.getDynamicPropertiesStore().getWitnessPayPerBlock();
+      account.setAllowance(account.getAllowance() + witnessPayPerBlock);
 
+      long txFeePoolBefore = 0L;
+      long transactionFeeReward = 0L;
+      long txFeePoolAfter = 0L;
       if (chainBaseManager.getDynamicPropertiesStore().supportTransactionFeePool()) {
-        long transactionFeeReward =
+        txFeePoolBefore = chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool();
+        long computedTransactionFeeReward =
             floorDiv(
-                chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool(),
+                txFeePoolBefore,
                 Constant.TRANSACTION_FEE_POOL_PERIOD,
                 chainBaseManager.getDynamicPropertiesStore().disableJavaLangMath());
+        transactionFeeReward = computedTransactionFeeReward;
         account.setAllowance(account.getAllowance() + transactionFeeReward);
         chainBaseManager
             .getDynamicPropertiesStore()
-            .saveTransactionFeePool(
-                chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool()
-                    - transactionFeeReward);
+            .saveTransactionFeePool(txFeePoolBefore - transactionFeeReward);
+        txFeePoolAfter = txFeePoolBefore - transactionFeeReward;
       }
 
       getAccountStore().put(account.createDbKey(), account);
+
+      if (traceThisWitness) {
+        logger.info(
+            "TRACE block_reward: block={}, witness_hex={}, witnessPayPerBlock={}, "
+                + "txFeeReward={}, txFeePool_before={}, txFeePool_after={}, "
+                + "allowance_before={}, allowance_after={}",
+            block.getNum(),
+            ByteArray.toHexString(witness),
+            witnessPayPerBlock,
+            transactionFeeReward,
+            txFeePoolBefore,
+            txFeePoolAfter,
+            allowanceBefore,
+            account.getAllowance());
+      }
     }
   }
 
