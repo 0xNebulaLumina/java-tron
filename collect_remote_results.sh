@@ -2,12 +2,13 @@
 
 set -e
 
-# Configurable sleep duration (in seconds), default 1200 (20 minutes)
+# Configurable max wait duration (in seconds), default 1200 (20 minutes).
+# If set to 0, wait until java-tron exits (e.g., via node.shutdown BlockHeight).
 SLEEP_DURATION=${1:-1200}
 # Configurable embedded Java log path
-EMBEDDED_JAVA_LOG=${2:-1.embedded-java.log}
+EMBEDDED_JAVA_LOG=${2:-2.embedded-java.log}
 # Configurable embedded-embedded CSV path
-EMBEDDED_CSV=${3:-output-directory/execution-csv/20260112-060750-377bf631-embedded-embedded.csv}
+EMBEDDED_CSV=${3:-output-directory/execution-csv/20260117-150119-62e3e372-embedded-embedded.csv}
 
 echo "Starting remote execution + remote storage result collection..."
 echo "Sleep duration: ${SLEEP_DURATION} seconds ($(($SLEEP_DURATION / 60)) minutes)"
@@ -31,6 +32,7 @@ echo "Step 3: Compiling java-tron..."
 # Step 4: Start rust-backend in background
 echo "Step 4: Starting rust-backend..."
 cd rust-backend
+export TRACE_WITHDRAW_OWNER_HEX=414d1ef8673f916debb7e2515a8f3ecaf2611034aa
 nohup ./target/release/tron-backend >> ../rust.log 2>&1 &
 RUST_PID=$!
 cd ..
@@ -52,6 +54,7 @@ nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
      -Dexec.csv.enabled=true -Dexec.csv.stateChanges.enabled=true \
      -Dremote.exec.trc10.enabled=true -Dremote.exec.apply.trc10=false \
      -Dremote.resource.sync.debug=true -Dremote.resource.sync.confirm=true \
+     -Dreward.trace.address_hex=414d1ef8673f916debb7e2515a8f3ecaf2611034aa \
      -jar ./build/libs/FullNode.jar -c ./main_net_config_remote.conf \
      --execution-spi-enabled --execution-mode "REMOTE" >> start.log 2>&1 &
 JAVA_PID=$!
@@ -59,10 +62,24 @@ JAVA_PID=$!
 echo "Java-tron started with PID: $JAVA_PID"
 echo "Rust-backend started with PID: $RUST_PID"
 
-# Step 6: Wait for configured duration then stop services
+# Step 6: Wait for java-tron to exit (preferred) or configured timeout, then stop services
 echo "Current time: $(date '+%Y-%m-%d %H:%M:%S')"
-echo "Waiting ${SLEEP_DURATION} seconds for data collection..."
-sleep $SLEEP_DURATION
+if [ "${SLEEP_DURATION}" -eq 0 ]; then
+    echo "Waiting for java-tron to exit (no timeout; SLEEP_DURATION=0)..."
+    while kill -0 $JAVA_PID 2>/dev/null; do
+        sleep 30
+    done
+else
+    echo "Waiting up to ${SLEEP_DURATION} seconds for java-tron to exit..."
+    end_time=$((SECONDS + SLEEP_DURATION))
+    while kill -0 $JAVA_PID 2>/dev/null; do
+        if [ "${SECONDS}" -ge "${end_time}" ]; then
+            echo "Timeout reached; java-tron still running."
+            break
+        fi
+        sleep 30
+    done
+fi
 
 echo "Step 6: Stopping services..."
 # Stop java-tron first
@@ -74,6 +91,8 @@ if kill -0 $JAVA_PID 2>/dev/null; then
     if kill -0 $JAVA_PID 2>/dev/null; then
         kill -9 $JAVA_PID
     fi
+else
+    echo "java-tron already exited."
 fi
 
 # Stop rust-backend
@@ -114,7 +133,13 @@ else
     RUST_LOG_PATH="rust.log (not found)"
 fi
 
-cp "../archive/${EMBEDDED_JAVA_LOG}" ./
+if [ -f "${EMBEDDED_JAVA_LOG}" ]; then
+    echo "Embedded Java log already present: ${EMBEDDED_JAVA_LOG}"
+elif [ -f "../archive/${EMBEDDED_JAVA_LOG}" ]; then
+    cp "../archive/${EMBEDDED_JAVA_LOG}" ./
+else
+    echo "Warning: embedded Java log not found: ${EMBEDDED_JAVA_LOG}"
+fi
 
 # Step 10: Find newest CSV file
 echo "Step 10: Finding newest CSV file..."

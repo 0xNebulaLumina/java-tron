@@ -92,10 +92,13 @@ def main():
 
     # If we got here, either lengths differ or no mismatches in compared fields
     if len(d1) != len(d2):
+        print(
+            "No mismatches found in compared fields for the common prefix "
+            f"({n} data rows)."
+        )
         print(f"Row count differs: embedded={len(d1)} remote={len(d2)}")
         sys.exit(0)
     print("No mismatches found in compared fields (ignoring run_id, exec_mode, storage_mode, ts_ms)")
 
 if __name__ == "__main__":
     main()
-
