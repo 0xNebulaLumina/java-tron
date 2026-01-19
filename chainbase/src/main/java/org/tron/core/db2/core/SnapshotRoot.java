@@ -183,6 +183,10 @@ public class SnapshotRoot extends AbstractSnapshot<byte[], byte[]> {
       // Handle deletes for non-account DBs
       for (byte[] key : deletes) {
         db.remove(key);
+        // Keep second-level cache consistent with the delete.
+        // Without this, cached values can resurrect deleted keys after head-based merge in REMOTE mode,
+        // causing stale reads (e.g., VotesStore entries surviving maintenance cleanup).
+        putCache(key, null);
       }
     }
 
