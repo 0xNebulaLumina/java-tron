@@ -2,7 +2,8 @@
 
 set -e
 
-# Configurable sleep duration (in seconds), default 1200 (20 minutes)
+# Configurable max wait duration (in seconds), default 1200 (20 minutes).
+# If set to 0, wait until java-tron exits (e.g., via node.shutdown BlockHeight).
 SLEEP_DURATION=${1:-1200}
 # Configurable embedded Java log path
 EMBEDDED_JAVA_LOG=${2:-1.embedded-java.log}
@@ -59,10 +60,24 @@ JAVA_PID=$!
 echo "Java-tron started with PID: $JAVA_PID"
 echo "Rust-backend started with PID: $RUST_PID"
 
-# Step 6: Wait for configured duration then stop services
+# Step 6: Wait for java-tron to exit (preferred) or configured timeout, then stop services
 echo "Current time: $(date '+%Y-%m-%d %H:%M:%S')"
-echo "Waiting ${SLEEP_DURATION} seconds for data collection..."
-sleep $SLEEP_DURATION
+if [ "${SLEEP_DURATION}" -eq 0 ]; then
+    echo "Waiting for java-tron to exit (no timeout; SLEEP_DURATION=0)..."
+    while kill -0 $JAVA_PID 2>/dev/null; do
+        sleep 30
+    done
+else
+    echo "Waiting up to ${SLEEP_DURATION} seconds for java-tron to exit..."
+    end_time=$((SECONDS + SLEEP_DURATION))
+    while kill -0 $JAVA_PID 2>/dev/null; do
+        if [ "${SECONDS}" -ge "${end_time}" ]; then
+            echo "Timeout reached; java-tron still running."
+            break
+        fi
+        sleep 30
+    done
+fi
 
 echo "Step 6: Stopping services..."
 # Stop java-tron first
@@ -74,6 +89,8 @@ if kill -0 $JAVA_PID 2>/dev/null; then
     if kill -0 $JAVA_PID 2>/dev/null; then
         kill -9 $JAVA_PID
     fi
+else
+    echo "java-tron already exited."
 fi
 
 # Stop rust-backend
@@ -114,7 +131,13 @@ else
     RUST_LOG_PATH="rust.log (not found)"
 fi
 
-cp "../archive/${EMBEDDED_JAVA_LOG}" ./
+if [ -f "${EMBEDDED_JAVA_LOG}" ]; then
+    echo "Embedded Java log already present: ${EMBEDDED_JAVA_LOG}"
+elif [ -f "../archive/${EMBEDDED_JAVA_LOG}" ]; then
+    cp "../archive/${EMBEDDED_JAVA_LOG}" ./
+else
+    echo "Warning: embedded Java log not found: ${EMBEDDED_JAVA_LOG}"
+fi
 
 # Step 10: Find newest CSV file
 echo "Step 10: Finding newest CSV file..."

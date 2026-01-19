@@ -25,7 +25,11 @@ import org.tron.core.Constant;
 import org.tron.core.capsule.ProtoCapsule;
 import org.tron.core.config.DefaultConfig;
 import org.tron.core.config.args.Args;
+import org.tron.core.db2.common.DB;
+import org.tron.core.db2.common.Flusher;
+import org.tron.core.db2.common.WrappedByteArray;
 import org.tron.core.db2.RevokingDbWithCacheNewValueTest.TestRevokingTronStore;
+import org.tron.core.db2.core.Chainbase;
 import org.tron.core.db2.core.Snapshot;
 import org.tron.core.db2.core.SnapshotManager;
 import org.tron.core.db2.core.SnapshotRoot;
@@ -129,6 +133,38 @@ public class SnapshotRootTest {
   }
 
   @Test
+  public void testMergeWithHeadDeleteInvalidatesCache() {
+    // "votes" DB is configured for second-level caching (CacheStrategies.CACHE_DBS),
+    // and REMOTE mode uses head-based merge. This test ensures deletes invalidate the cache.
+    InMemoryFlusherDb db = new InMemoryFlusherDb("votes");
+    SnapshotRoot root = new SnapshotRoot(db);
+    Chainbase chainbase = new Chainbase(root);
+
+    byte[] key = "test-key".getBytes();
+    byte[] value = "test-value".getBytes();
+
+    // 1) Write via a snapshot, then mergeWithHead to populate root+cache.
+    Snapshot snapshot1 = chainbase.getHead().advance();
+    chainbase.setHead(snapshot1);
+    chainbase.put(key, value);
+    root.mergeWithHead(snapshot1, Arrays.asList(snapshot1));
+    chainbase.setHead(root);
+    Assert.assertArrayEquals(value, chainbase.getUnchecked(key));
+
+    // 2) Delete via a snapshot, mergeWithHead, and ensure cache is invalidated.
+    Snapshot snapshot2 = chainbase.getHead().advance();
+    chainbase.setHead(snapshot2);
+    chainbase.delete(key);
+    root.mergeWithHead(snapshot2, Arrays.asList(snapshot2));
+    chainbase.setHead(root);
+
+    Assert.assertNull(chainbase.getUnchecked(key));
+    Assert.assertFalse(chainbase.has(key));
+
+    chainbase.close();
+  }
+
+  @Test
   public void testSecondCacheCheck()
       throws ItemNotFoundException {
     revokingDatabase = context.getBean(SnapshotManager.class);
@@ -197,6 +233,106 @@ public class SnapshotRootTest {
           + "value=" + Arrays.toString(value)
           + ", string=" + (value == null ? "" : new String(value))
           + '}';
+    }
+  }
+
+  private static final class InMemoryFlusherDb implements DB<byte[], byte[]>, Flusher {
+    private final String dbName;
+    private final java.util.Map<WrappedByteArray, WrappedByteArray> store;
+
+    private InMemoryFlusherDb(String dbName) {
+      this(dbName, new java.util.HashMap<>());
+    }
+
+    private InMemoryFlusherDb(
+        String dbName,
+        java.util.Map<WrappedByteArray, WrappedByteArray> sharedStore) {
+      this.dbName = dbName;
+      this.store = sharedStore;
+    }
+
+    @Override
+    public byte[] get(byte[] key) {
+      WrappedByteArray value = store.get(WrappedByteArray.of(key));
+      return value != null ? value.getBytes() : null;
+    }
+
+    @Override
+    public void put(byte[] key, byte[] value) {
+      store.put(WrappedByteArray.copyOf(key), WrappedByteArray.copyOf(value));
+    }
+
+    @Override
+    public long size() {
+      return store.size();
+    }
+
+    @Override
+    public boolean isEmpty() {
+      return store.isEmpty();
+    }
+
+    @Override
+    public void remove(byte[] key) {
+      store.remove(WrappedByteArray.of(key));
+    }
+
+    @Override
+    public java.util.Iterator<java.util.Map.Entry<byte[], byte[]>> iterator() {
+      java.util.Iterator<java.util.Map.Entry<WrappedByteArray, WrappedByteArray>> it =
+          store.entrySet().iterator();
+      return new java.util.Iterator<java.util.Map.Entry<byte[], byte[]>>() {
+        @Override
+        public boolean hasNext() {
+          return it.hasNext();
+        }
+
+        @Override
+        public java.util.Map.Entry<byte[], byte[]> next() {
+          java.util.Map.Entry<WrappedByteArray, WrappedByteArray> entry = it.next();
+          return new java.util.AbstractMap.SimpleImmutableEntry<>(
+              entry.getKey().getBytes(),
+              entry.getValue() != null ? entry.getValue().getBytes() : null);
+        }
+      };
+    }
+
+    @Override
+    public void close() {
+      // no-op
+    }
+
+    @Override
+    public String getDbName() {
+      return dbName;
+    }
+
+    @Override
+    public void stat() {
+      // no-op
+    }
+
+    @Override
+    public DB<byte[], byte[]> newInstance() {
+      return new InMemoryFlusherDb(dbName, store);
+    }
+
+    @Override
+    public void flush(java.util.Map<WrappedByteArray, WrappedByteArray> batch) {
+      for (java.util.Map.Entry<WrappedByteArray, WrappedByteArray> entry : batch.entrySet()) {
+        WrappedByteArray key = entry.getKey();
+        WrappedByteArray value = entry.getValue();
+        if (value == null || value.getBytes() == null) {
+          store.remove(WrappedByteArray.of(key.getBytes()));
+        } else {
+          store.put(WrappedByteArray.copyOf(key.getBytes()), WrappedByteArray.copyOf(value.getBytes()));
+        }
+      }
+    }
+
+    @Override
+    public void reset() {
+      store.clear();
     }
   }
 }

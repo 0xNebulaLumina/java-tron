@@ -1460,21 +1460,64 @@ impl EngineBackedEvmStateStore {
     pub fn get_account_allowance(&self, address: &Address) -> Result<i64> {
         let key = self.account_key(address);
 
-        match self.storage_engine.get(self.account_database(), &key)? {
+        match self.buffered_get(self.account_database(), &key)? {
             Some(data) => {
-                match self.extract_i64_field_from_protobuf(&data, 11) {
-                    Ok(allowance) => {
-                        tracing::debug!("Account {} allowance: {}", to_tron_address(address), allowance);
-                        Ok(allowance)
-                    },
-                    Err(e) => {
-                        tracing::debug!("Failed to extract allowance from account: {}, returning 0", e);
-                        Ok(0)
+                let allowance = match ProtoAccount::decode(data.as_slice()) {
+                    Ok(proto_account) => {
+                        let allowance = proto_account.allowance;
+                        match self.extract_i64_field_from_protobuf(&data, 11) {
+                            Ok(scanned) if scanned != allowance => {
+                                tracing::warn!(
+                                    "Account {} allowance mismatch: proto={} scanned={} (using proto)",
+                                    to_tron_address(address),
+                                    allowance,
+                                    scanned
+                                );
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    "Account {} allowance: proto={} (scan failed: {})",
+                                    to_tron_address(address),
+                                    allowance,
+                                    e
+                                );
+                            }
+                            _ => {}
+                        }
+                        allowance
                     }
-                }
-            },
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to decode Account proto for allowance ({}), falling back to scan: {}",
+                            to_tron_address(address),
+                            e
+                        );
+                        match self.extract_i64_field_from_protobuf(&data, 11) {
+                            Ok(allowance) => allowance,
+                            Err(e) => {
+                                tracing::debug!(
+                                    "Failed to extract allowance from account ({}): {}, returning 0",
+                                    to_tron_address(address),
+                                    e
+                                );
+                                0
+                            }
+                        }
+                    }
+                };
+
+                tracing::debug!(
+                    "Account {} allowance: {}",
+                    to_tron_address(address),
+                    allowance
+                );
+                Ok(allowance)
+            }
             None => {
-                tracing::debug!("Account not found for address {:?}, returning allowance 0", address);
+                tracing::debug!(
+                    "Account not found for address {:?}, returning allowance 0",
+                    address
+                );
                 Ok(0)
             }
         }
@@ -1486,21 +1529,64 @@ impl EngineBackedEvmStateStore {
     pub fn get_account_latest_withdraw_time(&self, address: &Address) -> Result<i64> {
         let key = self.account_key(address);
 
-        match self.storage_engine.get(self.account_database(), &key)? {
+        match self.buffered_get(self.account_database(), &key)? {
             Some(data) => {
-                match self.extract_i64_field_from_protobuf(&data, 12) {
-                    Ok(latest_withdraw_time) => {
-                        tracing::debug!("Account {} latest_withdraw_time: {}", to_tron_address(address), latest_withdraw_time);
-                        Ok(latest_withdraw_time)
-                    },
-                    Err(e) => {
-                        tracing::debug!("Failed to extract latest_withdraw_time from account: {}, returning 0", e);
-                        Ok(0)
+                let latest_withdraw_time = match ProtoAccount::decode(data.as_slice()) {
+                    Ok(proto_account) => {
+                        let latest_withdraw_time = proto_account.latest_withdraw_time;
+                        match self.extract_i64_field_from_protobuf(&data, 12) {
+                            Ok(scanned) if scanned != latest_withdraw_time => {
+                                tracing::warn!(
+                                    "Account {} latest_withdraw_time mismatch: proto={} scanned={} (using proto)",
+                                    to_tron_address(address),
+                                    latest_withdraw_time,
+                                    scanned
+                                );
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    "Account {} latest_withdraw_time: proto={} (scan failed: {})",
+                                    to_tron_address(address),
+                                    latest_withdraw_time,
+                                    e
+                                );
+                            }
+                            _ => {}
+                        }
+                        latest_withdraw_time
                     }
-                }
-            },
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to decode Account proto for latest_withdraw_time ({}), falling back to scan: {}",
+                            to_tron_address(address),
+                            e
+                        );
+                        match self.extract_i64_field_from_protobuf(&data, 12) {
+                            Ok(latest_withdraw_time) => latest_withdraw_time,
+                            Err(e) => {
+                                tracing::debug!(
+                                    "Failed to extract latest_withdraw_time from account ({}): {}, returning 0",
+                                    to_tron_address(address),
+                                    e
+                                );
+                                0
+                            }
+                        }
+                    }
+                };
+
+                tracing::debug!(
+                    "Account {} latest_withdraw_time: {}",
+                    to_tron_address(address),
+                    latest_withdraw_time
+                );
+                Ok(latest_withdraw_time)
+            }
             None => {
-                tracing::debug!("Account not found for address {:?}, returning latest_withdraw_time 0", address);
+                tracing::debug!(
+                    "Account not found for address {:?}, returning latest_withdraw_time 0",
+                    address
+                );
                 Ok(0)
             }
         }

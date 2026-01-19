@@ -5,6 +5,7 @@ import static org.tron.common.utils.WalletUtil.getAddressStringList;
 import com.google.common.collect.Maps;
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +17,8 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.tron.common.parameter.CommonParameter;
+import org.tron.common.utils.ByteArray;
 import org.tron.consensus.ConsensusDelegate;
 import org.tron.consensus.pbft.PbftManager;
 import org.tron.core.capsule.AccountCapsule;
@@ -25,10 +28,13 @@ import org.tron.core.capsule.WitnessCapsule;
 import org.tron.core.store.DelegationStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.store.VotesStore;
+import org.tron.protos.Protocol.Vote;
 
 @Slf4j(topic = "consensus")
 @Component
 public class MaintenanceManager {
+
+  private static final String REMOTE_MAINTENANCE_SYNC_VOTES_PROP = "remote.maintenance.sync.votes";
 
   @Autowired
   private ConsensusDelegate consensusDelegate;
@@ -163,6 +169,10 @@ public class MaintenanceManager {
     final Map<ByteString, Long> countWitness = Maps.newHashMap();
     Iterator<Entry<byte[], VotesCapsule>> dbIterator = votesStore.iterator();
     long sizeCount = 0;
+    boolean syncDeletesToRemoteBackend =
+        "remote".equalsIgnoreCase(CommonParameter.getInstance().getStorage().getStorageMode())
+            && Boolean.parseBoolean(System.getProperty(REMOTE_MAINTENANCE_SYNC_VOTES_PROP, "true"));
+    List<byte[]> remoteDeleteKeys = syncDeletesToRemoteBackend ? new ArrayList<>() : null;
     while (dbIterator.hasNext()) {
       Entry<byte[], VotesCapsule> next = dbIterator.next();
       VotesCapsule votes = next.getValue();
@@ -186,6 +196,24 @@ public class MaintenanceManager {
       });
       sizeCount++;
       votesStore.delete(next.getKey());
+      if (remoteDeleteKeys != null) {
+        remoteDeleteKeys.add(Arrays.copyOf(next.getKey(), next.getKey().length));
+      }
+    }
+    if (remoteDeleteKeys != null && !remoteDeleteKeys.isEmpty()) {
+      int success = 0;
+      for (byte[] key : remoteDeleteKeys) {
+        try {
+          votesStore.getDb().remove(key);
+          success++;
+        } catch (Exception e) {
+          logger.warn(
+              "REMOTE maintenance: failed to delete vote key from remote backend ({}=true): {}",
+              REMOTE_MAINTENANCE_SYNC_VOTES_PROP, ByteArray.toHexString(key), e);
+        }
+      }
+      logger.info("REMOTE maintenance: deleted {} / {} vote keys from remote backend ({}=true)",
+          success, remoteDeleteKeys.size(), REMOTE_MAINTENANCE_SYNC_VOTES_PROP);
     }
     logger.info("There is {} new votes in this epoch", sizeCount);
     return countWitness;
