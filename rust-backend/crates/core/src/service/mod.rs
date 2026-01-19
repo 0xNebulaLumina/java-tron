@@ -3892,6 +3892,7 @@ impl BackendService {
         let recipient_proto_opt = storage_adapter
             .get_account_proto(&to_address)
             .map_err(|e| format!("Failed to get recipient account: {}", e))?;
+        let recipient_was_missing = recipient_proto_opt.is_none();
 
         if let Some(ref recipient_proto) = recipient_proto_opt {
             // After ForbidTransferToContract proposal, sending TRC-10 to smart contracts is disallowed.
@@ -4187,8 +4188,16 @@ impl BackendService {
         if let Ok(Some(recipient_account)) = storage_adapter.get_account(&to_address) {
             state_changes.push(TronStateChange::AccountChange {
                 address: to_address,
-                old_account: Some(recipient_account.clone()),
-                new_account: Some(recipient_account), // No-op (ledger updates are tracked separately)
+                // If the protocol-level account was missing before execution, mirror embedded
+                // journaling semantics by emitting an account creation (old_account absent).
+                old_account: if recipient_was_missing {
+                    None
+                } else {
+                    Some(recipient_account.clone())
+                },
+                // Ledger updates are tracked separately; we still carry AccountInfo (incl. AEXT)
+                // so Java can derive account/resource usage deltas deterministically.
+                new_account: Some(recipient_account),
             });
         } else {
             // If recipient account does not exist yet, fabricate a minimal placeholder
@@ -4196,7 +4205,11 @@ impl BackendService {
             let placeholder = AccountInfo::default();
             state_changes.push(TronStateChange::AccountChange {
                 address: to_address,
-                old_account: Some(placeholder.clone()),
+                old_account: if recipient_was_missing {
+                    None
+                } else {
+                    Some(placeholder.clone())
+                },
                 new_account: Some(placeholder),
             });
         }
