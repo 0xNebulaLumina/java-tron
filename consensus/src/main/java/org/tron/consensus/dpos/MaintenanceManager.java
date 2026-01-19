@@ -34,7 +34,6 @@ import org.tron.protos.Protocol.Vote;
 @Component
 public class MaintenanceManager {
 
-  private static final String TRACE_ADDRESS_HEX_PROP = "reward.trace.address_hex";
   private static final String REMOTE_MAINTENANCE_SYNC_VOTES_PROP = "remote.maintenance.sync.votes";
 
   @Autowired
@@ -55,14 +54,6 @@ public class MaintenanceManager {
   private final List<ByteString> currentWitness = new ArrayList<>();
   @Getter
   private long beforeMaintenanceTime;
-
-  private static boolean isTraceAddress(byte[] address) {
-    String targetHex = System.getProperty(TRACE_ADDRESS_HEX_PROP);
-    if (targetHex == null || targetHex.trim().isEmpty() || address == null) {
-      return false;
-    }
-    return ByteArray.toHexString(address).equalsIgnoreCase(targetHex.trim());
-  }
 
   public void init() {
     currentWitness.addAll(consensusDelegate.getActiveWitnesses());
@@ -137,16 +128,6 @@ public class MaintenanceManager {
         long voteCountBefore = witnessCapsule.getVoteCount();
         witnessCapsule.setVoteCount(witnessCapsule.getVoteCount() + voteCount);
         consensusDelegate.saveWitness(witnessCapsule);
-        if (isTraceAddress(witnessAddress)) {
-          logger.info(
-              "TRACE witness_vote_count: block={}, address_hex={}, voteCount_before={}, delta={}, "
-                  + "voteCount_after={}",
-              consensusDelegate.getLatestBlockHeaderNumber(),
-              ByteArray.toHexString(witnessAddress),
-              voteCountBefore,
-              voteCount,
-              witnessCapsule.getVoteCount());
-        }
         logger.info("address is {} , countVote is {}", witnessCapsule.createReadableString(),
             witnessCapsule.getVoteCount());
       });
@@ -193,38 +174,9 @@ public class MaintenanceManager {
         "remote".equalsIgnoreCase(CommonParameter.getInstance().getStorage().getStorageMode())
             && Boolean.parseBoolean(System.getProperty(REMOTE_MAINTENANCE_SYNC_VOTES_PROP, "true"));
     List<byte[]> remoteDeleteKeys = syncDeletesToRemoteBackend ? new ArrayList<>() : null;
-    String traceAddressHex = System.getProperty(TRACE_ADDRESS_HEX_PROP);
-    ByteString traceAddress = null;
-    if (traceAddressHex != null && !traceAddressHex.trim().isEmpty()) {
-      traceAddress = ByteString.copyFrom(ByteArray.fromHexString(traceAddressHex.trim()));
-    }
-    long maintenanceBlockNum = consensusDelegate.getLatestBlockHeaderNumber() + 1;
     while (dbIterator.hasNext()) {
       Entry<byte[], VotesCapsule> next = dbIterator.next();
       VotesCapsule votes = next.getValue();
-      if (traceAddress != null) {
-        long oldCount = 0;
-        long newCount = 0;
-        for (Vote v : votes.getOldVotes()) {
-          if (v.getVoteAddress().equals(traceAddress)) {
-            oldCount += v.getVoteCount();
-          }
-        }
-        for (Vote v : votes.getNewVotes()) {
-          if (v.getVoteAddress().equals(traceAddress)) {
-            newCount += v.getVoteCount();
-          }
-        }
-        if (oldCount != newCount) {
-          logger.info(
-              "TRACE maintenance_vote_delta: blk={}, voter={}, old={}, new={}, delta={}",
-              maintenanceBlockNum,
-              ByteArray.toHexString(votes.getAddress().toByteArray()),
-              oldCount,
-              newCount,
-              newCount - oldCount);
-        }
-      }
       votes.getOldVotes().forEach(vote -> {
         ByteString voteAddress = vote.getVoteAddress();
         long voteCount = vote.getVoteCount();

@@ -6,9 +6,9 @@ set -e
 # If set to 0, wait until java-tron exits (e.g., via node.shutdown BlockHeight).
 SLEEP_DURATION=${1:-1200}
 # Configurable embedded Java log path
-EMBEDDED_JAVA_LOG=${2:-2.embedded-java.log}
+EMBEDDED_JAVA_LOG=${2:-1.embedded-java.log}
 # Configurable embedded-embedded CSV path
-EMBEDDED_CSV=${3:-output-directory/execution-csv/20260117-150119-62e3e372-embedded-embedded.csv}
+EMBEDDED_CSV=${3:-output-directory/execution-csv/20260112-060750-377bf631-embedded-embedded.csv}
 
 echo "Starting remote execution + remote storage result collection..."
 echo "Sleep duration: ${SLEEP_DURATION} seconds ($(($SLEEP_DURATION / 60)) minutes)"
@@ -32,7 +32,6 @@ echo "Step 3: Compiling java-tron..."
 # Step 4: Start rust-backend in background
 echo "Step 4: Starting rust-backend..."
 cd rust-backend
-export TRACE_WITHDRAW_OWNER_HEX=414d1ef8673f916debb7e2515a8f3ecaf2611034aa
 nohup ./target/release/tron-backend >> ../rust.log 2>&1 &
 RUST_PID=$!
 cd ..
@@ -54,7 +53,6 @@ nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
      -Dexec.csv.enabled=true -Dexec.csv.stateChanges.enabled=true \
      -Dremote.exec.trc10.enabled=true -Dremote.exec.apply.trc10=false \
      -Dremote.resource.sync.debug=true -Dremote.resource.sync.confirm=true \
-     -Dreward.trace.address_hex=414d1ef8673f916debb7e2515a8f3ecaf2611034aa \
      -jar ./build/libs/FullNode.jar -c ./main_net_config_remote.conf \
      --execution-spi-enabled --execution-mode "REMOTE" >> start.log 2>&1 &
 JAVA_PID=$!

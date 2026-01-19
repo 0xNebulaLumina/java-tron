@@ -284,30 +284,6 @@ impl BackendService {
             .get_account_allowance(&owner_address)
             .map_err(|e| format!("Failed to read allowance: {}", e))?;
 
-        let trace_owner_hex = std::env::var("TRACE_WITHDRAW_OWNER_HEX").ok();
-        let trace_owner = trace_owner_hex
-            .as_deref()
-            .map(|h| h.eq_ignore_ascii_case(&readable_owner_address))
-            .unwrap_or(false);
-        if trace_owner {
-            let allow_change_delegation = storage_adapter
-                .allow_change_delegation()
-                .map_err(|e| format!("Failed to read allow_change_delegation: {}", e))?;
-            let tx_id_hex = context
-                .transaction_id
-                .map(|id| hex::encode(id.as_slice()))
-                .unwrap_or_else(|| "".to_string());
-            info!(
-                "TRACE withdraw_inputs: block={}, txId={}, owner_hex={}, base_allowance={}, delegation_reward={}, allow_change_delegation={}",
-                context.block_number,
-                tx_id_hex,
-                readable_owner_address,
-                base_allowance,
-                delegation_reward,
-                allow_change_delegation
-            );
-        }
-
         if base_allowance <= 0 && delegation_reward <= 0 {
             warn!(
                 "Account {} has no reward to withdraw (allowance={}, delegation_reward={})",
