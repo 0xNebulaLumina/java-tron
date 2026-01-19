@@ -125,7 +125,6 @@ public class MaintenanceManager {
           logger.warn("Witness account is null. address is {}", Hex.toHexString(witnessAddress));
           return;
         }
-        long voteCountBefore = witnessCapsule.getVoteCount();
         witnessCapsule.setVoteCount(witnessCapsule.getVoteCount() + voteCount);
         consensusDelegate.saveWitness(witnessCapsule);
         logger.info("address is {} , countVote is {}", witnessCapsule.createReadableString(),
