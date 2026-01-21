@@ -1,0 +1,131 @@
+# PROPOSAL_CREATE_CONTRACT (16) — Rust/Java Parity TODO
+
+Goal
+- Make Rust `PROPOSAL_CREATE_CONTRACT` execution match Java’s:
+  - `actuator/src/main/java/org/tron/core/actuator/ProposalCreateActuator.java` (`validate()` + `execute()`)
+  - `actuator/src/main/java/org/tron/core/utils/ProposalUtil.java` (`ProposalUtil.validator`)
+
+Non-Goals
+- Do not change Java semantics; Rust should copy behavior and error messages.
+- Do not broaden enablement by default; keep behind feature gates until parity is proven.
+
+Acceptance Criteria
+- For every `ProposalCreateContract.parameters` entry:
+  - Rust enforces the same validation rule and emits the exact same error message as Java.
+- Fork-gated codes behave identically to Java’s `forkController.pass(...)` logic.
+- Post-execution DB mutations match Java’s `ProposalStore` + `DynamicPropertiesStore.saveLatestProposalNum`.
+- Conformance fixtures (or tests) cover representative failures/successes for all validation families (ranges, bools, prerequisites, already-active, fork gating).
+
+Checklist / TODO
+
+Phase 0 — Clarify Intended Write Model
+- [ ] Confirm how proposal execution is used in production:
+  - [ ] Remote storage (Rust authoritative DB) vs embedded storage (Java authoritative DB).
+  - [ ] Whether Java applies any state changes for proposals (today Rust returns none).
+- [ ] Decide one:
+  - [ ] Persist-in-Rust path: return `write_mode=PERSISTED` and ensure Java does not double-apply.
+  - [ ] Compute-only path: represent ProposalStore + DynamicProperties mutations as sidecars/state-changes and let Java apply.
+
+Phase 1 — Port `ProposalUtil.validator` (Parameter Rules)
+- [ ] Centralize Rust validation in a dedicated helper (avoid inline `match` in `execute_proposal_create_contract`).
+- [ ] Implement 1:1 validation rules for every Java `ProposalUtil.ProposalType` code.
+- [ ] Keep messages byte-for-byte identical to Java (including underscores, spaces, and `L` suffixes where present).
+
+Per-code parity checklist (Java switch cases)
+
+- [x] `0` MAINTENANCE_TIME_INTERVAL: range `[3 * 27 * 1000, 24 * 3600 * 1000]`.
+- [x] `1..=8` fee-like params: range `[0, LONG_VALUE]`.
+- [x] `9` ALLOW_CREATION_OF_CONTRACTS: value must be `1`.
+- [x] `10` REMOVE_THE_POWER_OF_THE_GR: `getRemoveThePowerOfTheGr() != -1` and value must be `1`.
+- [ ] `11` ENERGY_FEE: (Java currently has no validation; keep as “accept any”).
+- [ ] `12` EXCHANGE_CREATE_FEE: (Java currently has no validation; keep as “accept any”).
+- [ ] `13` MAX_CPU_TIME_OF_ONE_TX: enforce `[10,100]` vs `[10,400]` depending on `ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX`.
+- [ ] `14` ALLOW_UPDATE_ACCOUNT_NAME: value must be `1`.
+- [ ] `15` ALLOW_SAME_TOKEN_NAME: value must be `1`.
+- [ ] `16` ALLOW_DELEGATE_RESOURCE: value must be `1`.
+- [ ] `17` TOTAL_ENERGY_LIMIT: fork-gated + `[0, LONG_VALUE]` (and deprecated rules).
+- [x] `18` ALLOW_TVM_TRANSFER_TRC10: value must be `1` + prerequisite `ALLOW_SAME_TOKEN_NAME`.
+- [ ] `19` TOTAL_CURRENT_ENERGY_LIMIT: fork-gated + `[0, LONG_VALUE]`.
+- [ ] `20` ALLOW_MULTI_SIGN: fork-gated + value must be `1`.
+- [ ] `21` ALLOW_ADAPTIVE_ENERGY: fork-gated + value must be `1`.
+- [ ] `22` UPDATE_ACCOUNT_PERMISSION_FEE: fork-gated + `[0, MAX_SUPPLY]`.
+- [ ] `23` MULTI_SIGN_FEE: fork-gated + `[0, MAX_SUPPLY]`.
+- [ ] `24` ALLOW_PROTO_FILTER_NUM: fork-gated + value must be `0` or `1`.
+- [ ] `25` ALLOW_ACCOUNT_STATE_ROOT: fork-gated + value must be `0` or `1`.
+- [ ] `26` ALLOW_TVM_CONSTANTINOPLE: fork-gated + value must be `1` + prerequisite `ALLOW_TVM_TRANSFER_TRC10`.
+- [ ] `29` ADAPTIVE_RESOURCE_LIMIT_MULTIPLIER: fork-gated + `[1,10_000]`.
+- [ ] `30` ALLOW_CHANGE_DELEGATION: fork-gated + value must be `0` or `1`.
+- [ ] `31` WITNESS_127_PAY_PER_BLOCK: fork-gated + `[0, LONG_VALUE]`.
+- [ ] `32` ALLOW_TVM_SOLIDITY_059: fork-gated + value must be `1` + prerequisite `ALLOW_CREATION_OF_CONTRACTS`.
+- [ ] `33` ADAPTIVE_RESOURCE_LIMIT_TARGET_RATIO: fork-gated + `[1,1_000]`.
+- [ ] `35` FORBID_TRANSFER_TO_CONTRACT: fork-gated + value must be `1` + prerequisite `ALLOW_CREATION_OF_CONTRACTS`.
+- [ ] `39` ALLOW_SHIELDED_TRC20_TRANSACTION: fork-gated + value must be `0` or `1`.
+- [ ] `40` ALLOW_PBFT: fork-gated + value must be `1`.
+- [ ] `41` ALLOW_TVM_ISTANBUL: fork-gated + value must be `1`.
+- [ ] `44` ALLOW_MARKET_TRANSACTION: fork-gated + value must be `1`.
+- [ ] `45` MARKET_SELL_FEE: fork-gated + market enabled + `[0,10_000_000_000L]`.
+- [ ] `46` MARKET_CANCEL_FEE: fork-gated + market enabled + `[0,10_000_000_000L]`.
+- [ ] `47` MAX_FEE_LIMIT: fork-gated; value must be non-negative; upper bound depends on `ALLOW_TVM_LONDON` and `LONG_VALUE`.
+- [ ] `48` ALLOW_TRANSACTION_FEE_POOL: fork-gated + value must be `0` or `1`.
+- [ ] `49` ALLOW_BLACKHOLE_OPTIMIZATION: fork-gated + value must be `0` or `1` (note Java message uses `ALLOW_REMOVE_BLACKHOLE`).
+- [ ] `51` ALLOW_NEW_RESOURCE_MODEL: fork-gated + value must be `1`.
+- [ ] `52` ALLOW_TVM_FREEZE: fork-gated + value must be `1` + prerequisites (`ALLOW_DELEGATE_RESOURCE`, `ALLOW_MULTI_SIGN`, `ALLOW_TVM_CONSTANTINOPLE`, `ALLOW_TVM_SOLIDITY_059`).
+- [ ] `53` ALLOW_ACCOUNT_ASSET_OPTIMIZATION: fork-gated + value must be `1`.
+- [ ] `59` ALLOW_TVM_VOTE: fork-gated + value must be `1` + prerequisite `ALLOW_CHANGE_DELEGATION`.
+- [ ] `60` ALLOW_TVM_COMPATIBLE_EVM: fork-gated + value must be `1`.
+- [ ] `61` FREE_NET_LIMIT: fork-gated + `[0,100_000]`.
+- [ ] `62` TOTAL_NET_LIMIT: fork-gated + `[0, 1_000_000_000_000L]`.
+- [ ] `63` ALLOW_TVM_LONDON: fork-gated + value must be `1`.
+- [ ] `65` ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX: fork-gated + value must be `1`.
+- [ ] `66` ALLOW_ASSET_OPTIMIZATION: fork-gated + value must be `1`.
+- [ ] `67` ALLOW_NEW_REWARD: fork-gated + “already active” check + value must be `1`.
+- [ ] `68` MEMO_FEE: fork-gated + `[0,1_000_000_000]` with Java’s exact error message.
+- [ ] `69` ALLOW_DELEGATE_OPTIMIZATION: fork-gated + value must be `1`.
+- [ ] `70` UNFREEZE_DELAY_DAYS: fork-gated + `[1,365]` with Java’s exact error message.
+- [ ] `71` ALLOW_OPTIMIZED_RETURN_VALUE_OF_CHAIN_ID: fork-gated + value must be `1`.
+- [ ] `72` ALLOW_DYNAMIC_ENERGY: fork-gated + value in `[0,1]` + prerequisite `ALLOW_CHANGE_DELEGATION` when enabling.
+- [ ] `73` DYNAMIC_ENERGY_THRESHOLD: fork-gated + `[0, LONG_VALUE]`.
+- [ ] `74` DYNAMIC_ENERGY_INCREASE_FACTOR: fork-gated + `[0, DYNAMIC_ENERGY_INCREASE_FACTOR_RANGE]`.
+- [ ] `75` DYNAMIC_ENERGY_MAX_FACTOR: fork-gated + `[0, DYNAMIC_ENERGY_MAX_FACTOR_RANGE]`.
+- [ ] `76` ALLOW_TVM_SHANGHAI: fork-gated + value must be `1`.
+- [ ] `77` ALLOW_CANCEL_ALL_UNFREEZE_V2: fork-gated + value must be `1` + prerequisite `UNFREEZE_DELAY_DAYS`.
+- [ ] `78` MAX_DELEGATE_LOCK_PERIOD: fork-gated + value must be `> current` and `<= ONE_YEAR_BLOCK_NUMBERS` + prerequisite `UNFREEZE_DELAY_DAYS`.
+- [ ] `79` ALLOW_OLD_REWARD_OPT: fork-gated + “already active” check + value must be `1` + prerequisite “useNewRewardAlgorithm”.
+- [ ] `81` ALLOW_ENERGY_ADJUSTMENT: fork-gated + “already active” check + value must be `1`.
+- [ ] `82` MAX_CREATE_ACCOUNT_TX_SIZE: fork-gated + `[CREATE_ACCOUNT_TRANSACTION_MIN_BYTE_SIZE, CREATE_ACCOUNT_TRANSACTION_MAX_BYTE_SIZE]`.
+- [ ] `83` ALLOW_TVM_CANCUN: fork-gated + “already active” check + value must be `1`.
+- [ ] `87` ALLOW_STRICT_MATH: fork-gated + “already active” check + value must be `1`.
+- [ ] `88` CONSENSUS_LOGIC_OPTIMIZATION: fork-gated + “already active” check + value must be `1`.
+- [ ] `89` ALLOW_TVM_BLOB: fork-gated + “already active” check + value must be `1`.
+
+Phase 2 — Implement Fork Gating (`ForkController.pass`) Equivalent
+- [ ] Decide approach:
+  - [ ] Full parity: port Java’s `ForkController` logic (old vs new versions, stats-by-version arrays, hardForkTime/hardForkRate, ENERGY_LIMIT special-case).
+  - [ ] Practical parity: derive a simplified `pass(version)` from dynamic properties (e.g., `latestVersion`) only if that is proven equivalent for proposal validation.
+- [ ] Add/confirm storage accessors for fork state keys used by `ForkController`:
+  - [ ] `latest_block_header_timestamp`, `latest_block_header_number`, `maintenance_interval`, plus any “statsByVersion” keys.
+- [ ] Use `TronExecutionContext` block/time to evaluate pass/fail deterministically.
+
+Phase 3 — Wire Validator Into Rust Handler
+- [ ] Replace the current inline `match code { ... }` with a call to the shared validator per entry.
+- [ ] Optional parity: if `transaction.metadata.contract_parameter` is present, enforce `type_url == protocol.ProposalCreateContract` (same as Java `any.is(...)`).
+- [ ] Ensure validation happens before any DB writes (so `validate_fail` produces zero mutations).
+
+Phase 4 — Tests / Conformance Expansion
+- [ ] Add Rust unit tests for:
+  - [ ] range checks
+  - [ ] boolean checks (`0/1`, `1` only)
+  - [ ] prerequisites (dynamic-property dependencies)
+  - [ ] “already active” prohibitions
+  - [ ] fork-gated ids (both pass and fail paths)
+- [ ] Extend conformance fixtures to include at least one representative case for each validation family not covered today:
+  - [ ] `MAX_CPU_TIME_OF_ONE_TX` fail (value too high)
+  - [ ] `ALLOW_SAME_TOKEN_NAME` fail (value 0)
+  - [ ] `ALLOW_TVM_CONSTANTINOPLE` prereq fail
+  - [ ] `MARKET_SELL_FEE` fail when market not enabled
+  - [ ] `ALLOW_NEW_REWARD` fail when already active
+  - [ ] `MAX_CREATE_ACCOUNT_TX_SIZE` boundary tests
+
+Phase 5 — Rollout / Safety
+- [ ] Keep `proposal_create_enabled=false` default until full parity is proven.
+- [ ] Document any intentionally-unimplemented codes (if you choose to support only a subset) and ensure Rust rejects (not accepts) those codes to avoid silent divergence.

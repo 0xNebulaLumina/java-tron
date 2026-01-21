@@ -19,6 +19,7 @@ prompt_template="$(cat "$prompt_file")"
 
 while IFS= read -r input || [[ -n "$input" ]]; do
     [[ -z "$input" ]] && continue
+    [[ "$input" == \#* ]] && continue
 
     prompt="${prompt_template//\{PLACE_HOLDER\}/$input}"
 
