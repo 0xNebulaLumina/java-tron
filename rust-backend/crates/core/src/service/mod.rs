@@ -2097,14 +2097,17 @@ impl BackendService {
         // AccountCreateContract protobuf:
         //   bytes owner_address = 1;
         //   bytes account_address = 2; (target account to create)
-        //   AccountType type = 3;      (ignored - always Normal)
+        //   AccountType type = 3;      (account type enum)
         let contract_bytes = transaction
             .metadata
             .contract_parameter
             .as_ref()
             .map(|any| any.value.as_slice())
             .unwrap_or(transaction.data.as_ref());
-        let (owner, target_address) = self.parse_account_create_contract(contract_bytes)?;
+
+        // Get expected address prefix for strict validation (matches Java DecodeUtil.addressValid)
+        let expected_prefix = storage_adapter.address_prefix();
+        let (owner, target_address, account_type) = self.parse_account_create_contract(contract_bytes, expected_prefix)?;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
         let owner_tron_21 = storage_adapter.to_tron_address_21(&owner);
         let readable_owner_address = revm_primitives::hex::encode(owner_tron_21);
@@ -2113,8 +2116,8 @@ impl BackendService {
         let target_tron = tron_backend_common::to_tron_address(&target_address);
 
         info!(
-            "AccountCreate: owner={}, target={}",
-            owner_tron, target_tron
+            "AccountCreate: owner={}, target={}, type={}",
+            owner_tron, target_tron, account_type
         );
 
         // 2. Validate owner account exists
@@ -2201,7 +2204,8 @@ impl BackendService {
             new_account: Some(new_target_account.clone()),
         });
 
-        // Persist new account (include create_time for fixture parity).
+        // Persist new account (include create_time and account_type for fixture parity).
+        // Java's AccountCapsule(AccountCreateContract, ...) stores the contract's type field.
         use tron_backend_execution::protocol::permission::PermissionType;
         use tron_backend_execution::protocol::{Account as ProtoAccount, Key, Permission};
         let create_time = storage_adapter
@@ -2216,6 +2220,7 @@ impl BackendService {
         let mut target_proto = ProtoAccount {
             address: target_address_bytes.clone(),
             create_time,
+            r#type: account_type, // Respect contract's type field (matches Java AccountCapsule)
             ..Default::default()
         };
 
@@ -2386,13 +2391,18 @@ impl BackendService {
     /// AccountCreateContract structure:
     ///   bytes owner_address = 1;   (field 1, length-delimited)
     ///   bytes account_address = 2; (field 2, length-delimited) - target account
-    ///   AccountType type = 3;      (field 3, varint) - ignored, always Normal
+    ///   AccountType type = 3;      (field 3, varint) - account type enum
+    ///
+    /// Returns (owner_address, account_address, account_type)
+    /// account_type defaults to 0 (Normal) if not present
     fn parse_account_create_contract(
         &self,
         data: &[u8],
-    ) -> Result<(revm::primitives::Address, revm::primitives::Address), String> {
+        expected_prefix: u8,
+    ) -> Result<(revm::primitives::Address, revm::primitives::Address, i32), String> {
         let mut owner_address_bytes: Option<Vec<u8>> = None;
         let mut account_address_bytes: Option<Vec<u8>> = None;
+        let mut account_type: i32 = 0; // Default: Normal
         let mut pos = 0;
 
         while pos < data.len() {
@@ -2427,9 +2437,10 @@ impl BackendService {
                     account_address_bytes = Some(data[pos..pos + length as usize].to_vec());
                     pos += length as usize;
                 },
-                (3, 0) => { // type (varint) - ignored, always use Normal
-                    let (_, bytes_read) = read_varint(&data[pos..])
+                (3, 0) => { // type (varint) - account type enum
+                    let (type_val, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read type: {}", e))?;
+                    account_type = type_val as i32;
                     pos += bytes_read;
                 },
                 _ => {
@@ -2444,23 +2455,24 @@ impl BackendService {
         let owner_address_bytes = owner_address_bytes.ok_or_else(|| "Invalid ownerAddress".to_string())?;
         let account_address_bytes = account_address_bytes.ok_or_else(|| "Invalid account address".to_string())?;
 
-        fn parse_tron_prefixed_address(bytes: &[u8]) -> Result<revm::primitives::Address, ()> {
+        // Validate address with configured prefix (matches Java DecodeUtil.addressValid semantics)
+        fn parse_tron_prefixed_address(bytes: &[u8], expected_prefix: u8) -> Result<revm::primitives::Address, &'static str> {
             if bytes.len() != 21 {
-                return Err(());
+                return Err("length");
             }
             let prefix = bytes[0];
-            if prefix != 0x41 && prefix != 0xa0 {
-                return Err(());
+            if prefix != expected_prefix {
+                return Err("prefix");
             }
             Ok(revm::primitives::Address::from_slice(&bytes[1..]))
         }
 
-        let owner_address = parse_tron_prefixed_address(&owner_address_bytes)
-            .map_err(|()| "Invalid ownerAddress".to_string())?;
-        let account_address = parse_tron_prefixed_address(&account_address_bytes)
-            .map_err(|()| "Invalid account address".to_string())?;
+        let owner_address = parse_tron_prefixed_address(&owner_address_bytes, expected_prefix)
+            .map_err(|_| "Invalid ownerAddress".to_string())?;
+        let account_address = parse_tron_prefixed_address(&account_address_bytes, expected_prefix)
+            .map_err(|_| "Invalid account address".to_string())?;
 
-        Ok((owner_address, account_address))
+        Ok((owner_address, account_address, account_type))
     }
 
     // =========================================================================
