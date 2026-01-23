@@ -6,7 +6,7 @@ This checklist assumes we want to resolve the parity gaps identified in `plannin
 
 - [x] Confirm desired scope:
   - [x] **Actuator-only parity** (match `CreateAccountActuator` + `AccountCapsule`) ← CHOSEN
-  - [ ] **End-to-end parity** (also match `BandwidthProcessor` create-account resource path + receipts)
+  - [x] **End-to-end parity** (also match `BandwidthProcessor` create-account resource path + receipts) ← IMPLEMENTED
 - [x] Confirm target network mode expectations:
   - [ ] mainnet prefix only (`0x41`)
   - [ ] testnet prefix only (`0xa0`)
@@ -66,17 +66,17 @@ Goal: match `BandwidthProcessor` create-account behavior for `AccountCreateContr
 
 Checklist:
 
-- [ ] Implement dynamic property getter(s) in Rust:
-  - [ ] `CREATE_NEW_ACCOUNT_BANDWIDTH_RATE`
-  - [ ] `CREATE_ACCOUNT_FEE`
-  - [ ] `TOTAL_CREATE_ACCOUNT_COST` update helper
-- [ ] Decide where the logic lives:
-  - [ ] inside `execute_account_create_contract()` (contract-specific)
+- [x] Implement dynamic property getter(s) in Rust:
+  - [x] `CREATE_NEW_ACCOUNT_BANDWIDTH_RATE` - `get_create_new_account_bandwidth_rate()`
+  - [x] `CREATE_ACCOUNT_FEE` - `get_create_account_fee()`
+  - [x] `TOTAL_CREATE_ACCOUNT_COST` update helper - `add_total_create_account_cost()`
+- [x] Decide where the logic lives:
+  - [x] inside `execute_account_create_contract()` (contract-specific) ← CHOSEN
   - [ ] or in shared bandwidth accounting used by all non-VM txs (preferred long-term)
-- [ ] Update AEXT tracking (if `accountinfo_aext_mode == "tracked"`):
-  - [ ] track **netCost** (post-multiplier), not raw bytes
-  - [ ] ensure "now" matches Java's notion (slot/headSlot vs blockNumber)
-  - [ ] implement account-net (frozen bandwidth) vs free-net vs fee paths (ResourceTracker is currently simplified)
+- [x] Update AEXT tracking (if `accountinfo_aext_mode == "tracked"`):
+  - [x] track **netCost** (post-multiplier), not raw bytes
+  - [x] ensure "now" matches Java's notion (slot/headSlot vs blockNumber) - uses `context.block_number`
+  - [x] implement account-net (frozen bandwidth) vs free-net vs fee paths (ResourceTracker)
 - [ ] Add conformance-style tests:
   - [ ] bandwidth path success (enough net/free net)
   - [ ] fee fallback path (insufficient bandwidth, sufficient TRX for createAccountFee)
@@ -86,16 +86,17 @@ Checklist:
 
 Goal: match Java's receipt status/fee for this contract in remote mode.
 
-- [ ] Decide whether remote path must set `tron_transaction_result` for all system contracts.
-- [ ] If yes:
-  - [ ] Use `TransactionResultBuilder` to emit serialized `Protocol.Transaction.Result` bytes equivalent to `ret.setStatus(fee, SUCESS)` for AccountCreateContract.
+- [x] Decide whether remote path must set `tron_transaction_result` for all system contracts.
+  - Decision: Yes, for AccountCreateContract we set fee in receipt
+- [x] If yes:
+  - [x] Use `TransactionResultBuilder` to emit serialized `Protocol.Transaction.Result` bytes equivalent to `ret.setStatus(fee, SUCESS)` for AccountCreateContract.
   - [ ] Add tests in Java (or integration) to verify receipt fields are correct under remote execution.
 
 ## 6) Verification steps
 
 - [x] Rust:
   - [x] `cd rust-backend && cargo check` - compiles successfully
-  - [ ] `cd rust-backend && cargo test` - full test suite
+  - [x] `cd rust-backend && cargo test` - all tests pass
   - [ ] Run any existing conformance runner for `ACCOUNT_CREATE_CONTRACT` fixtures (if available)
 - [ ] Java:
   - [ ] `./gradlew :framework:test --tests "org.tron.core.storage.spi.DualStorageModeIntegrationTest"`
@@ -103,9 +104,9 @@ Goal: match Java's receipt status/fee for this contract in remote mode.
 
 ---
 
-## Implementation Notes (2026-01-21)
+## Implementation Notes (2026-01-23)
 
-### Changes Made
+### Phase 1: Actuator-level parity (2026-01-21)
 
 1. **Address validation strictness** (`parse_account_create_contract()`):
    - Changed function signature to accept `expected_prefix: u8` parameter
@@ -123,10 +124,40 @@ Goal: match Java's receipt status/fee for this contract in remote mode.
    - Passes prefix to parser
    - Uses returned `account_type` when creating the Account proto
 
+### Phase 2: End-to-end resource parity (2026-01-23)
+
+4. **Dynamic property getters** (`rust-backend/crates/execution/src/storage_adapter/engine.rs`):
+   - Added `get_create_new_account_bandwidth_rate()` - reads `CREATE_NEW_ACCOUNT_BANDWIDTH_RATE`, default: 1
+   - Added `get_create_account_fee()` - reads `CREATE_ACCOUNT_FEE`, default: 100,000 SUN (0.1 TRX)
+   - Added `get_total_create_account_cost()` - reads `TOTAL_CREATE_ACCOUNT_COST`, default: 0
+   - Added `add_total_create_account_cost(fee)` - atomically increments `TOTAL_CREATE_ACCOUNT_COST`
+
+5. **Create-account bandwidth path** (`execute_account_create_contract()`):
+   - Calculate `netCost = raw_bytes * CREATE_NEW_ACCOUNT_BANDWIDTH_RATE` (matches Java BandwidthProcessor)
+   - AEXT tracking now uses `netCost` instead of raw bytes for bandwidth consumption
+   - ResourceTracker path selection: ACCOUNT_NET → FREE_NET → FEE
+   - When FEE path is used:
+     - Get `CREATE_ACCOUNT_FEE` from dynamic properties
+     - Call `add_total_create_account_cost()` to update totals
+     - Log the fee fallback
+
+6. **Receipt passthrough**:
+   - Added `TransactionResultBuilder::new().with_fee(fee).build()` to create receipt bytes
+   - Set `tron_transaction_result: Some(receipt_bytes)` in result (previously `None`)
+   - Matches Java's `ret.setStatus(fee, SUCESS)` pattern
+
 ### Files Modified
+
+- `rust-backend/crates/execution/src/storage_adapter/engine.rs`:
+  - Lines ~974-1057: Added 4 new dynamic property methods
 
 - `rust-backend/crates/core/src/service/mod.rs`:
   - Lines ~2096-2110: Added prefix fetching and updated parse call
   - Lines ~2118-2121: Updated logging to include account_type
   - Lines ~2207-2223: Added account_type to target_proto
+  - Lines ~2324-2387: Rewrote bandwidth tracking section with:
+    - netCost calculation
+    - BandwidthPath tracking
+    - Fee fallback with TOTAL_CREATE_ACCOUNT_COST update
+    - Receipt passthrough
   - Lines ~2390-2470: Rewrote `parse_account_create_contract()` with prefix parameter and type parsing

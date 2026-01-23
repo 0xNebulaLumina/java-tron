@@ -972,6 +972,90 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get CreateNewAccountBandwidthRate dynamic property
+    /// This is the multiplier applied to bytes for create-account bandwidth cost.
+    /// Java reference: DynamicPropertiesStore.getCreateNewAccountBandwidthRate()
+    /// Default value: 1 (no multiplier)
+    pub fn get_create_new_account_bandwidth_rate(&self) -> Result<i64> {
+        let key = b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => {
+                let rate = i64::from_be_bytes([
+                    data[0], data[1], data[2], data[3],
+                    data[4], data[5], data[6], data[7],
+                ]);
+                tracing::debug!("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE from DB: {}", rate);
+                Ok(rate)
+            }
+            _ => {
+                tracing::debug!("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE not found, using default 1");
+                Ok(1) // Default: no multiplier
+            }
+        }
+    }
+
+    /// Get CreateAccountFee dynamic property
+    /// Fee charged as fallback when bandwidth is insufficient for account creation.
+    /// Java reference: DynamicPropertiesStore.getCreateAccountFee()
+    /// Default value: 100_000 SUN (0.1 TRX)
+    pub fn get_create_account_fee(&self) -> Result<u64> {
+        let key = b"CREATE_ACCOUNT_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => {
+                let fee = u64::from_be_bytes([
+                    data[0], data[1], data[2], data[3],
+                    data[4], data[5], data[6], data[7],
+                ]);
+                tracing::debug!("CREATE_ACCOUNT_FEE from DB: {} SUN", fee);
+                Ok(fee)
+            }
+            _ => {
+                tracing::debug!("CREATE_ACCOUNT_FEE not found, using default 100000 SUN");
+                Ok(100_000) // 0.1 TRX in SUN (default from TRON)
+            }
+        }
+    }
+
+    /// Get TOTAL_CREATE_ACCOUNT_COST dynamic property.
+    /// Accumulated cost of all create-account transactions via fee path.
+    /// Java reference: DynamicPropertiesStore.getTotalCreateAccountCost()
+    /// Default: 0 if not present.
+    pub fn get_total_create_account_cost(&self) -> Result<i64> {
+        let key = b"TOTAL_CREATE_ACCOUNT_COST";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3],
+                data[4], data[5], data[6], data[7],
+            ])),
+            _ => Ok(0),
+        }
+    }
+
+    /// Add to TOTAL_CREATE_ACCOUNT_COST dynamic property (java: addTotalCreateAccountCost()).
+    /// Called when bandwidth is insufficient and fee fallback is used for account creation.
+    pub fn add_total_create_account_cost(&self, fee: u64) -> Result<()> {
+        if fee == 0 {
+            return Ok(());
+        }
+
+        let delta: i64 = fee
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("fee exceeds i64::MAX"))?;
+        let current = self.get_total_create_account_cost()?;
+        let new_value = current
+            .checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_create_account_cost"))?;
+
+        let key = b"TOTAL_CREATE_ACCOUNT_COST";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            new_value.to_be_bytes().to_vec(),
+        )?;
+        tracing::debug!("TOTAL_CREATE_ACCOUNT_COST updated: {} -> {}", current, new_value);
+        Ok(())
+    }
+
     /// Get AllowMultiSign dynamic property
     /// Default value: 1 (enabled)
     pub fn get_allow_multi_sign(&self) -> Result<bool> {

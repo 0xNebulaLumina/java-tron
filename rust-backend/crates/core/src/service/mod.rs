@@ -2321,16 +2321,31 @@ impl BackendService {
             }
         });
 
-        // 12. Calculate bandwidth usage
-        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+        // 12. Calculate bandwidth usage with CREATE_NEW_ACCOUNT_BANDWIDTH_RATE multiplier
+        // Java BandwidthProcessor: netCost = bytes * createNewAccountBandwidthRatio
+        let raw_bandwidth_bytes = Self::calculate_bandwidth_usage(transaction);
+        let bandwidth_rate = storage_adapter.get_create_new_account_bandwidth_rate()
+            .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?;
+        let net_cost = (raw_bandwidth_bytes as i64).saturating_mul(bandwidth_rate);
+
+        info!(
+            "AccountCreate bandwidth: raw_bytes={}, rate={}, netCost={}",
+            raw_bandwidth_bytes, bandwidth_rate, net_cost
+        );
 
         // 13. Track AEXT for bandwidth if in tracked mode
+        // Implements Java BandwidthProcessor create-account path selection:
+        // 1. Try ACCOUNT_NET (if account has frozen bandwidth)
+        // 2. Try FREE_NET (if public bandwidth available)
+        // 3. Fall back to FEE (charge CREATE_ACCOUNT_FEE)
         let execution_config = self.get_execution_config()?;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
         let mut aext_map = std::collections::HashMap::new();
+        let mut bandwidth_path_used = "none";
+        let mut create_account_fee_charged: u64 = 0;
 
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::{AccountAext, ResourceTracker, BandwidthPath};
 
             // Get current AEXT for owner (or initialize with defaults)
             let current_aext = storage_adapter.get_account_aext(&owner)
@@ -2341,14 +2356,40 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
-            // Track bandwidth usage (returns path, before_aext, after_aext)
+            // Track bandwidth usage with netCost (not raw bytes) - matches Java semantics
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
-                bandwidth_used as i64,
+                net_cost,  // Use netCost (bytes * rate) for create-account
                 context.block_number as i64,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            bandwidth_path_used = match path {
+                BandwidthPath::AccountNet => "ACCOUNT_NET",
+                BandwidthPath::FreeNet => "FREE_NET",
+                BandwidthPath::Fee => "FEE",
+            };
+
+            // If fee path is used, charge CREATE_ACCOUNT_FEE and update TOTAL_CREATE_ACCOUNT_COST
+            // This is separate from CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT
+            if path == BandwidthPath::Fee {
+                create_account_fee_charged = storage_adapter.get_create_account_fee()
+                    .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?;
+
+                info!(
+                    "AccountCreate bandwidth insufficient, using fee fallback: CREATE_ACCOUNT_FEE={} SUN",
+                    create_account_fee_charged
+                );
+
+                // Update TOTAL_CREATE_ACCOUNT_COST dynamic property
+                storage_adapter.add_total_create_account_cost(create_account_fee_charged)
+                    .map_err(|e| format!("Failed to update TOTAL_CREATE_ACCOUNT_COST: {}", e))?;
+
+                // Note: The CREATE_ACCOUNT_FEE is already deducted by Java BandwidthProcessor
+                // before the actuator runs. In remote mode, the actual fee deduction happens
+                // on the Java side, so we just track the path here.
+            }
 
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
@@ -2358,21 +2399,26 @@ impl BackendService {
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
 
             debug!(
-                "AEXT tracked for account_create: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}",
-                owner, path, before_aext.net_usage, after_aext.net_usage
+                "AEXT tracked for account_create: owner={:?}, path={}, netCost={}, before_net_usage={}, after_net_usage={}",
+                owner, bandwidth_path_used, net_cost, before_aext.net_usage, after_aext.net_usage
             );
         }
 
+        // 14. Build receipt passthrough (matches Java ret.setStatus(fee, SUCESS))
+        let tron_transaction_result = TransactionResultBuilder::new()
+            .with_fee(fee as i64)
+            .build();
+
         info!(
-            "AccountCreate completed: fee={} SUN, state_changes={}, owner={}, target={}, fee_dest={}",
-            fee, state_changes.len(), owner_tron, target_tron, fee_destination
+            "AccountCreate completed: actuator_fee={} SUN, bandwidth_path={}, create_account_fee={}, state_changes={}, owner={}, target={}, fee_dest={}",
+            fee, bandwidth_path_used, create_account_fee_charged, state_changes.len(), owner_tron, target_tron, fee_destination
         );
 
         Ok(TronExecutionResult {
             success: true,
             return_data: revm_primitives::Bytes::new(),
             energy_used: 0, // System contracts use 0 energy
-            bandwidth_used,
+            bandwidth_used: raw_bandwidth_bytes,  // Report raw bytes for bandwidth_used field
             logs: Vec::new(), // No logs for account creation
             state_changes,
             error: None,
@@ -2382,7 +2428,7 @@ impl BackendService {
             trc10_changes: vec![],
             vote_changes: vec![],
             withdraw_changes: vec![],
-            tron_transaction_result: None,
+            tron_transaction_result: Some(tron_transaction_result), // Receipt passthrough
             contract_address: None,
         })
     }
