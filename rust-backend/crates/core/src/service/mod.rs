@@ -2377,6 +2377,27 @@ impl BackendService {
                 create_account_fee_charged = storage_adapter.get_create_account_fee()
                     .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?;
 
+                // Validate owner has sufficient balance for CREATE_ACCOUNT_FEE
+                // This matches Java BandwidthProcessor.payFee() which checks balance before deduction
+                // Get current owner balance (after actuator fee deduction if any)
+                let current_owner_balance = storage_adapter.get_account(&owner)
+                    .map_err(|e| format!("Failed to reload owner account: {}", e))?
+                    .map(|acc| acc.balance.as_limbs()[0]) // Get u64 balance
+                    .unwrap_or(0);
+
+                if current_owner_balance < create_account_fee_charged {
+                    // Calculate available bandwidth for error message
+                    let available_bandwidth = free_net_limit.saturating_sub(after_aext.free_net_usage);
+                    let error_msg = format!(
+                        "account [{}] has insufficient bandwidth[{}] and balance[{}] to create new account",
+                        owner_tron,
+                        available_bandwidth,
+                        current_owner_balance
+                    );
+                    warn!("{}", error_msg);
+                    return Err(error_msg);
+                }
+
                 info!(
                     "AccountCreate bandwidth insufficient, using fee fallback: CREATE_ACCOUNT_FEE={} SUN",
                     create_account_fee_charged

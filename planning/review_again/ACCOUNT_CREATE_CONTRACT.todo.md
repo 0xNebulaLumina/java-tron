@@ -80,7 +80,7 @@ Checklist:
 - [x] Add conformance-style tests:
   - [x] bandwidth path success (enough net/free net) - `test_account_create_bandwidth_path_free_net`
   - [x] fee fallback path (insufficient bandwidth, sufficient TRX for createAccountFee) - `test_account_create_fee_fallback_updates_total_cost`
-  - [ ] insufficient bandwidth + insufficient TRX → must fail with the same error as Java (not implemented - edge case)
+  - [x] insufficient bandwidth + insufficient TRX → must fail with the same error as Java - `test_account_create_insufficient_bandwidth_and_balance`
 
 ## 5) Receipt parity (only if required)
 
@@ -160,12 +160,20 @@ Goal: match Java's receipt status/fee for this contract in remote mode.
    - `test_account_create_type_normal_default` - verifies type=0 when not specified
    - `test_account_create_type_contract_persisted` - verifies type=1 (Contract) is persisted
 
-   **Resource Path Tests (2 tests)**:
+   **Resource Path Tests (3 tests)**:
    - `test_account_create_bandwidth_path_free_net` - verifies FREE_NET path usage and AEXT tracking
    - `test_account_create_fee_fallback_updates_total_cost` - verifies FEE path and TOTAL_CREATE_ACCOUNT_COST update
+   - `test_account_create_insufficient_bandwidth_and_balance` - verifies error when bandwidth insufficient AND balance < CREATE_ACCOUNT_FEE
 
    **Receipt Parity Test (1 test)**:
    - `test_account_create_receipt_contains_fee` - verifies tron_transaction_result contains fee
+
+### Phase 4: Insufficient Resource Validation (2026-01-23)
+
+8. **Balance validation when fee path is used** (`execute_account_create_contract()`):
+   - When `BandwidthPath::Fee` is selected due to insufficient bandwidth, now validates owner has sufficient balance for `CREATE_ACCOUNT_FEE`
+   - If balance < CREATE_ACCOUNT_FEE, returns Java-parity error: `"account [%s] has insufficient bandwidth[%d] and balance[%d] to create new account"`
+   - Error includes: owner address (Base58), available bandwidth, and current balance
 
 ### Files Modified
 
@@ -184,5 +192,5 @@ Goal: match Java's receipt status/fee for this contract in remote mode.
   - Lines ~2390-2470: Rewrote `parse_account_create_contract()` with prefix parameter and type parsing
 
 - `rust-backend/crates/core/src/service/tests/contracts.rs`:
-  - Added 9 new unit tests for AccountCreateContract
+  - Added 10 unit tests for AccountCreateContract
   - Added helper functions: `new_test_service_with_account_create_enabled()`, `new_test_service_with_account_create_and_aext()`, `build_account_create_contract_data()`, `make_tron_address_21()`

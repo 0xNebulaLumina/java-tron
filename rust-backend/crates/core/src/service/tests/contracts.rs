@@ -3096,3 +3096,103 @@ fn test_account_create_receipt_contains_fee() {
     // The receipt should start with tag 0x08 (field 1, wire type 0)
     assert_eq!(receipt_bytes[0], 0x08, "Receipt should start with fee field tag");
 }
+
+#[test]
+fn test_account_create_insufficient_bandwidth_and_balance() {
+    // Test case: bandwidth is insufficient AND owner doesn't have enough TRX for CREATE_ACCOUNT_FEE
+    // Should return error matching Java: "account [%s] has insufficient bandwidth[%d] and balance[%d] to create new account"
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+
+    // Set up dynamic properties:
+    // - Zero actuator fee (so validation passes at step 5)
+    // - Zero free net limit (forces fee path)
+    // - High CREATE_ACCOUNT_FEE (higher than owner balance)
+    storage_engine
+        .put(
+            "properties",
+            b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
+            &0u64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"FREE_NET_LIMIT",
+            &0i64.to_be_bytes(), // Zero free net - forces fee path
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"CREATE_ACCOUNT_FEE",
+            &1_000_000_000u64.to_be_bytes(), // 1000 TRX - higher than owner balance
+        )
+        .unwrap();
+
+    let mainnet_owner = make_tron_address_21(0x41, [0x11u8; 20]);
+    storage_engine
+        .put("account", &mainnet_owner, b"dummy_account_data")
+        .unwrap();
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Owner has low balance (less than CREATE_ACCOUNT_FEE)
+    let owner_address = Address::from([0x11u8; 20]);
+    let owner_balance: u64 = 100_000; // Only 0.1 TRX, not enough for 1000 TRX fee
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(owner_balance),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
+
+    let service = new_test_service_with_account_create_and_aext();
+
+    let owner_tron = make_tron_address_21(0x41, [0x11u8; 20]);
+    let target_tron = make_tron_address_21(0x41, [0x77u8; 20]);
+    let contract_data = build_account_create_contract_data(&owner_tron, &target_tron, None);
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
+
+    // Should fail with the Java-parity error message
+    assert!(result.is_err(), "Should fail when bandwidth and balance are both insufficient");
+    let error_msg = result.err().unwrap();
+
+    // Verify error message matches Java format
+    assert!(
+        error_msg.contains("has insufficient bandwidth") && error_msg.contains("and balance") && error_msg.contains("to create new account"),
+        "Error should match Java format: got '{}'", error_msg
+    );
+    assert!(
+        error_msg.contains(&format!("{}", owner_balance)),
+        "Error should include owner balance: got '{}'", error_msg
+    );
+}
