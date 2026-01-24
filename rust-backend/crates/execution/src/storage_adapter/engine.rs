@@ -1057,21 +1057,23 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get AllowMultiSign dynamic property
-    /// Default value: 1 (enabled)
+    /// Java-tron uses strict `== 1` check (not just `!= 0`) for parity.
+    /// Default value: true (enabled) when key is missing, to match late-chain behavior.
     pub fn get_allow_multi_sign(&self) -> Result<bool> {
         let key = b"ALLOW_MULTI_SIGN";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                // Java stores dynamic properties as big-endian i64/u64.
-                // For small values (e.g. 1), the first byte is 0; so interpret as 8-byte integer.
+                // Java stores dynamic properties as big-endian i64.
+                // Java: getAllowMultiSign() != 1 is "not allowed", so we need strict == 1 check.
                 if data.len() >= 8 {
-                    let val = u64::from_be_bytes([
+                    let val = i64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7],
                     ]);
-                    Ok(val != 0)
+                    Ok(val == 1)
                 } else if !data.is_empty() {
-                    Ok(data[0] != 0)
+                    // Fallback for short data (edge case)
+                    Ok(data[data.len() - 1] == 1)
                 } else {
                     Ok(true) // Default enabled
                 }
@@ -1149,24 +1151,26 @@ impl EngineBackedEvmStateStore {
 
     /// Get Black Hole Optimization dynamic property (parity with Java)
     /// Java stores this as a long under key "ALLOW_BLACKHOLE_OPTIMIZATION".
+    /// Java uses strict `== 1` check (not just `!= 0`) for parity.
     /// When this flag is 1, the node BURNS fees (optimization enabled).
-    /// When 0, the node CREDITS the blackhole account.
+    /// When 0 or any other value, the node CREDITS the blackhole account.
     /// Default: false (credit blackhole) to match early-chain behavior when key is absent.
     pub fn support_black_hole_optimization(&self) -> Result<bool> {
         // Parity key with java-tron DynamicPropertiesStore
         let key = b"ALLOW_BLACKHOLE_OPTIMIZATION";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                // Java writes a long; interpret big-endian u64 when length >= 8.
+                // Java writes a long; interpret big-endian i64 when length >= 8.
+                // Java: supportBlackHoleOptimization() checks value == 1 (strict).
                 if data.len() >= 8 {
-                    let val = u64::from_be_bytes([
+                    let val = i64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7]
                     ]);
-                    Ok(val != 0)
+                    Ok(val == 1)
                 } else if !data.is_empty() {
-                    // Fallback: treat first byte as boolean
-                    Ok(data[0] != 0)
+                    // Fallback: treat last byte as the value (edge case)
+                    Ok(data[data.len() - 1] == 1)
                 } else {
                     // Empty value → treat as disabled (credit blackhole)
                     Ok(false)
