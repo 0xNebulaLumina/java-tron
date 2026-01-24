@@ -45,6 +45,8 @@ Goal: decide whether Rust should:
 - strictly error when critical keys are absent (matching Java's `IllegalArgumentException`), or
 - keep current default fallback behavior (safer for partial DBs) but accept that this diverges.
 
+Recommendation: keep fallback behavior for normal execution (it’s closer to java-tron’s “startup seeds defaults” reality and keeps partial fixtures usable). If strict parity is needed, add it behind a conformance/strict toggle and enable it only in fixture/CI runs.
+
 Checklist:
 
 - [ ] Identify which keys are "must exist" for this contract in real deployments:
