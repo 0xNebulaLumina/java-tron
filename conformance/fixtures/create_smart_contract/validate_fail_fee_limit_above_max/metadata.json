@@ -4,7 +4,7 @@
   "caseName": "validate_fail_fee_limit_above_max",
   "caseCategory": "validate_fail",
   "description": "Fail when feeLimit > maxFeeLimit",
-  "generatedAt": "2026-01-14T06:56:54.919Z",
+  "generatedAt": "2026-01-25T09:15:33.388Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

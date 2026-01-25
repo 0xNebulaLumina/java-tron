@@ -4,7 +4,7 @@
   "caseName": "validate_fail_account_id_contains_space",
   "caseCategory": "validate_fail",
   "description": "Fail when account ID contains space character (0x20 < 0x21)",
-  "generatedAt": "2026-01-14T06:56:40.586Z",
+  "generatedAt": "2026-01-25T09:15:17.647Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_expired_at_exact_boundary",
   "caseCategory": "validate_fail",
   "description": "Fail when now == expirationTime (exact boundary)",
-  "generatedAt": "2026-01-14T06:56:50.815Z",
+  "generatedAt": "2026-01-25T09:15:28.818Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

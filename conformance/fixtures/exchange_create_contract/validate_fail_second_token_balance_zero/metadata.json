@@ -4,7 +4,7 @@
   "caseName": "validate_fail_second_token_balance_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when second token balance is zero",
-  "generatedAt": "2026-01-14T06:56:46.414Z",
+  "generatedAt": "2026-01-25T09:15:24.583Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

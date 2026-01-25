@@ -4,7 +4,7 @@
   "caseName": "validate_fail_asset_name_non_ascii",
   "caseCategory": "validate_fail",
   "description": "Fail when asset name contains byte > 0x7E",
-  "generatedAt": "2026-01-14T06:56:41.930Z",
+  "generatedAt": "2026-01-25T09:15:19.701Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

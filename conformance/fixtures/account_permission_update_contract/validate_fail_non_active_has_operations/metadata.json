@@ -4,7 +4,7 @@
   "caseName": "validate_fail_non_active_has_operations",
   "caseCategory": "validate_fail",
   "description": "Fail when non-Active permission has operations set",
-  "generatedAt": "2026-01-14T06:56:40.762Z",
+  "generatedAt": "2026-01-25T09:15:17.859Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

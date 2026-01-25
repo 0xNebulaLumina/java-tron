@@ -4,7 +4,7 @@
   "caseName": "validate_fail_over_100",
   "caseCategory": "validate_fail",
   "description": "Fail when brokerage is greater than 100",
-  "generatedAt": "2026-01-14T06:56:43.096Z",
+  "generatedAt": "2026-01-25T09:15:20.845Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

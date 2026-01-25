@@ -4,7 +4,7 @@
   "caseName": "happy_path_precision_zero",
   "caseCategory": "happy",
   "description": "Success when precision is 0 (boundary-happy)",
-  "generatedAt": "2026-01-14T06:56:41.964Z",
+  "generatedAt": "2026-01-25T09:15:19.741Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

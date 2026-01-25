@@ -4,7 +4,7 @@
   "caseName": "validate_fail_self_participate",
   "caseCategory": "validate_fail",
   "description": "Fail when participating in own asset",
-  "generatedAt": "2026-01-14T06:56:53.806Z",
+  "generatedAt": "2026-01-25T09:15:32.230Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "edge_constructor_out_of_energy",
   "caseCategory": "edge",
   "description": "Constructor runs out of energy (OOG)",
-  "generatedAt": "2026-01-14T06:56:54.890Z",
+  "generatedAt": "2026-01-25T09:15:33.373Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

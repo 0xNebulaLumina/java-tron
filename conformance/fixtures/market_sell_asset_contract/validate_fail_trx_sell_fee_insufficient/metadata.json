@@ -4,7 +4,7 @@
   "caseName": "validate_fail_trx_sell_fee_insufficient",
   "caseCategory": "validate_fail",
   "description": "Fail when TRX sell + fee exceeds balance",
-  "generatedAt": "2026-01-14T06:56:49.661Z",
+  "generatedAt": "2026-01-25T09:15:27.768Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

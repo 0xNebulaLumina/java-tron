@@ -4,7 +4,7 @@
   "caseName": "validate_fail_delegate_to_contract_address",
   "caseCategory": "validate_fail",
   "description": "Fail when delegating resources to a contract address",
-  "generatedAt": "2026-01-14T06:56:47.404Z",
+  "generatedAt": "2026-01-25T09:15:25.599Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

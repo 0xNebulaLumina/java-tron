@@ -4,7 +4,7 @@
   "caseName": "happy_path_existing_recipient",
   "caseCategory": "happy",
   "description": "Normal TRX transfer to an existing account",
-  "generatedAt": "2026-01-14T06:56:52.894Z",
+  "generatedAt": "2026-01-25T09:15:31.157Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "storage_overwrite",
   "caseCategory": "happy",
   "description": "Overwrite existing storage slot with new value",
-  "generatedAt": "2026-01-14T06:57:05.807Z",
+  "generatedAt": "2026-01-25T09:15:45.393Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

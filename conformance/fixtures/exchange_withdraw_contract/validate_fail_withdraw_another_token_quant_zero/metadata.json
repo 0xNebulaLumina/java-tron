@@ -4,7 +4,7 @@
   "caseName": "validate_fail_withdraw_another_token_quant_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when calculated proportional withdrawal is zero",
-  "generatedAt": "2026-01-14T06:56:46.338Z",
+  "generatedAt": "2026-01-25T09:15:24.503Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_new_public_limit_too_large",
   "caseCategory": "validate_fail",
   "description": "Fail when newPublicLimit >= oneDayNetLimit",
-  "generatedAt": "2026-01-14T06:56:53.856Z",
+  "generatedAt": "2026-01-25T09:15:32.287Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

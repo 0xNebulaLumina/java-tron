@@ -4,7 +4,7 @@
   "caseName": "validate_fail_witness_not_sr",
   "caseCategory": "validate_fail",
   "description": "Fail when trying to set witness permission on non-witness account",
-  "generatedAt": "2026-01-14T06:56:40.756Z",
+  "generatedAt": "2026-01-25T09:15:17.853Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

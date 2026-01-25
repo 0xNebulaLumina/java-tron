@@ -4,7 +4,7 @@
   "caseName": "validate_fail_account_id_empty",
   "caseCategory": "validate_fail",
   "description": "Fail when account ID is empty (0 bytes)",
-  "generatedAt": "2026-01-14T06:56:40.753Z",
+  "generatedAt": "2026-01-25T09:15:17.849Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

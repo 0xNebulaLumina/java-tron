@@ -4,7 +4,7 @@
   "caseName": "validate_fail_active_type_wrong",
   "caseCategory": "validate_fail",
   "description": "Fail when active permission has wrong type (Owner instead of Active)",
-  "generatedAt": "2026-01-14T06:56:40.692Z",
+  "generatedAt": "2026-01-25T09:15:17.787Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

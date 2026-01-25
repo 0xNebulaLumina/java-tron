@@ -4,7 +4,7 @@
   "caseName": "legacy_validate_fail_insufficient_balance",
   "caseCategory": "validate_fail",
   "description": "Legacy mode (V1): Fail when owner has insufficient token balance",
-  "generatedAt": "2026-01-14T06:56:52.908Z",
+  "generatedAt": "2026-01-25T09:15:31.174Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
