@@ -131,6 +131,9 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
       Streams.stream(((SnapshotImpl) next).db)
           .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
               WrappedByteArray.of(e.getValue().getBytes())));
+      if (next == this) {
+        break;
+      }
       next = next.getNext();
     }
   }
@@ -142,6 +145,9 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
               Objects.requireNonNull(e.getKey().getBytes()), prefix) == 0)
           .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
               WrappedByteArray.of(e.getValue().getBytes())));
+      if (next == this) {
+        break;
+      }
       next = next.getNext();
     }
   }
@@ -160,6 +166,9 @@ public class SnapshotImpl extends AbstractSnapshot<Key, Value> {
       Streams.stream(((SnapshotImpl) next).db)
           .forEach(e -> all.put(WrappedByteArray.of(e.getKey().getBytes()),
               e.getValue().getOperator()));
+      if (next == this) {
+        break;
+      }
       next = next.getNext();
     }
   }

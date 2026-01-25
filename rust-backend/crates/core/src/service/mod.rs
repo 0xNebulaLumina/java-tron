@@ -3682,10 +3682,6 @@ impl BackendService {
             self.check_account_permission_update_permission(storage_adapter, active_perm, address_prefix)?;
         }
 
-        // Java-tron has transactional/revoking semantics: if fee payment fails,
-        // the entire operation is reverted (no permission changes persisted).
-        // To match this, we must validate fee payment BEFORE persisting any changes.
-
         let fee = storage_adapter.get_update_account_permission_fee()
             .map_err(|e| format!("Failed to get update_account_permission_fee: {}", e))?;
         info!("AccountPermissionUpdate: owner={}, fee={}", owner_tron, fee);
@@ -3694,19 +3690,9 @@ impl BackendService {
             return Err("Invalid update account permission fee".to_string());
         }
 
-        // Check balance BEFORE any state changes (atomicity parity with Java)
-        if fee > 0 {
-            let current_balance = account_proto.balance;
-            if current_balance < fee {
-                let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&owner));
-                return Err(format!(
-                    "{} insufficient balance, balance: {}, amount: {}",
-                    owner_hex, current_balance, fee
-                ));
-            }
-        }
-
-        // Now safe to apply changes - balance check passed
+        // Java actuator order: persist permission updates, then charge the fee.
+        // In java-tron this runs under the revoking store, so if fee payment fails
+        // (BalanceInsufficientException) all writes are rolled back.
 
         // Update permissions in memory
         owner_permission.id = 0;
@@ -3725,14 +3711,29 @@ impl BackendService {
             account_proto.active_permission.push(active_perm);
         }
 
-        // Deduct fee from balance (in memory)
+        // Persist permission changes first (before fee charging).
+        storage_adapter.put_account_proto(&owner, &account_proto)
+            .map_err(|e| format!("Failed to persist account permissions: {}", e))?;
+
+        // Charge fee after permissions are persisted.
         if fee > 0 {
+            let current_balance = account_proto.balance;
+            if current_balance < fee {
+                let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&owner));
+                return Err(format!(
+                    "{} insufficient balance, balance: {}, amount: {}",
+                    owner_hex, current_balance, fee
+                ));
+            }
+
             account_proto.balance -= fee;
         }
 
-        // Persist account with both permission updates and fee deduction in a single write
-        storage_adapter.put_account_proto(&owner, &account_proto)
-            .map_err(|e| format!("Failed to persist account: {}", e))?;
+        // Persist fee deduction (if any) in a separate write.
+        if fee > 0 {
+            storage_adapter.put_account_proto(&owner, &account_proto)
+                .map_err(|e| format!("Failed to persist fee deduction: {}", e))?;
+        }
 
         // Handle fee destination: burn or credit to blackhole
         // Java: supportBlackHoleOptimization() ? burnTrx(fee) : credit blackhole account
