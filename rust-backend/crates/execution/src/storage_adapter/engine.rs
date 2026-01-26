@@ -3404,22 +3404,42 @@ impl EngineBackedEvmStateStore {
     /// Get TOTAL_SIGN_NUM dynamic property
     /// Maximum number of keys allowed in a permission
     /// Java throws `IllegalArgumentException("not found TOTAL_SIGN_NUM")` if missing.
+    ///
+    /// Note: Java stores this as 4-byte int (ByteArray.fromInt), not 8-byte long.
+    /// Java's ByteArray.toInt uses BigInteger(1, b).intValue() which treats bytes as
+    /// unsigned big-endian then truncates to int. We support both 4-byte and 8-byte
+    /// for compatibility with Java storage and Rust test fixtures.
     pub fn get_total_sign_num(&self) -> Result<i64> {
         let key = b"TOTAL_SIGN_NUM";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                if data.len() >= 8 {
-                    let value = i64::from_be_bytes([
+                let value = if data.len() >= 8 {
+                    // 8-byte value (from Rust tests or future Java changes)
+                    i64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7],
-                    ]);
-                    tracing::debug!("TOTAL_SIGN_NUM: {}", value);
-                    Ok(value)
+                    ])
+                } else if data.len() >= 4 {
+                    // 4-byte value (from Java's ByteArray.fromInt)
+                    // Java stores as big-endian signed int, convert to i64
+                    i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64
+                } else if !data.is_empty() {
+                    // Variable-length big-endian (Java's BigInteger semantics)
+                    // Treat as unsigned big-endian, convert to i64
+                    let mut val: i64 = 0;
+                    for &byte in &data {
+                        val = (val << 8) | (byte as i64);
+                    }
+                    val
                 } else {
-                    // Invalid length treated as missing for strict parity
-                    tracing::warn!("TOTAL_SIGN_NUM has invalid length: {}", data.len());
-                    Err(anyhow::anyhow!("not found TOTAL_SIGN_NUM"))
-                }
+                    // Empty data - Java's toInt returns 0 for empty arrays,
+                    // but getTotalSignNum() throws on missing, not empty.
+                    // Treat empty as missing for strict parity.
+                    tracing::warn!("TOTAL_SIGN_NUM has empty data");
+                    return Err(anyhow::anyhow!("not found TOTAL_SIGN_NUM"));
+                };
+                tracing::debug!("TOTAL_SIGN_NUM: {} (from {} bytes)", value, data.len());
+                Ok(value)
             }
             None => {
                 // Java throws IllegalArgumentException when key is missing

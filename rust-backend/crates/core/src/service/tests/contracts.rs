@@ -382,7 +382,8 @@ fn test_account_permission_update_validate_fail_owner_address_empty() {
     storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
     storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
     storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &100_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt), not 8-byte long
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
     let available_contract_type = [0xFFu8; 32];
     storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
 
@@ -3367,7 +3368,8 @@ fn test_account_permission_update_burn_trx_when_blackhole_optimization_enabled()
     let fee: i64 = 100_000_000;
     storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
     // TOTAL_SIGN_NUM = 5 (max keys per permission)
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    // Java stores as 4-byte int (ByteArray.fromInt), not 8-byte long
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
     // AVAILABLE_CONTRACT_TYPE - 32 bytes, all bits enabled
     let available_contract_type = [0xFFu8; 32];
     storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
@@ -3469,7 +3471,8 @@ fn test_account_permission_update_credit_blackhole_when_optimization_disabled() 
     storage_engine.put("properties", b"BURN_TRX_AMOUNT", &0i64.to_be_bytes()).unwrap();
     let fee: i64 = 100_000_000;
     storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
     let available_contract_type = [0xFFu8; 32];
     storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
 
@@ -3578,7 +3581,8 @@ fn test_account_permission_update_insufficient_balance_error_message() {
     storage_engine.put("properties", b"BURN_TRX_AMOUNT", &0i64.to_be_bytes()).unwrap();
     let fee: i64 = 100_000_000; // 100 TRX fee
     storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
     let available_contract_type = [0xFFu8; 32];
     storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
 
@@ -3716,7 +3720,8 @@ fn test_account_permission_update_invalid_contract_type_in_operations() {
     storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
     let fee: i64 = 100_000_000;
     storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
 
     // Set AVAILABLE_CONTRACT_TYPE with bit 0 UNSET (contract type 0 is not available)
     // This means contract type 0 (AccountCreateContract) cannot be enabled in active permissions
@@ -3806,7 +3811,8 @@ fn test_account_permission_update_missing_available_contract_type() {
     storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
     let fee: i64 = 100_000_000;
     storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
     // NOTE: AVAILABLE_CONTRACT_TYPE is intentionally NOT set
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
@@ -3876,7 +3882,8 @@ fn test_account_permission_update_available_contract_type_too_short() {
     storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
     let fee: i64 = 100_000_000;
     storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
     // AVAILABLE_CONTRACT_TYPE with only 16 bytes (should be 32)
     let short_available = [0xFFu8; 16];
     storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &short_available).unwrap();
@@ -3948,7 +3955,8 @@ fn test_account_permission_update_missing_allow_multi_sign() {
     storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
     let fee: i64 = 100_000_000;
     storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
     let available_contract_type = [0xFFu8; 32];
     storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
     // NOTE: ALLOW_MULTI_SIGN is intentionally NOT set
@@ -4087,7 +4095,8 @@ fn test_account_permission_update_missing_update_account_permission_fee() {
     // Seed dynamic properties WITHOUT UPDATE_ACCOUNT_PERMISSION_FEE
     storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
     storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
     let available_contract_type = [0xFFu8; 32];
     storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
     // NOTE: UPDATE_ACCOUNT_PERMISSION_FEE is intentionally NOT set
