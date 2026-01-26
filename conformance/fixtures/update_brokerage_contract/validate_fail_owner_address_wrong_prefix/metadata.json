@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_address_wrong_prefix",
   "caseCategory": "validate_fail",
   "description": "Fail when owner_address has wrong network prefix (0xa0 instead of 0x41)",
-  "generatedAt": "2026-01-14T06:56:43.121Z",
+  "generatedAt": "2026-01-25T09:15:20.868Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

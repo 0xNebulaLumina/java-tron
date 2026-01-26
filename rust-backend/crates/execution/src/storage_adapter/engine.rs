@@ -1057,27 +1057,31 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get AllowMultiSign dynamic property
-    /// Default value: 1 (enabled)
+    /// Java-tron uses strict `== 1` check (not just `!= 0`) for parity.
+    /// Java throws `IllegalArgumentException("not found ALLOW_MULTI_SIGN")` if missing.
     pub fn get_allow_multi_sign(&self) -> Result<bool> {
         let key = b"ALLOW_MULTI_SIGN";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                // Java stores dynamic properties as big-endian i64/u64.
-                // For small values (e.g. 1), the first byte is 0; so interpret as 8-byte integer.
+                // Java stores dynamic properties as big-endian i64.
+                // Java: getAllowMultiSign() != 1 is "not allowed", so we need strict == 1 check.
                 if data.len() >= 8 {
-                    let val = u64::from_be_bytes([
+                    let val = i64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7],
                     ]);
-                    Ok(val != 0)
+                    Ok(val == 1)
                 } else if !data.is_empty() {
-                    Ok(data[0] != 0)
+                    // Fallback for short data (edge case)
+                    Ok(data[data.len() - 1] == 1)
                 } else {
-                    Ok(true) // Default enabled
+                    // Empty data treated as missing for strict parity
+                    Err(anyhow::anyhow!("not found ALLOW_MULTI_SIGN"))
                 }
             },
             None => {
-                Ok(true) // Default enabled
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found ALLOW_MULTI_SIGN"))
             }
         }
     }
@@ -1149,24 +1153,26 @@ impl EngineBackedEvmStateStore {
 
     /// Get Black Hole Optimization dynamic property (parity with Java)
     /// Java stores this as a long under key "ALLOW_BLACKHOLE_OPTIMIZATION".
+    /// Java uses strict `== 1` check (not just `!= 0`) for parity.
     /// When this flag is 1, the node BURNS fees (optimization enabled).
-    /// When 0, the node CREDITS the blackhole account.
+    /// When 0 or any other value, the node CREDITS the blackhole account.
     /// Default: false (credit blackhole) to match early-chain behavior when key is absent.
     pub fn support_black_hole_optimization(&self) -> Result<bool> {
         // Parity key with java-tron DynamicPropertiesStore
         let key = b"ALLOW_BLACKHOLE_OPTIMIZATION";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                // Java writes a long; interpret big-endian u64 when length >= 8.
+                // Java writes a long; interpret big-endian i64 when length >= 8.
+                // Java: supportBlackHoleOptimization() checks value == 1 (strict).
                 if data.len() >= 8 {
-                    let val = u64::from_be_bytes([
+                    let val = i64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7]
                     ]);
-                    Ok(val != 0)
+                    Ok(val == 1)
                 } else if !data.is_empty() {
-                    // Fallback: treat first byte as boolean
-                    Ok(data[0] != 0)
+                    // Fallback: treat last byte as the value (edge case)
+                    Ok(data[data.len() - 1] == 1)
                 } else {
                     // Empty value → treat as disabled (credit blackhole)
                     Ok(false)
@@ -3397,33 +3403,51 @@ impl EngineBackedEvmStateStore {
 
     /// Get TOTAL_SIGN_NUM dynamic property
     /// Maximum number of keys allowed in a permission
-    /// Default: 5
+    /// Java throws `IllegalArgumentException("not found TOTAL_SIGN_NUM")` if missing.
+    ///
+    /// Note: Java stores this as 4-byte int (ByteArray.fromInt), not 8-byte long.
+    /// Java's ByteArray.toInt uses BigInteger(1, b).intValue() which:
+    /// - Returns 0 for empty arrays
+    /// - Interprets bytes as unsigned big-endian
+    /// - Truncates to low 32 bits (equivalent to taking last 4 bytes for len >= 4)
     pub fn get_total_sign_num(&self) -> Result<i64> {
         let key = b"TOTAL_SIGN_NUM";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                if data.len() >= 8 {
-                    let value = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
-                    ]);
-                    tracing::debug!("TOTAL_SIGN_NUM: {}", value);
-                    Ok(value)
+                // Match Java's ByteArray.toInt(byte[] b) exactly:
+                // return ArrayUtils.isEmpty(b) ? 0 : new BigInteger(1, b).intValue();
+                let value = if data.is_empty() {
+                    // Java's toInt returns 0 for empty arrays
+                    0i64
+                } else if data.len() >= 4 {
+                    // BigInteger(1, b).intValue() returns low 32 bits of unsigned big-endian.
+                    // For len >= 4, this is equivalent to taking the last 4 bytes.
+                    let start = data.len() - 4;
+                    let last_4 = [data[start], data[start + 1], data[start + 2], data[start + 3]];
+                    // Interpret as unsigned u32, cast to i32 for signed semantics, then to i64
+                    let unsigned_val = u32::from_be_bytes(last_4);
+                    (unsigned_val as i32) as i64
                 } else {
-                    tracing::warn!("TOTAL_SIGN_NUM has invalid length: {}", data.len());
-                    Ok(5) // Default
-                }
+                    // For len < 4, interpret as unsigned big-endian (fits in i32)
+                    let mut val: i64 = 0;
+                    for &byte in &data {
+                        val = (val << 8) | (byte as i64);
+                    }
+                    val
+                };
+                tracing::debug!("TOTAL_SIGN_NUM: {} (from {} bytes)", value, data.len());
+                Ok(value)
             }
             None => {
-                tracing::debug!("TOTAL_SIGN_NUM not found, returning default 5");
-                Ok(5)
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found TOTAL_SIGN_NUM"))
             }
         }
     }
 
     /// Get UPDATE_ACCOUNT_PERMISSION_FEE dynamic property
     /// Fee in SUN for updating account permissions
-    /// Default: 100_000_000 (100 TRX)
+    /// Java throws `IllegalArgumentException("not found UPDATE_ACCOUNT_PERMISSION_FEE")` if missing.
     pub fn get_update_account_permission_fee(&self) -> Result<i64> {
         let key = b"UPDATE_ACCOUNT_PERMISSION_FEE";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
@@ -3436,30 +3460,31 @@ impl EngineBackedEvmStateStore {
                     tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE: {}", value);
                     Ok(value)
                 } else {
+                    // Invalid length treated as missing for strict parity
                     tracing::warn!("UPDATE_ACCOUNT_PERMISSION_FEE has invalid length: {}", data.len());
-                    Ok(100_000_000) // 100 TRX in SUN
+                    Err(anyhow::anyhow!("not found UPDATE_ACCOUNT_PERMISSION_FEE"))
                 }
             }
             None => {
-                tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE not found, returning default 100_000_000");
-                Ok(100_000_000) // 100 TRX in SUN
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found UPDATE_ACCOUNT_PERMISSION_FEE"))
             }
         }
     }
 
     /// Get AVAILABLE_CONTRACT_TYPE dynamic property
     /// Bitmap of allowed contract types (32 bytes)
-    /// Returns None if not found (all contracts allowed)
-    pub fn get_available_contract_type(&self) -> Result<Option<Vec<u8>>> {
+    /// Java throws `IllegalArgumentException("not found AVAILABLE_CONTRACT_TYPE")` if missing.
+    pub fn get_available_contract_type(&self) -> Result<Vec<u8>> {
         let key = b"AVAILABLE_CONTRACT_TYPE";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 tracing::debug!("AVAILABLE_CONTRACT_TYPE: {} bytes", data.len());
-                Ok(Some(data))
+                Ok(data)
             }
             None => {
-                tracing::debug!("AVAILABLE_CONTRACT_TYPE not found");
-                Ok(None)
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found AVAILABLE_CONTRACT_TYPE"))
             }
         }
     }

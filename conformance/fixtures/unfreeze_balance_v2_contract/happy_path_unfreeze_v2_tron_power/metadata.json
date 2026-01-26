@@ -4,7 +4,7 @@
   "caseName": "happy_path_unfreeze_v2_tron_power",
   "caseCategory": "happy",
   "description": "V2 unfreeze TRON_POWER resource (new resource model enabled)",
-  "generatedAt": "2026-01-14T06:56:48.441Z",
+  "generatedAt": "2026-01-25T09:15:26.617Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

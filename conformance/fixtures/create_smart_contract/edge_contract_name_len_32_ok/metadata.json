@@ -4,7 +4,7 @@
   "caseName": "edge_contract_name_len_32_ok",
   "caseCategory": "edge",
   "description": "Success when contract name is exactly 32 bytes",
-  "generatedAt": "2026-01-14T06:56:54.892Z",
+  "generatedAt": "2026-01-25T09:15:33.375Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

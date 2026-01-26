@@ -4,7 +4,7 @@
   "caseName": "validate_fail_witness_keys_not_one",
   "caseCategory": "validate_fail",
   "description": "Fail when witness permission has more than 1 key",
-  "generatedAt": "2026-01-14T06:56:40.705Z",
+  "generatedAt": "2026-01-25T09:15:17.802Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

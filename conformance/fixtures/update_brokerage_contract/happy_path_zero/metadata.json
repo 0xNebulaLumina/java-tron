@@ -4,7 +4,7 @@
   "caseName": "happy_path_zero",
   "caseCategory": "happy",
   "description": "Set brokerage to 0% (witness takes no commission)",
-  "generatedAt": "2026-01-14T06:56:43.102Z",
+  "generatedAt": "2026-01-25T09:15:20.850Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

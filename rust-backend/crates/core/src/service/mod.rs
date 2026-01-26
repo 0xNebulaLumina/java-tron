@@ -3548,13 +3548,17 @@ impl BackendService {
             return Err("operations size must 32".to_string());
         }
 
-        // Check operations bits against AVAILABLE_CONTRACT_TYPE bitmap when present.
+        // Check operations bits against AVAILABLE_CONTRACT_TYPE bitmap.
+        // Java-tron requires this property to exist and be >= 32 bytes; missing/short is an error.
         let available_contract_type = storage_adapter.get_available_contract_type()
-            .map_err(|e| format!("Failed to get AVAILABLE_CONTRACT_TYPE: {}", e))?;
-        let allow_all = [0xFFu8; 32];
-        let allowed_bitmap: &[u8] = match available_contract_type.as_deref() {
-            Some(b) if b.len() >= 32 => &b[..32],
-            _ => &allow_all,
+            .map_err(|e| format!("{}", e))?;
+        let allowed_bitmap: &[u8] = if available_contract_type.len() >= 32 {
+            &available_contract_type[..32]
+        } else {
+            return Err(format!(
+                "AVAILABLE_CONTRACT_TYPE is too short: expected >= 32 bytes, got {}",
+                available_contract_type.len()
+            ));
         };
 
         for i in 0..256 {
@@ -3674,7 +3678,19 @@ impl BackendService {
             self.check_account_permission_update_permission(storage_adapter, active_perm, address_prefix)?;
         }
 
-        // Execute (match java-tron: update permissions first, then charge fee)
+        let fee = storage_adapter.get_update_account_permission_fee()
+            .map_err(|e| format!("Failed to get update_account_permission_fee: {}", e))?;
+        info!("AccountPermissionUpdate: owner={}, fee={}", owner_tron, fee);
+
+        if fee < 0 {
+            return Err("Invalid update account permission fee".to_string());
+        }
+
+        // Java actuator order: persist permission updates, then charge the fee.
+        // In java-tron this runs under the revoking store, so if fee payment fails
+        // (BalanceInsufficientException) all writes are rolled back.
+
+        // Update permissions in memory
         owner_permission.id = 0;
         account_proto.owner_permission = Some(owner_permission);
 
@@ -3691,17 +3707,11 @@ impl BackendService {
             account_proto.active_permission.push(active_perm);
         }
 
-        // Persist permissions update before charging fee (so insufficient balance keeps permission changes)
+        // Persist permission changes first (before fee charging).
         storage_adapter.put_account_proto(&owner, &account_proto)
-            .map_err(|e| format!("Failed to persist account: {}", e))?;
+            .map_err(|e| format!("Failed to persist account permissions: {}", e))?;
 
-        let fee = storage_adapter.get_update_account_permission_fee()
-            .map_err(|e| format!("Failed to get update_account_permission_fee: {}", e))?;
-        info!("AccountPermissionUpdate: owner={}, fee={}", owner_tron, fee);
-
-        if fee < 0 {
-            return Err("Invalid update account permission fee".to_string());
-        }
+        // Charge fee after permissions are persisted.
         if fee > 0 {
             let current_balance = account_proto.balance;
             if current_balance < fee {
@@ -3711,23 +3721,36 @@ impl BackendService {
                     owner_hex, current_balance, fee
                 ));
             }
-            account_proto.balance = current_balance - fee;
-            storage_adapter.put_account_proto(&owner, &account_proto)
-                .map_err(|e| format!("Failed to persist account: {}", e))?;
+
+            account_proto.balance -= fee;
         }
 
-        // Handle fee: burn or credit to blackhole
+        // Persist fee deduction (if any) in a separate write.
+        if fee > 0 {
+            storage_adapter.put_account_proto(&owner, &account_proto)
+                .map_err(|e| format!("Failed to persist fee deduction: {}", e))?;
+        }
+
+        // Handle fee destination: burn or credit to blackhole
+        // Java: supportBlackHoleOptimization() ? burnTrx(fee) : credit blackhole account
         let support_blackhole_optimization = storage_adapter.support_black_hole_optimization()
             .map_err(|e| format!("Failed to get blackhole optimization flag: {}", e))?;
 
-        if !support_blackhole_optimization {
-            if fee > 0 {
-                let blackhole_addr = storage_adapter.get_blackhole_address_evm();
-                storage_adapter.add_balance(&blackhole_addr, fee as u64)
-                    .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+        if fee > 0 {
+            if support_blackhole_optimization {
+                // Burn mode: increment BURN_TRX_AMOUNT (matches Java's burnTrx())
+                storage_adapter.burn_trx(fee as u64)
+                    .map_err(|e| format!("Failed to burn TRX: {}", e))?;
+            } else {
+                // Credit blackhole account (use get_blackhole_address for consistency)
+                if let Some(blackhole_addr) = storage_adapter.get_blackhole_address()
+                    .map_err(|e| format!("Failed to get blackhole address: {}", e))?
+                {
+                    storage_adapter.add_balance(&blackhole_addr, fee as u64)
+                        .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+                }
             }
         }
-        // If blackhole optimization is enabled, fee is just burned (not credited anywhere)
 
         info!("AccountPermissionUpdate completed: owner={}, fee={}", owner_tron, fee);
 

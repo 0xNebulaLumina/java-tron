@@ -4,7 +4,7 @@
   "caseName": "validate_fail_description_too_long_201",
   "caseCategory": "validate_fail",
   "description": "Fail when description length is 201 bytes (max is 200)",
-  "generatedAt": "2026-01-14T06:56:41.932Z",
+  "generatedAt": "2026-01-25T09:15:19.704Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

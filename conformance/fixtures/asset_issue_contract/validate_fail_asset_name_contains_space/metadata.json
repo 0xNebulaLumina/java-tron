@@ -4,7 +4,7 @@
   "caseName": "validate_fail_asset_name_contains_space",
   "caseCategory": "validate_fail",
   "description": "Fail when asset name contains space (0x20, below valid range 0x21-0x7E)",
-  "generatedAt": "2026-01-14T06:56:41.910Z",
+  "generatedAt": "2026-01-25T09:15:19.645Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

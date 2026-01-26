@@ -4,7 +4,7 @@
   "caseName": "happy_path",
   "caseCategory": "happy",
   "description": "Cancel all pending unfreeze operations",
-  "generatedAt": "2026-01-14T06:56:51.911Z",
+  "generatedAt": "2026-01-25T09:15:30.162Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

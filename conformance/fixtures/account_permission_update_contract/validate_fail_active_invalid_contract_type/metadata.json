@@ -4,7 +4,7 @@
   "caseName": "validate_fail_active_invalid_contract_type",
   "caseCategory": "validate_fail",
   "description": "Fail when active permission enables a contract type not in AVAILABLE_CONTRACT_TYPE",
-  "generatedAt": "2026-01-14T06:56:40.777Z",
+  "generatedAt": "2026-01-25T09:15:17.868Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

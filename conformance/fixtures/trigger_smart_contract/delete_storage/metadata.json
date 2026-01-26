@@ -4,7 +4,7 @@
   "caseName": "delete_storage",
   "caseCategory": "happy",
   "description": "Delete storage slot using testDelete(1)",
-  "generatedAt": "2026-01-14T06:57:22.901Z",
+  "generatedAt": "2026-01-25T09:16:04.374Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

@@ -4,7 +4,7 @@
   "caseName": "legacy_happy_path",
   "caseCategory": "happy",
   "description": "Legacy mode (allowSameTokenName=0): Unfreeze expired frozen asset supply using asset name",
-  "generatedAt": "2026-01-14T06:56:53.861Z",
+  "generatedAt": "2026-01-25T09:15:32.293Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

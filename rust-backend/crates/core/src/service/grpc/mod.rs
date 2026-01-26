@@ -1052,12 +1052,20 @@ impl crate::backend::backend_server::Backend for BackendService {
             .map(|cfg| cfg.remote.rust_persist_enabled)
             .unwrap_or(false);
 
-        // Create storage adapter with optional write buffer for Phase B conformance
-        let (mut storage_adapter, write_buffer) = if rust_persist_enabled {
+        // Create storage adapter with optional write buffer.
+        //
+        // Always buffer NON_VM execution to match java-tron's transactional semantics:
+        // if execution returns an error, no partial writes should be persisted.
+        let use_buffered_writes = rust_persist_enabled || matches!(tx_kind, crate::backend::TxKind::NonVm);
+        let (mut storage_adapter, write_buffer) = if use_buffered_writes {
             let (adapter, buffer) = tron_backend_execution::EngineBackedEvmStateStore::new_with_buffer(
                 storage_engine.clone(),
             );
-            info!("Phase B: Using buffered writes (rust_persist_enabled=true)");
+            if rust_persist_enabled {
+                info!("Phase B: Using buffered writes (rust_persist_enabled=true)");
+            } else {
+                info!("Using buffered writes for NON_VM atomicity");
+            }
             (adapter, Some(buffer))
         } else {
             let adapter = tron_backend_execution::EngineBackedEvmStateStore::new(

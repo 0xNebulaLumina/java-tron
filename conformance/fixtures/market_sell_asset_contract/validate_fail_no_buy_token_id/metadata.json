@@ -4,7 +4,7 @@
   "caseName": "validate_fail_no_buy_token_id",
   "caseCategory": "validate_fail",
   "description": "Fail when buyTokenId does not exist",
-  "generatedAt": "2026-01-14T06:56:49.596Z",
+  "generatedAt": "2026-01-25T09:15:27.693Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

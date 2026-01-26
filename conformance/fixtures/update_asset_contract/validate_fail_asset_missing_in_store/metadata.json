@@ -4,7 +4,7 @@
   "caseName": "validate_fail_asset_missing_in_store",
   "caseCategory": "validate_fail",
   "description": "Fail when account's assetIssuedID refers to non-existent asset",
-  "generatedAt": "2026-01-14T06:56:53.857Z",
+  "generatedAt": "2026-01-25T09:15:32.289Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

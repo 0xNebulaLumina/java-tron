@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_id_too_small",
   "caseCategory": "validate_fail",
   "description": "Fail when tokenId <= 1_000_000 and tokenId != 0",
-  "generatedAt": "2026-01-14T06:56:54.928Z",
+  "generatedAt": "2026-01-25T09:15:33.396Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

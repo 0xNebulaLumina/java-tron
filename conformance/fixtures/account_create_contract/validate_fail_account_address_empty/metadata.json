@@ -4,7 +4,7 @@
   "caseName": "validate_fail_account_address_empty",
   "caseCategory": "validate_fail",
   "description": "Fail when target account address is empty bytes",
-  "generatedAt": "2026-01-14T06:56:45.256Z",
+  "generatedAt": "2026-01-25T09:15:23.172Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

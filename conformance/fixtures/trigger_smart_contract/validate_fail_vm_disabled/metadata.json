@@ -4,7 +4,7 @@
   "caseName": "validate_fail_vm_disabled",
   "caseCategory": "validate_fail",
   "description": "Trigger when VM support is disabled via committee",
-  "generatedAt": "2026-01-14T06:57:14.567Z",
+  "generatedAt": "2026-01-25T09:15:55.232Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

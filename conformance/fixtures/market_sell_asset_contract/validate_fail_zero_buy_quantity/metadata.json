@@ -4,7 +4,7 @@
   "caseName": "validate_fail_zero_buy_quantity",
   "caseCategory": "validate_fail",
   "description": "Fail when buy quantity is zero",
-  "generatedAt": "2026-01-14T06:56:49.610Z",
+  "generatedAt": "2026-01-25T09:15:27.709Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

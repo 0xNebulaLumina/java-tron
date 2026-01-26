@@ -4,7 +4,7 @@
   "caseName": "edge_revert_with_reason",
   "caseCategory": "edge",
   "description": "Call function that explicitly reverts with a reason string",
-  "generatedAt": "2026-01-14T06:57:13.649Z",
+  "generatedAt": "2026-01-25T09:15:54.224Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

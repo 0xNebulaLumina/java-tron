@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_expired",
   "caseCategory": "validate_fail",
   "description": "Fail when frozen supply has not yet expired",
-  "generatedAt": "2026-01-14T06:56:53.853Z",
+  "generatedAt": "2026-01-25T09:15:32.285Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

@@ -545,6 +545,40 @@ impl ConformanceRunner {
             }
         };
 
+        // Validate fixture structure before execution so missing files are reported clearly.
+        let pre_db_dir = fixture.path.join("pre_db");
+        if !pre_db_dir.exists() {
+            return ConformanceResult::failure(metadata, "pre_db directory not found".to_string());
+        }
+
+        let expected_dir = fixture.path.join("expected");
+        if !expected_dir.exists() {
+            return ConformanceResult::failure(metadata, "expected directory not found".to_string());
+        }
+
+        let post_db_dir = expected_dir.join("post_db");
+        if !post_db_dir.exists() {
+            return ConformanceResult::failure(metadata, "expected/post_db directory not found".to_string());
+        }
+
+        for db_name in metadata.databases_touched.iter() {
+            let pre_kv = pre_db_dir.join(format!("{}.kv", db_name));
+            if !pre_kv.exists() {
+                return ConformanceResult::failure(
+                    metadata.clone(),
+                    format!("Missing pre_db/{}.kv", db_name),
+                );
+            }
+
+            let expected_kv = post_db_dir.join(format!("{}.kv", db_name));
+            if !expected_kv.exists() {
+                return ConformanceResult::failure(
+                    metadata.clone(),
+                    format!("Missing expected/post_db/{}.kv", db_name),
+                );
+            }
+        }
+
         // Load request
         let request = match self.load_request(fixture) {
             Ok(r) => r,
@@ -624,25 +658,24 @@ impl ConformanceRunner {
 
         // Execute transaction using the same dispatch logic as the real backend.
         // Use buffered writes: accumulate all writes in memory, only commit on success.
-        // This ensures validate_fail fixtures produce zero writes to post_db.
+        // This ensures NON_VM failures do not persist partial writes.
         let execution_result: Result<tron_backend_execution::TronExecutionResult, String> = match tx_kind {
             crate::backend::TxKind::NonVm => {
                 // Create storage adapter with a write buffer for atomic commit/rollback
-                let (mut storage_adapter, write_buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
+                let (mut storage_adapter, _write_buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
 
                 let result = backend_service.execute_non_vm_contract(&mut storage_adapter, &transaction, &context);
 
-                // Conformance fixtures capture java-tron's persisted post_db. Some fixtures expect
-                // state changes even when the transaction result is REVERT, and the current
-                // non-VM dispatch returns `Err(String)` for those failures.
-                //
-                // For fixture parity, always commit buffered writes after execution; the contract
-                // logic itself determines whether it wrote any state.
-                if let Err(e) = storage_adapter.commit_buffer() {
-                    return ConformanceResult::failure(
-                        metadata,
-                        format!("Failed to commit write buffer: {}", e),
-                    );
+                // Commit only on success; on failure drop buffer (rollback).
+                if let Ok(ref r) = result {
+                    if r.success {
+                        if let Err(e) = storage_adapter.commit_buffer() {
+                            return ConformanceResult::failure(
+                                metadata,
+                                format!("Failed to commit write buffer: {}", e),
+                            );
+                        }
+                    }
                 }
 
                 result
@@ -910,6 +943,12 @@ impl ConformanceRunner {
             return ConformanceResult::failure(metadata, "expected directory not found".to_string());
         }
 
+        // Check expected/post_db directory
+        let post_db_dir = expected_dir.join("post_db");
+        if !post_db_dir.exists() {
+            return ConformanceResult::failure(metadata, "expected/post_db directory not found".to_string());
+        }
+
         // Validate all databases are present in pre_db
         for db_name in metadata.databases_touched.iter() {
             let kv_file = pre_db_dir.join(format!("{}.kv", db_name));
@@ -917,6 +956,17 @@ impl ConformanceRunner {
                 return ConformanceResult::failure(
                     metadata.clone(),
                     format!("Missing pre_db/{}.kv", db_name),
+                );
+            }
+        }
+
+        // Validate all databases are present in expected/post_db
+        for db_name in metadata.databases_touched.iter() {
+            let kv_file = post_db_dir.join(format!("{}.kv", db_name));
+            if !kv_file.exists() {
+                return ConformanceResult::failure(
+                    metadata.clone(),
+                    format!("Missing expected/post_db/{}.kv", db_name),
                 );
             }
         }

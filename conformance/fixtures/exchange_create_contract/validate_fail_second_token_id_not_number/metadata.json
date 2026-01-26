@@ -4,7 +4,7 @@
   "caseName": "validate_fail_second_token_id_not_number",
   "caseCategory": "validate_fail",
   "description": "Fail when second token id is not a valid number",
-  "generatedAt": "2026-01-14T06:56:46.334Z",
+  "generatedAt": "2026-01-25T09:15:24.500Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

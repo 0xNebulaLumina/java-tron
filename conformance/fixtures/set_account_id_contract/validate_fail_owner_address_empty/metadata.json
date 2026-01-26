@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_address_empty",
   "caseCategory": "validate_fail",
   "description": "Fail when owner address is empty bytes",
-  "generatedAt": "2026-01-14T06:56:40.773Z",
+  "generatedAt": "2026-01-25T09:15:17.863Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

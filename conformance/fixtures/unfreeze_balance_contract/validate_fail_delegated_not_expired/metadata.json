@@ -4,7 +4,7 @@
   "caseName": "validate_fail_delegated_not_expired",
   "caseCategory": "validate_fail",
   "description": "Fail when delegated resource has not expired yet",
-  "generatedAt": "2026-01-14T06:56:47.406Z",
+  "generatedAt": "2026-01-25T09:15:25.602Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

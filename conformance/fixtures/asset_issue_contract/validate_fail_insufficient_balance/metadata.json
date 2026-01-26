@@ -4,7 +4,7 @@
   "caseName": "validate_fail_insufficient_balance",
   "caseCategory": "validate_fail",
   "description": "Fail when owner has insufficient balance for asset issuance fee",
-  "generatedAt": "2026-01-14T06:56:41.950Z",
+  "generatedAt": "2026-01-25T09:15:19.725Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
