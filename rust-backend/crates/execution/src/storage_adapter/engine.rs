@@ -3406,37 +3406,34 @@ impl EngineBackedEvmStateStore {
     /// Java throws `IllegalArgumentException("not found TOTAL_SIGN_NUM")` if missing.
     ///
     /// Note: Java stores this as 4-byte int (ByteArray.fromInt), not 8-byte long.
-    /// Java's ByteArray.toInt uses BigInteger(1, b).intValue() which treats bytes as
-    /// unsigned big-endian then truncates to int. We support both 4-byte and 8-byte
-    /// for compatibility with Java storage and Rust test fixtures.
+    /// Java's ByteArray.toInt uses BigInteger(1, b).intValue() which:
+    /// - Returns 0 for empty arrays
+    /// - Interprets bytes as unsigned big-endian
+    /// - Truncates to low 32 bits (equivalent to taking last 4 bytes for len >= 4)
     pub fn get_total_sign_num(&self) -> Result<i64> {
         let key = b"TOTAL_SIGN_NUM";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                let value = if data.len() >= 8 {
-                    // 8-byte value (from Rust tests or future Java changes)
-                    i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
-                    ])
+                // Match Java's ByteArray.toInt(byte[] b) exactly:
+                // return ArrayUtils.isEmpty(b) ? 0 : new BigInteger(1, b).intValue();
+                let value = if data.is_empty() {
+                    // Java's toInt returns 0 for empty arrays
+                    0i64
                 } else if data.len() >= 4 {
-                    // 4-byte value (from Java's ByteArray.fromInt)
-                    // Java stores as big-endian signed int, convert to i64
-                    i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64
-                } else if !data.is_empty() {
-                    // Variable-length big-endian (Java's BigInteger semantics)
-                    // Treat as unsigned big-endian, convert to i64
+                    // BigInteger(1, b).intValue() returns low 32 bits of unsigned big-endian.
+                    // For len >= 4, this is equivalent to taking the last 4 bytes.
+                    let start = data.len() - 4;
+                    let last_4 = [data[start], data[start + 1], data[start + 2], data[start + 3]];
+                    // Interpret as unsigned u32, cast to i32 for signed semantics, then to i64
+                    let unsigned_val = u32::from_be_bytes(last_4);
+                    (unsigned_val as i32) as i64
+                } else {
+                    // For len < 4, interpret as unsigned big-endian (fits in i32)
                     let mut val: i64 = 0;
                     for &byte in &data {
                         val = (val << 8) | (byte as i64);
                     }
                     val
-                } else {
-                    // Empty data - Java's toInt returns 0 for empty arrays,
-                    // but getTotalSignNum() throws on missing, not empty.
-                    // Treat empty as missing for strict parity.
-                    tracing::warn!("TOTAL_SIGN_NUM has empty data");
-                    return Err(anyhow::anyhow!("not found TOTAL_SIGN_NUM"));
                 };
                 tracing::debug!("TOTAL_SIGN_NUM: {} (from {} bytes)", value, data.len());
                 Ok(value)
