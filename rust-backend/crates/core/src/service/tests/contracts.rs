@@ -377,6 +377,15 @@ fn test_account_update_contract_duplicate_set() {
 fn test_account_permission_update_validate_fail_owner_address_empty() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+
+    // Seed required dynamic properties (Java throws if these are missing)
+    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &100_000_000i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    let available_contract_type = [0xFFu8; 32];
+    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -3924,6 +3933,215 @@ fn test_account_permission_update_available_contract_type_too_short() {
     assert!(
         error.contains("too short") || error.contains("AVAILABLE_CONTRACT_TYPE"),
         "Error should indicate AVAILABLE_CONTRACT_TYPE is too short: got '{}'",
+        error
+    );
+}
+
+/// Test that validation fails when ALLOW_MULTI_SIGN is missing from dynamic properties.
+/// Java throws `IllegalArgumentException("not found ALLOW_MULTI_SIGN")`.
+#[test]
+fn test_account_permission_update_missing_allow_multi_sign() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+
+    // Seed dynamic properties WITHOUT ALLOW_MULTI_SIGN
+    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    let fee: i64 = 100_000_000;
+    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    let available_contract_type = [0xFFu8; 32];
+    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    // NOTE: ALLOW_MULTI_SIGN is intentionally NOT set
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_system_enabled();
+
+    let owner_address = Address::from([0x56u8; 20]);
+    storage_adapter.set_account(owner_address, AccountInfo {
+        balance: U256::from(200_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    }).unwrap();
+
+    let mut owner_tron = vec![0x41u8];
+    owner_tron.extend_from_slice(owner_address.as_slice());
+
+    let owner_permission = build_permission(0, 0, "owner", 1, None, &[(&owner_tron, 1)]);
+    let active_permission = build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
+
+    let contract_data = build_account_permission_update_contract_data(
+        &owner_tron,
+        &owner_permission,
+        None,
+        &[&active_permission],
+    );
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_account_permission_update_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+
+    // Should fail because ALLOW_MULTI_SIGN is missing
+    assert!(result.is_err(), "Should fail when ALLOW_MULTI_SIGN is missing");
+    let error = result.err().unwrap();
+    assert!(
+        error.contains("not found ALLOW_MULTI_SIGN") || error.contains("ALLOW_MULTI_SIGN"),
+        "Error should mention ALLOW_MULTI_SIGN: got '{}'",
+        error
+    );
+}
+
+/// Test that validation fails when TOTAL_SIGN_NUM is missing from dynamic properties.
+/// Java throws `IllegalArgumentException("not found TOTAL_SIGN_NUM")`.
+#[test]
+fn test_account_permission_update_missing_total_sign_num() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+
+    // Seed dynamic properties WITHOUT TOTAL_SIGN_NUM
+    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    let fee: i64 = 100_000_000;
+    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
+    let available_contract_type = [0xFFu8; 32];
+    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    // NOTE: TOTAL_SIGN_NUM is intentionally NOT set
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_system_enabled();
+
+    let owner_address = Address::from([0x57u8; 20]);
+    storage_adapter.set_account(owner_address, AccountInfo {
+        balance: U256::from(200_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    }).unwrap();
+
+    let mut owner_tron = vec![0x41u8];
+    owner_tron.extend_from_slice(owner_address.as_slice());
+
+    let owner_permission = build_permission(0, 0, "owner", 1, None, &[(&owner_tron, 1)]);
+    let active_permission = build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
+
+    let contract_data = build_account_permission_update_contract_data(
+        &owner_tron,
+        &owner_permission,
+        None,
+        &[&active_permission],
+    );
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_account_permission_update_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+
+    // Should fail because TOTAL_SIGN_NUM is missing
+    assert!(result.is_err(), "Should fail when TOTAL_SIGN_NUM is missing");
+    let error = result.err().unwrap();
+    assert!(
+        error.contains("not found TOTAL_SIGN_NUM") || error.contains("TOTAL_SIGN_NUM"),
+        "Error should mention TOTAL_SIGN_NUM: got '{}'",
+        error
+    );
+}
+
+/// Test that validation fails when UPDATE_ACCOUNT_PERMISSION_FEE is missing from dynamic properties.
+/// Java throws `IllegalArgumentException("not found UPDATE_ACCOUNT_PERMISSION_FEE")`.
+#[test]
+fn test_account_permission_update_missing_update_account_permission_fee() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+
+    // Seed dynamic properties WITHOUT UPDATE_ACCOUNT_PERMISSION_FEE
+    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i64.to_be_bytes()).unwrap();
+    let available_contract_type = [0xFFu8; 32];
+    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    // NOTE: UPDATE_ACCOUNT_PERMISSION_FEE is intentionally NOT set
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_system_enabled();
+
+    let owner_address = Address::from([0x58u8; 20]);
+    storage_adapter.set_account(owner_address, AccountInfo {
+        balance: U256::from(200_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    }).unwrap();
+
+    let mut owner_tron = vec![0x41u8];
+    owner_tron.extend_from_slice(owner_address.as_slice());
+
+    let owner_permission = build_permission(0, 0, "owner", 1, None, &[(&owner_tron, 1)]);
+    let active_permission = build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
+
+    let contract_data = build_account_permission_update_contract_data(
+        &owner_tron,
+        &owner_permission,
+        None,
+        &[&active_permission],
+    );
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_account_permission_update_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+
+    // Should fail because UPDATE_ACCOUNT_PERMISSION_FEE is missing
+    assert!(result.is_err(), "Should fail when UPDATE_ACCOUNT_PERMISSION_FEE is missing");
+    let error = result.err().unwrap();
+    assert!(
+        error.contains("not found UPDATE_ACCOUNT_PERMISSION_FEE") || error.contains("UPDATE_ACCOUNT_PERMISSION_FEE"),
+        "Error should mention UPDATE_ACCOUNT_PERMISSION_FEE: got '{}'",
         error
     );
 }

@@ -1058,7 +1058,7 @@ impl EngineBackedEvmStateStore {
 
     /// Get AllowMultiSign dynamic property
     /// Java-tron uses strict `== 1` check (not just `!= 0`) for parity.
-    /// Default value: true (enabled) when key is missing, to match late-chain behavior.
+    /// Java throws `IllegalArgumentException("not found ALLOW_MULTI_SIGN")` if missing.
     pub fn get_allow_multi_sign(&self) -> Result<bool> {
         let key = b"ALLOW_MULTI_SIGN";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
@@ -1075,11 +1075,13 @@ impl EngineBackedEvmStateStore {
                     // Fallback for short data (edge case)
                     Ok(data[data.len() - 1] == 1)
                 } else {
-                    Ok(true) // Default enabled
+                    // Empty data treated as missing for strict parity
+                    Err(anyhow::anyhow!("not found ALLOW_MULTI_SIGN"))
                 }
             },
             None => {
-                Ok(true) // Default enabled
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found ALLOW_MULTI_SIGN"))
             }
         }
     }
@@ -3401,7 +3403,7 @@ impl EngineBackedEvmStateStore {
 
     /// Get TOTAL_SIGN_NUM dynamic property
     /// Maximum number of keys allowed in a permission
-    /// Default: 5
+    /// Java throws `IllegalArgumentException("not found TOTAL_SIGN_NUM")` if missing.
     pub fn get_total_sign_num(&self) -> Result<i64> {
         let key = b"TOTAL_SIGN_NUM";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
@@ -3414,20 +3416,21 @@ impl EngineBackedEvmStateStore {
                     tracing::debug!("TOTAL_SIGN_NUM: {}", value);
                     Ok(value)
                 } else {
+                    // Invalid length treated as missing for strict parity
                     tracing::warn!("TOTAL_SIGN_NUM has invalid length: {}", data.len());
-                    Ok(5) // Default
+                    Err(anyhow::anyhow!("not found TOTAL_SIGN_NUM"))
                 }
             }
             None => {
-                tracing::debug!("TOTAL_SIGN_NUM not found, returning default 5");
-                Ok(5)
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found TOTAL_SIGN_NUM"))
             }
         }
     }
 
     /// Get UPDATE_ACCOUNT_PERMISSION_FEE dynamic property
     /// Fee in SUN for updating account permissions
-    /// Default: 100_000_000 (100 TRX)
+    /// Java throws `IllegalArgumentException("not found UPDATE_ACCOUNT_PERMISSION_FEE")` if missing.
     pub fn get_update_account_permission_fee(&self) -> Result<i64> {
         let key = b"UPDATE_ACCOUNT_PERMISSION_FEE";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
@@ -3440,30 +3443,31 @@ impl EngineBackedEvmStateStore {
                     tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE: {}", value);
                     Ok(value)
                 } else {
+                    // Invalid length treated as missing for strict parity
                     tracing::warn!("UPDATE_ACCOUNT_PERMISSION_FEE has invalid length: {}", data.len());
-                    Ok(100_000_000) // 100 TRX in SUN
+                    Err(anyhow::anyhow!("not found UPDATE_ACCOUNT_PERMISSION_FEE"))
                 }
             }
             None => {
-                tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE not found, returning default 100_000_000");
-                Ok(100_000_000) // 100 TRX in SUN
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found UPDATE_ACCOUNT_PERMISSION_FEE"))
             }
         }
     }
 
     /// Get AVAILABLE_CONTRACT_TYPE dynamic property
     /// Bitmap of allowed contract types (32 bytes)
-    /// Returns None if not found (all contracts allowed)
-    pub fn get_available_contract_type(&self) -> Result<Option<Vec<u8>>> {
+    /// Java throws `IllegalArgumentException("not found AVAILABLE_CONTRACT_TYPE")` if missing.
+    pub fn get_available_contract_type(&self) -> Result<Vec<u8>> {
         let key = b"AVAILABLE_CONTRACT_TYPE";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 tracing::debug!("AVAILABLE_CONTRACT_TYPE: {} bytes", data.len());
-                Ok(Some(data))
+                Ok(data)
             }
             None => {
-                tracing::debug!("AVAILABLE_CONTRACT_TYPE not found");
-                Ok(None)
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found AVAILABLE_CONTRACT_TYPE"))
             }
         }
     }

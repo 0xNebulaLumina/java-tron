@@ -3551,18 +3551,14 @@ impl BackendService {
         // Check operations bits against AVAILABLE_CONTRACT_TYPE bitmap.
         // Java-tron requires this property to exist and be >= 32 bytes; missing/short is an error.
         let available_contract_type = storage_adapter.get_available_contract_type()
-            .map_err(|e| format!("Failed to get AVAILABLE_CONTRACT_TYPE: {}", e))?;
-        let allowed_bitmap: &[u8] = match available_contract_type.as_deref() {
-            Some(b) if b.len() >= 32 => &b[..32],
-            Some(b) => {
-                return Err(format!(
-                    "AVAILABLE_CONTRACT_TYPE is too short: expected >= 32 bytes, got {}",
-                    b.len()
-                ));
-            }
-            None => {
-                return Err("AVAILABLE_CONTRACT_TYPE not found in dynamic properties".to_string());
-            }
+            .map_err(|e| format!("{}", e))?;
+        let allowed_bitmap: &[u8] = if available_contract_type.len() >= 32 {
+            &available_contract_type[..32]
+        } else {
+            return Err(format!(
+                "AVAILABLE_CONTRACT_TYPE is too short: expected >= 32 bytes, got {}",
+                available_contract_type.len()
+            ));
         };
 
         for i in 0..256 {

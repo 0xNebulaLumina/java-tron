@@ -90,15 +90,19 @@ Java uses strict `== 1` gates and throws when keys are missing.
 - [x] Boolean dynamic properties:
   - [x] Update `EngineBackedEvmStateStore::get_allow_multi_sign()` to interpret `val == 1` (not `val != 0`)
   - [x] Update `EngineBackedEvmStateStore::support_black_hole_optimization()` similarly (`== 1`)
-- [ ] Missing-key behavior:
-  - [ ] Decide which keys must exist for this contract:
-    - [ ] `ALLOW_MULTI_SIGN`
-    - [ ] `TOTAL_SIGN_NUM`
-    - [ ] `AVAILABLE_CONTRACT_TYPE`
-    - [ ] `UPDATE_ACCOUNT_PERMISSION_FEE`
-  - [ ] If strict parity:
-    - [ ] Change corresponding getters in `rust-backend/crates/execution/src/storage_adapter/engine.rs` to return errors when missing (instead of defaults)
-    - [ ] Add tests for missing-key cases and confirm errors propagate up cleanly
+- [x] Missing-key behavior:
+  - [x] Decide which keys must exist for this contract:
+    - [x] `ALLOW_MULTI_SIGN` - must exist (Java throws `IllegalArgumentException`)
+    - [x] `TOTAL_SIGN_NUM` - must exist (Java throws `IllegalArgumentException`)
+    - [x] `AVAILABLE_CONTRACT_TYPE` - must exist (Java throws `IllegalArgumentException`)
+    - [x] `UPDATE_ACCOUNT_PERMISSION_FEE` - must exist (Java throws `IllegalArgumentException`)
+  - [x] If strict parity:
+    - [x] Change corresponding getters in `rust-backend/crates/execution/src/storage_adapter/engine.rs` to return errors when missing (instead of defaults)
+    - [x] Add tests for missing-key cases and confirm errors propagate up cleanly:
+      - [x] `test_account_permission_update_missing_allow_multi_sign`
+      - [x] `test_account_permission_update_missing_total_sign_num`
+      - [x] `test_account_permission_update_missing_update_account_permission_fee`
+      - [x] `test_account_permission_update_missing_available_contract_type` (already existed)
 
 ## 5) Receipt parity (only if required)
 
