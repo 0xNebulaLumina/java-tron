@@ -29,26 +29,38 @@ Goal: match java-tron `supportBlackHoleOptimization() ? burnTrx(fee) : credit bl
 
 Problem: Rust currently writes permission updates before verifying fee payment; in direct-write mode this can leave persisted permission changes on failure.
 
-Pick one approach (or do both; (A) is systemic, (B) is contract-local hardening):
+**Decision: Option A (systemic buffered writes) has been implemented and is the active approach.**
 
-### Option A (systemic): always buffer writes and commit on success
+### Option A (systemic): always buffer writes and commit on success ✅ IMPLEMENTED
 
-- [ ] In gRPC execution path (`rust-backend/crates/core/src/service/grpc/mod.rs`):
-  - [ ] Create the storage adapter with a write buffer for contract execution unconditionally (or for all non-VM system contracts)
-  - [ ] Commit the buffer only when execution succeeds; otherwise drop without commit
-  - [ ] Ensure `touched_keys`/`write_mode` semantics remain consistent
-- [ ] Add test(s) to confirm "no writes on failure" for AccountPermissionUpdate:
+- [x] In gRPC execution path (`rust-backend/crates/core/src/service/grpc/mod.rs`):
+  - [x] Create the storage adapter with a write buffer for all non-VM system contracts (line 1059: `matches!(tx_kind, crate::backend::TxKind::NonVm)`)
+  - [x] Commit the buffer only when execution succeeds; otherwise drop without commit (lines 1226-1260)
+  - [x] Ensure `touched_keys`/`write_mode` semantics remain consistent
+- [x] `ExecutionWriteBuffer` implementation in `rust-backend/crates/execution/src/storage_adapter/write_buffer.rs`:
+  - [x] Accumulates all puts/deletes in memory during execution
+  - [x] `commit()` method writes all operations atomically per database
+  - [x] Dropping buffer without commit discards all pending writes
+- [x] Conformance runner uses buffered writes (`rust-backend/crates/core/src/conformance/runner.rs:665`)
+- [x] Unit tests for write buffer atomicity:
+  - [x] `test_write_buffer_not_committed_on_failure` (runner.rs:1348)
+  - [x] `test_touched_keys_tracking` (runner.rs:1373)
+  - [x] `test_write_buffer_overwrites` (runner.rs:1404)
+  - [x] `test_write_buffer_put_then_delete` (runner.rs:1429)
+- [ ] Add integration test(s) to confirm "no writes on failure" for AccountPermissionUpdate specifically:
   - [ ] Build tx that fails due to insufficient balance
   - [ ] Assert account permissions remain unchanged in storage post-execution
 
-### Option B (contract-local): reorder writes to avoid partial persistence
+### Option B (contract-local): reorder writes to avoid partial persistence *(not implemented - unnecessary due to Option A)*
 
-- [x] In `execute_account_permission_update_contract()`:
-  - [x] Load fee and validate `fee >= 0` and `balance >= fee` **before** any `put_account_proto(...)`
-  - [x] Apply permission updates and fee deduction in-memory
-  - [x] Persist the account once (or at least ensure no persistence occurs before the balance check)
+> **Note:** Option B was NOT implemented. The current code in `execute_account_permission_update_contract()` still writes permissions (line 3715) BEFORE the balance check (line 3721). However, this is safe because Option A's systemic buffer approach guarantees atomicity - all writes go to the buffer, and when the balance check fails with `Err(...)`, the gRPC handler drops the buffer without committing.
+
+- [ ] ~~In `execute_account_permission_update_contract()`:~~
+  - [ ] ~~Load fee and validate `fee >= 0` and `balance >= fee` **before** any `put_account_proto(...)`~~
+  - [x] Apply permission updates and fee deduction in-memory *(partially - permissions updated in-memory before put)*
+  - [ ] ~~Persist the account once (or at least ensure no persistence occurs before the balance check)~~
   - [x] Apply fee routing (burn/blackhole) only after fee has been deducted
-- [ ] Add unit test:
+- [ ] Add unit test: N/A *(not needed - Option A provides atomicity guarantee)*
   - [ ] Set balance `< fee`; execute; assert:
     - [ ] returned error string matches Java (`"<ownerHex> insufficient balance, balance: ..., amount: ..."`),
     - [ ] stored permissions unchanged
