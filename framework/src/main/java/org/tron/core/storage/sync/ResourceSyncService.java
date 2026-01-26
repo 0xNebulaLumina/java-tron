@@ -89,7 +89,9 @@ public class ResourceSyncService {
   private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
   private volatile long lastFailureTime = 0;
   private volatile boolean circuitBreakerOpen = false;
-  
+
+  private volatile StorageSPI storageSPI;
+
   public ResourceSyncService() {
     instance = this;
   }
@@ -308,11 +310,23 @@ public class ResourceSyncService {
    * Get the current StorageSPI instance.
    */
   private StorageSPI getStorageSPI() {
-    try {
-      return StorageSpiFactory.createStorage();
-    } catch (Exception e) {
-      logger.error("Failed to get StorageSPI instance", e);
-      return null;
+    StorageSPI current = storageSPI;
+    if (current != null) {
+      return current;
+    }
+
+    synchronized (this) {
+      if (storageSPI != null) {
+        return storageSPI;
+      }
+
+      try {
+        storageSPI = StorageSpiFactory.createStorage();
+        return storageSPI;
+      } catch (Exception e) {
+        logger.error("Failed to get StorageSPI instance", e);
+        return null;
+      }
     }
   }
   

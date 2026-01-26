@@ -40,12 +40,12 @@ import static org.tron.protos.contract.Common.ResourceCode.ENERGY;
 @Slf4j(topic = "VM")
 public class RuntimeSpiImpl implements Runtime {
 
+  private static volatile StorageSPI mirrorRemoteStorageSPI;
+
   private final ExecutionSPI executionSPI;
   private TransactionContext context;
   private ExecutionProgramResult executionResult;
   private String runtimeError;
-
-
 
   /**
    * Constructor that ensures ExecutionSPI factory is properly initialized.
@@ -1598,7 +1598,7 @@ public class RuntimeSpiImpl implements Runtime {
     try {
       ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
       // Use REMOTE mode StorageSPI to read from Rust backend (where the data was persisted)
-      StorageSPI storageSPI = StorageSpiFactory.createStorage(StorageMode.REMOTE);
+      StorageSPI storageSPI = getMirrorRemoteStorageSPI();
 
       // Group touched keys by database name for batch processing
       Map<String, List<ExecutionSPI.TouchedKey>> keysByDb = new HashMap<>();
@@ -1654,6 +1654,22 @@ public class RuntimeSpiImpl implements Runtime {
 
     } catch (Exception e) {
       logger.error("Phase B mirror: Failed to initialize mirror: {}", e.getMessage(), e);
+    }
+  }
+
+  private static StorageSPI getMirrorRemoteStorageSPI() {
+    StorageSPI current = mirrorRemoteStorageSPI;
+    if (current != null) {
+      return current;
+    }
+
+    synchronized (RuntimeSpiImpl.class) {
+      if (mirrorRemoteStorageSPI != null) {
+        return mirrorRemoteStorageSPI;
+      }
+
+      mirrorRemoteStorageSPI = StorageSpiFactory.createStorage(StorageMode.REMOTE);
+      return mirrorRemoteStorageSPI;
     }
   }
 

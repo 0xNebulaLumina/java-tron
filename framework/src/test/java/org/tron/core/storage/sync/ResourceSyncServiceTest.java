@@ -1,5 +1,6 @@
 package org.tron.core.storage.sync;
 
+import java.lang.reflect.Field;
 import java.util.HashSet;
 import java.util.Set;
 import org.junit.After;
@@ -44,6 +45,9 @@ public class ResourceSyncServiceTest {
     System.clearProperty("remote.resource.sync.enabled");
     System.clearProperty("remote.resource.sync.debug");
     System.clearProperty("remote.resource.sync.confirm");
+    System.clearProperty("storage.mode");
+    System.clearProperty("storage.remote.host");
+    System.clearProperty("storage.remote.port");
     
     syncService = new ResourceSyncService();
   }
@@ -53,6 +57,9 @@ public class ResourceSyncServiceTest {
     System.clearProperty("remote.resource.sync.enabled");
     System.clearProperty("remote.resource.sync.debug");
     System.clearProperty("remote.resource.sync.confirm");
+    System.clearProperty("storage.mode");
+    System.clearProperty("storage.remote.host");
+    System.clearProperty("storage.remote.port");
   }
   
   @Test
@@ -77,6 +84,31 @@ public class ResourceSyncServiceTest {
     
     // Should not throw with empty sets
     syncService.flushResourceDeltas(mockCtx, emptyAccounts, emptyDynamic, emptyAssetV1, emptyAssetV2);
+  }
+
+  @Test
+  public void testStorageSpiIsCached() throws Exception {
+    System.setProperty("storage.mode", "REMOTE");
+    System.setProperty("storage.remote.host", "127.0.0.1");
+    System.setProperty("storage.remote.port", "50011");
+
+    TransactionContext mockCtx = new TransactionContext(null, null, null, false, false);
+    Set<byte[]> emptyAccounts = new HashSet<>();
+    Set<byte[]> emptyDynamic = new HashSet<>();
+    Set<byte[]> emptyAssetV1 = new HashSet<>();
+    Set<byte[]> emptyAssetV2 = new HashSet<>();
+
+    syncService.flushResourceDeltas(mockCtx, emptyAccounts, emptyDynamic, emptyAssetV1, emptyAssetV2);
+
+    Field storageSpiField = ResourceSyncService.class.getDeclaredField("storageSPI");
+    storageSpiField.setAccessible(true);
+    Object first = storageSpiField.get(syncService);
+    Assert.assertNotNull("StorageSPI should be initialized after first flush", first);
+
+    syncService.flushResourceDeltas(mockCtx, emptyAccounts, emptyDynamic, emptyAssetV1, emptyAssetV2);
+    Object second = storageSpiField.get(syncService);
+
+    Assert.assertSame("StorageSPI should be cached and reused", first, second);
   }
   
   @Test
