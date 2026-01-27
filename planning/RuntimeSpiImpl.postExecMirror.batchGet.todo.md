@@ -1,11 +1,11 @@
 # RuntimeSpiImpl.postExecMirror — Use `batchGet()` for Phase B Mirror (TODO)
 
-Status: draft
+Status: in-progress
 Owners: `framework` runtime/VM (`RuntimeSpiImpl`), storage SPI (`StorageSPI` / `RemoteStorageSPI`), rust-backend storage (optional follow-up)
 Target: improve remote-remote throughput while preserving Phase B correctness
 
 ## Problem Statement
-In Phase B (`write_mode=PERSISTED`), Java skips applying state changes and instead runs **B-镜像 (B-mirror)** via `RuntimeSpiImpl.postExecMirror(...)` to refresh Java’s local revoking head from the remote “root” state.
+In Phase B (`write_mode=PERSISTED`), Java skips applying state changes and instead runs **B-镜像 (B-mirror)** via `RuntimeSpiImpl.postExecMirror(...)` to refresh Java's local revoking head from the remote "root" state.
 
 Today, `postExecMirror(...)` does a **blocking per-key `storageSPI.get(db, key)`** for every non-delete touched key. This results in ~2–3 gRPC reads per tx in the common case, which is a large fraction of remote-remote runtime cost.
 
@@ -27,12 +27,12 @@ In Java, `byte[]` keys in `HashMap` compare by **identity**, not content.
 - `EmbeddedStorageSPI.batchGet(...)` uses the input key objects as map keys → `map.get(originalKey)` works.
 - `RemoteStorageSPI.batchGet(...)` currently uses `kv.getKey().toByteArray()` → **new arrays**, so `map.get(originalKey)` does **not** work.
 
-If mirror assumes identity lookups, it will incorrectly treat “found” values as missing → deleting local keys (catastrophic).
+If mirror assumes identity lookups, it will incorrectly treat "found" values as missing → deleting local keys (catastrophic).
 
 ### 2) `BatchGetResponse.success=false` must be treated as error
 `backend.proto` defines `BatchGetResponse { bool success; string error_message; repeated KeyValue pairs; }`.
 
-If `success=false`, the response may contain empty pairs; treating that as “all missing” would delete keys locally.
+If `success=false`, the response may contain empty pairs; treating that as "all missing" would delete keys locally.
 `RemoteStorageSPI.batchGet(...)` must check `success` and fail fast (throw) so mirror can fallback safely.
 
 ## Implementation Strategy Overview
@@ -57,7 +57,7 @@ If `success=false`, the response may contain empty pairs; treating that as “al
   - [ ] Decide output: periodic log line vs Prometheus (repo already has InstrumentedAppender).
 
 Acceptance for Phase 0
-- [ ] Have a baseline “before” number for blocks/sec and tx rows/sec on the same stopping height.
+- [ ] Have a baseline "before" number for blocks/sec and tx rows/sec on the same stopping height.
 
 ---
 
@@ -65,9 +65,9 @@ Acceptance for Phase 0
 File: `framework/src/main/java/org/tron/core/storage/spi/RemoteStorageSPI.java`
 
 ### 1.1 Respect `BatchGetResponse.success`
-- [ ] After `blockingStub.batchGet(...)`, if `!response.getSuccess()`:
-  - [ ] Throw a `RuntimeException` including `dbName` and `error_message`.
-  - [ ] Do **not** return an empty map on error.
+- [x] After `blockingStub.batchGet(...)`, if `!response.getSuccess()`:
+  - [x] Throw a `RuntimeException` including `dbName` and `error_message`.
+  - [x] Do **not** return an empty map on error.
 
 ### 1.2 Preserve input-key identity in returned map (preferred)
 Goal: make `batchGet(db, keys)` return a `Map<byte[], byte[]>` where:
@@ -75,25 +75,25 @@ Goal: make `batchGet(db, keys)` return a `Map<byte[], byte[]>` where:
 - Values are `byte[]` or `null` (not found).
 
 Plan:
-- [ ] Build a `Map<ByteArrayWrapper, Integer>` from request keys to index (content-based), to locate the matching request object.
-- [ ] For each `KeyValue kv`:
-  - [ ] Locate the corresponding request key index by content (`ByteArrayWrapper`).
-  - [ ] `result.put(requestKeys.get(index), kv.found ? kv.value : null)`
-- [ ] Ensure every request key is present in the result map (fill missing as null) to match embedded behavior.
-- [ ] If response includes unknown keys or mismatched sizes:
-  - [ ] Log WARN and still produce safe results (fill unknowns ignored; missing keys -> null).
+- [x] Build a `Map<ByteArrayWrapper, Integer>` from request keys to index (content-based), to locate the matching request object.
+- [x] For each `KeyValue kv`:
+  - [x] Locate the corresponding request key index by content (`ByteArrayWrapper`).
+  - [x] `result.put(requestKeys.get(index), kv.found ? kv.value : null)`
+- [x] Ensure every request key is present in the result map (fill missing as null) to match embedded behavior.
+- [x] If response includes unknown keys or mismatched sizes:
+  - [x] Log WARN and still produce safe results (fill unknowns ignored; missing keys -> null).
 
 ### 1.3 (Alternative) Mirror-side wrapper map only
 If we decide not to modify `RemoteStorageSPI`, mirror must not use `map.get(originalKey)`.
 This is acceptable but slower and spreads key-wrapping logic into the hot path.
 
 Decision TODO
-- [ ] Choose approach:
-  - [ ] A: Fix `RemoteStorageSPI.batchGet` identity + success (recommended).
+- [x] Choose approach:
+  - [x] A: Fix `RemoteStorageSPI.batchGet` identity + success (recommended). ✅ IMPLEMENTED
   - [ ] B: Leave SPI as-is and implement wrapper-based lookup in mirror.
 
 Acceptance for Phase 1
-- [ ] `batchGet` never silently treats backend failure as “missing keys”.
+- [x] `batchGet` never silently treats backend failure as "missing keys".
 - [ ] A unit/regression test proves lookups work in remote mode.
 
 ---
@@ -102,41 +102,41 @@ Acceptance for Phase 1
 File: `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java`
 
 ### 2.1 Add feature flags / knobs (kill switches)
-- [ ] Add JVM property to enable batchGet mirror:
-  - [ ] `remote.exec.postexec.mirror.batchGet` (default `true` once stable; start with `false` if we want cautious rollout)
-- [ ] Add JVM property for chunk size:
-  - [ ] `remote.exec.postexec.mirror.batchGet.maxKeys` (default `256`)
-- [ ] Add JVM property to control fallback behavior:
-  - [ ] `remote.exec.postexec.mirror.batchGet.fallbackToSingleGet` (default `true`)
+- [x] Add JVM property to enable batchGet mirror:
+  - [x] `remote.exec.postexec.mirror.batchGet` (default `true` once stable; start with `false` if we want cautious rollout)
+- [x] Add JVM property for chunk size:
+  - [x] `remote.exec.postexec.mirror.batchGet.maxKeys` (default `256`)
+- [x] Add JVM property to control fallback behavior:
+  - [x] `remote.exec.postexec.mirror.batchGet.fallbackToSingleGet` (default `true`)
 
 ### 2.2 Normalize and dedupe touched keys (last-write-wins)
 Rationale: a tx may touch the same `(db,key)` multiple times; we must apply the final op.
 
 Implementation plan:
-- [ ] Convert `List<TouchedKey>` into `Map<String, LinkedHashMap<ByteArrayWrapper, Boolean /*isDelete*/>>`
-  - [ ] Use insertion order (LinkedHashMap) to preserve “last occurrence wins” deterministically.
-  - [ ] Store the latest `byte[]` instance alongside the wrapper so we can apply with consistent bytes.
+- [x] Convert `List<TouchedKey>` into `Map<String, LinkedHashMap<ByteArrayWrapper, Boolean /*isDelete*/>>`
+  - [x] Use insertion order (LinkedHashMap) to preserve "last occurrence wins" deterministically.
+  - [x] Store the latest `byte[]` instance alongside the wrapper so we can apply with consistent bytes.
 
 ### 2.3 Apply deletes locally without remote reads
-- [ ] For each db group:
-  - [ ] Resolve `TronStoreWithRevoking<?> store = getStoreByDbName(dbName, chainBaseManager)`
-  - [ ] For keys where `isDelete=true`, call `store.delete(keyBytes)`
+- [x] For each db group:
+  - [x] Resolve `TronStoreWithRevoking<?> store = getStoreByDbName(dbName, chainBaseManager)`
+  - [x] For keys where `isDelete=true`, call `store.delete(keyBytes)`
 
 ### 2.4 Batch fetch non-delete keys by db (with chunking)
-- [ ] For each db group:
-  - [ ] Collect `readKeys` (non-delete).
-  - [ ] Chunk `readKeys` into `N` chunks of size <= `maxKeys`.
-  - [ ] For each chunk:
-    - [ ] `Map<byte[], byte[]> values = storageSPI.batchGet(dbName, chunkKeys).get()`
-    - [ ] If `batchGet` throws and fallback is enabled:
-      - [ ] For each key in chunk, call `storageSPI.get(dbName, key).get()`
-    - [ ] Apply results:
-      - [ ] if value != null → `store.putRawBytes(key, value)`
-      - [ ] if value == null → `store.delete(key)` (treat missing as delete, matching current semantics)
+- [x] For each db group:
+  - [x] Collect `readKeys` (non-delete).
+  - [x] Chunk `readKeys` into `N` chunks of size <= `maxKeys`.
+  - [x] For each chunk:
+    - [x] `Map<byte[], byte[]> values = storageSPI.batchGet(dbName, chunkKeys).get()`
+    - [x] If `batchGet` throws and fallback is enabled:
+      - [x] For each key in chunk, call `storageSPI.get(dbName, key).get()`
+    - [x] Apply results:
+      - [x] if value != null → `store.putRawBytes(key, value)`
+      - [x] if value == null → `store.delete(key)` (treat missing as delete, matching current semantics)
 
 ### 2.5 Safe lookup of batch results (depends on Phase 1 decision)
-- [ ] If Phase 1.2 (identity-preserving map) is implemented:
-  - [ ] Use `values.get(keyBytes)` directly.
+- [x] If Phase 1.2 (identity-preserving map) is implemented:
+  - [x] Use `values.get(keyBytes)` directly.
 - [ ] Else:
   - [ ] Convert `values.entrySet()` into `Map<ByteArrayWrapper, byte[]>` and lookup by wrapper.
 
@@ -145,21 +145,21 @@ Today `postExecMirror` logs per tx at INFO.
 For throughput runs, this produces huge logs and can throttle.
 
 Plan:
-- [ ] Demote per-tx mirror logs to DEBUG, or throttle:
-  - [ ] `Phase B mirror: Refreshing ...` at DEBUG
-  - [ ] `Phase B mirror: Completed ...` at DEBUG
-- [ ] Keep WARN/ERROR for real issues (unknown db, batchGet failure, fallback activation).
+- [x] Demote per-tx mirror logs to DEBUG, or throttle:
+  - [x] `Phase B mirror: Refreshing ...` at DEBUG
+  - [x] `Phase B mirror: Completed ...` at DEBUG
+- [x] Keep WARN/ERROR for real issues (unknown db, batchGet failure, fallback activation).
 
 ### 2.7 Keep behavior parity
 Must preserve existing semantics:
-- [ ] `isDelete=true` always deletes locally (no remote read)
-- [ ] non-delete but remote missing → delete locally
-- [ ] unknown dbName → skip with error accounting, no crash
-- [ ] do not introduce concurrency that risks revokingDB thread-safety (apply locally on current thread)
+- [x] `isDelete=true` always deletes locally (no remote read)
+- [x] non-delete but remote missing → delete locally
+- [x] unknown dbName → skip with error accounting, no crash
+- [x] do not introduce concurrency that risks revokingDB thread-safety (apply locally on current thread)
 
 Acceptance for Phase 2
-- [ ] Mirror performs <= 1 `batchGet` per db per tx (plus chunking only when needed).
-- [ ] On any batchGet failure, mirror remains correct via fallback.
+- [x] Mirror performs <= 1 `batchGet` per db per tx (plus chunking only when needed).
+- [x] On any batchGet failure, mirror remains correct via fallback.
 
 ---
 
@@ -169,26 +169,32 @@ Acceptance for Phase 2
 Problem: `postExecMirror` is private and depends on `TransactionContext` + stores.
 
 Plan:
-- [ ] Extract core mirror logic into a small helper class (package-private) so it’s testable:
+- [ ] Extract core mirror logic into a small helper class (package-private) so it's testable:
   - [ ] Inputs: `StorageSPI storageSPI`, `ChainBaseManager cbm`, `List<TouchedKey> touchedKeys`
   - [ ] Output: stats object (counts, errors) for assertions (optional)
-- [ ] Tests:
-  - [ ] Dedup: same key touched twice → only final op applied
-  - [ ] Delete-only: no storage reads occur
-  - [ ] Missing value: remote returns null → local delete
-  - [ ] Unknown db: logs warning, counts errors, continues
-  - [ ] Batch failure: fallback to single get, still applies correct values
+- [x] Tests (in `RemoteStorageBatchGetTest.java`):
+  - [x] Dedup: same key touched twice → only final op applied (`testNormalizeTouchedKeys_lastWriteWins`)
+  - [ ] Delete-only: no storage reads occur (requires mock StorageSPI)
+  - [ ] Missing value: remote returns null → local delete (requires mock StorageSPI)
+  - [ ] Unknown db: logs warning, counts errors, continues (requires mock stores)
+  - [ ] Batch failure: fallback to single get, still applies correct values (requires mock StorageSPI)
+- [x] Additional tests:
+  - [x] Key identity: `testBatchGetKeyIdentity_canLookupByOriginalKey`
+  - [x] ByteArrayWrapper equality: `testByteArrayWrapperEquality`
+  - [x] Chunking: `testChunking_splitsByMaxKeys`
+  - [x] Multiple keys/dbs: `testNormalizeTouchedKeys_multipleKeysMultipleDbs`
 
 ### 3.2 RemoteStorageSPI regression tests
 Files: `framework/src/test/java/...`
 
 Plan:
 - [ ] Add a focused test for `RemoteStorageSPI.batchGet` behavior:
-  - [ ] When backend returns `success=false`, ensure `batchGet` throws
-  - [ ] Identity behavior: ensure returned map keys can be looked up using the same `byte[]` instances passed in
+  - [ ] When backend returns `success=false`, ensure `batchGet` throws (requires running Rust backend)
+  - [x] Identity behavior: ensure returned map keys can be looked up using the same `byte[]` instances passed in (logic tested in `RemoteStorageBatchGetTest`)
 
 Acceptance for Phase 3
-- [ ] Tests cover the “delete everything” failure modes (identity + success flag).
+- [x] Tests cover the key identity failure mode (in `RemoteStorageBatchGetTest.java`)
+- [ ] Tests cover the success=false failure mode (requires integration test with backend)
 
 ---
 
@@ -203,7 +209,7 @@ Acceptance for Phase 3
   - [ ] number of mirror gRPC calls (instrumentation or log-derived)
 
 ### 4.2 Rollout plan
-- [ ] Land Phase 1 + Phase 2 behind `remote.exec.postexec.mirror.batchGet` flag.
+- [x] Land Phase 1 + Phase 2 behind `remote.exec.postexec.mirror.batchGet` flag.
 - [ ] Enable by default only after:
   - [ ] No CSV mismatches on long common prefix
   - [ ] No mirror-related WARN spikes

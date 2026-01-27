@@ -3,11 +3,13 @@ package org.tron.common.runtime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import lombok.extern.slf4j.Slf4j;
+import org.tron.core.db.ByteArrayWrapper;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.db.TronStoreWithRevoking;
@@ -1562,16 +1564,43 @@ public class RuntimeSpiImpl implements Runtime {
     }
   }
 
+  // =========================================================================
+  // Phase B Mirror - batchGet optimization constants and feature flags
+  // =========================================================================
+
+  /**
+   * JVM property to enable batchGet-based mirror reads.
+   * When true (default), uses batchGet() for O(#dbs) RPC calls per tx.
+   * When false, falls back to per-key get() for O(#keys) RPC calls per tx.
+   */
+  private static final String PROP_BATCH_GET_ENABLED = "remote.exec.postexec.mirror.batchGet";
+  private static final boolean DEFAULT_BATCH_GET_ENABLED = true;
+
+  /**
+   * JVM property for maximum keys per batchGet chunk.
+   * Conservative default to avoid oversized gRPC messages.
+   */
+  private static final String PROP_BATCH_MAX_KEYS = "remote.exec.postexec.mirror.batchGet.maxKeys";
+  private static final int DEFAULT_BATCH_MAX_KEYS = 256;
+
+  /**
+   * JVM property to control fallback behavior on batchGet failure.
+   * When true (default), falls back to per-key get() for failed chunks.
+   * When false, counts errors but doesn't retry (risky for correctness).
+   */
+  private static final String PROP_FALLBACK_ENABLED = "remote.exec.postexec.mirror.batchGet.fallbackToSingleGet";
+  private static final boolean DEFAULT_FALLBACK_ENABLED = true;
+
   /**
    * Post-execution mirror for B-镜像 (B-mirror) support.
    * When Rust has persisted state changes (write_mode=PERSISTED), Java should NOT apply
    * the state changes itself (to avoid double-apply). Instead, it should refresh its
    * local revoking head from the remote root to keep local views consistent.
    *
-   * <p>This method reads the touched keys from the execution result and refreshes the
-   * corresponding entries in Java's revoking stores from the remote storage.
+   * <p>This optimized implementation uses batchGet() to reduce gRPC calls from
+   * O(#touched keys) to O(#touched dbs) per transaction.
    *
-   * <p>Gate: Enabled when -Dremote.exec.postexec.mirror=true (default false for Phase B M2).
+   * <p>Gate: Enabled when -Dremote.exec.postexec.mirror=true (default true for Phase B).
    *
    * @param result ExecutionProgramResult containing touched keys
    * @param context Transaction context with access to stores
@@ -1592,68 +1621,240 @@ public class RuntimeSpiImpl implements Runtime {
       return;
     }
 
-    logger.info("Phase B mirror: Refreshing {} touched keys for transaction: {}",
-        touchedKeys.size(), context.getTrxCap().getTransactionId());
+    // Feature flags
+    boolean batchGetEnabled = Boolean.parseBoolean(
+        System.getProperty(PROP_BATCH_GET_ENABLED, String.valueOf(DEFAULT_BATCH_GET_ENABLED)));
+    int maxBatchKeys = Integer.parseInt(
+        System.getProperty(PROP_BATCH_MAX_KEYS, String.valueOf(DEFAULT_BATCH_MAX_KEYS)));
+    boolean fallbackEnabled = Boolean.parseBoolean(
+        System.getProperty(PROP_FALLBACK_ENABLED, String.valueOf(DEFAULT_FALLBACK_ENABLED)));
+
+    logger.debug("Phase B mirror: Refreshing {} touched keys for tx={}, batchGet={}, maxKeys={}, fallback={}",
+        touchedKeys.size(), context.getTrxCap().getTransactionId(),
+        batchGetEnabled, maxBatchKeys, fallbackEnabled);
 
     try {
       ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
-      // Use REMOTE mode StorageSPI to read from Rust backend (where the data was persisted)
       StorageSPI storageSPI = getMirrorRemoteStorageSPI();
 
-      // Group touched keys by database name for batch processing
-      Map<String, List<ExecutionSPI.TouchedKey>> keysByDb = new HashMap<>();
-      for (ExecutionSPI.TouchedKey tk : touchedKeys) {
-        keysByDb.computeIfAbsent(tk.getDb(), k -> new ArrayList<>()).add(tk);
-      }
+      // Step A: Normalize and dedupe touched keys by db (last-write-wins)
+      // Map<dbName, Map<KeyWrapper, KeyOperation>> where KeyOperation contains the final byte[] and isDelete
+      Map<String, LinkedHashMap<ByteArrayWrapper, KeyOperation>> normalizedByDb = normalizeTouchedKeys(touchedKeys);
 
       int successCount = 0;
       int errorCount = 0;
+      int batchGetCalls = 0;
+      int fallbackGetCalls = 0;
 
       // Process each database's keys
-      for (Map.Entry<String, List<ExecutionSPI.TouchedKey>> entry : keysByDb.entrySet()) {
-        String dbName = entry.getKey();
-        List<ExecutionSPI.TouchedKey> keys = entry.getValue();
+      for (Map.Entry<String, LinkedHashMap<ByteArrayWrapper, KeyOperation>> dbEntry : normalizedByDb.entrySet()) {
+        String dbName = dbEntry.getKey();
+        LinkedHashMap<ByteArrayWrapper, KeyOperation> keyOps = dbEntry.getValue();
 
         // Get the local store for this database
         TronStoreWithRevoking<?> store = getStoreByDbName(dbName, chainBaseManager);
         if (store == null) {
-          logger.warn("Phase B mirror: Unknown database '{}', skipping {} keys", dbName, keys.size());
-          errorCount += keys.size();
+          logger.warn("Phase B mirror: Unknown database '{}', skipping {} keys", dbName, keyOps.size());
+          errorCount += keyOps.size();
           continue;
         }
 
-        // Process each key
-        for (ExecutionSPI.TouchedKey tk : keys) {
+        // Step B: Split keys into deletes (no remote read needed) and reads
+        List<KeyOperation> deleteOps = new ArrayList<>();
+        List<KeyOperation> readOps = new ArrayList<>();
+
+        for (KeyOperation op : keyOps.values()) {
+          if (op.isDelete) {
+            deleteOps.add(op);
+          } else {
+            readOps.add(op);
+          }
+        }
+
+        // Apply deletes locally (no remote calls)
+        for (KeyOperation op : deleteOps) {
           try {
-            if (tk.isDelete()) {
-              // Delete from local store
-              store.delete(tk.getKey());
-              logger.debug("Phase B mirror: Deleted key from db={}", dbName);
-            } else {
-              // Read value from remote and write to local
-              byte[] value = storageSPI.get(dbName, tk.getKey()).get();
-              if (value != null) {
-                store.putRawBytes(tk.getKey(), value);
-                logger.debug("Phase B mirror: Mirrored {} bytes to db={}", value.length, dbName);
-              } else {
-                // Key doesn't exist in remote, treat as delete
-                store.delete(tk.getKey());
-                logger.debug("Phase B mirror: Key not found in remote, deleted from db={}", dbName);
-              }
-            }
+            store.delete(op.keyBytes);
             successCount++;
           } catch (Exception e) {
-            logger.warn("Phase B mirror: Failed to mirror key in db={}: {}", dbName, e.getMessage());
+            logger.warn("Phase B mirror: Failed to delete key in db={}: {}", dbName, e.getMessage());
             errorCount++;
           }
         }
+
+        // Process reads: use batchGet or per-key get based on feature flag
+        if (readOps.isEmpty()) {
+          continue;
+        }
+
+        if (batchGetEnabled) {
+          // Step C: Batch fetch with chunking
+          int[] counts = processBatchReads(dbName, store, storageSPI, readOps, maxBatchKeys, fallbackEnabled);
+          successCount += counts[0];
+          errorCount += counts[1];
+          batchGetCalls += counts[2];
+          fallbackGetCalls += counts[3];
+        } else {
+          // Legacy per-key get path
+          int[] counts = processPerKeyReads(dbName, store, storageSPI, readOps);
+          successCount += counts[0];
+          errorCount += counts[1];
+        }
       }
 
-      logger.info("Phase B mirror: Completed {} keys (success={}, errors={})",
-          touchedKeys.size(), successCount, errorCount);
+      logger.debug("Phase B mirror: Completed {} keys (success={}, errors={}, batchGetCalls={}, fallbackCalls={})",
+          touchedKeys.size(), successCount, errorCount, batchGetCalls, fallbackGetCalls);
 
     } catch (Exception e) {
       logger.error("Phase B mirror: Failed to initialize mirror: {}", e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Normalize and dedupe touched keys by database, using last-write-wins semantics.
+   *
+   * <p>When a key appears multiple times (possibly with mixed delete/update operations),
+   * only the last occurrence determines the final operation to apply.
+   *
+   * @param touchedKeys raw touched keys from execution result
+   * @return Map from dbName to LinkedHashMap of KeyWrapper to KeyOperation (preserves last-write order)
+   */
+  private Map<String, LinkedHashMap<ByteArrayWrapper, KeyOperation>> normalizeTouchedKeys(
+      List<ExecutionSPI.TouchedKey> touchedKeys) {
+
+    Map<String, LinkedHashMap<ByteArrayWrapper, KeyOperation>> result = new HashMap<>();
+
+    for (ExecutionSPI.TouchedKey tk : touchedKeys) {
+      String dbName = tk.getDb();
+      byte[] keyBytes = tk.getKey();
+      boolean isDelete = tk.isDelete();
+
+      LinkedHashMap<ByteArrayWrapper, KeyOperation> dbMap =
+          result.computeIfAbsent(dbName, k -> new LinkedHashMap<>());
+
+      // Last-write-wins: always overwrite with the latest operation
+      ByteArrayWrapper keyWrapper = new ByteArrayWrapper(keyBytes);
+      dbMap.put(keyWrapper, new KeyOperation(keyBytes, isDelete));
+    }
+
+    return result;
+  }
+
+  /**
+   * Process batch reads for a database using batchGet with chunking.
+   *
+   * @return int array: [successCount, errorCount, batchGetCalls, fallbackGetCalls]
+   */
+  private int[] processBatchReads(
+      String dbName,
+      TronStoreWithRevoking<?> store,
+      StorageSPI storageSPI,
+      List<KeyOperation> readOps,
+      int maxBatchKeys,
+      boolean fallbackEnabled) {
+
+    int successCount = 0;
+    int errorCount = 0;
+    int batchGetCalls = 0;
+    int fallbackGetCalls = 0;
+
+    // Step C: Chunk readOps into batches of up to maxBatchKeys
+    for (int i = 0; i < readOps.size(); i += maxBatchKeys) {
+      int end = Math.min(i + maxBatchKeys, readOps.size());
+      List<KeyOperation> chunk = readOps.subList(i, end);
+
+      // Prepare key list for batchGet
+      List<byte[]> chunkKeys = new ArrayList<>(chunk.size());
+      for (KeyOperation op : chunk) {
+        chunkKeys.add(op.keyBytes);
+      }
+
+      try {
+        // Call batchGet for this chunk
+        Map<byte[], byte[]> values = storageSPI.batchGet(dbName, chunkKeys).get();
+        batchGetCalls++;
+
+        // Step D: Apply results using identity-based lookup (RemoteStorageSPI now preserves key identity)
+        for (KeyOperation op : chunk) {
+          try {
+            byte[] value = values.get(op.keyBytes);
+            if (value != null) {
+              store.putRawBytes(op.keyBytes, value);
+            } else {
+              // Not found in remote - treat as delete (same as current per-key semantics)
+              store.delete(op.keyBytes);
+            }
+            successCount++;
+          } catch (Exception e) {
+            logger.warn("Phase B mirror: Failed to apply key in db={}: {}", dbName, e.getMessage());
+            errorCount++;
+          }
+        }
+
+      } catch (Exception e) {
+        // Step E: batchGet failed - fallback or count errors
+        logger.warn("Phase B mirror: batchGet failed for db={}, chunk size={}: {}",
+            dbName, chunk.size(), e.getMessage());
+
+        if (fallbackEnabled) {
+          // Fallback to per-key get for this chunk
+          int[] fallbackCounts = processPerKeyReads(dbName, store, storageSPI, chunk);
+          successCount += fallbackCounts[0];
+          errorCount += fallbackCounts[1];
+          fallbackGetCalls += chunk.size();
+        } else {
+          // Count all keys in chunk as errors
+          errorCount += chunk.size();
+        }
+      }
+    }
+
+    return new int[]{successCount, errorCount, batchGetCalls, fallbackGetCalls};
+  }
+
+  /**
+   * Process reads using legacy per-key get path (used as fallback or when batchGet disabled).
+   *
+   * @return int array: [successCount, errorCount]
+   */
+  private int[] processPerKeyReads(
+      String dbName,
+      TronStoreWithRevoking<?> store,
+      StorageSPI storageSPI,
+      List<KeyOperation> readOps) {
+
+    int successCount = 0;
+    int errorCount = 0;
+
+    for (KeyOperation op : readOps) {
+      try {
+        byte[] value = storageSPI.get(dbName, op.keyBytes).get();
+        if (value != null) {
+          store.putRawBytes(op.keyBytes, value);
+        } else {
+          // Key doesn't exist in remote, treat as delete
+          store.delete(op.keyBytes);
+        }
+        successCount++;
+      } catch (Exception e) {
+        logger.warn("Phase B mirror: Failed to mirror key in db={}: {}", dbName, e.getMessage());
+        errorCount++;
+      }
+    }
+
+    return new int[]{successCount, errorCount};
+  }
+
+  /**
+   * Helper class to hold normalized key operation (key bytes and final delete flag).
+   */
+  private static class KeyOperation {
+    final byte[] keyBytes;
+    final boolean isDelete;
+
+    KeyOperation(byte[] keyBytes, boolean isDelete) {
+      this.keyBytes = keyBytes;
+      this.isDelete = isDelete;
     }
   }
 
