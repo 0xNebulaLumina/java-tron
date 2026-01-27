@@ -10,10 +10,18 @@ EMBEDDED_JAVA_LOG=${2:-1.embedded-java.log}
 # Configurable embedded-embedded CSV path
 EMBEDDED_CSV=${3:-output-directory/execution-csv/20260112-060750-377bf631-embedded-embedded.csv}
 
+# ResourceSync debug/confirm flags (default false). Override via env vars:
+#   REMOTE_RESOURCE_SYNC_DEBUG=true
+#   REMOTE_RESOURCE_SYNC_CONFIRM=true
+REMOTE_RESOURCE_SYNC_DEBUG=${REMOTE_RESOURCE_SYNC_DEBUG:-false}
+REMOTE_RESOURCE_SYNC_CONFIRM=${REMOTE_RESOURCE_SYNC_CONFIRM:-false}
+
 echo "Starting remote execution + remote storage result collection..."
 echo "Sleep duration: ${SLEEP_DURATION} seconds ($(($SLEEP_DURATION / 60)) minutes)"
 echo "Embedded Java log: ${EMBEDDED_JAVA_LOG}"
 echo "Embedded CSV: ${EMBEDDED_CSV}"
+echo "ResourceSync debug: ${REMOTE_RESOURCE_SYNC_DEBUG}"
+echo "ResourceSync confirm: ${REMOTE_RESOURCE_SYNC_CONFIRM}"
 
 # Step 1: Clean up previous data
 echo "Step 1: Cleaning up previous data..."
@@ -52,7 +60,7 @@ nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
      -XX:+UseCMSInitiatingOccupancyOnly  -XX:CMSInitiatingOccupancyFraction=70 \
      -Dexec.csv.enabled=true -Dexec.csv.stateChanges.enabled=true \
      -Dremote.exec.trc10.enabled=true -Dremote.exec.apply.trc10=false \
-     -Dremote.resource.sync.debug=true -Dremote.resource.sync.confirm=true \
+     -Dremote.resource.sync.debug=${REMOTE_RESOURCE_SYNC_DEBUG} -Dremote.resource.sync.confirm=${REMOTE_RESOURCE_SYNC_CONFIRM} \
      -jar ./build/libs/FullNode.jar -c ./main_net_config_remote.conf \
      --execution-spi-enabled --execution-mode "REMOTE" >> start.log 2>&1 &
 JAVA_PID=$!
