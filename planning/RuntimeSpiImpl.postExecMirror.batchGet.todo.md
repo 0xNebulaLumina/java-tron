@@ -1,6 +1,6 @@
 # RuntimeSpiImpl.postExecMirror — Use `batchGet()` for Phase B Mirror (TODO)
 
-Status: in-progress
+Status: implementation-complete (pending perf validation)
 Owners: `framework` runtime/VM (`RuntimeSpiImpl`), storage SPI (`StorageSPI` / `RemoteStorageSPI`), rust-backend storage (optional follow-up)
 Target: improve remote-remote throughput while preserving Phase B correctness
 
@@ -220,16 +220,23 @@ Acceptance for Phase 4
 
 ---
 
-## Optional Follow-Up: Rust `batch_get` optimization (multi_get)
+## Optional Follow-Up: Rust `batch_get` optimization (multi_get) ✅
 Files:
 - `rust-backend/crates/storage/src/engine.rs`
 
 Plan:
-- [ ] Replace per-key `db.get(key)` loop with RocksDB `multi_get` (or iterator-based equivalent) if available.
-- [ ] Preserve stable response semantics:
-  - [ ] 1 response entry per request key, in request order
-  - [ ] found flag accurate; value empty only when found=false
+- [x] Replace per-key `db.get(key)` loop with RocksDB `multi_get` (or iterator-based equivalent) if available.
+- [x] Preserve stable response semantics:
+  - [x] 1 response entry per request key, in request order
+  - [x] found flag accurate; value empty only when found=false
+
+Implementation:
+- Changed `batch_get()` in `engine.rs` to use `db.multi_get()` instead of per-key `db.get()` loop
+- RocksDB's `multi_get` batches all key lookups into a single operation
+- Results maintain input key order via `keys.iter().zip(multi_results.into_iter())`
+- Handles per-key errors gracefully (logs warning, marks as not found)
 
 Acceptance
-- [ ] Measurable reduction in backend CPU time per batchGet under load.
+- [x] Code compiles and builds with `cargo build --release`
+- [ ] Measurable reduction in backend CPU time per batchGet under load (requires benchmark).
 
