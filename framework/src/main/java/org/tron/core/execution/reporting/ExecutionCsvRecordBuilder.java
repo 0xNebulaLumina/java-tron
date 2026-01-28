@@ -198,12 +198,16 @@ public class ExecutionCsvRecordBuilder {
             trace.getTransactionContext().getTrxCap().getInstance().getRawData().getContract(0);
         org.tron.protos.Protocol.Transaction.Contract.ContractType type = contract.getType();
         String forcedOp = null;
+        boolean forceV1UnfreezeDeltaShape = false;
         switch (type) {
           case FreezeBalanceContract:
           case FreezeBalanceV2Contract:
             forcedOp = "freeze";
             break;
           case UnfreezeBalanceContract:
+            forcedOp = "unfreeze";
+            forceV1UnfreezeDeltaShape = true;
+            break;
           case UnfreezeBalanceV2Contract:
             forcedOp = "unfreeze";
             break;
@@ -214,6 +218,26 @@ public class ExecutionCsvRecordBuilder {
         if (forcedOp != null && freezeDeltas != null) {
           for (DomainCanonicalizer.FreezeDelta d : freezeDeltas) {
             d.setOp(forcedOp);
+            if (forceV1UnfreezeDeltaShape) {
+              // Embedded UnfreezeBalanceActuator records:
+              // - old_amount_sun = unfreezeAmount (delta)
+              // - new_amount_sun = 0
+              // - old/new_expire_time_ms = 0 (ambiguous for multi-entry freezes)
+              try {
+                long oldAmount = Long.parseLong(d.getOldAmountSun());
+                long newAmount = Long.parseLong(d.getNewAmountSun());
+                long delta = oldAmount - newAmount;
+                if (delta < 0) {
+                  delta = 0;
+                }
+                d.setOldAmountSun(String.valueOf(delta));
+                d.setNewAmountSun("0");
+                d.setOldExpireTimeMs("0");
+                d.setNewExpireTimeMs("0");
+              } catch (Exception ignore2) {
+                // Keep best-effort values; do not fail CSV building
+              }
+            }
           }
         }
       }

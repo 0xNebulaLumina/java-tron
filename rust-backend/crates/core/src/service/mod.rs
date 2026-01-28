@@ -1778,8 +1778,22 @@ impl BackendService {
                               sum_sun, tron_power_sun));
         }
 
-        // 5. Phase 1: Skip withdrawReward (log only)
-        info!("Skipping withdrawReward for {} (Phase 1 - delegation not yet ported)", owner_tron);
+        // 5. Withdraw delegation rewards (java-tron: MortgageService.withdrawReward)
+        // This MUST occur before mutating Account.votes to ensure rewards are computed
+        // against the pre-vote state.
+        let delegation_reward: i64 = if execution_config.remote.delegation_reward_enabled {
+            contracts::delegation::withdraw_reward(storage_adapter, &owner)
+                .map_err(|e| format!("Failed to withdraw_reward for {}: {}", owner_tron, e))?
+        } else {
+            0
+        };
+
+        if delegation_reward > 0 {
+            info!(
+                "Delegation reward withdrawn for {}: {} SUN (added to allowance)",
+                owner_tron, delegation_reward
+            );
+        }
 
         // 6. Load or create VotesRecord
         // java-tron semantics:
@@ -1849,6 +1863,13 @@ impl BackendService {
         let mut owner_account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or_else(|| format!("Account[{}] not exists", readable_owner_address))?;
+
+        if delegation_reward > 0 {
+            owner_account.allowance = owner_account
+                .allowance
+                .checked_add(delegation_reward)
+                .ok_or_else(|| "Overflow when adding delegation reward to allowance".to_string())?;
+        }
 
         owner_account.votes.clear();
         for (vote_address, vote_count) in &votes {
