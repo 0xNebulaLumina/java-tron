@@ -172,6 +172,21 @@ mod tests {
     }
 
     #[test]
+    fn test_create_new_account_fee_in_system_contract_default_is_zero() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
+            .expect("Failed to create storage engine");
+        let adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+        // Java-tron initializes CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT to 0 when missing.
+        // The Rust adapter should match this default for early-chain parity.
+        let fee = adapter
+            .get_create_new_account_fee_in_system_contract()
+            .expect("Failed to read CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT");
+        assert_eq!(fee, 0);
+    }
+
+    #[test]
     fn test_account_name_validation() {
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())

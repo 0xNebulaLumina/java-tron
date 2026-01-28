@@ -946,7 +946,7 @@ impl EngineBackedEvmStateStore {
     /// Get CreateNewAccountFeeInSystemContract dynamic property
     /// Fee charged when creating a new account via system contract (AccountCreateContract)
     /// Java reference: DynamicPropertiesStore.java getCreateNewAccountFeeInSystemContract()
-    /// Default value: 1_000_000 SUN (1 TRX)
+    /// Default value: 0 SUN (java-tron initializes to 0; committee may change later)
     pub fn get_create_new_account_fee_in_system_contract(&self) -> Result<u64> {
         let key = b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
@@ -960,14 +960,14 @@ impl EngineBackedEvmStateStore {
                     Ok(fee)
                 } else {
                     // Use default value if data is too short
-                    tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT has invalid length, using default 1000000 SUN");
-                    Ok(1_000_000) // 1 TRX in SUN (default from TRON)
+                    tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT has invalid length, using default 0 SUN");
+                    Ok(0)
                 }
             },
             None => {
                 // Use default value if not found
-                tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT not found, using default 1000000 SUN");
-                Ok(1_000_000) // 1 TRX in SUN (default from TRON)
+                tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT not found, using default 0 SUN");
+                Ok(0)
             }
         }
     }
