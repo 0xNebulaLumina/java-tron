@@ -60,7 +60,7 @@ while read -r cidr; do
         exit 1
     fi
     echo "Adding GitHub range $cidr"
-    ipset add allowed-domains "$cidr"
+    ipset add -exist allowed-domains "$cidr"
 done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
 # Resolve and add other allowed domains
@@ -69,7 +69,10 @@ for domain in \
     "api.anthropic.com" \
     "sentry.io" \
     "statsig.anthropic.com" \
-    "statsig.com"; do
+    "statsig.com" \
+    "marketplace.visualstudio.com" \
+    "vscode.blob.core.windows.net" \
+    "update.code.visualstudio.com"; do
     echo "Resolving $domain..."
     ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
     if [ -z "$ips" ]; then
@@ -83,7 +86,7 @@ for domain in \
             exit 1
         fi
         echo "Adding $ip for $domain"
-        ipset add allowed-domains "$ip"
+        ipset add -exist allowed-domains "$ip"
     done < <(echo "$ips")
 done
 
@@ -112,6 +115,9 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 # Then allow only specific outbound traffic to allowed domains
 iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
+
+# Explicitly REJECT all other outbound traffic for immediate feedback
+iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited
 
 echo "Firewall configuration complete"
 echo "Verifying firewall rules..."

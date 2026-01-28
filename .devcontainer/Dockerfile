@@ -4,6 +4,8 @@ ARG TZ
 ENV TZ="$TZ"
 
 ARG CLAUDE_CODE_VERSION=latest
+ARG CODEX_VERSION=latest
+ARG GEMINI_CLI_VERSION=latest
 
 # Install basic development tools and iptables/ipset
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -57,6 +59,10 @@ RUN ARCH=$(dpkg --print-architecture) && \
 # Set up non-root user
 USER node
 
+# Install uv for Python package management and ensure it is on PATH
+ENV PATH=/home/node/.local/bin:$PATH
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Install global packages
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
 ENV PATH=$PATH:/usr/local/share/npm-global/bin
@@ -65,8 +71,8 @@ ENV PATH=$PATH:/usr/local/share/npm-global/bin
 ENV SHELL=/bin/zsh
 
 # Set the default editor and visual
-ENV EDITOR nano
-ENV VISUAL nano
+ENV EDITOR=nano
+ENV VISUAL=nano
 
 # Default powerline10k theme
 ARG ZSH_IN_DOCKER_VERSION=1.2.0
@@ -78,8 +84,14 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
   -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
   -x
 
-# Install Claude
+# Install claude-code
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+# Install codex
+RUN npm install -g @openai/codex@${CODEX_VERSION}
+# Install gemini-cli
+RUN npm install -g @google/gemini-cli@${GEMINI_CLI_VERSION}
+# Install spec-kit
+RUN uv tool install specify-cli --from git+https://github.com/github/spec-kit.git
 
 
 # Copy and set up firewall script
