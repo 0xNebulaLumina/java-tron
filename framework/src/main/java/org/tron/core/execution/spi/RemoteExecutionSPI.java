@@ -24,8 +24,11 @@ import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContra
 import org.tron.protos.contract.BalanceContract.CancelAllUnfreezeV2Contract;
 import org.tron.protos.contract.BalanceContract.DelegateResourceContract;
 import org.tron.protos.contract.BalanceContract.FreezeBalanceContract;
+import org.tron.protos.contract.BalanceContract.FreezeBalanceV2Contract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
 import org.tron.protos.contract.BalanceContract.UnDelegateResourceContract;
+import org.tron.protos.contract.BalanceContract.UnfreezeBalanceContract;
+import org.tron.protos.contract.BalanceContract.UnfreezeBalanceV2Contract;
 import org.tron.protos.contract.BalanceContract.WithdrawExpireUnfreezeContract;
 import org.tron.protos.contract.Common.ResourceCode;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
@@ -319,7 +322,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Phase 3 Fix: Keep TRC-10 on Java path until Rust storage can handle TRC-10 ledgers
           boolean trc10RemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
           if (!trc10RemoteEnabled) {
-            logger.debug("TRC-10 remote execution disabled, throwing exception to fallback to Java actuators");
+            logger.debug("TRC-10 remote execution disabled, throwing exception");
             throw new UnsupportedOperationException("TRC-10 execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
 
@@ -336,7 +339,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // TRC-10 Asset Issue: Gate behind the same TRC-10 feature flag
           boolean assetIssueRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
           if (!assetIssueRemoteEnabled) {
-            logger.debug("TRC-10 AssetIssue remote execution disabled, throwing exception to fallback to Java actuators");
+            logger.debug("TRC-10 AssetIssue remote execution disabled, throwing exception");
             throw new UnsupportedOperationException("AssetIssue execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
 
@@ -360,7 +363,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Gate behind the same TRC-10 feature flag
           boolean participateAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
           if (!participateAssetRemoteEnabled) {
-            logger.debug("TRC-10 ParticipateAssetIssue remote execution disabled, throwing exception to fallback to Java actuators");
+            logger.debug("TRC-10 ParticipateAssetIssue remote execution disabled, throwing exception");
             throw new UnsupportedOperationException("ParticipateAssetIssue execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
 
@@ -385,7 +388,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Gate behind the same TRC-10 feature flag
           boolean unfreezeAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
           if (!unfreezeAssetRemoteEnabled) {
-            logger.debug("TRC-10 UnfreezeAsset remote execution disabled, throwing exception to fallback to Java actuators");
+            logger.debug("TRC-10 UnfreezeAsset remote execution disabled, throwing exception");
             throw new UnsupportedOperationException("UnfreezeAsset execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
 
@@ -406,7 +409,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Gate behind the same TRC-10 feature flag
           boolean updateAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
           if (!updateAssetRemoteEnabled) {
-            logger.debug("TRC-10 UpdateAsset remote execution disabled, throwing exception to fallback to Java actuators");
+            logger.debug("TRC-10 UpdateAsset remote execution disabled, throwing exception");
             throw new UnsupportedOperationException("UpdateAsset execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
 
@@ -463,6 +466,48 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               freezeContract.getFrozenBalance(),
               freezeContract.getFrozenDuration());
+          break;
+
+        case UnfreezeBalanceContract:
+          UnfreezeBalanceContract unfreezeContract =
+              contractParameter.unpack(UnfreezeBalanceContract.class);
+          toAddress = new byte[0];
+          data = unfreezeContract.toByteArray();
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UNFREEZE_BALANCE_CONTRACT;
+          logger.debug(
+              "Mapped UnfreezeBalanceContract to remote request; owner={}, resource={}, receiver={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              unfreezeContract.getResource(),
+              org.tron.common.utils.ByteArray.toHexString(unfreezeContract.getReceiverAddress().toByteArray()));
+          break;
+
+        case FreezeBalanceV2Contract:
+          FreezeBalanceV2Contract freezeBalanceV2Contract =
+              contractParameter.unpack(FreezeBalanceV2Contract.class);
+          toAddress = new byte[0];
+          data = freezeBalanceV2Contract.toByteArray();
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.FREEZE_BALANCE_V2_CONTRACT;
+          logger.debug(
+              "Mapped FreezeBalanceV2Contract to remote request; owner={}, amount={}, resource={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              freezeBalanceV2Contract.getFrozenBalance(),
+              freezeBalanceV2Contract.getResource());
+          break;
+
+        case UnfreezeBalanceV2Contract:
+          UnfreezeBalanceV2Contract unfreezeBalanceV2Contract =
+              contractParameter.unpack(UnfreezeBalanceV2Contract.class);
+          toAddress = new byte[0];
+          data = unfreezeBalanceV2Contract.toByteArray();
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UNFREEZE_BALANCE_V2_CONTRACT;
+          logger.debug(
+              "Mapped UnfreezeBalanceV2Contract to remote request; owner={}, amount={}, resource={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              unfreezeBalanceV2Contract.getUnfreezeBalance(),
+              unfreezeBalanceV2Contract.getResource());
           break;
 
         case WitnessCreateContract:
@@ -887,9 +932,12 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         default:
-          // Remove TRANSFER fallback - throw exception to fall back to embedded
-          logger.error("Contract type {} not mapped to remote; falling back to embedded", contract.getType());
-          throw new UnsupportedOperationException(contract.getType() + " not mapped to remote; falling back to embedded");
+          // Unsupported contract type in Remote execution mode.
+          logger.error(
+              "Contract type {} not mapped to remote",
+              contract.getType());
+          throw new UnsupportedOperationException(
+              contract.getType() + " not mapped to remote");
       }
 
       // Log transaction classification
