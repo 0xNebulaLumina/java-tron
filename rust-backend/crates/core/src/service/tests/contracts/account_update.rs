@@ -617,3 +617,225 @@ fn test_account_update_duplicate_name_allowed_when_updates_enabled() {
     let result = service.execute_account_update_contract(&mut storage_adapter, &tx2, &context);
     assert!(result.is_ok(), "Duplicate name should be allowed when updates enabled: {:?}", result.err());
 }
+
+// ============================================================================
+// Contract-parameter unpack parity tests
+// ============================================================================
+
+/// Helper to build AccountUpdateContract protobuf bytes
+fn build_account_update_contract_proto(owner_address: &[u8], account_name: &[u8]) -> Vec<u8> {
+    use super::common::encode_varint;
+    let mut buf = Vec::new();
+
+    // Field 1: account_name (bytes, wire type 2)
+    if !account_name.is_empty() {
+        encode_varint(&mut buf, (1 << 3) | 2); // tag
+        encode_varint(&mut buf, account_name.len() as u64);
+        buf.extend_from_slice(account_name);
+    }
+
+    // Field 2: owner_address (bytes, wire type 2)
+    if !owner_address.is_empty() {
+        encode_varint(&mut buf, (2 << 3) | 2); // tag
+        encode_varint(&mut buf, owner_address.len() as u64);
+        buf.extend_from_slice(owner_address);
+    }
+
+    buf
+}
+
+#[test]
+fn test_account_update_with_contract_parameter() {
+    // Test that contract_parameter is properly parsed and validated
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    seed_allow_update_account_name(&storage_engine, 0);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_system_enabled();
+    let context = new_test_context();
+
+    let owner_address = Address::from([1u8; 20]);
+    let owner_account = AccountInfo {
+        balance: U256::from(1000000),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+
+    let from_raw = make_from_raw(&owner_address);
+    let account_name = b"ProtoName";
+
+    // Build proper protobuf
+    let proto_value = build_account_update_contract_proto(&from_raw, account_name);
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(account_name.to_vec()), // Must match proto
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
+            from_raw: Some(from_raw),
+            contract_parameter: Some(tron_backend_execution::TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountUpdateContract".to_string(),
+                value: proto_value,
+            }),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(result.is_ok(), "Should succeed with valid contract_parameter: {:?}", result.err());
+
+    let stored_name = storage_adapter.get_account_name(&owner_address).unwrap();
+    assert_eq!(stored_name, Some("ProtoName".to_string()));
+}
+
+#[test]
+fn test_account_update_rejects_wrong_type_url() {
+    // Test that wrong type URL in contract_parameter is rejected
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    seed_allow_update_account_name(&storage_engine, 0);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_system_enabled();
+    let context = new_test_context();
+
+    let owner_address = Address::from([1u8; 20]);
+    let owner_account = AccountInfo {
+        balance: U256::from(1000000),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+
+    let from_raw = make_from_raw(&owner_address);
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from("TestName".as_bytes()),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
+            from_raw: Some(from_raw),
+            contract_parameter: Some(tron_backend_execution::TronContractParameter {
+                type_url: "type.googleapis.com/protocol.WrongContract".to_string(), // Wrong type
+                value: vec![],
+            }),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(result.is_err(), "Should reject wrong type URL");
+    assert!(result.unwrap_err().contains("contract type error"));
+}
+
+#[test]
+fn test_account_update_with_malformed_proto() {
+    // Test that malformed protobuf in contract_parameter is rejected
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    seed_allow_update_account_name(&storage_engine, 0);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_system_enabled();
+    let context = new_test_context();
+
+    let owner_address = Address::from([1u8; 20]);
+    let owner_account = AccountInfo {
+        balance: U256::from(1000000),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+
+    let from_raw = make_from_raw(&owner_address);
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from("TestName".as_bytes()),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
+            from_raw: Some(from_raw),
+            contract_parameter: Some(tron_backend_execution::TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountUpdateContract".to_string(),
+                value: vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF], // Invalid protobuf - varint too long
+            }),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(result.is_err(), "Should reject malformed protobuf");
+    assert!(result.unwrap_err().contains("Protocol buffer parse error"));
+}
+
+#[test]
+fn test_account_update_proto_name_takes_precedence() {
+    // Test that name from decoded proto is used even if transaction.data differs
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    seed_allow_update_account_name(&storage_engine, 0);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_system_enabled();
+    let context = new_test_context();
+
+    let owner_address = Address::from([1u8; 20]);
+    let owner_account = AccountInfo {
+        balance: U256::from(1000000),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+
+    let from_raw = make_from_raw(&owner_address);
+
+    // Proto has "ProtoName", but transaction.data has "DataName"
+    let proto_value = build_account_update_contract_proto(&from_raw, b"ProtoName");
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from("DataName".as_bytes()), // Different from proto
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
+            from_raw: Some(from_raw),
+            contract_parameter: Some(tron_backend_execution::TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountUpdateContract".to_string(),
+                value: proto_value,
+            }),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(result.is_ok(), "Should succeed: {:?}", result.err());
+
+    // Verify proto name was used (not transaction.data)
+    let stored_name = storage_adapter.get_account_name(&owner_address).unwrap();
+    assert_eq!(stored_name, Some("ProtoName".to_string()), "Should use name from decoded proto");
+}

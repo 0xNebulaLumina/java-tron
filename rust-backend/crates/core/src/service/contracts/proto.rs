@@ -1,6 +1,88 @@
 // Protobuf parsing utilities
 // Shared protobuf decoding helpers
 
+/// Parsed AccountUpdateContract fields
+/// Corresponds to protocol.AccountUpdateContract protobuf message:
+///   bytes account_name = 1;
+///   bytes owner_address = 2;
+#[derive(Debug, Default, Clone)]
+pub struct AccountUpdateContractParams {
+    pub account_name: Vec<u8>,
+    pub owner_address: Vec<u8>,
+}
+
+/// Parse AccountUpdateContract from protobuf bytes
+/// Wire format: field 1 = account_name (bytes), field 2 = owner_address (bytes)
+pub(crate) fn parse_account_update_contract(data: &[u8]) -> Result<AccountUpdateContractParams, String> {
+    let mut params = AccountUpdateContractParams::default();
+    let mut pos = 0;
+
+    while pos < data.len() {
+        // Read tag (field_number << 3 | wire_type)
+        let (tag, tag_len) = read_varint(&data[pos..])?;
+        pos += tag_len;
+
+        let field_number = (tag >> 3) as u32;
+        let wire_type = (tag & 0x7) as u8;
+
+        match (field_number, wire_type) {
+            // Field 1: account_name (bytes, wire type 2 = length-delimited)
+            (1, 2) => {
+                let (len, len_bytes) = read_varint(&data[pos..])?;
+                pos += len_bytes;
+                let len = len as usize;
+                if pos + len > data.len() {
+                    return Err("Truncated account_name field".to_string());
+                }
+                params.account_name = data[pos..pos + len].to_vec();
+                pos += len;
+            }
+            // Field 2: owner_address (bytes, wire type 2 = length-delimited)
+            (2, 2) => {
+                let (len, len_bytes) = read_varint(&data[pos..])?;
+                pos += len_bytes;
+                let len = len as usize;
+                if pos + len > data.len() {
+                    return Err("Truncated owner_address field".to_string());
+                }
+                params.owner_address = data[pos..pos + len].to_vec();
+                pos += len;
+            }
+            // Skip unknown fields
+            (_, 0) => {
+                // Varint - skip
+                let (_val, val_len) = read_varint(&data[pos..])?;
+                pos += val_len;
+            }
+            (_, 1) => {
+                // 64-bit fixed - skip 8 bytes
+                if pos + 8 > data.len() {
+                    return Err("Truncated 64-bit field".to_string());
+                }
+                pos += 8;
+            }
+            (_, 2) => {
+                // Length-delimited - skip
+                let (len, len_bytes) = read_varint(&data[pos..])?;
+                pos += len_bytes;
+                pos += len as usize;
+            }
+            (_, 5) => {
+                // 32-bit fixed - skip 4 bytes
+                if pos + 4 > data.len() {
+                    return Err("Truncated 32-bit field".to_string());
+                }
+                pos += 4;
+            }
+            _ => {
+                return Err(format!("Unknown wire type {} for field {}", wire_type, field_number));
+            }
+        }
+    }
+
+    Ok(params)
+}
+
 /// Read a protobuf varint from a byte slice
 /// Returns (value, bytes_read)
 pub(crate) fn read_varint(data: &[u8]) -> Result<(u64, usize), String> {
@@ -303,6 +385,67 @@ impl TransactionResultBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_account_update_contract_basic() {
+        // Build a simple AccountUpdateContract proto:
+        // field 1 (account_name) = "TestName"
+        // field 2 (owner_address) = [0x41, 0x01..0x01] (21 bytes)
+        let mut data = Vec::new();
+
+        // Field 1: account_name (tag = (1 << 3) | 2 = 10)
+        data.push(10); // tag
+        data.push(8);  // length
+        data.extend_from_slice(b"TestName");
+
+        // Field 2: owner_address (tag = (2 << 3) | 2 = 18)
+        data.push(18); // tag
+        data.push(21); // length
+        data.push(0x41); // TRON prefix
+        data.extend_from_slice(&[1u8; 20]);
+
+        let result = parse_account_update_contract(&data).unwrap();
+        assert_eq!(result.account_name, b"TestName");
+        assert_eq!(result.owner_address.len(), 21);
+        assert_eq!(result.owner_address[0], 0x41);
+    }
+
+    #[test]
+    fn test_parse_account_update_contract_empty_name() {
+        // AccountUpdateContract with empty account_name (allowed by Java)
+        let mut data = Vec::new();
+
+        // Only field 2: owner_address
+        data.push(18); // tag
+        data.push(21); // length
+        data.push(0x41);
+        data.extend_from_slice(&[2u8; 20]);
+
+        let result = parse_account_update_contract(&data).unwrap();
+        assert!(result.account_name.is_empty(), "Empty name should be allowed");
+        assert_eq!(result.owner_address.len(), 21);
+    }
+
+    #[test]
+    fn test_parse_account_update_contract_empty_data() {
+        // Empty protobuf should parse to defaults
+        let result = parse_account_update_contract(&[]).unwrap();
+        assert!(result.account_name.is_empty());
+        assert!(result.owner_address.is_empty());
+    }
+
+    #[test]
+    fn test_parse_account_update_contract_truncated() {
+        // Truncated length-delimited field should fail
+        let mut data = Vec::new();
+        data.push(10); // tag for field 1
+        data.push(100); // length says 100 bytes
+        data.extend_from_slice(b"short"); // but only 5 bytes
+
+        let result = parse_account_update_contract(&data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Truncated"));
+    }
 
     #[test]
     fn test_write_varint() {
