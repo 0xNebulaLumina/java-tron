@@ -1084,6 +1084,12 @@ mod tests {
             &dir.join("pre_db/account.kv"),
             &kv_data,
         ).unwrap();
+
+        // Create account.kv in expected/post_db (required since databasesTouched includes "account")
+        crate::conformance::kv_format::write_kv_file(
+            &dir.join("expected/post_db/account.kv"),
+            &kv_data,
+        ).unwrap();
     }
 
     #[test]

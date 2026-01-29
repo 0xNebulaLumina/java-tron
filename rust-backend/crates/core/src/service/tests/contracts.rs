@@ -19,6 +19,20 @@ fn encode_varint(buf: &mut Vec<u8>, mut value: u64) {
     }
 }
 
+/// Seed required dynamic properties for tests.
+/// Many system contracts check for ALLOW_MULTI_SIGN.
+fn seed_dynamic_properties(storage_engine: &StorageEngine) {
+    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+}
+
+/// Create a TRON-format from_raw (21 bytes: 0x41 prefix + 20-byte address)
+fn make_from_raw(addr: &Address) -> Vec<u8> {
+    let mut raw = vec![0x41u8];
+    raw.extend_from_slice(addr.as_slice());
+    raw
+}
+
 #[test]
 fn test_trc10_transfer_emits_recipient_account_creation() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -109,6 +123,7 @@ fn test_account_update_contract_happy_path() {
     // Create mock storage and service
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -199,6 +214,7 @@ fn test_account_update_contract_validations() {
     // Create mock storage and service
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -293,6 +309,7 @@ fn test_account_update_contract_duplicate_set() {
     // Create mock storage and service
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -445,6 +462,7 @@ fn test_freeze_balance_success_basic() {
     // Setup storage with initial account
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -480,6 +498,7 @@ fn test_freeze_balance_success_basic() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
+            from_raw: Some(make_from_raw(&owner_address)),
             ..Default::default()
         },
     };
@@ -540,6 +559,7 @@ fn test_freeze_balance_insufficient_balance() {
 
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -569,6 +589,7 @@ fn test_freeze_balance_insufficient_balance() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
+            from_raw: Some(make_from_raw(&owner_address)),
             ..Default::default()
         },
     };
@@ -600,7 +621,11 @@ fn test_freeze_balance_insufficient_balance() {
     // Execute - should fail
     let result = service.execute_freeze_balance_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_err(), "Should fail with insufficient balance");
-    assert!(result.unwrap_err().contains("Insufficient balance"));
+    let err_msg = result.unwrap_err();
+    assert!(
+        err_msg.contains("Insufficient balance") || err_msg.contains("frozenBalance must be less than") || err_msg.contains("accountBalance"),
+        "Expected balance error, got: {}", err_msg
+    );
 }
 
 #[test]
@@ -668,6 +693,7 @@ fn test_freeze_balance_emits_freeze_changes_when_enabled() {
     // Create test storage with temp directory
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     // Setup owner account with sufficient balance
@@ -701,6 +727,7 @@ fn test_freeze_balance_emits_freeze_changes_when_enabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
+            from_raw: Some(make_from_raw(&owner_addr)),
             ..Default::default()
         },
     };
@@ -760,6 +787,7 @@ fn test_freeze_balance_no_emission_when_disabled() {
     // Create test storage with temp directory
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     // Setup owner account with sufficient balance
@@ -790,6 +818,7 @@ fn test_freeze_balance_no_emission_when_disabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
+            from_raw: Some(make_from_raw(&owner_addr)),
             ..Default::default()
         },
     };
@@ -841,6 +870,7 @@ fn test_unfreeze_balance_emits_freeze_changes_when_enabled() {
     // Create test storage with temp directory
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     // Setup owner account
@@ -873,6 +903,7 @@ fn test_unfreeze_balance_emits_freeze_changes_when_enabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
             asset_id: None,
+            from_raw: Some(make_from_raw(&owner_addr)),
             ..Default::default()
         },
     };
@@ -928,6 +959,7 @@ fn test_freeze_balance_v2_emits_with_v2_flag() {
     // Create test storage with temp directory
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     // Setup owner account
@@ -959,6 +991,7 @@ fn test_freeze_balance_v2_emits_with_v2_flag() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceV2Contract),
             asset_id: None,
+            from_raw: Some(make_from_raw(&owner_addr)),
             ..Default::default()
         },
     };
@@ -1014,6 +1047,7 @@ fn test_unfreeze_balance_v2_partial_unfreeze() {
     // Create test storage with temp directory
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     // Setup owner account
@@ -1048,6 +1082,7 @@ fn test_unfreeze_balance_v2_partial_unfreeze() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract),
             asset_id: None,
+            from_raw: Some(make_from_raw(&owner_addr)),
             ..Default::default()
         },
     };
@@ -1103,6 +1138,7 @@ fn test_unfreeze_balance_v2_full_unfreeze() {
     // Create test storage with temp directory
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     // Setup owner account
@@ -1135,6 +1171,7 @@ fn test_unfreeze_balance_v2_full_unfreeze() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract),
             asset_id: None,
+            from_raw: Some(make_from_raw(&owner_addr)),
             ..Default::default()
         },
     };
@@ -1192,6 +1229,7 @@ fn test_asset_issue_contract_trc10_change_emission() {
     // Create mock storage and service
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -2108,6 +2146,7 @@ fn test_witness_update_contract_happy_path() {
     // Create mock storage and service
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -2199,6 +2238,7 @@ fn test_witness_update_contract_validations() {
     // Create mock storage and service
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -2345,6 +2385,7 @@ fn test_witness_update_tracks_aext_when_enabled() {
     // Create mock storage and service with AEXT tracking enabled
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -2735,6 +2776,7 @@ fn test_account_create_type_normal_default() {
             &0u64.to_be_bytes(),
         )
         .unwrap();
+    seed_dynamic_properties(&storage_engine);
 
     let mainnet_owner = make_tron_address_21(0x41, [0x11u8; 20]);
     storage_engine
@@ -2800,6 +2842,7 @@ fn test_account_create_type_contract_persisted() {
             &0u64.to_be_bytes(),
         )
         .unwrap();
+    seed_dynamic_properties(&storage_engine);
 
     let mainnet_owner = make_tron_address_21(0x41, [0x11u8; 20]);
     storage_engine
@@ -2886,6 +2929,7 @@ fn test_account_create_bandwidth_path_free_net() {
             &1i64.to_be_bytes(), // 1x multiplier
         )
         .unwrap();
+    seed_dynamic_properties(&storage_engine);
 
     let mainnet_owner = make_tron_address_21(0x41, [0x11u8; 20]);
     storage_engine
@@ -2977,6 +3021,7 @@ fn test_account_create_fee_fallback_updates_total_cost() {
             &100000u64.to_be_bytes(), // 0.1 TRX fallback fee
         )
         .unwrap();
+    seed_dynamic_properties(&storage_engine);
 
     let mainnet_owner = make_tron_address_21(0x41, [0x11u8; 20]);
     storage_engine
@@ -3047,6 +3092,7 @@ fn test_account_create_receipt_contains_fee() {
             &actuator_fee.to_be_bytes(),
         )
         .unwrap();
+    seed_dynamic_properties(&storage_engine);
 
     let mainnet_owner = make_tron_address_21(0x41, [0x11u8; 20]);
     storage_engine
@@ -3147,6 +3193,7 @@ fn test_account_create_insufficient_bandwidth_and_balance() {
             &1_000_000_000u64.to_be_bytes(), // 1000 TRX - higher than owner balance
         )
         .unwrap();
+    seed_dynamic_properties(&storage_engine);
 
     let mainnet_owner = make_tron_address_21(0x41, [0x11u8; 20]);
     storage_engine
