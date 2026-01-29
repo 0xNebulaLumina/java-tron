@@ -1990,15 +1990,20 @@ impl BackendService {
         }
 
         // Validation parity: DecodeUtil.addressValid(ownerAddress)
+        // Java requires: len == 21 AND prefix == configured addressPreFixByte
+        // This matches DecodeUtil.addressValid exactly:
+        //   - Empty address → false (warn: "Address is empty")
+        //   - len != 21 → false (warn: "Address length need 42 but...")
+        //   - prefix != addressPreFixByte → false (warn: "Address need prefix with...")
         if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
-            let owner_address_valid = match from_raw.len() {
-                21 => from_raw[0] == 0x41 || from_raw[0] == 0xa0,
-                20 => true,
-                _ => false,
-            };
+            let expected_prefix = storage_adapter.address_prefix();
+            let owner_address_valid = from_raw.len() == 21 && from_raw[0] == expected_prefix;
             if !owner_address_valid {
                 return Err("Invalid ownerAddress".to_string());
             }
+        } else {
+            // No from_raw provided - cannot validate address
+            return Err("Invalid ownerAddress".to_string());
         }
 
         // Validation: owner account must exist (java: \"Account does not exist\")
