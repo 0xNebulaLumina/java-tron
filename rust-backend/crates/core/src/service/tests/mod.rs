@@ -7,3 +7,5 @@ mod contracts;
 mod helpers;
 #[cfg(test)]
 mod integration;
+
+// Note: contracts.rs was split into contracts/ subdirectory with separate files per contract type
