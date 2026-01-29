@@ -61,7 +61,7 @@ impl BackendService {
         // Parse freeze parameters from transaction data
         let params = Self::parse_freeze_balance_params(&transaction.data)?;
 
-        info!("FreezeBalance owner={} amount={} resource={:?} duration={}",
+        debug!("FreezeBalance owner={} amount={} resource={:?} duration={}",
               tron_backend_common::to_tron_address(&transaction.from),
               params.frozen_balance,
               params.resource,
@@ -510,7 +510,7 @@ impl BackendService {
                     v2_model: false, // FreezeBalanceContract is V1 model
                 };
 
-                info!("Emitting freeze change: owner={}, resource={:?}, amount={}, expiration={}",
+                debug!("Emitting freeze change: owner={}, resource={:?}, amount={}, expiration={}",
                       tron_backend_common::to_tron_address(&transaction.from),
                       resource, record.frozen_amount, record.expiration_timestamp);
 
@@ -549,7 +549,7 @@ impl BackendService {
                 total_energy_limit,
             };
 
-            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+            debug!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
                   total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
 
             vec![change]
@@ -590,7 +590,7 @@ impl BackendService {
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        info!(
+        debug!(
             "Executing UNFREEZE_BALANCE_CONTRACT: owner={}, data_len={}",
             tron_backend_common::to_tron_address(&transaction.from),
             transaction.data.len()
@@ -1245,7 +1245,7 @@ impl BackendService {
                 v2_model: false, // UnfreezeBalanceContract is V1 model
             };
 
-            info!(
+            debug!(
                 "Emitting unfreeze change: owner={}, resource={:?}, amount={}, expiration={}",
                 tron_backend_common::to_tron_address(&transaction.from),
                 resource,
@@ -1282,7 +1282,7 @@ impl BackendService {
                 total_energy_limit,
             };
 
-            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+            debug!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
                   total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
 
             vec![change]
@@ -1399,7 +1399,7 @@ impl BackendService {
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        info!(
+        debug!(
             "Executing FREEZE_BALANCE_V2_CONTRACT: owner={}, data_len={}",
             tron_backend_common::to_tron_address(&transaction.from),
             transaction.data.len()
@@ -1637,7 +1637,7 @@ impl BackendService {
                     v2_model: true, // FreezeBalanceV2Contract is V2 model
                 };
 
-                info!("Emitting freeze V2 change: owner={}, resource={:?}, amount={}, expiration={}",
+                debug!("Emitting freeze V2 change: owner={}, resource={:?}, amount={}, expiration={}",
                       tron_backend_common::to_tron_address(&owner_address),
                       freeze_ledger_resource, record.frozen_amount, record.expiration_timestamp);
 
@@ -1676,7 +1676,7 @@ impl BackendService {
                 total_energy_limit,
             };
 
-            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+            debug!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
                   total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
 
             vec![change]
@@ -1717,7 +1717,7 @@ impl BackendService {
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        info!(
+        debug!(
             "Executing UNFREEZE_BALANCE_V2_CONTRACT: owner={}, data_len={}",
             tron_backend_common::to_tron_address(&transaction.from),
             transaction.data.len()
@@ -2246,7 +2246,7 @@ impl BackendService {
                 }
             };
 
-            info!("Emitting unfreeze V2 change: owner={}, resource={:?}, amount={} (remaining after unfreeze)",
+            debug!("Emitting unfreeze V2 change: owner={}, resource={:?}, amount={} (remaining after unfreeze)",
                   tron_backend_common::to_tron_address(&transaction.from), resource, change.amount);
 
             vec![change]
@@ -2278,7 +2278,7 @@ impl BackendService {
                 total_energy_limit,
             };
 
-            info!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
+            debug!("Emitting global resource change: net_weight={}, net_limit={}, energy_weight={}, energy_limit={}",
                   total_net_weight, total_net_limit, total_energy_weight, total_energy_limit);
 
             vec![change]

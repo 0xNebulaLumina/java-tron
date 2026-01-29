@@ -1,6 +1,6 @@
 # Reduce INFO Logging During Sync (remote-remote) — TODO
 
-Status: plan-ready (not started)
+Status: **Phase 2.R implemented** (code changes done, validation pending)
 Owners: Rust `rust-backend` (`crates/core` gRPC, `crates/execution`)
 Target: improve **remote-remote** sync throughput by reducing hot-path **INFO** logging overhead (CPU + I/O) on Rust backend.
 
@@ -76,16 +76,16 @@ Acceptance for Phase 1.R
 File: `rust-backend/crates/core/src/service/grpc/mod.rs` (multiple callsites around per-tx execution)
 
 Plan:
-- [ ] Convert per-tx INFO logs to DEBUG:
-  - [ ] “Using buffered writes …”
-  - [ ] “Executing NON_VM/VM …”
-  - [ ] “Transaction executed successfully …”
-  - [ ] “Committed … touched keys …”
-  - [ ] “Dropping buffer …”
-- [ ] Ensure expensive log work is behind a `tracing::enabled!(Level::DEBUG)` check:
-  - [ ] Blackhole BEFORE/AFTER balance logs (currently cause extra storage reads and conversions):
-    - [ ] Only compute and read balances when DEBUG is enabled or when an explicit config flag is set.
-    - [ ] Prefer “summary only” at INFO; reserve per-tx addresses/ids for DEBUG.
+- [x] Convert per-tx INFO logs to DEBUG:
+  - [x] "Using buffered writes …"
+  - [x] "Executing NON_VM/VM …"
+  - [x] "Transaction executed successfully …"
+  - [x] "Committed … touched keys …"
+  - [x] "Dropping buffer …"
+- [x] Ensure expensive log work is behind a `tracing::enabled!(Level::DEBUG)` check:
+  - [x] Blackhole BEFORE/AFTER balance logs (currently cause extra storage reads and conversions):
+    - [x] Only compute and read balances when DEBUG is enabled or when an explicit config flag is set.
+    - [x] Prefer "summary only" at INFO; reserve per-tx addresses/ids for DEBUG.
 - [ ] Add periodic INFO summary (every T seconds) instead of per-tx INFO:
   - [ ] tx count, tx/sec, avg commit ops, touched keys histogram, last block number seen
 
@@ -93,9 +93,9 @@ Plan:
 File: `rust-backend/crates/execution/src/tron_evm.rs:1059..1137`
 
 Plan:
-- [ ] Demote “Extracting … state change records” and “Extracted and sorted …” from INFO to DEBUG.
-- [ ] Move the per-change loop to TRACE and guard it:
-  - [ ] `if tracing::enabled!(tracing::Level::TRACE) { for … }`
+- [x] Demote "Extracting … state change records" and "Extracted and sorted …" from INFO to DEBUG.
+- [x] Move the per-change loop to TRACE and guard it:
+  - [x] `if tracing::enabled!(tracing::Level::TRACE) { for … }`
 - [ ] (Optional) Add sampling: log only first N changes when DEBUG is enabled.
 
 #### 2.R.3 Contract-specific logs
@@ -104,8 +104,18 @@ Files (examples; scan for `info!` in hot code paths):
 - `rust-backend/crates/core/src/service/contracts/*`
 
 Plan:
-- [ ] Identify any `info!` that runs per tx and demote to DEBUG (unless it’s a rare anomaly).
-- [ ] Keep WARN/ERROR for exceptional situations unchanged.
+- [x] Identify any `info!` that runs per tx and demote to DEBUG (unless it's a rare anomaly).
+- [x] Keep WARN/ERROR for exceptional situations unchanged.
+
+**Files updated:**
+- `rust-backend/crates/core/src/service/mod.rs` - all per-tx `info!` → `debug!`
+- `rust-backend/crates/core/src/service/contracts/freeze.rs` - all `info!` → `debug!`
+- `rust-backend/crates/core/src/service/contracts/delegation.rs` - all `info!` → `debug!`
+- `rust-backend/crates/core/src/service/contracts/withdraw.rs` - all `info!` → `debug!`
+- `rust-backend/crates/execution/src/storage_adapter/engine.rs` - all `tracing::info!` → `tracing::debug!`
+- `rust-backend/crates/execution/src/storage_adapter/database.rs` - all `tracing::info!` → `tracing::debug!`
+- `rust-backend/crates/execution/src/storage_adapter/in_memory.rs` - `tracing::info!` → `tracing::debug!`
+- `rust-backend/crates/execution/src/tron_evm.rs` - per-tx logs demoted + TRACE guard added
 
 Acceptance for Phase 2.R
 - [ ] With default `RUST_LOG` (or default filter), backend INFO logs are not emitted per tx; only periodic summaries remain.

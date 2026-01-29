@@ -779,7 +779,7 @@ where
                     Output::Create(data, addr) => {
                         // addr is Option<Address> - the created contract's address
                         if let Some(created_addr) = addr {
-                            tracing::info!("Contract created at address: {:?}", created_addr);
+                            tracing::debug!("Contract created at address: {:?}", created_addr);
                             (data, Some(created_addr))
                         } else {
                             tracing::warn!("Contract creation succeeded but no address returned");
@@ -1056,7 +1056,7 @@ impl<S: EvmStateStore + Send + Sync + 'static> TronEvm<EvmStateDatabase<S>> {
         let db = &mut self.evm.context.evm.db;
         let state_records = db.get_state_change_records();
         
-        tracing::info!("Extracting {} state change records from database", state_records.len());
+        tracing::debug!("Extracting {} state change records from database", state_records.len());
         
         let mut state_changes: Vec<TronStateChange> = state_records.iter().map(|record| {
             match record {
@@ -1121,18 +1121,21 @@ impl<S: EvmStateStore + Send + Sync + 'static> TronEvm<EvmStateDatabase<S>> {
         // Clear the records after extracting them
         db.clear_state_change_records();
         
-        tracing::info!("Extracted and sorted {} state changes for return", state_changes.len());
-        for (i, change) in state_changes.iter().enumerate() {
-            match change {
-                TronStateChange::StorageChange { address, key, .. } => {
-                    tracing::info!("  State change {}: StorageChange for address {:?}, key {:?}", i, address, key);
-                },
-                TronStateChange::AccountChange { address, old_account, new_account } => {
-                    let old_exists = old_account.is_some();
-                    let new_exists = new_account.is_some();
-                    tracing::info!("  State change {}: AccountChange for address {:?}, old_exists: {}, new_exists: {}", 
-                                  i, address, old_exists, new_exists);
-                },
+        tracing::debug!("Extracted and sorted {} state changes for return", state_changes.len());
+        // Per-change logging moved to TRACE level to avoid hot-path spam
+        if tracing::enabled!(tracing::Level::TRACE) {
+            for (i, change) in state_changes.iter().enumerate() {
+                match change {
+                    TronStateChange::StorageChange { address, key, .. } => {
+                        tracing::trace!("  State change {}: StorageChange for address {:?}, key {:?}", i, address, key);
+                    },
+                    TronStateChange::AccountChange { address, old_account, new_account } => {
+                        let old_exists = old_account.is_some();
+                        let new_exists = new_account.is_some();
+                        tracing::trace!("  State change {}: AccountChange for address {:?}, old_exists: {}, new_exists: {}",
+                                      i, address, old_exists, new_exists);
+                    },
+                }
             }
         }
         

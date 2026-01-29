@@ -92,7 +92,7 @@ impl InMemoryEvmStateStore {
         }
 
         // Log the computation with all relevant details
-        tracing::info!(
+        tracing::debug!(
             address = ?address,
             new_model = new_model,
             bandwidth = bandwidth_amount,

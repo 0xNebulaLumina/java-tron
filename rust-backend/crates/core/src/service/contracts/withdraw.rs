@@ -221,7 +221,7 @@ impl BackendService {
         }
         let readable_owner_address = hex::encode(owner_from_field);
 
-        info!(
+        debug!(
             "Executing WITHDRAW_BALANCE_CONTRACT: owner={}",
             readable_owner_address
         );
@@ -273,7 +273,7 @@ impl BackendService {
         let delegation_reward = self.compute_delegation_reward_if_enabled(storage_adapter, &owner_address)?;
 
         if delegation_reward > 0 {
-            info!(
+            debug!(
                 "Delegation reward computed for {}: {} SUN",
                 readable_owner_address, delegation_reward
             );
@@ -355,7 +355,7 @@ impl BackendService {
                 .map_err(|e| format!("Failed to persist owner account proto: {}", e))?;
         }
 
-        info!(
+        debug!(
             "WithdrawBalance: owner={} withdrew {} SUN, new_balance={}",
             readable_owner_address, allowance, new_balance_u64
         );

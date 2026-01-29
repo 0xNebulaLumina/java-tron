@@ -96,7 +96,7 @@ impl<S: EvmStateStore> EvmStateDatabase<S> {
     /// Prefer setting this at construction time via `new_with_persist()`.
     pub fn set_persist_enabled(&mut self, enabled: bool) {
         if enabled != self.persist_enabled {
-            tracing::info!(
+            tracing::debug!(
                 "EvmStateDatabase persist_enabled changed from {} to {}",
                 self.persist_enabled,
                 enabled
@@ -380,7 +380,7 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
             if account_changed || force_track_creation {
                 if is_account_creation || force_track_creation {
                     let address_tron = to_tron_address(&address);
-                    tracing::info!("Recording account creation for address {:?} (tron: {}) with balance: {} (forced: {})", 
+                    tracing::debug!("Recording account creation for address {:?} (tron: {}) with balance: {} (forced: {})", 
                                  address, address_tron, new_account_info.balance, force_track_creation);
                 } else {
                     tracing::debug!("Recording account modification for address {:?} - old balance: {:?}, new balance: {}", 
@@ -413,10 +413,10 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
                 } else {
                     let address_tron = to_tron_address(&address);
                     if is_account_creation || force_track_creation {
-                        tracing::info!("Successfully persisted account creation for {:?} (tron: {}) - balance: {}",
+                        tracing::debug!("Successfully persisted account creation for {:?} (tron: {}) - balance: {}",
                                      address, address_tron, new_account_info.balance);
                     } else {
-                        tracing::info!("Successfully persisted account changes for {:?} (tron: {}) - balance: {}",
+                        tracing::debug!("Successfully persisted account changes for {:?} (tron: {}) - balance: {}",
                                        address, address_tron, new_account_info.balance);
                     }
                 }

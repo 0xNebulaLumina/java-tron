@@ -214,7 +214,7 @@ impl BackendService {
         use prost::Message;
         use tron_backend_execution::protocol::{AccountType as ProtoAccountType, CreateSmartContract};
 
-        info!("Phase 2.I L2: Persisting SmartContract metadata for contract at {:?}", created_address);
+        debug!("Phase 2.I L2: Persisting SmartContract metadata for contract at {:?}", created_address);
 
         // Parse CreateSmartContract proto from transaction data
         let create_contract = CreateSmartContract::decode(transaction.data.as_ref())
@@ -264,7 +264,7 @@ impl BackendService {
         storage_adapter.put_smart_contract(&smart_contract)
             .map_err(|e| format!("Failed to persist SmartContract to ContractStore: {}", e))?;
 
-        info!("Successfully persisted SmartContract: name='{}', origin_energy_limit={}, consume_user_resource_percent={}",
+        debug!("Successfully persisted SmartContract: name='{}', origin_energy_limit={}, consume_user_resource_percent={}",
               smart_contract.name, smart_contract.origin_energy_limit, smart_contract.consume_user_resource_percent);
 
         // Ensure AccountStore entry for the contract has the correct type/name (Contract account).
@@ -284,7 +284,7 @@ impl BackendService {
             // java-tron stores an ABI key even when the ABI message is empty (serializes to 0 bytes).
             storage_adapter.put_abi(&tron_address, abi)
                 .map_err(|e| format!("Failed to persist ABI: {}", e))?;
-            info!("Persisted ABI with {} entries", abi.entrys.len());
+            debug!("Persisted ABI with {} entries", abi.entrys.len());
         }
 
         Ok(())
@@ -1194,7 +1194,7 @@ impl BackendService {
         let support_blackhole = storage_adapter.support_black_hole_optimization()
             .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
 
-        info!(
+        debug!(
             "WitnessCreate flags: upgrade_cost={} SUN, allow_multi_sign={}, support_blackhole={}",
             account_upgrade_cost,
             allow_multi_sign,
@@ -1252,7 +1252,7 @@ impl BackendService {
         let fee_destination: String;
         if support_blackhole {
             // Burn mode - no additional account change needed
-            info!("Burning {} SUN (blackhole optimization)", account_upgrade_cost);
+            debug!("Burning {} SUN (blackhole optimization)", account_upgrade_cost);
             storage_adapter.burn_trx(account_upgrade_cost)
                 .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             fee_destination = String::from("burn");
@@ -1285,7 +1285,7 @@ impl BackendService {
                     .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
 
                 let bh_tron = revm_primitives::hex::encode(add_tron_address_prefix(&blackhole_addr));
-                info!(
+                debug!(
                     "Credited {} SUN to blackhole address {}",
                     account_upgrade_cost,
                     bh_tron
@@ -1351,7 +1351,7 @@ impl BackendService {
         }
 
         let owner_tron = revm_primitives::hex::encode(add_tron_address_prefix(&transaction.from));
-        info!(
+        debug!(
             "WitnessCreate completed: cost={} SUN, state_changes={}, owner={}, fee_dest={}",
             account_upgrade_cost,
             state_changes.len(),
@@ -1448,12 +1448,12 @@ impl BackendService {
             storage_adapter
                 .put_witness(&updated_witness)
                 .map_err(|e| format!("Failed to update witness: {}", e))?;
-            info!(
+            debug!(
                 "Updated witness URL: owner={}, old_url='{}', new_url='{}'",
                 owner_tron, old_url, new_url
             );
         } else {
-            info!(
+            debug!(
                 "Witness update is a no-op (URL unchanged): owner={}, url='{}'",
                 owner_tron, new_url
             );
@@ -1690,8 +1690,8 @@ impl BackendService {
         let owner_tron = tron_backend_common::to_tron_address(&owner);
         let readable_owner_address = hex::encode(&owner_address_raw);
 
-        info!("VoteWitness owner={} vote_count=?", owner_tron);
-        info!("Parsed {} votes from VoteWitnessContract", votes_raw.len());
+        debug!("VoteWitness owner={} vote_count=?", owner_tron);
+        debug!("Parsed {} votes from VoteWitnessContract", votes_raw.len());
 
         // 3. Validate votes count
         if votes_raw.is_empty() {
@@ -1768,7 +1768,7 @@ impl BackendService {
         let tron_power_sun = storage_adapter.compute_tron_power_in_sun(&owner, new_model)
             .map_err(|e| format!("Failed to compute tron power: {}", e))?;
 
-        info!("VoteWitness owner={} sum={} TRX ({} SUN), tronPower={} SUN, new_model={}",
+        debug!("VoteWitness owner={} sum={} TRX ({} SUN), tronPower={} SUN, new_model={}",
               owner_tron, sum_trx, sum_sun, tron_power_sun, new_model);
 
         if sum_sun > tron_power_sun {
@@ -1779,7 +1779,7 @@ impl BackendService {
         }
 
         // 5. Phase 1: Skip withdrawReward (log only)
-        info!("Skipping withdrawReward for {} (Phase 1 - delegation not yet ported)", owner_tron);
+        debug!("Skipping withdrawReward for {} (Phase 1 - delegation not yet ported)", owner_tron);
 
         // 6. Load or create VotesRecord
         // java-tron semantics:
@@ -1791,7 +1791,7 @@ impl BackendService {
 
         let mut votes_record = match storage_adapter.get_votes(&owner) {
             Ok(Some(record)) => {
-                info!("Found existing votes for {}: old_votes={}, new_votes={}",
+                debug!("Found existing votes for {}: old_votes={}, new_votes={}",
                       owner_tron, record.old_votes.len(), record.new_votes.len());
                 // Preserve old_votes (epoch baseline) and overwrite new_votes below.
                 record
@@ -1804,11 +1804,11 @@ impl BackendService {
                         .map_err(|e| format!("Failed to get account votes list: {}", e))?;
 
                     if prior_votes_tuples.is_empty() {
-                        info!("No existing votes for {} and no Account.votes, creating empty record (seed_enabled=true)",
+                        debug!("No existing votes for {} and no Account.votes, creating empty record (seed_enabled=true)",
                               owner_tron);
                         VotesRecord::empty(owner)
                     } else {
-                        info!("Seeding old_votes from Account.votes for {}: {} entries (seed_enabled=true)",
+                        debug!("Seeding old_votes from Account.votes for {}: {} entries (seed_enabled=true)",
                               owner_tron, prior_votes_tuples.len());
                         // Convert (Address, u64) tuples to Vote structs
                         use tron_backend_execution::Vote;
@@ -1820,7 +1820,7 @@ impl BackendService {
                     }
                 } else {
                     // Legacy behavior: empty old_votes
-                    info!("No existing votes for {}, creating new record with empty old_votes (seed_enabled=false)",
+                    debug!("No existing votes for {}, creating new record with empty old_votes (seed_enabled=false)",
                           owner_tron);
                     VotesRecord::empty(owner)
                 }
@@ -1841,7 +1841,7 @@ impl BackendService {
         storage_adapter.set_votes(owner, &votes_record)
             .map_err(|e| format!("Failed to set votes: {}", e))?;
 
-        info!("Successfully stored votes for {}: old_votes={}, new_votes={}",
+        debug!("Successfully stored votes for {}: old_votes={}, new_votes={}",
               owner_tron, votes_record.old_votes.len(), votes_record.new_votes.len());
 
         // 8.5 Update Account.votes list to match embedded semantics.
@@ -1926,7 +1926,7 @@ impl BackendService {
             }).collect(),
         };
 
-        info!("VoteWitness completed: owner={}, votes={}, state_changes={}, bandwidth={}, vote_change_entries={}",
+        debug!("VoteWitness completed: owner={}, votes={}, state_changes={}, bandwidth={}, vote_change_entries={}",
               owner_tron, votes_record.new_votes.len(), state_changes.len(), bandwidth_used, vote_change.votes.len());
 
         Ok(TronExecutionResult {
@@ -1971,7 +1971,7 @@ impl BackendService {
         let owner_tron = tron_backend_common::to_tron_address(&transaction.from);
         let name_bytes = transaction.data.as_ref();
 
-        info!(
+        debug!(
             "AccountUpdate owner={} name_len={}",
             owner_tron,
             name_bytes.len()
@@ -2112,10 +2112,10 @@ impl BackendService {
         let owner_tron_21 = storage_adapter.to_tron_address_21(&owner);
         let readable_owner_address = revm_primitives::hex::encode(owner_tron_21);
 
-        info!("AccountCreate owner={}", owner_tron);
+        debug!("AccountCreate owner={}", owner_tron);
         let target_tron = tron_backend_common::to_tron_address(&target_address);
 
-        info!(
+        debug!(
             "AccountCreate: owner={}, target={}, type={}",
             owner_tron, target_tron, account_type
         );
@@ -2143,7 +2143,7 @@ impl BackendService {
         let fee = storage_adapter.get_create_new_account_fee_in_system_contract()
             .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: {}", e))?;
 
-        info!("AccountCreate fee: {} SUN", fee);
+        debug!("AccountCreate fee: {} SUN", fee);
 
         // 5. Validate sufficient balance
         let fee_u256 = revm_primitives::U256::from(fee);
@@ -2159,7 +2159,7 @@ impl BackendService {
         let support_blackhole = storage_adapter.support_black_hole_optimization()
             .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
 
-        info!(
+        debug!(
             "AccountCreate: fee={} SUN, support_blackhole={}",
             fee, support_blackhole
         );
@@ -2265,7 +2265,7 @@ impl BackendService {
             fee_destination = String::from("none(fee=0)");
         } else if support_blackhole {
             // Burn mode - no additional account change needed
-            info!("Burning {} SUN (blackhole optimization)", fee);
+            debug!("Burning {} SUN (blackhole optimization)", fee);
             storage_adapter
                 .burn_trx(fee)
                 .map_err(|e| format!("Failed to burn TRX: {}", e))?;
@@ -2299,7 +2299,7 @@ impl BackendService {
                     .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
 
                 let bh_tron = tron_backend_common::to_tron_address(&blackhole_addr);
-                info!(
+                debug!(
                     "Credited {} SUN to blackhole address {}",
                     fee, bh_tron
                 );
@@ -2328,7 +2328,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?;
         let net_cost = (raw_bandwidth_bytes as i64).saturating_mul(bandwidth_rate);
 
-        info!(
+        debug!(
             "AccountCreate bandwidth: raw_bytes={}, rate={}, netCost={}",
             raw_bandwidth_bytes, bandwidth_rate, net_cost
         );
@@ -2398,7 +2398,7 @@ impl BackendService {
                     return Err(error_msg);
                 }
 
-                info!(
+                debug!(
                     "AccountCreate bandwidth insufficient, using fee fallback: CREATE_ACCOUNT_FEE={} SUN",
                     create_account_fee_charged
                 );
@@ -2430,7 +2430,7 @@ impl BackendService {
             .with_fee(fee as i64)
             .build();
 
-        info!(
+        debug!(
             "AccountCreate completed: actuator_fee={} SUN, bandwidth_path={}, create_account_fee={}, state_changes={}, owner={}, target={}, fee_dest={}",
             fee, bandwidth_path_used, create_account_fee_charged, state_changes.len(), owner_tron, target_tron, fee_destination
         );
@@ -2652,7 +2652,7 @@ impl BackendService {
         let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
         let owner_tron = tron_backend_common::to_tron_address(&owner);
 
-        info!("ProposalCreate owner={}", owner_tron);
+        debug!("ProposalCreate owner={}", owner_tron);
 
         // 3. Validate owner exists and is a witness
         // Java: AccountStore.has(owner) then WitnessStore.has(owner)
@@ -2678,7 +2678,7 @@ impl BackendService {
             return Err("This proposal has no parameter.".to_string());
         }
 
-        info!("ProposalCreate: {} parameters", parameters.len());
+        debug!("ProposalCreate: {} parameters", parameters.len());
 
         // 4. Validate proposal parameter values (java-tron: ProposalUtil.validator)
         const LONG_VALUE: i64 = 100_000_000_000_000_000;
@@ -2790,7 +2790,7 @@ impl BackendService {
         storage_adapter.set_latest_proposal_num(new_proposal_id)
             .map_err(|e| format!("Failed to update LATEST_PROPOSAL_NUM: {}", e))?;
 
-        info!(
+        debug!(
             "ProposalCreate completed: id={}, expiration={}, params={}",
             new_proposal_id, expiration_time, proposal.parameters.len()
         );
@@ -2964,7 +2964,7 @@ impl BackendService {
         let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
         let owner_tron = tron_backend_common::to_tron_address(&owner);
 
-        info!("ProposalApprove owner={}", owner_tron);
+        debug!("ProposalApprove owner={}", owner_tron);
 
         // 3. Validate owner exists and is a witness (java-tron parity)
         let account_exists = storage_adapter.get_account_proto(&owner)
@@ -2982,7 +2982,7 @@ impl BackendService {
             return Err(format!("Witness[{}] not exists", readable_owner_address));
         }
 
-        info!(
+        debug!(
             "ProposalApprove: id={}, is_add={}",
             proposal_id, is_add_approval
         );
@@ -3034,7 +3034,7 @@ impl BackendService {
         storage_adapter.put_proposal(&proposal)
             .map_err(|e| format!("Failed to persist proposal: {}", e))?;
 
-        info!(
+        debug!(
             "ProposalApprove completed: id={}, approvals={}",
             proposal_id, proposal.approvals.len()
         );
@@ -3160,7 +3160,7 @@ impl BackendService {
         let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
         let owner_tron = tron_backend_common::to_tron_address(&owner);
 
-        info!("ProposalDelete owner={}", owner_tron);
+        debug!("ProposalDelete owner={}", owner_tron);
 
         // 3. Validate owner exists
         let account_exists = storage_adapter.get_account_proto(&owner)
@@ -3171,7 +3171,7 @@ impl BackendService {
             return Err(format!("Account[{}] not exists", readable_owner_address));
         }
 
-        info!("ProposalDelete: id={}", proposal_id);
+        debug!("ProposalDelete: id={}", proposal_id);
 
         // 4. Validate proposal exists (java-tron parity checks LATEST_PROPOSAL_NUM first)
         let latest_proposal_num = storage_adapter.get_latest_proposal_num()
@@ -3209,7 +3209,7 @@ impl BackendService {
         storage_adapter.put_proposal(&proposal)
             .map_err(|e| format!("Failed to persist proposal: {}", e))?;
 
-        info!("ProposalDelete completed: id={}, state=CANCELED", proposal_id);
+        debug!("ProposalDelete completed: id={}, state=CANCELED", proposal_id);
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
@@ -3309,7 +3309,7 @@ impl BackendService {
         let owner = transaction.from;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
 
-        info!("SetAccountId owner={}", owner_tron);
+        debug!("SetAccountId owner={}", owner_tron);
 
         // 1. Parse SetAccountIdContract
         // SetAccountIdContract:
@@ -3323,7 +3323,7 @@ impl BackendService {
             .unwrap_or(transaction.data.as_ref());
         let account_id = self.parse_set_account_id_contract(contract_bytes)?;
 
-        info!("SetAccountId: owner={}, account_id={:?}",
+        debug!("SetAccountId: owner={}, account_id={:?}",
               owner_tron, String::from_utf8_lossy(&account_id));
 
         // 2. Validate account ID format
@@ -3373,7 +3373,7 @@ impl BackendService {
         storage_adapter.put_account_id_index(&account_id, &owner_address_bytes)
             .map_err(|e| format!("Failed to persist account id index: {}", e))?;
 
-        info!("SetAccountId completed: owner={}, account_id={:?}",
+        debug!("SetAccountId completed: owner={}, account_id={:?}",
               owner_tron, String::from_utf8_lossy(&account_id));
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
@@ -3624,7 +3624,7 @@ impl BackendService {
 
         let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
         let owner_tron = tron_backend_common::to_tron_address(&owner);
-        info!("AccountPermissionUpdate owner={}", owner_tron);
+        debug!("AccountPermissionUpdate owner={}", owner_tron);
 
         // Load owner account
         let mut account_proto = storage_adapter.get_account_proto(&owner)
@@ -3680,7 +3680,7 @@ impl BackendService {
 
         let fee = storage_adapter.get_update_account_permission_fee()
             .map_err(|e| format!("Failed to get update_account_permission_fee: {}", e))?;
-        info!("AccountPermissionUpdate: owner={}, fee={}", owner_tron, fee);
+        debug!("AccountPermissionUpdate: owner={}, fee={}", owner_tron, fee);
 
         if fee < 0 {
             return Err("Invalid update account permission fee".to_string());
@@ -3752,7 +3752,7 @@ impl BackendService {
             }
         }
 
-        info!("AccountPermissionUpdate completed: owner={}, fee={}", owner_tron, fee);
+        debug!("AccountPermissionUpdate completed: owner={}, fee={}", owner_tron, fee);
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
@@ -4119,7 +4119,7 @@ impl BackendService {
             }
         }
 
-        info!(
+        debug!(
             "TRC-10 Transfer: owner={}, to={}, asset_id_len={}, amount={}",
             owner_tron, to_tron, asset_id.len(), amount
         );
@@ -4336,7 +4336,7 @@ impl BackendService {
             }
         );
 
-        info!(
+        debug!(
             "TRC-10 Transfer completed: owner={}, to={}, asset_id_len={}, amount={}, fee={} SUN, state_changes={}, bandwidth={}",
             owner_tron, to_tron, asset_id.len(), amount, fee_amount, state_changes.len(), bandwidth_used
         );
@@ -4409,7 +4409,7 @@ impl BackendService {
         // 1. Parse AssetIssueContract proto from transaction.data
         let asset_info = Self::parse_asset_issue_contract(&transaction.data)?;
 
-        info!(
+        debug!(
             "AssetIssue: owner={}, name={}, total_supply={}, precision={}",
             owner_tron, asset_info.name, asset_info.total_supply, asset_info.precision
         );
@@ -4694,7 +4694,7 @@ impl BackendService {
                     .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
 
                 let bh_tron = tron_backend_common::to_tron_address(&blackhole_addr);
-                info!(
+                debug!(
                     "Credited {} SUN asset issue fee to blackhole address {}",
                     asset_issue_fee, bh_tron
                 );
@@ -4748,7 +4748,7 @@ impl BackendService {
             );
         }
 
-        info!(
+        debug!(
             "AssetIssue completed: owner={}, name={}, fee={} SUN, state_changes={}, bandwidth={}",
             owner_tron, asset_info.name, asset_issue_fee, state_changes.len(), bandwidth_used
         );

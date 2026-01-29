@@ -1062,9 +1062,9 @@ impl crate::backend::backend_server::Backend for BackendService {
                 storage_engine.clone(),
             );
             if rust_persist_enabled {
-                info!("Phase B: Using buffered writes (rust_persist_enabled=true)");
+                debug!("Phase B: Using buffered writes (rust_persist_enabled=true)");
             } else {
-                info!("Using buffered writes for NON_VM atomicity");
+                debug!("Using buffered writes for NON_VM atomicity");
             }
             (adapter, Some(buffer))
         } else {
@@ -1074,41 +1074,45 @@ impl crate::backend::backend_server::Backend for BackendService {
             (adapter, None)
         };
 
-        // Log blackhole balance before execution
-        let blackhole_balance_before = if let Ok(Some(blackhole_addr)) = storage_adapter.get_blackhole_address() {
-            let balance = storage_adapter.get_account(&blackhole_addr)
-                .ok()
-                .flatten()
-                .map(|acc| acc.balance)
-                .unwrap_or(revm_primitives::U256::ZERO);
-            let blackhole_addr_array: [u8; 20] = blackhole_addr.as_slice().try_into().unwrap();
-            let blackhole_base58 = to_tron_address(&blackhole_addr_array);
-            let from_addr_array: [u8; 20] = transaction.from.as_slice().try_into().unwrap();
-            let from_addr_base58 = to_tron_address(&from_addr_array);
-            let contract_type_str = transaction.metadata.contract_type
-                .as_ref()
-                .map(|ct| format!("{:?}", ct))
-                .unwrap_or_else(|| "UNKNOWN".to_string());
+        // Log blackhole balance before execution (DEBUG only - expensive: requires DB read + address conversion)
+        let blackhole_balance_before = if tracing::enabled!(tracing::Level::DEBUG) {
+            if let Ok(Some(blackhole_addr)) = storage_adapter.get_blackhole_address() {
+                let balance = storage_adapter.get_account(&blackhole_addr)
+                    .ok()
+                    .flatten()
+                    .map(|acc| acc.balance)
+                    .unwrap_or(revm_primitives::U256::ZERO);
+                let blackhole_addr_array: [u8; 20] = blackhole_addr.as_slice().try_into().unwrap();
+                let blackhole_base58 = to_tron_address(&blackhole_addr_array);
+                let from_addr_array: [u8; 20] = transaction.from.as_slice().try_into().unwrap();
+                let from_addr_base58 = to_tron_address(&from_addr_array);
+                let contract_type_str = transaction.metadata.contract_type
+                    .as_ref()
+                    .map(|ct| format!("{:?}", ct))
+                    .unwrap_or_else(|| "UNKNOWN".to_string());
 
-            let tx_id = req.context.as_ref()
-                .map(|c| c.transaction_id.as_str())
-                .unwrap_or("");
-            info!("Blackhole balance BEFORE execution: {} SUN (address: {}) - block: {}, txId: {}, tx from: {}, contract_type: {}",
-                  balance, blackhole_base58, context.block_number, tx_id, from_addr_base58, contract_type_str);
-            Some((blackhole_addr, balance, blackhole_base58))
+                let tx_id = req.context.as_ref()
+                    .map(|c| c.transaction_id.as_str())
+                    .unwrap_or("");
+                debug!("Blackhole balance BEFORE execution: {} SUN (address: {}) - block: {}, txId: {}, tx from: {}, contract_type: {}",
+                      balance, blackhole_base58, context.block_number, tx_id, from_addr_base58, contract_type_str);
+                Some((blackhole_addr, balance, blackhole_base58))
+            } else {
+                debug!("Blackhole address not configured, skipping balance logging");
+                None
+            }
         } else {
-            warn!("Blackhole address not configured, skipping balance logging");
             None
         };
 
         // Phase 3: Branch execution based on transaction kind
         let execution_result = match tx_kind {
             crate::backend::TxKind::NonVm => {
-                info!("Executing NON_VM transaction with contract type dispatch");
+                debug!("Executing NON_VM transaction with contract type dispatch");
                 // Execute non-VM transaction with contract type dispatch
                 match self.execute_non_vm_contract(&mut storage_adapter, &transaction, &context) {
                     Ok(result) => {
-                        info!("Non-VM contract executed successfully - energy_used: {}, bandwidth_used: {}, state_changes: {}",
+                        debug!("Non-VM contract executed successfully - energy_used: {}, bandwidth_used: {}, state_changes: {}",
                               result.energy_used, result.bandwidth_used, result.state_changes.len());
                         Ok(result)
                     },
@@ -1119,7 +1123,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                 }
             },
             crate::backend::TxKind::Vm => {
-                info!("Executing VM transaction via EVM");
+                debug!("Executing VM transaction via EVM");
 
                 // TRON Parity Fix: Check if this is likely a non-VM transaction before execution (fallback heuristic)
                 let is_non_vm = self.is_likely_non_vm_transaction(&transaction, &storage_adapter);
@@ -1183,7 +1187,7 @@ impl crate::backend::backend_server::Backend for BackendService {
             }
         };
 
-        // Log blackhole balance after execution and compute delta
+        // Log blackhole balance after execution and compute delta (DEBUG only - expensive: requires DB read)
         if let Some((blackhole_addr, balance_before, blackhole_base58)) = blackhole_balance_before.as_ref() {
             // Create a fresh storage adapter to query post-execution state
             let post_exec_adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
@@ -1209,17 +1213,17 @@ impl crate::backend::backend_server::Backend for BackendService {
                 let tx_id = req.context.as_ref()
                     .map(|c| c.transaction_id.as_str())
                     .unwrap_or("");
-                info!("Blackhole balance AFTER execution: {} SUN (address: {}, delta: {} SUN) - block: {}, txId: {}, tx from: {}, contract_type: {}",
+                debug!("Blackhole balance AFTER execution: {} SUN (address: {}, delta: {} SUN) - block: {}, txId: {}, tx from: {}, contract_type: {}",
                       balance_after, blackhole_base58, delta_signed, context.block_number, tx_id, from_addr_base58, contract_type_str);
             } else {
-                warn!("Blackhole account disappeared after execution (address: {})", blackhole_base58);
+                debug!("Blackhole account disappeared after execution (address: {})", blackhole_base58);
             }
         }
 
         // Handle execution result
         match execution_result {
             Ok(result) => {
-                info!("Transaction executed successfully - energy_used: {}, bandwidth_used: {}",
+                debug!("Transaction executed successfully - energy_used: {}, bandwidth_used: {}",
                       result.energy_used, result.bandwidth_used);
 
                 // Phase B: Commit buffer and extract touched_keys if rust_persist_enabled
@@ -1233,7 +1237,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                                 let op_count = locked_buffer.operation_count();
                                 match locked_buffer.commit(&storage_engine) {
                                     Ok(()) => {
-                                        info!("Phase B: Committed {} writes, {} touched keys",
+                                        debug!("Phase B: Committed {} writes, {} touched keys",
                                               op_count, keys.len());
                                         (Some(keys), 1) // WRITE_MODE_PERSISTED
                                     }
@@ -1245,7 +1249,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                                 }
                             } else {
                                 // Execution failed/reverted - don't commit, drop buffer
-                                info!("Phase B: Dropping buffer without commit (execution reverted)");
+                                debug!("Phase B: Dropping buffer without commit (execution reverted)");
                                 (None, 0)
                             }
                         }

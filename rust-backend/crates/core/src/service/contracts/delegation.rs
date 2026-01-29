@@ -116,7 +116,7 @@ pub fn withdraw_reward(
             let latest_reward =
                 compute_reward(storage_adapter, begin_cycle, end_cycle, &account_vote)?;
 
-            info!(
+            debug!(
                 "Latest cycle reward for {} cycle {}: {} SUN",
                 address_tron, begin_cycle, latest_reward
             );
@@ -155,7 +155,7 @@ pub fn withdraw_reward(
         let remaining_reward =
             compute_reward(storage_adapter, begin_cycle, end_cycle, &account_snapshot)?;
 
-        info!(
+        debug!(
             "Remaining cycles reward for {} ({} to {}): {} SUN",
             address_tron, begin_cycle, end_cycle, remaining_reward
         );
@@ -177,7 +177,7 @@ pub fn withdraw_reward(
         .set_delegation_account_vote(end_cycle, address, &account_snapshot)
         .map_err(|e| format!("Failed to set account_vote: {}", e))?;
 
-    info!(
+    debug!(
         "withdraw_reward completed for {}: total reward {} SUN, new begin_cycle {}, end_cycle {}",
         address_tron,
         reward,

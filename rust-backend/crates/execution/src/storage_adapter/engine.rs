@@ -2160,7 +2160,7 @@ impl EngineBackedEvmStateStore {
                 tracing::debug!("Found account data for votes extraction, length: {}", data.len());
                 match self.extract_votes_from_account_protobuf(&data) {
                     Ok(votes) => {
-                        tracing::info!("Extracted {} votes from Account.votes field for {}",
+                        tracing::debug!("Extracted {} votes from Account.votes field for {}",
                                       votes.len(), address_tron);
                         Ok(votes)
                     },
@@ -2476,7 +2476,7 @@ impl EngineBackedEvmStateStore {
         };
 
         if account_total > 0 {
-            tracing::info!(
+            tracing::debug!(
                 address = ?address,
                 new_model = new_model,
                 total = account_total,
@@ -2505,7 +2505,7 @@ impl EngineBackedEvmStateStore {
             }
         }
 
-        tracing::info!(
+        tracing::debug!(
             address = ?address,
             new_model = new_model,
             total = total,
@@ -2548,7 +2548,7 @@ impl EngineBackedEvmStateStore {
         let tron_address = self.account_key(&address);
         self.buffered_put(self.account_index_database(), name.to_vec(), tron_address)?;
 
-        tracing::info!(
+        tracing::debug!(
             "Stored account name (len={}) and index entry for address {:?}",
             name.len(),
             address
@@ -4268,7 +4268,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
         let key = self.account_key(address);
         // Convert to Tron format address for debugging consistency with Java logs
         let address_tron = to_tron_address(address);
-        tracing::info!("Getting account for address {:?} (tron: {}), key: {}", 
+        tracing::debug!("Getting account for address {:?} (tron: {}), key: {}", 
                       address, address_tron, hex::encode(&key));
 
         match self.buffered_get(self.account_database(), &key)? {
@@ -4277,7 +4277,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
                                data.len(), hex::encode(&data[..std::cmp::min(32, data.len())]));
                 match self.deserialize_account(&data) {
                     Ok(account) => {
-                        tracing::info!("Successfully deserialized account - balance: {}, nonce: {}",
+                        tracing::debug!("Successfully deserialized account - balance: {}, nonce: {}",
                                       account.balance, account.nonce);
                         Ok(Some(account))
                     },
@@ -4298,7 +4298,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
                 }
             },
             None => {
-                tracing::info!("No account data found for address {:?} with key {} - account does not exist", address, hex::encode(&key));
+                tracing::debug!("No account data found for address {:?} with key {} - account does not exist", address, hex::encode(&key));
                 // Return None to indicate account doesn't exist
                 // This allows the Database implementation to handle account creation properly
                 Ok(None)
@@ -4343,7 +4343,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
             existing_data.as_deref(),
         );
 
-        tracing::info!(
+        tracing::debug!(
             "Setting account for address {:?} (tron: {}), balance: {}, key: {}, data_len: {}, existing: {}",
             address,
             address_tron,
