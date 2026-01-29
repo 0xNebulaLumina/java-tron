@@ -2106,11 +2106,11 @@ impl BackendService {
         if aext_mode == "tracked" {
             use tron_backend_execution::{AccountAext, ResourceTracker};
 
-            // Get current AEXT for owner (or initialize with defaults)
+            // Get current AEXT for owner (or initialize with proper defaults including window size 28800)
             let current_aext = storage_adapter
                 .get_account_aext(&transaction.from)
                 .map_err(|e| format!("Failed to get owner AEXT: {}", e))?
-                .unwrap_or_default();
+                .unwrap_or_else(|| AccountAext::with_defaults());
 
             // Get free net limit from dynamic properties (default: 5000)
             let free_net_limit = storage_adapter
@@ -2125,6 +2125,11 @@ impl BackendService {
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter
+                .set_account_aext(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));

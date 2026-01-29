@@ -109,12 +109,13 @@ Fix plan:
    - Returns "Protocol buffer parse error" on malformed proto
 
 ### Phase 3: End-to-End Parity (Section 0 - Part 2)
-4. **Added AEXT tracking** (`mod.rs:2100-2137`):
+4. **Added AEXT tracking** (`mod.rs:2101-2144`):
    - Gets execution config for aext_mode
    - When mode is "tracked":
-     - Gets current AEXT for owner
+     - Gets current AEXT for owner using `AccountAext::with_defaults()` (not `Default::default()`) to ensure proper window sizes (28800)
      - Gets FREE_NET_LIMIT from dynamic properties
      - Calls `ResourceTracker::track_bandwidth()` with block_number
+     - **Persists after_aext via `set_account_aext()`** (matching other tracked-mode handlers)
      - Populates `aext_map` in result
    - Matches pattern used by other system contracts (witness_create, vote_witness, etc.)
 
