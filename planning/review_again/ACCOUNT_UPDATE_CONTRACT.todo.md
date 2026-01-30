@@ -50,13 +50,23 @@ Goal: mirror Java's `any.unpack(AccountUpdateContract.class)` behavior and reduc
 
 Goal: ensure `ExecutionResult.state_changes` behavior matches embedded recording used by conformance/CSV.
 
-- [ ] Verify via the existing fixture flow that embedded expects exactly:
-  - [ ] one no-op owner `AccountChange` (old == new)
-  - [ ] no "zero address" changes
-- [ ] If mismatch observed:
-  - [ ] adjust emission count/order/determinism for AccountUpdateContract only (keep other contracts unchanged)
+- [x] Verify via the existing fixture flow that embedded expects exactly:
+  - [x] one no-op owner `AccountChange` (old == new) ✓ Verified via conformance fixtures
+  - [x] no "zero address" changes ✓ Verified via conformance fixtures
+- [x] If mismatch observed:
+  - [x] N/A - All 9 AccountUpdateContract fixtures pass (no adjustment needed)
 
-**Status**: Not verified yet. Current implementation emits one AccountChange with old==new.
+**Status**: ✓ Verified via `./scripts/ci/run_fixture_conformance.sh --rust-only`
+- All 9 AccountUpdateContract fixtures pass:
+  - `edge_happy_account_name_len_200`
+  - `edge_happy_duplicate_name_updates_enabled_overwrites_index`
+  - `happy_path_set_name_first_time`
+  - `happy_update_existing_name_updates_enabled`
+  - `validate_fail_account_missing`
+  - `validate_fail_duplicate_name_updates_disabled`
+  - `validate_fail_invalid_name_too_long`
+  - `validate_fail_owner_address_empty`
+  - `validate_fail_owner_already_named_updates_disabled`
 
 ## 4) Update stale Rust tests for AccountUpdateContract
 
@@ -78,7 +88,7 @@ Fix plan:
 - [x] Rust:
   - [x] `cd rust-backend && cargo test` (AccountUpdateContract tests) ✓ All 16 tests pass
   - [x] Proto parsing tests ✓ All 9 proto tests pass
-  - [ ] Run any conformance runner cases involving `ACCOUNT_UPDATE_CONTRACT` (if the repo has a harness command/script)
+  - [x] Run any conformance runner cases involving `ACCOUNT_UPDATE_CONTRACT` ✓ All 9 fixtures pass via `./scripts/ci/run_fixture_conformance.sh --rust-only`
 - [ ] Java (only if integration behavior changes):
   - [ ] `./gradlew :framework:test --tests \"org.tron.core.conformance.CoreAccountFixtureGeneratorTest\"`
   - [ ] Execute a remote-vs-embedded CSV comparison run that includes AccountUpdateContract transactions
