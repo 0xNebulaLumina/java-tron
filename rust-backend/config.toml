@@ -168,6 +168,12 @@ delegation_reward_enabled = true
 # - Easier transaction rollback on validation failure
 rust_persist_enabled = true
 
+# Dynamic property strictness (Task 5 - Java parity)
+# When true: Methods like get_asset_issue_fee_strict() return errors when keys are missing
+# When false: Uses safe defaults (backward compatible behavior)
+# Set to true for conformance testing or strict Java parity
+strict_dynamic_properties = true
+
 # Genesis Account Initialization
 # Pre-populate accounts with initial balances at startup for testing/parity.
 # This ensures the Rust storage has the same initial state as mainnet at a given starting block.
@@ -186,8 +192,3 @@ address = "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"
 balance_sun = -9223372036854075808
 comment = "Blackhole address - receives system fees when support_black_hole_optimization=false"
 
-# Dynamic property strictness
-# When true: Methods like get_asset_issue_fee_strict() return errors when keys are missing
-# When false: Uses safe defaults (backward compatible behavior)
-# Set to true for conformance testing or strict Java parity
-strict_dynamic_properties = true
