@@ -12,8 +12,8 @@ This checklist assumes we want to resolve the parity risks identified in `planni
   - [ ] testnet only (`0xa0`)
   - [x] must enforce prefix strictly based on the DB/configured network
 - [x] Confirm execution topology:
-  - [ ] "remote storage + remote execution" (shared dynamic properties)
-  - [x] "remote execution only" (Java owns dynamic properties) — affects `token_id` emission requirements
+  - [x] "remote storage + remote execution" (shared dynamic properties) — Rust commits NON_VM writes with write_mode=PERSISTED, Java mirrors on PERSISTED (see RemoteExecutionSPI.java:992, mod.rs:1059/1226, RuntimeSpiImpl.java:93)
+  - [ ] "remote execution only" (Java owns dynamic properties)
 
 ## 1) Address prefix strictness (match Java `DecodeUtil.addressValid`)
 
@@ -58,6 +58,7 @@ Goal: reduce reliance on Java reading `TOKEN_ID_NUM` after execution.
 - [x] Update `execute_asset_issue_contract()` to populate `token_id`.
 - [x] Add tests:
   - [x] `Trc10Change::AssetIssued.token_id` is present and matches the allocated id
+  - [x] `TOKEN_ID_NUM` is persisted alongside token_id (guards future refactors; Java only increments TOKEN_ID_NUM when token_id is empty per RuntimeSpiImpl.java:700)
   - [ ] Java remote CSV extraction uses the provided token_id (no dynamicStore dependency)
 
 ## 4) Unify contract bytes source (`data` vs `contract_parameter.value`)
@@ -113,7 +114,7 @@ Goal: decide whether Rust should match Java's "throw when missing" behavior or k
 
 3. **Token ID emission (Task 3)**:
    - Changed `token_id: None` to `token_id: Some(token_id_str.clone())` in `Trc10Change::AssetIssued`
-   - Makes Rust execution self-contained without Java dependency on `TOKEN_ID_NUM`
+   - With shared Rust storage (write_mode=PERSISTED), Java mirrors the result; token_id in the change provides reporting/journaling parity without requiring Java to re-read TOKEN_ID_NUM from dynamicStore
 
 4. **Unified contract bytes source (Task 4)**:
    - Changed `parse_asset_issue_contract()` to use `contract_bytes` (same as prost decode)
@@ -123,6 +124,7 @@ Goal: decide whether Rust should match Java's "throw when missing" behavior or k
 
 - `test_asset_issue_validate_fail_wrong_address_prefix` — verifies 0xa0 prefix fails on 0x41 DB
 - `test_asset_issue_token_id_populated_in_trc10_change` — verifies token_id is now `Some(...)`
+- `test_asset_issue_token_id_num_persisted_alongside_token_id` — guards against future refactors that might emit token_id but forget to persist TOKEN_ID_NUM (Java only increments TOKEN_ID_NUM when token_id is empty per RuntimeSpiImpl.java:700)
 - Updated `test_asset_issue_contract_trc10_change_emission` to check token_id is populated
 
-All 14 asset issue contract tests pass.
+All 15 asset issue contract tests pass.

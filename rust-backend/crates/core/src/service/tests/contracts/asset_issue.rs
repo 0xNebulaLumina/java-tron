@@ -1029,3 +1029,98 @@ fn test_asset_issue_token_id_populated_in_trc10_change() {
         _ => panic!("Expected AssetIssued change"),
     }
 }
+
+#[test]
+fn test_asset_issue_token_id_num_persisted_alongside_token_id() {
+    // Guard against future refactors: Rust must persist TOKEN_ID_NUM even though it also emits token_id.
+    // Java only increments TOKEN_ID_NUM when token_id is empty (RuntimeSpiImpl.java:700), so if Rust
+    // stops persisting TOKEN_ID_NUM, Java's fallback path would re-use stale IDs causing collisions.
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    // Verify initial TOKEN_ID_NUM (default is 1000000)
+    let initial_token_id_num = storage_adapter.get_token_id_num().unwrap();
+    assert_eq!(initial_token_id_num, 1_000_000, "Initial TOKEN_ID_NUM should be 1000000");
+
+    // Issue first asset
+    let owner1 = Address::from([0x11u8; 20]);
+    storage_adapter.set_account(owner1, AccountInfo {
+        balance: U256::from(2_000_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    }).unwrap();
+
+    let contract_data1 = build_asset_issue_contract_data(
+        owner1, b"Token1", 1000, 1, 1, 1000000, 2000000, b"https://t1.example",
+    );
+    let tx1 = TronTransaction {
+        from: owner1,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data1,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result1 = service.execute_asset_issue_contract(&mut storage_adapter, &tx1, &new_test_context()).unwrap();
+
+    // Verify token_id in change matches persisted TOKEN_ID_NUM
+    let token_id1 = match &result1.trc10_changes[0] {
+        tron_backend_execution::Trc10Change::AssetIssued(issued) => issued.token_id.clone().unwrap(),
+        _ => panic!("Expected AssetIssued"),
+    };
+    assert_eq!(token_id1, "1000001");
+
+    // KEY ASSERTION: TOKEN_ID_NUM must be persisted to storage
+    let persisted_token_id_num = storage_adapter.get_token_id_num().unwrap();
+    assert_eq!(persisted_token_id_num, 1_000_001, "TOKEN_ID_NUM must be persisted after asset issue");
+    assert_eq!(token_id1, persisted_token_id_num.to_string(), "Emitted token_id must match persisted TOKEN_ID_NUM");
+
+    // Issue second asset (different owner) to verify incrementing works
+    let owner2 = Address::from([0x22u8; 20]);
+    storage_adapter.set_account(owner2, AccountInfo {
+        balance: U256::from(2_000_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    }).unwrap();
+
+    let contract_data2 = build_asset_issue_contract_data(
+        owner2, b"Token2", 2000, 1, 1, 1000000, 2000000, b"https://t2.example",
+    );
+    let tx2 = TronTransaction {
+        from: owner2,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data2,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result2 = service.execute_asset_issue_contract(&mut storage_adapter, &tx2, &new_test_context()).unwrap();
+
+    let token_id2 = match &result2.trc10_changes[0] {
+        tron_backend_execution::Trc10Change::AssetIssued(issued) => issued.token_id.clone().unwrap(),
+        _ => panic!("Expected AssetIssued"),
+    };
+    assert_eq!(token_id2, "1000002", "Second token should get incremented ID");
+
+    let final_token_id_num = storage_adapter.get_token_id_num().unwrap();
+    assert_eq!(final_token_id_num, 1_000_002, "TOKEN_ID_NUM must be incremented after second asset issue");
+}
