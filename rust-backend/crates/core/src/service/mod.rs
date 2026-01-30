@@ -20,7 +20,7 @@ pub mod contracts;
 // Import utilities from submodules
 use contracts::proto::read_varint;
 use contracts::proto::TransactionResultBuilder;
-use grpc::address::add_tron_address_prefix;
+use grpc::address::{add_tron_address_prefix, add_tron_address_prefix_with, validate_tron_address_prefix};
 
 /// Vote witness contract constants
 const MAX_VOTE_NUMBER: usize = 30;
@@ -4492,10 +4492,11 @@ impl BackendService {
         .map_err(|e| format!("Failed to decode AssetIssueContractData: {}", e))?;
 
         // Validation parity: DecodeUtil.addressValid(ownerAddress)
-        let owner = match asset_proto.owner_address.as_slice() {
-            bytes if bytes.len() == 21 && (bytes[0] == 0x41 || bytes[0] == 0xa0) => {
-                Address::from_slice(&bytes[1..])
-            }
+        // Java requires exact match with network-specific prefix (0x41 mainnet, 0xa0 testnet)
+        let expected_prefix = storage_adapter.tron_address_prefix()
+            .map_err(|e| format!("Failed to get address prefix: {}", e))?;
+        let owner = match validate_tron_address_prefix(asset_proto.owner_address.as_slice(), expected_prefix) {
+            Ok(bytes) if bytes.len() == 20 => Address::from_slice(bytes),
             _ => return Err("Invalid ownerAddress".to_string()),
         };
 
@@ -4503,8 +4504,10 @@ impl BackendService {
 
         debug!("Executing ASSET_ISSUE_CONTRACT for owner {}", owner_tron);
 
-        // 1. Parse AssetIssueContract proto from transaction.data
-        let asset_info = Self::parse_asset_issue_contract(&transaction.data)?;
+        // 1. Parse AssetIssueContract proto from contract_bytes (same source as prost decode)
+        // This ensures consistency: both parse_asset_issue_contract and AssetIssueContractData::decode
+        // use the same bytes, avoiding divergence if callers populate only one field.
+        let asset_info = Self::parse_asset_issue_contract(contract_bytes)?;
 
         info!(
             "AssetIssue: owner={}, name={}, total_supply={}, precision={}",
@@ -4520,16 +4523,24 @@ impl BackendService {
         }
 
         // 3. Contract validation (match java-tron's AssetIssueActuator.validate ordering)
+        // Use raw bytes from asset_proto for validation to match Java's byte-based validation.
+        // This avoids discrepancies from lossy UTF-8 conversion.
         let allow_same_token_name = storage_adapter
             .get_allow_same_token_name()
             .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
 
-        if !Self::valid_asset_name(asset_info.name.as_bytes()) {
+        // Validate using raw bytes from proto (not lossy-decoded strings)
+        if !Self::valid_asset_name(&asset_proto.name) {
             return Err("Invalid assetName".to_string());
         }
 
-        if allow_same_token_name != 0 && asset_info.name.to_lowercase() == "trx" {
-            return Err("assetName can't be trx".to_string());
+        // Java's "trx" check uses: new String(name).toLowerCase().equals("trx")
+        // We use lossy decode here since Java does explicit String conversion for this check
+        if allow_same_token_name != 0 {
+            let name_str = String::from_utf8_lossy(&asset_proto.name).to_lowercase();
+            if name_str == "trx" {
+                return Err("assetName can't be trx".to_string());
+            }
         }
 
         if asset_info.precision != 0
@@ -4539,15 +4550,18 @@ impl BackendService {
             return Err("precision cannot exceed 6".to_string());
         }
 
-        if !asset_info.abbr.is_empty() && !Self::valid_asset_name(asset_info.abbr.as_bytes()) {
+        // Validate abbr using raw bytes
+        if !asset_proto.abbr.is_empty() && !Self::valid_asset_name(&asset_proto.abbr) {
             return Err("Invalid abbreviation for token".to_string());
         }
 
-        if !Self::valid_url(asset_info.url.as_bytes()) {
+        // Validate url using raw bytes
+        if !Self::valid_url(&asset_proto.url) {
             return Err("Invalid url".to_string());
         }
 
-        if !Self::valid_asset_description(asset_info.description.as_bytes()) {
+        // Validate description using raw bytes
+        if !Self::valid_asset_description(&asset_proto.description) {
             return Err("Invalid description".to_string());
         }
 
@@ -4571,9 +4585,10 @@ impl BackendService {
             return Err("Start time should be greater than HeadBlockTime".to_string());
         }
 
+        // Use raw name bytes for legacy "Token exists" lookup (V1 store keyed by name)
         if allow_same_token_name == 0
             && storage_adapter
-                .get_asset_issue(asset_info.name.as_bytes(), allow_same_token_name)
+                .get_asset_issue(&asset_proto.name, allow_same_token_name)
                 .map_err(|e| format!("Failed to query AssetIssueStore: {}", e))?
                 .is_some()
         {
@@ -4870,7 +4885,7 @@ impl BackendService {
                 public_free_asset_net_limit: asset_info.public_free_asset_net_limit,
                 public_free_asset_net_usage: asset_info.public_free_asset_net_usage,
                 public_latest_free_net_time: asset_info.public_latest_free_net_time,
-                token_id: None, // Java will compute via TOKEN_ID_NUM
+                token_id: Some(token_id_str.clone()), // Self-contained: no Java dependency on TOKEN_ID_NUM
             }
         );
 

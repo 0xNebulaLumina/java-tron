@@ -79,6 +79,8 @@ fn test_asset_issue_contract_trc10_change_emission() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
+    // Enable same-token-name mode so precision passes through (not forced to 0)
+    storage_engine.put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes()).unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -220,7 +222,9 @@ fn test_asset_issue_contract_trc10_change_emission() {
             assert_eq!(asset_issued.end_time, 2000000, "End time should match");
             assert_eq!(asset_issued.description, description.to_vec(), "Description should match");
             assert_eq!(asset_issued.url, url.to_vec(), "URL should match");
-            assert_eq!(asset_issued.token_id, None, "Token ID should be None (computed by Java)");
+            // token_id is now self-contained (populated by Rust) for executor-only parity
+            assert!(asset_issued.token_id.is_some(), "Token ID should be populated");
+            assert_eq!(asset_issued.token_id.as_ref().unwrap(), "1000001", "Token ID should be 1000001 (first allocation)");
         }
         _ => panic!("Expected AssetIssued change"),
     }
@@ -903,4 +907,762 @@ fn test_asset_issue_validate_fail_frozen_supply_days_out_of_range_message() {
         result.err().unwrap(),
         "frozenDuration must be less than 3652 days and more than 1 days"
     );
+}
+
+#[test]
+fn test_asset_issue_validate_fail_wrong_address_prefix() {
+    // Test that mainnet DB (0x41 prefix) rejects testnet addresses (0xa0 prefix)
+    use prost::Message;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    // Create owner_address with testnet prefix (0xa0) instead of mainnet (0x41)
+    let mut owner_address = vec![0xa0u8]; // Wrong prefix for mainnet DB
+    owner_address.extend_from_slice(&[1u8; 20]);
+
+    let contract = AssetIssueContractData {
+        owner_address,
+        name: b"Token".to_vec(),
+        abbr: b"TK".to_vec(),
+        total_supply: 1000,
+        frozen_supply: vec![],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://token.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut contract_bytes = Vec::new();
+    contract.encode(&mut contract_bytes).unwrap();
+
+    let transaction = TronTransaction {
+        from: Address::from([1u8; 20]),
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(contract_bytes),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    // Should fail with "Invalid ownerAddress" because prefix doesn't match DB prefix
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_err());
+    assert_eq!(result.err().unwrap(), "Invalid ownerAddress");
+}
+
+#[test]
+fn test_asset_issue_token_id_populated_in_trc10_change() {
+    // Verify token_id is now populated in Trc10Change::AssetIssued (not None)
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let owner_address = Address::from([0xaau8; 20]);
+    let owner_account = AccountInfo {
+        balance: U256::from(2_000_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    storage_adapter.set_account(owner_address, owner_account).unwrap();
+
+    let contract_data = build_asset_issue_contract_data(
+        owner_address,
+        b"TestToken",
+        1000,
+        1,
+        1,
+        1000000,
+        2000000,
+        b"https://test.example",
+    );
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_ok(), "Asset issue should succeed: {:?}", result.err());
+    let execution_result = result.unwrap();
+
+    // Verify token_id is populated (not None) - this is the key change for Task 3
+    assert_eq!(execution_result.trc10_changes.len(), 1);
+    match &execution_result.trc10_changes[0] {
+        tron_backend_execution::Trc10Change::AssetIssued(asset_issued) => {
+            assert!(asset_issued.token_id.is_some(), "token_id should be Some (self-contained)");
+            // First token allocation should be 1000001 (TOKEN_ID_NUM defaults to 1000000, incremented by 1)
+            assert_eq!(asset_issued.token_id.as_ref().unwrap(), "1000001");
+        }
+        _ => panic!("Expected AssetIssued change"),
+    }
+}
+
+#[test]
+fn test_asset_issue_token_id_num_persisted_alongside_token_id() {
+    // Guard against future refactors: Rust must persist TOKEN_ID_NUM even though it also emits token_id.
+    // Java only increments TOKEN_ID_NUM when token_id is empty (RuntimeSpiImpl.java:700), so if Rust
+    // stops persisting TOKEN_ID_NUM, Java's fallback path would re-use stale IDs causing collisions.
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    // Verify initial TOKEN_ID_NUM (default is 1000000)
+    let initial_token_id_num = storage_adapter.get_token_id_num().unwrap();
+    assert_eq!(initial_token_id_num, 1_000_000, "Initial TOKEN_ID_NUM should be 1000000");
+
+    // Issue first asset
+    let owner1 = Address::from([0x11u8; 20]);
+    storage_adapter.set_account(owner1, AccountInfo {
+        balance: U256::from(2_000_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    }).unwrap();
+
+    let contract_data1 = build_asset_issue_contract_data(
+        owner1, b"Token1", 1000, 1, 1, 1000000, 2000000, b"https://t1.example",
+    );
+    let tx1 = TronTransaction {
+        from: owner1,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data1,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result1 = service.execute_asset_issue_contract(&mut storage_adapter, &tx1, &new_test_context()).unwrap();
+
+    // Verify token_id in change matches persisted TOKEN_ID_NUM
+    let token_id1 = match &result1.trc10_changes[0] {
+        tron_backend_execution::Trc10Change::AssetIssued(issued) => issued.token_id.clone().unwrap(),
+        _ => panic!("Expected AssetIssued"),
+    };
+    assert_eq!(token_id1, "1000001");
+
+    // KEY ASSERTION: TOKEN_ID_NUM must be persisted to storage
+    let persisted_token_id_num = storage_adapter.get_token_id_num().unwrap();
+    assert_eq!(persisted_token_id_num, 1_000_001, "TOKEN_ID_NUM must be persisted after asset issue");
+    assert_eq!(token_id1, persisted_token_id_num.to_string(), "Emitted token_id must match persisted TOKEN_ID_NUM");
+
+    // Issue second asset (different owner) to verify incrementing works
+    let owner2 = Address::from([0x22u8; 20]);
+    storage_adapter.set_account(owner2, AccountInfo {
+        balance: U256::from(2_000_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    }).unwrap();
+
+    let contract_data2 = build_asset_issue_contract_data(
+        owner2, b"Token2", 2000, 1, 1, 1000000, 2000000, b"https://t2.example",
+    );
+    let tx2 = TronTransaction {
+        from: owner2,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data2,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result2 = service.execute_asset_issue_contract(&mut storage_adapter, &tx2, &new_test_context()).unwrap();
+
+    let token_id2 = match &result2.trc10_changes[0] {
+        tron_backend_execution::Trc10Change::AssetIssued(issued) => issued.token_id.clone().unwrap(),
+        _ => panic!("Expected AssetIssued"),
+    };
+    assert_eq!(token_id2, "1000002", "Second token should get incremented ID");
+
+    let final_token_id_num = storage_adapter.get_token_id_num().unwrap();
+    assert_eq!(final_token_id_num, 1_000_002, "TOKEN_ID_NUM must be incremented after second asset issue");
+}
+
+// =============================================================================
+// Task 2: Malformed UTF-8 name bytes tests
+// =============================================================================
+
+#[test]
+fn test_asset_issue_malformed_utf8_name_invalid_asset_name() {
+    // Test that malformed UTF-8 bytes in name field fail validation with "Invalid assetName"
+    // Java validates raw bytes via TransactionUtil.validAssetName(), Rust should match.
+    use prost::Message;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let mut owner_address = vec![0x41u8];
+    owner_address.extend_from_slice(&[1u8; 20]);
+
+    // Malformed UTF-8: standalone continuation byte (0x80-0xBF without leading byte)
+    // This is invalid UTF-8, but more importantly for Java parity, the validation
+    // should fail because these bytes don't pass validAssetName() which requires
+    // alphanumeric bytes in range [0-9A-Za-z].
+    let malformed_name = vec![0x80u8, 0x81u8, 0x82u8];
+
+    let contract = AssetIssueContractData {
+        owner_address,
+        name: malformed_name,
+        abbr: b"TK".to_vec(),
+        total_supply: 1000,
+        frozen_supply: vec![],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://token.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut contract_bytes = Vec::new();
+    contract.encode(&mut contract_bytes).unwrap();
+
+    let transaction = TronTransaction {
+        from: Address::from([1u8; 20]),
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(contract_bytes),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    // Should fail with "Invalid assetName" because non-alphanumeric bytes don't pass validation
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_err(), "Malformed UTF-8 name should fail validation");
+    assert_eq!(result.err().unwrap(), "Invalid assetName");
+}
+
+#[test]
+fn test_asset_issue_name_with_control_characters_fails() {
+    // Test that names with control characters (< 0x20 or DEL 0x7F) fail validation.
+    // Java's validAssetName checks: (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+    use prost::Message;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let mut owner_address = vec![0x41u8];
+    owner_address.extend_from_slice(&[1u8; 20]);
+
+    // Name with a newline character (0x0A) embedded
+    let name_with_control = b"Test\nToken".to_vec();
+
+    let contract = AssetIssueContractData {
+        owner_address,
+        name: name_with_control,
+        abbr: b"TK".to_vec(),
+        total_supply: 1000,
+        frozen_supply: vec![],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://token.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut contract_bytes = Vec::new();
+    contract.encode(&mut contract_bytes).unwrap();
+
+    let transaction = TronTransaction {
+        from: Address::from([1u8; 20]),
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(contract_bytes),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_err(), "Name with control characters should fail");
+    assert_eq!(result.err().unwrap(), "Invalid assetName");
+}
+
+#[test]
+fn test_asset_issue_high_ascii_bytes_in_name_fails() {
+    // Test that high ASCII bytes (>= 0x80) fail validation since they're not alphanumeric.
+    // This exercises the raw byte validation path.
+    use prost::Message;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let mut owner_address = vec![0x41u8];
+    owner_address.extend_from_slice(&[1u8; 20]);
+
+    // Valid UTF-8 but high bytes: "Tökén" (ö = 0xC3 0xB6, é = 0xC3 0xA9)
+    let name_utf8_high = "Tökén".as_bytes().to_vec();
+
+    let contract = AssetIssueContractData {
+        owner_address,
+        name: name_utf8_high,
+        abbr: b"TK".to_vec(),
+        total_supply: 1000,
+        frozen_supply: vec![],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://token.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut contract_bytes = Vec::new();
+    contract.encode(&mut contract_bytes).unwrap();
+
+    let transaction = TronTransaction {
+        from: Address::from([1u8; 20]),
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(contract_bytes),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_err(), "Name with high ASCII/UTF-8 bytes should fail");
+    assert_eq!(result.err().unwrap(), "Invalid assetName");
+}
+
+// =============================================================================
+// Task 4: Contract bytes source tests (data vs contract_parameter.value)
+// =============================================================================
+
+#[test]
+fn test_asset_issue_uses_contract_parameter_when_data_empty() {
+    // Test that when transaction.data is empty but metadata.contract_parameter is populated,
+    // execution still works correctly (bytes come from contract_parameter.value).
+    use prost::Message;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+    use tron_backend_execution::TronContractParameter;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let owner_address_bytes = {
+        let mut v = vec![0x41u8];
+        v.extend_from_slice(&[0xBBu8; 20]);
+        v
+    };
+    let owner = Address::from([0xBBu8; 20]);
+
+    // Set up owner account with sufficient balance
+    let owner_account = AccountInfo {
+        balance: U256::from(2_000_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    storage_adapter.set_account(owner, owner_account).unwrap();
+
+    // Build valid AssetIssueContract
+    let contract = AssetIssueContractData {
+        owner_address: owner_address_bytes,
+        name: b"ParamToken".to_vec(),
+        abbr: b"PT".to_vec(),
+        total_supply: 5000,
+        frozen_supply: vec![],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://param.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut contract_bytes = Vec::new();
+    contract.encode(&mut contract_bytes).unwrap();
+
+    // Create transaction with EMPTY data but populated contract_parameter
+    let transaction = TronTransaction {
+        from: owner,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::new(), // Empty!
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AssetIssueContract".to_string(),
+                value: contract_bytes,
+            }),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_ok(), "Should succeed using contract_parameter when data is empty: {:?}", result.err());
+
+    let exec_result = result.unwrap();
+    assert!(exec_result.success);
+    assert_eq!(exec_result.trc10_changes.len(), 1);
+    match &exec_result.trc10_changes[0] {
+        tron_backend_execution::Trc10Change::AssetIssued(issued) => {
+            assert_eq!(issued.name, b"ParamToken".to_vec());
+            assert!(issued.token_id.is_some());
+        }
+        _ => panic!("Expected AssetIssued"),
+    }
+}
+
+#[test]
+fn test_asset_issue_prefers_contract_parameter_over_data() {
+    // Test that when BOTH transaction.data and metadata.contract_parameter are populated,
+    // the contract_parameter.value takes precedence (current implementation behavior).
+    // This documents the source-of-truth behavior for Task 4.
+    use prost::Message;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+    use tron_backend_execution::TronContractParameter;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let owner = Address::from([0xCCu8; 20]);
+    let owner_address_bytes = {
+        let mut v = vec![0x41u8];
+        v.extend_from_slice(&[0xCCu8; 20]);
+        v
+    };
+
+    // Set up owner account
+    storage_adapter.set_account(owner, AccountInfo {
+        balance: U256::from(2_000_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    }).unwrap();
+
+    // Build contract bytes for contract_parameter (the "real" source)
+    let contract_param = AssetIssueContractData {
+        owner_address: owner_address_bytes.clone(),
+        name: b"ParamSource".to_vec(), // This name should be used
+        abbr: b"PS".to_vec(),
+        total_supply: 1000,
+        frozen_supply: vec![],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://param.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut param_bytes = Vec::new();
+    contract_param.encode(&mut param_bytes).unwrap();
+
+    // Build DIFFERENT contract bytes for transaction.data (should be ignored)
+    let contract_data = AssetIssueContractData {
+        owner_address: owner_address_bytes,
+        name: b"DataSource".to_vec(), // Different name - should NOT be used
+        abbr: b"DS".to_vec(),
+        total_supply: 2000,
+        frozen_supply: vec![],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://data.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut data_bytes = Vec::new();
+    contract_data.encode(&mut data_bytes).unwrap();
+
+    // Create transaction with BOTH populated
+    let transaction = TronTransaction {
+        from: owner,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(data_bytes), // Has "DataSource" name
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AssetIssueContract".to_string(),
+                value: param_bytes, // Has "ParamSource" name
+            }),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_ok(), "Should succeed: {:?}", result.err());
+
+    let exec_result = result.unwrap();
+    assert!(exec_result.success);
+    assert_eq!(exec_result.trc10_changes.len(), 1);
+    match &exec_result.trc10_changes[0] {
+        tron_backend_execution::Trc10Change::AssetIssued(issued) => {
+            // Verify that contract_parameter.value was used (name = "ParamSource")
+            assert_eq!(issued.name, b"ParamSource".to_vec(),
+                "contract_parameter should take precedence over transaction.data");
+            assert_eq!(issued.total_supply, 1000,
+                "total_supply should come from contract_parameter (1000, not 2000)");
+        }
+        _ => panic!("Expected AssetIssued"),
+    }
+}
+
+// =============================================================================
+// Task 5: Dynamic-property missing-key parity tests
+// =============================================================================
+
+#[test]
+fn test_strict_get_asset_issue_fee_missing() {
+    // When strict mode is used, missing ASSET_ISSUE_FEE should return an error
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // Do NOT seed ASSET_ISSUE_FEE
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Non-strict getter returns default
+    let fee = storage_adapter.get_asset_issue_fee().unwrap();
+    assert_eq!(fee, 1024000000, "Non-strict should return default");
+
+    // Strict getter returns error
+    let strict_result = storage_adapter.get_asset_issue_fee_strict();
+    assert!(strict_result.is_err(), "Strict should return error when missing");
+    assert!(strict_result.err().unwrap().to_string().contains("not found ASSET_ISSUE_FEE"));
+}
+
+#[test]
+fn test_strict_get_token_id_num_missing() {
+    // When strict mode is used, missing TOKEN_ID_NUM should return an error
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // Do NOT seed TOKEN_ID_NUM
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Non-strict getter returns default
+    let token_id = storage_adapter.get_token_id_num().unwrap();
+    assert_eq!(token_id, 1_000_000, "Non-strict should return default");
+
+    // Strict getter returns error
+    let strict_result = storage_adapter.get_token_id_num_strict();
+    assert!(strict_result.is_err(), "Strict should return error when missing");
+    assert!(strict_result.err().unwrap().to_string().contains("not found TOKEN_ID_NUM"));
+}
+
+#[test]
+fn test_strict_get_allow_same_token_name_missing() {
+    // When strict mode is used, missing ALLOW_SAME_TOKEN_NAME should return an error
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // Do NOT seed ALLOW_SAME_TOKEN_NAME
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Non-strict getter returns default
+    let val = storage_adapter.get_allow_same_token_name().unwrap();
+    assert_eq!(val, 0, "Non-strict should return default (0 = legacy mode)");
+
+    // Strict getter returns error
+    let strict_result = storage_adapter.get_allow_same_token_name_strict();
+    assert!(strict_result.is_err(), "Strict should return error when missing");
+    assert!(strict_result.err().unwrap().to_string().contains("not found ALLOW_SAME_TOKEN_NAME"));
+}
+
+#[test]
+fn test_strict_get_one_day_net_limit_missing() {
+    // When strict mode is used, missing ONE_DAY_NET_LIMIT should return an error
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // Do NOT seed ONE_DAY_NET_LIMIT
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Non-strict getter returns default
+    let val = storage_adapter.get_one_day_net_limit().unwrap();
+    assert_eq!(val, 8_640_000_000, "Non-strict should return default");
+
+    // Strict getter returns error
+    let strict_result = storage_adapter.get_one_day_net_limit_strict();
+    assert!(strict_result.is_err(), "Strict should return error when missing");
+    assert!(strict_result.err().unwrap().to_string().contains("not found ONE_DAY_NET_LIMIT"));
+}
+
+#[test]
+fn test_strict_frozen_supply_properties_missing() {
+    // When strict mode is used, missing frozen supply properties should return errors
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // Do NOT seed any frozen supply properties
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Non-strict getters return defaults
+    assert_eq!(storage_adapter.get_max_frozen_supply_number().unwrap(), 10);
+    assert_eq!(storage_adapter.get_max_frozen_supply_time().unwrap(), 3652);
+    assert_eq!(storage_adapter.get_min_frozen_supply_time().unwrap(), 1);
+
+    // Strict getters return errors
+    let max_num_result = storage_adapter.get_max_frozen_supply_number_strict();
+    assert!(max_num_result.is_err());
+    assert!(max_num_result.err().unwrap().to_string().contains("not found MAX_FROZEN_SUPPLY_NUMBER"));
+
+    let max_time_result = storage_adapter.get_max_frozen_supply_time_strict();
+    assert!(max_time_result.is_err());
+    assert!(max_time_result.err().unwrap().to_string().contains("not found MAX_FROZEN_SUPPLY_TIME"));
+
+    let min_time_result = storage_adapter.get_min_frozen_supply_time_strict();
+    assert!(min_time_result.is_err());
+    assert!(min_time_result.err().unwrap().to_string().contains("not found MIN_FROZEN_SUPPLY_TIME"));
+}
+
+#[test]
+fn test_strict_getters_succeed_when_keys_present() {
+    // When keys are present, strict getters should return values (not errors)
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+
+    // Seed all the properties
+    storage_engine.put("properties", b"ASSET_ISSUE_FEE", &2048000000u64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"TOKEN_ID_NUM", &2_000_000i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"ONE_DAY_NET_LIMIT", &10_000_000_000i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"MAX_FROZEN_SUPPLY_NUMBER", &20i32.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"MAX_FROZEN_SUPPLY_TIME", &5000i32.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"MIN_FROZEN_SUPPLY_TIME", &2i32.to_be_bytes()).unwrap();
+
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // All strict getters should succeed and return the seeded values
+    assert_eq!(storage_adapter.get_asset_issue_fee_strict().unwrap(), 2048000000);
+    assert_eq!(storage_adapter.get_allow_same_token_name_strict().unwrap(), 1);
+    assert_eq!(storage_adapter.get_token_id_num_strict().unwrap(), 2_000_000);
+    assert_eq!(storage_adapter.get_one_day_net_limit_strict().unwrap(), 10_000_000_000);
+    assert_eq!(storage_adapter.get_max_frozen_supply_number_strict().unwrap(), 20);
+    assert_eq!(storage_adapter.get_max_frozen_supply_time_strict().unwrap(), 5000);
+    assert_eq!(storage_adapter.get_min_frozen_supply_time_strict().unwrap(), 2);
 }

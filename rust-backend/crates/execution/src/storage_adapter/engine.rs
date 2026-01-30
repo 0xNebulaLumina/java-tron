@@ -4723,6 +4723,155 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    // ============================================================================
+    // Strict Dynamic Property Getters (Task 5 - Java Parity)
+    // ============================================================================
+    //
+    // These methods match Java's DynamicPropertiesStore behavior by returning errors
+    // when keys are missing. Use these when strict_dynamic_properties is enabled in config.
+
+    /// Get AssetIssueFee with strict mode (errors when missing).
+    /// Java: "not found ASSET_ISSUE_FEE"
+    pub fn get_asset_issue_fee_strict(&self) -> Result<u64> {
+        let key = b"ASSET_ISSUE_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let fee = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(fee)
+                } else {
+                    Err(anyhow::anyhow!("not found ASSET_ISSUE_FEE"))
+                }
+            },
+            None => Err(anyhow::anyhow!("not found ASSET_ISSUE_FEE")),
+        }
+    }
+
+    /// Get AllowSameTokenName with strict mode (errors when missing).
+    /// Java: "not found ALLOW_SAME_TOKEN_NAME"
+    pub fn get_allow_same_token_name_strict(&self) -> Result<i64> {
+        let key = b" ALLOW_SAME_TOKEN_NAME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val)
+                } else {
+                    Err(anyhow::anyhow!("not found ALLOW_SAME_TOKEN_NAME"))
+                }
+            },
+            None => Err(anyhow::anyhow!("not found ALLOW_SAME_TOKEN_NAME")),
+        }
+    }
+
+    /// Get TOKEN_ID_NUM with strict mode (errors when missing).
+    /// Java: "not found TOKEN_ID_NUM"
+    pub fn get_token_id_num_strict(&self) -> Result<i64> {
+        let key = b"TOKEN_ID_NUM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Err(anyhow::anyhow!("not found TOKEN_ID_NUM"))
+                }
+            }
+            None => Err(anyhow::anyhow!("not found TOKEN_ID_NUM")),
+        }
+    }
+
+    /// Get OneDayNetLimit with strict mode (errors when missing).
+    /// Java: "not found ONE_DAY_NET_LIMIT"
+    pub fn get_one_day_net_limit_strict(&self) -> Result<i64> {
+        let key = b"ONE_DAY_NET_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val)
+                } else {
+                    Err(anyhow::anyhow!("not found ONE_DAY_NET_LIMIT"))
+                }
+            },
+            None => Err(anyhow::anyhow!("not found ONE_DAY_NET_LIMIT")),
+        }
+    }
+
+    /// Get MAX_FROZEN_SUPPLY_NUMBER with strict mode (errors when missing).
+    /// Java: "not found MAX_FROZEN_SUPPLY_NUMBER"
+    pub fn get_max_frozen_supply_number_strict(&self) -> Result<i64> {
+        let key = b"MAX_FROZEN_SUPPLY_NUMBER";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Err(anyhow::anyhow!("not found MAX_FROZEN_SUPPLY_NUMBER"))
+                }
+            }
+            None => Err(anyhow::anyhow!("not found MAX_FROZEN_SUPPLY_NUMBER")),
+        }
+    }
+
+    /// Get MAX_FROZEN_SUPPLY_TIME with strict mode (errors when missing).
+    /// Java: "not found MAX_FROZEN_SUPPLY_TIME"
+    pub fn get_max_frozen_supply_time_strict(&self) -> Result<i64> {
+        let key = b"MAX_FROZEN_SUPPLY_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Err(anyhow::anyhow!("not found MAX_FROZEN_SUPPLY_TIME"))
+                }
+            }
+            None => Err(anyhow::anyhow!("not found MAX_FROZEN_SUPPLY_TIME")),
+        }
+    }
+
+    /// Get MIN_FROZEN_SUPPLY_TIME with strict mode (errors when missing).
+    /// Java: "not found MIN_FROZEN_SUPPLY_TIME"
+    pub fn get_min_frozen_supply_time_strict(&self) -> Result<i64> {
+        let key = b"MIN_FROZEN_SUPPLY_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Err(anyhow::anyhow!("not found MIN_FROZEN_SUPPLY_TIME"))
+                }
+            }
+            None => Err(anyhow::anyhow!("not found MIN_FROZEN_SUPPLY_TIME")),
+        }
+    }
+
     /// Get asset issue by key (asset name or asset id depending on allowSameTokenName)
     pub fn get_asset_issue(&self, key: &[u8], allow_same_token_name: i64) -> Result<Option<crate::protocol::AssetIssueContractData>> {
         let db = if allow_same_token_name == 0 {
