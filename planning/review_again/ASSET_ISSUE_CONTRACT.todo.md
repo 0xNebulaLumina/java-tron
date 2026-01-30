@@ -45,8 +45,11 @@ Checklist:
 
 - [x] Ensure the "trx" name ban in same-token-name mode uses Java-equivalent UTF-8 decoding semantics.
 - [x] Ensure legacy "Token exists" lookup uses **exact name bytes** from the proto.
-- [ ] Add tests for malformed UTF-8 name bytes:
-  - [ ] expected validation failure matches Java ("Invalid assetName") and does not silently alter bytes used for lookups.
+- [x] Add tests for malformed UTF-8 name bytes:
+  - [x] expected validation failure matches Java ("Invalid assetName") and does not silently alter bytes used for lookups.
+  - [x] `test_asset_issue_malformed_utf8_name_invalid_asset_name` - malformed UTF-8 (0x80, 0x81, 0x82) fails with "Invalid assetName"
+  - [x] `test_asset_issue_name_with_control_characters_fails` - control characters (newline) fail with "Invalid assetName"
+  - [x] `test_asset_issue_high_ascii_bytes_in_name_fails` - high ASCII/UTF-8 bytes fail with "Invalid assetName"
 
 ## 3) Make `Trc10Change::AssetIssued` self-contained (token_id emission)
 
@@ -67,9 +70,9 @@ Goal: avoid accidental divergence if callers populate only one field.
 
 - [x] In `execute_asset_issue_contract()`:
   - [x] Use `contract_bytes` consistently for both prost decode and minimal parsing.
-- [ ] Add tests:
-  - [ ] `transaction.data` empty + `metadata.contract_parameter` populated still executes correctly
-  - [ ] both populated but different → define and enforce one source-of-truth (should likely reject)
+- [x] Add tests:
+  - [x] `test_asset_issue_uses_contract_parameter_when_data_empty` - `transaction.data` empty + `metadata.contract_parameter` populated still executes correctly
+  - [x] `test_asset_issue_prefers_contract_parameter_over_data` - both populated but different → `contract_parameter.value` takes precedence (documented source-of-truth behavior)
 
 ## 5) Dynamic-property missing-key parity (optional but important)
 
@@ -88,7 +91,7 @@ Goal: decide whether Rust should match Java's "throw when missing" behavior or k
 ## 6) Verification steps
 
 - [x] Rust:
-  - [x] `cd rust-backend && cargo test` — All 14 asset_issue tests pass
+  - [x] `cd rust-backend && cargo test` — All 20 asset_issue tests pass (updated from 14 after adding Task 2 and Task 4 tests)
   - [ ] Run any available conformance/fixture runner for AssetIssue cases (if present)
 - [ ] Java (optional, if remote mode integration is under test):
   - [ ] `./gradlew :framework:test`
@@ -127,4 +130,15 @@ Goal: decide whether Rust should match Java's "throw when missing" behavior or k
 - `test_asset_issue_token_id_num_persisted_alongside_token_id` — guards against future refactors that might emit token_id but forget to persist TOKEN_ID_NUM (Java only increments TOKEN_ID_NUM when token_id is empty per RuntimeSpiImpl.java:700)
 - Updated `test_asset_issue_contract_trc10_change_emission` to check token_id is populated
 
-All 15 asset issue contract tests pass.
+All 20 asset issue contract tests pass.
+
+### Additional Tests Added (2026-01-30)
+
+**Task 2 - Malformed UTF-8 name bytes tests:**
+- `test_asset_issue_malformed_utf8_name_invalid_asset_name` - verifies malformed UTF-8 bytes (0x80, 0x81, 0x82) fail validation with "Invalid assetName"
+- `test_asset_issue_name_with_control_characters_fails` - verifies names with control characters (newline 0x0A) fail validation with "Invalid assetName"
+- `test_asset_issue_high_ascii_bytes_in_name_fails` - verifies high ASCII/UTF-8 bytes (e.g., "Tökén") fail validation with "Invalid assetName"
+
+**Task 4 - Contract bytes source tests:**
+- `test_asset_issue_uses_contract_parameter_when_data_empty` - verifies execution works when `transaction.data` is empty but `metadata.contract_parameter` is populated
+- `test_asset_issue_prefers_contract_parameter_over_data` - verifies `contract_parameter.value` takes precedence when both are populated (documented source-of-truth behavior)
