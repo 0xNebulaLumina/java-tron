@@ -79,6 +79,8 @@ fn test_asset_issue_contract_trc10_change_emission() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
+    // Enable same-token-name mode so precision passes through (not forced to 0)
+    storage_engine.put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes()).unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -220,7 +222,9 @@ fn test_asset_issue_contract_trc10_change_emission() {
             assert_eq!(asset_issued.end_time, 2000000, "End time should match");
             assert_eq!(asset_issued.description, description.to_vec(), "Description should match");
             assert_eq!(asset_issued.url, url.to_vec(), "URL should match");
-            assert_eq!(asset_issued.token_id, None, "Token ID should be None (computed by Java)");
+            // token_id is now self-contained (populated by Rust) for executor-only parity
+            assert!(asset_issued.token_id.is_some(), "Token ID should be populated");
+            assert_eq!(asset_issued.token_id.as_ref().unwrap(), "1000001", "Token ID should be 1000001 (first allocation)");
         }
         _ => panic!("Expected AssetIssued change"),
     }
@@ -903,4 +907,125 @@ fn test_asset_issue_validate_fail_frozen_supply_days_out_of_range_message() {
         result.err().unwrap(),
         "frozenDuration must be less than 3652 days and more than 1 days"
     );
+}
+
+#[test]
+fn test_asset_issue_validate_fail_wrong_address_prefix() {
+    // Test that mainnet DB (0x41 prefix) rejects testnet addresses (0xa0 prefix)
+    use prost::Message;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    // Create owner_address with testnet prefix (0xa0) instead of mainnet (0x41)
+    let mut owner_address = vec![0xa0u8]; // Wrong prefix for mainnet DB
+    owner_address.extend_from_slice(&[1u8; 20]);
+
+    let contract = AssetIssueContractData {
+        owner_address,
+        name: b"Token".to_vec(),
+        abbr: b"TK".to_vec(),
+        total_supply: 1000,
+        frozen_supply: vec![],
+        trx_num: 1,
+        precision: 0,
+        num: 1,
+        start_time: 1_000_000,
+        end_time: 2_000_000,
+        order: 0,
+        vote_score: 0,
+        description: vec![],
+        url: b"https://token.example".to_vec(),
+        free_asset_net_limit: 0,
+        public_free_asset_net_limit: 0,
+        public_free_asset_net_usage: 0,
+        public_latest_free_net_time: 0,
+        id: String::new(),
+    };
+
+    let mut contract_bytes = Vec::new();
+    contract.encode(&mut contract_bytes).unwrap();
+
+    let transaction = TronTransaction {
+        from: Address::from([1u8; 20]),
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(contract_bytes),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    // Should fail with "Invalid ownerAddress" because prefix doesn't match DB prefix
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_err());
+    assert_eq!(result.err().unwrap(), "Invalid ownerAddress");
+}
+
+#[test]
+fn test_asset_issue_token_id_populated_in_trc10_change() {
+    // Verify token_id is now populated in Trc10Change::AssetIssued (not None)
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let owner_address = Address::from([0xaau8; 20]);
+    let owner_account = AccountInfo {
+        balance: U256::from(2_000_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    storage_adapter.set_account(owner_address, owner_account).unwrap();
+
+    let contract_data = build_asset_issue_contract_data(
+        owner_address,
+        b"TestToken",
+        1000,
+        1,
+        1,
+        1000000,
+        2000000,
+        b"https://test.example",
+    );
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data,
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    assert!(result.is_ok(), "Asset issue should succeed: {:?}", result.err());
+    let execution_result = result.unwrap();
+
+    // Verify token_id is populated (not None) - this is the key change for Task 3
+    assert_eq!(execution_result.trc10_changes.len(), 1);
+    match &execution_result.trc10_changes[0] {
+        tron_backend_execution::Trc10Change::AssetIssued(asset_issued) => {
+            assert!(asset_issued.token_id.is_some(), "token_id should be Some (self-contained)");
+            // First token allocation should be 1000001 (TOKEN_ID_NUM defaults to 1000000, incremented by 1)
+            assert_eq!(asset_issued.token_id.as_ref().unwrap(), "1000001");
+        }
+        _ => panic!("Expected AssetIssued change"),
+    }
 }
