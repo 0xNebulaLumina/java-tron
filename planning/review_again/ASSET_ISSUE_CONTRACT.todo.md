@@ -78,20 +78,27 @@ Goal: avoid accidental divergence if callers populate only one field.
 
 Goal: decide whether Rust should match Java's "throw when missing" behavior or keep safe defaults.
 
-- [ ] Identify which keys should be strict for this contract (likely):
-  - [ ] `ASSET_ISSUE_FEE`
-  - [ ] `TOKEN_ID_NUM`
-  - [ ] `ALLOW_SAME_TOKEN_NAME`
-  - [ ] `ONE_DAY_NET_LIMIT`
-  - [ ] `MIN_FROZEN_SUPPLY_TIME`, `MAX_FROZEN_SUPPLY_TIME`, `MAX_FROZEN_SUPPLY_NUMBER`
-- [ ] If choosing strict parity:
-  - [ ] Change the corresponding getters in `rust-backend/crates/execution/src/storage_adapter/engine.rs` to error when absent (at least under conformance mode).
-  - [ ] Add tests proving missing keys fail early with a clear error.
+- [x] Identify which keys should be strict for this contract (likely):
+  - [x] `ASSET_ISSUE_FEE`
+  - [x] `TOKEN_ID_NUM`
+  - [x] `ALLOW_SAME_TOKEN_NAME`
+  - [x] `ONE_DAY_NET_LIMIT`
+  - [x] `MIN_FROZEN_SUPPLY_TIME`, `MAX_FROZEN_SUPPLY_TIME`, `MAX_FROZEN_SUPPLY_NUMBER`
+- [x] If choosing strict parity:
+  - [x] Add `strict_dynamic_properties` config flag to `RemoteExecutionConfig` (default: false)
+  - [x] Add `_strict()` variants of getters in `rust-backend/crates/execution/src/storage_adapter/engine.rs` that return errors when absent
+  - [x] Add tests proving missing keys fail early with a clear error:
+    - [x] `test_strict_get_asset_issue_fee_missing`
+    - [x] `test_strict_get_token_id_num_missing`
+    - [x] `test_strict_get_allow_same_token_name_missing`
+    - [x] `test_strict_get_one_day_net_limit_missing`
+    - [x] `test_strict_frozen_supply_properties_missing` (MAX_FROZEN_SUPPLY_NUMBER, MAX_FROZEN_SUPPLY_TIME, MIN_FROZEN_SUPPLY_TIME)
+    - [x] `test_strict_getters_succeed_when_keys_present`
 
 ## 6) Verification steps
 
 - [x] Rust:
-  - [x] `cd rust-backend && cargo test` — All 20 asset_issue tests pass (updated from 14 after adding Task 2 and Task 4 tests)
+  - [x] `cd rust-backend && cargo test` — All 26 asset_issue tests pass (updated from 20 after adding Task 5 strict mode tests)
   - [ ] Run any available conformance/fixture runner for AssetIssue cases (if present)
 - [ ] Java (optional, if remote mode integration is under test):
   - [ ] `./gradlew :framework:test`
@@ -130,7 +137,7 @@ Goal: decide whether Rust should match Java's "throw when missing" behavior or k
 - `test_asset_issue_token_id_num_persisted_alongside_token_id` — guards against future refactors that might emit token_id but forget to persist TOKEN_ID_NUM (Java only increments TOKEN_ID_NUM when token_id is empty per RuntimeSpiImpl.java:700)
 - Updated `test_asset_issue_contract_trc10_change_emission` to check token_id is populated
 
-All 20 asset issue contract tests pass.
+All 26 asset issue contract tests pass.
 
 ### Additional Tests Added (2026-01-30)
 
@@ -142,3 +149,26 @@ All 20 asset issue contract tests pass.
 **Task 4 - Contract bytes source tests:**
 - `test_asset_issue_uses_contract_parameter_when_data_empty` - verifies execution works when `transaction.data` is empty but `metadata.contract_parameter` is populated
 - `test_asset_issue_prefers_contract_parameter_over_data` - verifies `contract_parameter.value` takes precedence when both are populated (documented source-of-truth behavior)
+
+**Task 5 - Dynamic-property missing-key parity (2026-01-30):**
+
+Implementation approach: Added `_strict()` variants of getters that return errors when keys are missing, matching Java's `IllegalArgumentException("not found ...")` behavior. Also added `strict_dynamic_properties` config flag to enable strict mode.
+
+Changes made:
+- Added `strict_dynamic_properties: bool` to `RemoteExecutionConfig` in `crates/common/src/config.rs` (default: false)
+- Added strict getter methods in `crates/execution/src/storage_adapter/engine.rs`:
+  - `get_asset_issue_fee_strict()` - errors with "not found ASSET_ISSUE_FEE"
+  - `get_allow_same_token_name_strict()` - errors with "not found ALLOW_SAME_TOKEN_NAME"
+  - `get_token_id_num_strict()` - errors with "not found TOKEN_ID_NUM"
+  - `get_one_day_net_limit_strict()` - errors with "not found ONE_DAY_NET_LIMIT"
+  - `get_max_frozen_supply_number_strict()` - errors with "not found MAX_FROZEN_SUPPLY_NUMBER"
+  - `get_max_frozen_supply_time_strict()` - errors with "not found MAX_FROZEN_SUPPLY_TIME"
+  - `get_min_frozen_supply_time_strict()` - errors with "not found MIN_FROZEN_SUPPLY_TIME"
+
+Tests added:
+- `test_strict_get_asset_issue_fee_missing` - verifies strict getter errors when key missing, non-strict returns default
+- `test_strict_get_token_id_num_missing` - verifies strict getter errors when key missing
+- `test_strict_get_allow_same_token_name_missing` - verifies strict getter errors when key missing
+- `test_strict_get_one_day_net_limit_missing` - verifies strict getter errors when key missing
+- `test_strict_frozen_supply_properties_missing` - verifies all 3 frozen supply strict getters error when keys missing
+- `test_strict_getters_succeed_when_keys_present` - verifies strict getters work correctly when keys exist

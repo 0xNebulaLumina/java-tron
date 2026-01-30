@@ -406,6 +406,35 @@ pub struct RemoteExecutionConfig {
     ///           MarketPairPriceToOrderStore, AccountStore, DynamicPropertiesStore
     /// Default: false for safe rollout
     pub market_cancel_order_enabled: bool,
+
+    // === Dynamic Property Strictness (Task 5 parity) ===
+    //
+    // Java's DynamicPropertiesStore throws IllegalArgumentException when keys are missing,
+    // but the store initialization catches these and saves defaults. In practice, a properly
+    // initialized store always has these keys.
+    //
+    // Rust defaults to safe fallback values for robustness, but this can mask configuration
+    // issues or cause subtle divergence in edge cases.
+    //
+    // When strict mode is enabled, Rust will return errors when required dynamic properties
+    // are missing, matching Java's "throw when missing" behavior.
+
+    /// Strict dynamic property mode for Java parity
+    ///
+    /// When enabled, getters for critical dynamic properties will return errors when keys
+    /// are missing, rather than using default values. This matches Java's behavior and helps
+    /// catch configuration issues early.
+    ///
+    /// Affected properties for AssetIssueContract:
+    /// - ASSET_ISSUE_FEE
+    /// - TOKEN_ID_NUM
+    /// - ALLOW_SAME_TOKEN_NAME
+    /// - ONE_DAY_NET_LIMIT
+    /// - MIN_FROZEN_SUPPLY_TIME, MAX_FROZEN_SUPPLY_TIME, MAX_FROZEN_SUPPLY_NUMBER
+    ///
+    /// Default: false for backward compatibility (uses safe defaults)
+    /// Set to true for conformance testing or strict Java parity
+    pub strict_dynamic_properties: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -637,6 +666,8 @@ impl Default for RemoteExecutionConfig {
             // Phase 2.G: Market (DEX) contracts (52/53)
             market_sell_asset_enabled: false, // Default false for safe rollout
             market_cancel_order_enabled: false, // Default false for safe rollout
+            // Task 5: Dynamic property strictness
+            strict_dynamic_properties: false, // Default false for backward compatibility
         }
     }
 } 

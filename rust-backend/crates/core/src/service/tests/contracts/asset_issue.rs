@@ -1536,3 +1536,133 @@ fn test_asset_issue_prefers_contract_parameter_over_data() {
         _ => panic!("Expected AssetIssued"),
     }
 }
+
+// =============================================================================
+// Task 5: Dynamic-property missing-key parity tests
+// =============================================================================
+
+#[test]
+fn test_strict_get_asset_issue_fee_missing() {
+    // When strict mode is used, missing ASSET_ISSUE_FEE should return an error
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // Do NOT seed ASSET_ISSUE_FEE
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Non-strict getter returns default
+    let fee = storage_adapter.get_asset_issue_fee().unwrap();
+    assert_eq!(fee, 1024000000, "Non-strict should return default");
+
+    // Strict getter returns error
+    let strict_result = storage_adapter.get_asset_issue_fee_strict();
+    assert!(strict_result.is_err(), "Strict should return error when missing");
+    assert!(strict_result.err().unwrap().to_string().contains("not found ASSET_ISSUE_FEE"));
+}
+
+#[test]
+fn test_strict_get_token_id_num_missing() {
+    // When strict mode is used, missing TOKEN_ID_NUM should return an error
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // Do NOT seed TOKEN_ID_NUM
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Non-strict getter returns default
+    let token_id = storage_adapter.get_token_id_num().unwrap();
+    assert_eq!(token_id, 1_000_000, "Non-strict should return default");
+
+    // Strict getter returns error
+    let strict_result = storage_adapter.get_token_id_num_strict();
+    assert!(strict_result.is_err(), "Strict should return error when missing");
+    assert!(strict_result.err().unwrap().to_string().contains("not found TOKEN_ID_NUM"));
+}
+
+#[test]
+fn test_strict_get_allow_same_token_name_missing() {
+    // When strict mode is used, missing ALLOW_SAME_TOKEN_NAME should return an error
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // Do NOT seed ALLOW_SAME_TOKEN_NAME
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Non-strict getter returns default
+    let val = storage_adapter.get_allow_same_token_name().unwrap();
+    assert_eq!(val, 0, "Non-strict should return default (0 = legacy mode)");
+
+    // Strict getter returns error
+    let strict_result = storage_adapter.get_allow_same_token_name_strict();
+    assert!(strict_result.is_err(), "Strict should return error when missing");
+    assert!(strict_result.err().unwrap().to_string().contains("not found ALLOW_SAME_TOKEN_NAME"));
+}
+
+#[test]
+fn test_strict_get_one_day_net_limit_missing() {
+    // When strict mode is used, missing ONE_DAY_NET_LIMIT should return an error
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // Do NOT seed ONE_DAY_NET_LIMIT
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Non-strict getter returns default
+    let val = storage_adapter.get_one_day_net_limit().unwrap();
+    assert_eq!(val, 8_640_000_000, "Non-strict should return default");
+
+    // Strict getter returns error
+    let strict_result = storage_adapter.get_one_day_net_limit_strict();
+    assert!(strict_result.is_err(), "Strict should return error when missing");
+    assert!(strict_result.err().unwrap().to_string().contains("not found ONE_DAY_NET_LIMIT"));
+}
+
+#[test]
+fn test_strict_frozen_supply_properties_missing() {
+    // When strict mode is used, missing frozen supply properties should return errors
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    // Do NOT seed any frozen supply properties
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Non-strict getters return defaults
+    assert_eq!(storage_adapter.get_max_frozen_supply_number().unwrap(), 10);
+    assert_eq!(storage_adapter.get_max_frozen_supply_time().unwrap(), 3652);
+    assert_eq!(storage_adapter.get_min_frozen_supply_time().unwrap(), 1);
+
+    // Strict getters return errors
+    let max_num_result = storage_adapter.get_max_frozen_supply_number_strict();
+    assert!(max_num_result.is_err());
+    assert!(max_num_result.err().unwrap().to_string().contains("not found MAX_FROZEN_SUPPLY_NUMBER"));
+
+    let max_time_result = storage_adapter.get_max_frozen_supply_time_strict();
+    assert!(max_time_result.is_err());
+    assert!(max_time_result.err().unwrap().to_string().contains("not found MAX_FROZEN_SUPPLY_TIME"));
+
+    let min_time_result = storage_adapter.get_min_frozen_supply_time_strict();
+    assert!(min_time_result.is_err());
+    assert!(min_time_result.err().unwrap().to_string().contains("not found MIN_FROZEN_SUPPLY_TIME"));
+}
+
+#[test]
+fn test_strict_getters_succeed_when_keys_present() {
+    // When keys are present, strict getters should return values (not errors)
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+
+    // Seed all the properties
+    storage_engine.put("properties", b"ASSET_ISSUE_FEE", &2048000000u64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"TOKEN_ID_NUM", &2_000_000i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"ONE_DAY_NET_LIMIT", &10_000_000_000i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"MAX_FROZEN_SUPPLY_NUMBER", &20i32.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"MAX_FROZEN_SUPPLY_TIME", &5000i32.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"MIN_FROZEN_SUPPLY_TIME", &2i32.to_be_bytes()).unwrap();
+
+    let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // All strict getters should succeed and return the seeded values
+    assert_eq!(storage_adapter.get_asset_issue_fee_strict().unwrap(), 2048000000);
+    assert_eq!(storage_adapter.get_allow_same_token_name_strict().unwrap(), 1);
+    assert_eq!(storage_adapter.get_token_id_num_strict().unwrap(), 2_000_000);
+    assert_eq!(storage_adapter.get_one_day_net_limit_strict().unwrap(), 10_000_000_000);
+    assert_eq!(storage_adapter.get_max_frozen_supply_number_strict().unwrap(), 20);
+    assert_eq!(storage_adapter.get_max_frozen_supply_time_strict().unwrap(), 5000);
+    assert_eq!(storage_adapter.get_min_frozen_supply_time_strict().unwrap(), 2);
+}
