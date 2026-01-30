@@ -44,13 +44,26 @@ Goal: Java uses `owner_address` from the protobuf contract; Rust should, too.
 - [x] Decide whether to enforce `decoded_owner == transaction.metadata.from_raw` (if both are present):
   - Note: Not enforced - parsing from protobuf is the source of truth like Java.
 - [x] Add tests/fixtures:
-  - Note: Existing tests validate via fixture comparison. Additional edge-case tests for invalid owner_address can be added if needed.
+  - [x] Edge-case tests for invalid owner_address (12 tests added in `cancel_all_unfreeze_v2.rs`):
+    - `test_cancel_all_unfreeze_v2_rejects_missing_contract_parameter`
+    - `test_cancel_all_unfreeze_v2_rejects_wrong_type_url`
+    - `test_cancel_all_unfreeze_v2_rejects_empty_owner_address`
+    - `test_cancel_all_unfreeze_v2_rejects_20_byte_owner_address`
+    - `test_cancel_all_unfreeze_v2_rejects_wrong_prefix`
+    - `test_cancel_all_unfreeze_v2_rejects_22_byte_owner_address`
+    - `test_cancel_all_unfreeze_v2_rejects_malformed_protobuf`
+    - `test_cancel_all_unfreeze_v2_rejects_nonexistent_account`
+    - `test_cancel_all_unfreeze_v2_rejects_empty_unfrozen_list`
+    - `test_cancel_all_unfreeze_v2_rejects_when_feature_disabled`
+    - `test_cancel_all_unfreeze_v2_happy_path_with_valid_proto`
+    - `test_cancel_all_unfreeze_v2_proto_owner_takes_precedence`
 
 ## 3) Verification
 
 - [x] Rust:
-  - [x] `cd rust-backend && cargo test -p tron-backend-core cancel_unfreeze` (5 passed)
+  - [x] `cd rust-backend && cargo test -p tron-backend-core cancel_unfreeze` (5 passed - receipt encoding)
   - [x] `cd rust-backend && cargo test -p tron-backend-core proto` (20 passed)
+  - [x] `cd rust-backend && cargo test -p tron-backend-core cancel_all_unfreeze_v2` (12 passed - edge cases)
   - [ ] (Optional) run conformance fixtures for CancelAllUnfreezeV2 and ensure DB diffs remain clean:
     - `cd rust-backend && cargo test -- --ignored test_run_real_fixtures` (or use the repo's fixture runner if available)
 - [ ] Java (optional reference):
