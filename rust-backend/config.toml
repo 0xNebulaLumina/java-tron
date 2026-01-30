@@ -185,3 +185,9 @@ address = "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"
 # IMPORTANT: Adjust this value based on your specific test scenario and starting block.
 balance_sun = -9223372036854075808
 comment = "Blackhole address - receives system fees when support_black_hole_optimization=false"
+
+# Dynamic property strictness
+# When true: Methods like get_asset_issue_fee_strict() return errors when keys are missing
+# When false: Uses safe defaults (backward compatible behavior)
+# Set to true for conformance testing or strict Java parity
+strict_dynamic_properties = true
