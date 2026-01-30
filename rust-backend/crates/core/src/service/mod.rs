@@ -1950,26 +1950,61 @@ impl BackendService {
 
     /// Execute an ACCOUNT_UPDATE_CONTRACT
     /// Updates the account name for a given address with proper validation and CSV parity
+    ///
+    /// End-to-end parity with Java UpdateAccountActuator:
+    /// 1. Unpacks contract_parameter.value as AccountUpdateContract protobuf
+    /// 2. Validates owner_address via DecodeUtil.addressValid (21 bytes, correct prefix)
+    /// 3. Validates account_name via TransactionUtil.validAccountName (allows empty, max 200)
+    /// 4. Validates consistency between decoded proto fields and transaction fields
+    /// 5. Tracks bandwidth/AEXT usage for resource accounting
     fn execute_account_update_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
+        use contracts::proto::parse_account_update_contract;
 
-        // Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.AccountUpdateContract") {
-                return Err(
-                    "contract type error, expected type [AccountUpdateContract], real type[class com.google.protobuf.Any]"
-                        .to_string(),
+        // 1. Validate contract parameter type and unpack (Any.is + Any.unpack parity)
+        // Java: any.unpack(AccountUpdateContract.class) - fails with InvalidProtocolBufferException
+        let (decoded_owner_address, decoded_account_name): (Option<Vec<u8>>, Option<Vec<u8>>) =
+            if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+                // Validate type URL
+                if !Self::any_type_url_matches(&any.type_url, "protocol.AccountUpdateContract") {
+                    return Err(
+                        "contract type error, expected type [AccountUpdateContract], real type[class com.google.protobuf.Any]"
+                            .to_string(),
+                    );
+                }
+
+                // Parse the protobuf value - mirrors Java's any.unpack()
+                let parsed = parse_account_update_contract(&any.value)
+                    .map_err(|e| format!("Protocol buffer parse error: {}", e))?;
+
+                (Some(parsed.owner_address), Some(parsed.account_name))
+            } else {
+                (None, None)
+            };
+
+        // 2. Determine canonical source for name_bytes
+        // Prefer decoded proto if available, fall back to transaction.data
+        let name_bytes: &[u8] = if let Some(ref decoded_name) = decoded_account_name {
+            // Validate consistency: decoded account_name should match transaction.data
+            if transaction.data.as_ref() != decoded_name.as_slice() {
+                warn!(
+                    "AccountUpdate: decoded account_name differs from transaction.data: decoded={} tx_data={}",
+                    decoded_name.len(),
+                    transaction.data.len()
                 );
+                // Use decoded proto as canonical source (matches Java behavior)
             }
-        }
+            decoded_name.as_slice()
+        } else {
+            transaction.data.as_ref()
+        };
 
         let owner_tron = tron_backend_common::to_tron_address(&transaction.from);
-        let name_bytes = transaction.data.as_ref();
 
         info!(
             "AccountUpdate owner={} name_len={}",
@@ -1977,7 +2012,7 @@ impl BackendService {
             name_bytes.len()
         );
 
-        // Validation parity: TransactionUtil.validAccountName(bytes)
+        // 3. Validation parity: TransactionUtil.validAccountName(bytes)
         // - allow empty
         // - max length = 200
         if name_bytes.len() > 200 {
@@ -1989,25 +2024,41 @@ impl BackendService {
             return Err("Invalid accountName".to_string());
         }
 
-        // Validation parity: DecodeUtil.addressValid(ownerAddress)
-        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
-            let owner_address_valid = match from_raw.len() {
-                21 => from_raw[0] == 0x41 || from_raw[0] == 0xa0,
-                20 => true,
-                _ => false,
-            };
-            if !owner_address_valid {
-                return Err("Invalid ownerAddress".to_string());
+        // 4. Validation parity: DecodeUtil.addressValid(ownerAddress)
+        // Java requires: len == 21 AND prefix == configured addressPreFixByte
+        // This matches DecodeUtil.addressValid exactly:
+        //   - Empty address → false (warn: "Address is empty")
+        //   - len != 21 → false (warn: "Address length need 42 but...")
+        //   - prefix != addressPreFixByte → false (warn: "Address need prefix with...")
+        let from_raw = transaction.metadata.from_raw.as_deref()
+            .ok_or_else(|| "Invalid ownerAddress".to_string())?;
+
+        let expected_prefix = storage_adapter.address_prefix();
+        let owner_address_valid = from_raw.len() == 21 && from_raw[0] == expected_prefix;
+        if !owner_address_valid {
+            return Err("Invalid ownerAddress".to_string());
+        }
+
+        // 5. Validate consistency: decoded owner_address should match from_raw
+        if let Some(ref decoded_owner) = decoded_owner_address {
+            if !decoded_owner.is_empty() && decoded_owner.as_slice() != from_raw {
+                warn!(
+                    "AccountUpdate: decoded owner_address differs from from_raw: decoded_len={} from_raw_len={}",
+                    decoded_owner.len(),
+                    from_raw.len()
+                );
+                // For strict parity, we could reject here, but Java uses decoded proto internally
+                // and the request mapping ensures they match. Log warning but proceed.
             }
         }
 
-        // Validation: owner account must exist (java: \"Account does not exist\")
+        // 6. Validation: owner account must exist (java: "Account does not exist")
         let owner_account = storage_adapter
             .get_account(&transaction.from)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or_else(|| "Account does not exist".to_string())?;
 
-        // Validation: only-set-once + duplicate name checks depend on ALLOW_UPDATE_ACCOUNT_NAME
+        // 7. Validation: only-set-once + duplicate name checks depend on ALLOW_UPDATE_ACCOUNT_NAME
         let owner_proto = storage_adapter
             .get_account_proto(&transaction.from)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
@@ -2029,12 +2080,12 @@ impl BackendService {
             return Err("This name is existed".to_string());
         }
 
-        // Apply: persist account name and update account-index (name -> address).
+        // 8. Apply: persist account name and update account-index (name -> address).
         storage_adapter
             .set_account_name(transaction.from, name_bytes)
             .map_err(|e| format!("Failed to set account name: {}", e))?;
 
-        // State Changes: emit exactly one account-level change for CSV parity
+        // 9. State Changes: emit exactly one account-level change for CSV parity
         // old_account == new_account (no balance/nonce/code changes) to match embedded journaled no-op
         let state_changes = vec![
             TronStateChange::AccountChange {
@@ -2044,10 +2095,56 @@ impl BackendService {
             }
         ];
 
-        // Calculate bandwidth based on transaction payload size
+        // 10. Calculate bandwidth based on transaction payload size
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        // Result: success with energy_used=0, exactly 1 state change
+        // 11. AEXT tracking for end-to-end parity (bandwidth/resource accounting)
+        let execution_config = self.get_execution_config()?;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
+
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for owner (or initialize with proper defaults including window size 28800)
+            let current_aext = storage_adapter
+                .get_account_aext(&transaction.from)
+                .map_err(|e| format!("Failed to get owner AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get free net limit from dynamic properties (default: 5000)
+            let free_net_limit = storage_adapter
+                .get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Track bandwidth usage
+            let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &transaction.from,
+                bandwidth_used as i64,
+                context.block_number as i64, // Use block number as "now"
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter
+                .set_account_aext(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
+
+            debug!(
+                "AEXT tracked for account_update: owner={}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                owner_tron,
+                before_aext.net_usage,
+                after_aext.net_usage,
+                before_aext.free_net_usage,
+                after_aext.free_net_usage
+            );
+        }
+
+        // Result: success with energy_used=0, state change, and AEXT tracking
         Ok(TronExecutionResult {
             success: true,
             return_data: revm_primitives::Bytes::new(), // No return data for account update
@@ -2056,8 +2153,8 @@ impl BackendService {
             state_changes,      // Exactly one account-level change
             logs: vec![],       // No logs for account update
             error: None,
-            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
-            freeze_changes: vec![], // Will be populated by freeze-related contracts
+            aext_map,           // Populated with tracked AEXT if mode is "tracked"
+            freeze_changes: vec![], // Not applicable for account update
             global_resource_changes: vec![], // Not applicable for account update
             trc10_changes: vec![], // Not applicable for account update
             vote_changes: vec![], // Not applicable for account update
