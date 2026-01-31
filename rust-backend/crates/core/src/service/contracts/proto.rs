@@ -257,20 +257,18 @@ impl TransactionResultBuilder {
 
     /// Set cancel_unfreezeV2_amount map for CancelAllUnfreezeV2 contract
     /// Takes amounts for bandwidth, energy, and tron_power
+    ///
+    /// Java parity note: The map always contains all 3 keys (even when value is 0).
+    /// Order matches Java HashMap iteration: ENERGY, TRON_POWER, BANDWIDTH
     pub fn with_cancel_unfreeze_v2_amounts(mut self, bandwidth: i64, energy: i64, tron_power: i64) -> Self {
-        let mut amounts = Vec::new();
-        if bandwidth > 0 {
-            amounts.push(("BANDWIDTH".to_string(), bandwidth));
-        }
-        if energy > 0 {
-            amounts.push(("ENERGY".to_string(), energy));
-        }
-        if tron_power > 0 {
-            amounts.push(("TRON_POWER".to_string(), tron_power));
-        }
-        if !amounts.is_empty() {
-            self.cancel_unfreezeV2_amount = Some(amounts);
-        }
+        // Always include all 3 keys in Java HashMap iteration order:
+        // ENERGY, TRON_POWER, BANDWIDTH
+        let amounts = vec![
+            ("ENERGY".to_string(), energy),
+            ("TRON_POWER".to_string(), tron_power),
+            ("BANDWIDTH".to_string(), bandwidth),
+        ];
+        self.cancel_unfreezeV2_amount = Some(amounts);
         self
     }
 
@@ -508,5 +506,111 @@ mod tests {
         assert!(!result.is_empty());
         assert_eq!(result[0], 0x72);
         assert!(result.windows(asset_issue_id.len()).any(|w| w == asset_issue_id.as_bytes()));
+    }
+
+    #[test]
+    fn test_cancel_unfreeze_v2_all_keys_present_when_values_zero() {
+        // Java parity: map should contain all 3 keys even when values are 0
+        let result = TransactionResultBuilder::new()
+            .with_cancel_unfreeze_v2_amounts(0, 0, 0)
+            .build();
+
+        // Verify all 3 resource types are present
+        let bytes_str = String::from_utf8_lossy(&result);
+        assert!(bytes_str.contains("ENERGY"), "ENERGY key should be present");
+        assert!(bytes_str.contains("TRON_POWER"), "TRON_POWER key should be present");
+        assert!(bytes_str.contains("BANDWIDTH"), "BANDWIDTH key should be present");
+    }
+
+    #[test]
+    fn test_cancel_unfreeze_v2_partial_values() {
+        // Even if only one resource has a non-zero value, all 3 keys should be present
+        let result = TransactionResultBuilder::new()
+            .with_cancel_unfreeze_v2_amounts(1000000, 0, 0)
+            .build();
+
+        let bytes_str = String::from_utf8_lossy(&result);
+        assert!(bytes_str.contains("ENERGY"), "ENERGY key should be present");
+        assert!(bytes_str.contains("TRON_POWER"), "TRON_POWER key should be present");
+        assert!(bytes_str.contains("BANDWIDTH"), "BANDWIDTH key should be present");
+    }
+
+    #[test]
+    fn test_cancel_unfreeze_v2_key_order() {
+        // Java parity: order should be ENERGY, TRON_POWER, BANDWIDTH
+        let result = TransactionResultBuilder::new()
+            .with_cancel_unfreeze_v2_amounts(100, 200, 300)
+            .build();
+
+        // Find positions of keys in serialized bytes
+        let energy_pos = result.windows(6).position(|w| w == b"ENERGY");
+        let tron_power_pos = result.windows(10).position(|w| w == b"TRON_POWER");
+        let bandwidth_pos = result.windows(9).position(|w| w == b"BANDWIDTH");
+
+        assert!(energy_pos.is_some(), "ENERGY not found");
+        assert!(tron_power_pos.is_some(), "TRON_POWER not found");
+        assert!(bandwidth_pos.is_some(), "BANDWIDTH not found");
+
+        // Verify order: ENERGY < TRON_POWER < BANDWIDTH
+        let e = energy_pos.unwrap();
+        let t = tron_power_pos.unwrap();
+        let b = bandwidth_pos.unwrap();
+        assert!(e < t, "ENERGY should come before TRON_POWER (got {} vs {})", e, t);
+        assert!(t < b, "TRON_POWER should come before BANDWIDTH (got {} vs {})", t, b);
+    }
+
+    #[test]
+    fn test_withdraw_expire_amount_absent_when_zero() {
+        // Java parity: withdraw_expire_amount (field 27) should NOT be encoded when 0
+        // This is handled at the call site, but verify the builder doesn't encode when not set
+        let result = TransactionResultBuilder::new()
+            .with_cancel_unfreeze_v2_amounts(100, 0, 0)
+            .build();
+
+        // Field 27 tag = (27 << 3) | 0 = 216 = 0xD8 0x01
+        // If field 27 were present, we'd see 0xD8 0x01 in the bytes
+        let has_field_27 = result.windows(2).any(|w| w == [0xD8, 0x01]);
+        assert!(!has_field_27, "Field 27 (withdraw_expire_amount) should not be present when not set");
+    }
+
+    #[test]
+    fn test_withdraw_expire_amount_present_when_nonzero() {
+        // Field 27 should be present when value is non-zero
+        let result = TransactionResultBuilder::new()
+            .with_withdraw_expire_amount(5000000000)
+            .with_cancel_unfreeze_v2_amounts(0, 0, 0)
+            .build();
+
+        // Field 27 tag = (27 << 3) | 0 = 216 = 0xD8 0x01
+        let has_field_27 = result.windows(2).any(|w| w == [0xD8, 0x01]);
+        assert!(has_field_27, "Field 27 (withdraw_expire_amount) should be present when non-zero");
+    }
+
+    #[test]
+    fn test_cancel_unfreeze_v2_matches_fixture_happy_path() {
+        // Verify encoding matches fixture: conformance/fixtures/cancel_all_unfreeze_v2_contract/happy_path/expected/result.pb
+        // This is: ENERGY=0, TRON_POWER=0, BANDWIDTH=5000000000 (0x80e497d012 varint)
+        let result = TransactionResultBuilder::new()
+            .with_cancel_unfreeze_v2_amounts(5000000000, 0, 0)  // bandwidth=5B, energy=0, tron_power=0
+            .build();
+
+        // Expected fixture bytes (without withdraw_expire_amount since it's 0)
+        // From: xxd -p conformance/fixtures/cancel_all_unfreeze_v2_contract/happy_path/expected/result.pb
+        let expected = hex::decode("e2010a0a06454e455247591000e2010e0a0a54524f4e5f504f5745521000e201110a0942414e4457494454481080e497d012").unwrap();
+        assert_eq!(result, expected, "Encoded bytes should match fixture exactly");
+    }
+
+    #[test]
+    fn test_cancel_unfreeze_v2_matches_fixture_all_expired() {
+        // Verify encoding matches fixture: conformance/fixtures/cancel_all_unfreeze_v2_contract/edge_all_entries_expired_withdraw_only/expected/result.pb
+        // This is: withdraw_expire_amount=6000000000 (field 27), ENERGY=0, TRON_POWER=0, BANDWIDTH=0
+        let result = TransactionResultBuilder::new()
+            .with_withdraw_expire_amount(6000000000)
+            .with_cancel_unfreeze_v2_amounts(0, 0, 0)
+            .build();
+
+        // From: xxd -p conformance/fixtures/cancel_all_unfreeze_v2_contract/edge_all_entries_expired_withdraw_only/expected/result.pb
+        let expected = hex::decode("d80180f882ad16e2010a0a06454e455247591000e2010e0a0a54524f4e5f504f5745521000e2010d0a0942414e4457494454481000").unwrap();
+        assert_eq!(result, expected, "Encoded bytes should match fixture exactly");
     }
 }
