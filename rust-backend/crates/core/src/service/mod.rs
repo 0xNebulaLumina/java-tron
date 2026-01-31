@@ -5811,9 +5811,23 @@ impl BackendService {
         let mut contract_address: Vec<u8> = vec![];
         let mut pos = 0;
 
+        // Standard InvalidProtocolBufferException message for truncated input
+        let invalid_protobuf_message = || {
+            "While parsing a protocol message, the input ended unexpectedly in the middle of a field.  This could mean either that the input has been truncated or that an embedded message misreported its own length.".to_string()
+        };
+
+        // Map our parser errors to java-tron's InvalidProtocolBufferException messages
+        let map_protobuf_error = |e: String| {
+            if e.contains("Unexpected end") || e.contains("Varint") {
+                invalid_protobuf_message()
+            } else {
+                e
+            }
+        };
+
         while pos < data.len() {
             let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(|e| format!("Failed to read field header: {}", e))?;
+                .map_err(map_protobuf_error)?;
             pos += bytes_read;
 
             let field_number = field_header >> 3;
@@ -5823,11 +5837,11 @@ impl BackendService {
                 (1, 2) => {
                     // owner_address
                     let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                        .map_err(map_protobuf_error)?;
                     pos += bytes_read;
                     let end = pos + length as usize;
                     if end > data.len() {
-                        return Err("Invalid owner_address length".to_string());
+                        return Err(invalid_protobuf_message());
                     }
                     owner_address = data[pos..end].to_vec();
                     pos = end;
@@ -5835,18 +5849,18 @@ impl BackendService {
                 (2, 2) => {
                     // contract_address
                     let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                        .map_err(map_protobuf_error)?;
                     pos += bytes_read;
                     let end = pos + length as usize;
                     if end > data.len() {
-                        return Err("Invalid contract_address length".to_string());
+                        return Err(invalid_protobuf_message());
                     }
                     contract_address = data[pos..end].to_vec();
                     pos = end;
                 }
                 _ => {
                     let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                        .map_err(map_protobuf_error)?;
                     pos += skip_len;
                 }
             }

@@ -1144,6 +1144,36 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
     log.info("ClearABI type mismatch: validationError={}", result.getValidationError());
   }
 
+  @Test
+  public void generateClearABI_invalidProtobufBytes() throws Exception {
+    // Manually build Any with correct type_url but invalid/corrupted value bytes
+    // This covers the InvalidProtocolBufferException catch block in validate()
+    Any invalidAny = Any.newBuilder()
+        .setTypeUrl("type.googleapis.com/" + ClearABIContract.getDescriptor().getFullName())
+        .setValue(ByteString.copyFrom(new byte[]{0x0A, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF})) // invalid varint length for owner_address
+        .build();
+
+    TransactionCapsule trxCap = createTransactionWithRawAny(
+        Transaction.Contract.ContractType.ClearABIContract, invalidAny);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_invalid_protobuf_bytes")
+        .caseCategory("validate_fail")
+        .description("Fail when contract parameter contains invalid/truncated protobuf bytes")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .expectedError("Protocol") // InvalidProtocolBufferException message contains "Protocol"
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI invalid protobuf: validationError={}", result.getValidationError());
+  }
+
   // ==========================================================================
   // Helper Methods
   // ==========================================================================
@@ -1185,5 +1215,28 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
         .build();
 
     return new BlockCapsule(block);
+  }
+
+  /**
+   * Creates a transaction with a pre-built Any parameter (for testing invalid protobuf bytes).
+   * This allows injecting malformed protobuf data to test error handling.
+   */
+  private TransactionCapsule createTransactionWithRawAny(
+      Transaction.Contract.ContractType declaredType,
+      Any rawAny) {
+    Transaction.Contract protoContract = Transaction.Contract.newBuilder()
+        .setType(declaredType)
+        .setParameter(rawAny)
+        .build();
+
+    Transaction transaction = Transaction.newBuilder()
+        .setRawData(Transaction.raw.newBuilder()
+            .addContract(protoContract)
+            .setTimestamp(System.currentTimeMillis())
+            .setExpiration(System.currentTimeMillis() + 3600000)
+            .build())
+        .build();
+
+    return new TransactionCapsule(transaction);
   }
 }
