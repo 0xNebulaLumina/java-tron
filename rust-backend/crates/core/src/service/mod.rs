@@ -5505,29 +5505,21 @@ impl BackendService {
             return Err("contract type error,unexpected type [ClearABIContract]".to_string());
         }
 
-        // 2. Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.ClearABIContract") {
-                return Err(
-                    "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]"
-                        .to_string(),
-                );
-            }
-        }
-
-        // 3. Parse the contract data
-        let contract_bytes = transaction
+        // 2. Strict contract_parameter requirement for NON_VM system contracts
+        // Java always populates contract_parameter; we require it for strict parity.
+        // Treat None and empty type_url as "missing" → return type-mismatch error.
+        let any = transaction
             .metadata
             .contract_parameter
             .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
-        let (owner_in_contract, contract_address) = self.parse_clear_abi_contract(contract_bytes)?;
+            .ok_or_else(|| {
+                "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]"
+                    .to_string()
+            })?;
 
-        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if transaction.metadata.contract_parameter.is_none()
-            && owner_from_field.is_empty()
-            && !owner_in_contract.is_empty()
+        // Validate type_url is present and matches expected type
+        if any.type_url.is_empty()
+            || !Self::any_type_url_matches(&any.type_url, "protocol.ClearABIContract")
         {
             return Err(
                 "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]"
@@ -5535,6 +5527,11 @@ impl BackendService {
             );
         }
 
+        // 3. Parse the contract data from contract_parameter.value only (no fallback)
+        let (owner_in_contract, contract_address) = self.parse_clear_abi_contract(&any.value)?;
+
+        // Use owner from contract if present, else from metadata.from_raw
+        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
         let owner_tron = if !owner_in_contract.is_empty() {
             owner_in_contract.as_slice()
         } else {
@@ -5800,67 +5797,88 @@ impl BackendService {
         Ok((owner_address, brokerage))
     }
 
-    /// Parse ClearABIContract from protobuf bytes
+    /// Parse ClearABIContract from protobuf bytes with exhaustive error handling
     /// ClearABIContract:
     ///   bytes owner_address = 1;
     ///   bytes contract_address = 2;
+    ///
+    /// Error handling matches protobuf-java 3.21.12 for exact parity:
+    /// - Truncated input → PROTOBUF_TRUNCATED_MESSAGE
+    /// - Malformed varint → PROTOBUF_MALFORMED_VARINT
+    /// - Invalid tag (0) → PROTOBUF_INVALID_TAG_ZERO
+    /// - Invalid wire type (6/7) → PROTOBUF_INVALID_WIRE_TYPE
     fn parse_clear_abi_contract(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
-        use contracts::proto::read_varint;
+        use contracts::proto::{
+            read_varint_typed, skip_protobuf_field_checked, ProtobufError, VarintError,
+            PROTOBUF_INVALID_TAG_ZERO, PROTOBUF_INVALID_WIRE_TYPE, PROTOBUF_MALFORMED_VARINT,
+            PROTOBUF_TRUNCATED_MESSAGE,
+        };
 
         let mut owner_address: Vec<u8> = vec![];
         let mut contract_address: Vec<u8> = vec![];
         let mut pos = 0;
 
-        // Standard InvalidProtocolBufferException message for truncated input
-        let invalid_protobuf_message = || {
-            "While parsing a protocol message, the input ended unexpectedly in the middle of a field.  This could mean either that the input has been truncated or that an embedded message misreported its own length.".to_string()
-        };
-
-        // Map our parser errors to java-tron's InvalidProtocolBufferException messages
-        let map_protobuf_error = |e: String| {
-            if e.contains("Unexpected end") || e.contains("Varint") {
-                invalid_protobuf_message()
-            } else {
-                e
-            }
-        };
-
         while pos < data.len() {
-            let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(map_protobuf_error)?;
+            // Read field tag (field_number << 3 | wire_type)
+            let (field_header, bytes_read) = read_varint_typed(&data[pos..]).map_err(|e| {
+                match e {
+                    VarintError::Truncated => PROTOBUF_TRUNCATED_MESSAGE.to_string(),
+                    VarintError::TooLong => PROTOBUF_MALFORMED_VARINT.to_string(),
+                }
+            })?;
             pos += bytes_read;
 
+            // Check for invalid tag (0)
+            // protobuf-java: InvalidProtocolBufferException.invalidTag()
+            if field_header == 0 {
+                return Err(PROTOBUF_INVALID_TAG_ZERO.to_string());
+            }
+
             let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
+            let wire_type = (field_header & 0x7) as u8;
+
+            // Check for invalid wire types (6/7) before processing
+            if wire_type == 6 || wire_type == 7 {
+                return Err(PROTOBUF_INVALID_WIRE_TYPE.to_string());
+            }
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(map_protobuf_error)?;
+                    // owner_address (bytes, length-delimited)
+                    let (length, bytes_read) = read_varint_typed(&data[pos..]).map_err(|e| {
+                        match e {
+                            VarintError::Truncated => PROTOBUF_TRUNCATED_MESSAGE.to_string(),
+                            VarintError::TooLong => PROTOBUF_MALFORMED_VARINT.to_string(),
+                        }
+                    })?;
                     pos += bytes_read;
                     let end = pos + length as usize;
                     if end > data.len() {
-                        return Err(invalid_protobuf_message());
+                        return Err(PROTOBUF_TRUNCATED_MESSAGE.to_string());
                     }
                     owner_address = data[pos..end].to_vec();
                     pos = end;
                 }
                 (2, 2) => {
-                    // contract_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(map_protobuf_error)?;
+                    // contract_address (bytes, length-delimited)
+                    let (length, bytes_read) = read_varint_typed(&data[pos..]).map_err(|e| {
+                        match e {
+                            VarintError::Truncated => PROTOBUF_TRUNCATED_MESSAGE.to_string(),
+                            VarintError::TooLong => PROTOBUF_MALFORMED_VARINT.to_string(),
+                        }
+                    })?;
                     pos += bytes_read;
                     let end = pos + length as usize;
                     if end > data.len() {
-                        return Err(invalid_protobuf_message());
+                        return Err(PROTOBUF_TRUNCATED_MESSAGE.to_string());
                     }
                     contract_address = data[pos..end].to_vec();
                     pos = end;
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(map_protobuf_error)?;
+                    // Unknown field - skip with bounds checking
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(|e| e.to_java_message())?;
                     pos += skip_len;
                 }
             }

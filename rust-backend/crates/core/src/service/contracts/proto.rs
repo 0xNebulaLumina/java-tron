@@ -1,6 +1,95 @@
 // Protobuf parsing utilities
 // Shared protobuf decoding helpers
 
+// =============================================================================
+// Protobuf Error Taxonomy
+// =============================================================================
+// These constants match protobuf-java 3.21.12 InvalidProtocolBufferException messages.
+// Used for exact string parity with java-tron error messages.
+
+/// Truncated input (EOF mid-field / truncated varint / truncated length-delimited)
+/// From: InvalidProtocolBufferException.truncatedMessage()
+pub const PROTOBUF_TRUNCATED_MESSAGE: &str = "While parsing a protocol message, the input ended unexpectedly in the middle of a field.  This could mean either that the input has been truncated or that an embedded message misreported its own length.";
+
+/// Malformed varint (too long, >10 bytes)
+/// From: InvalidProtocolBufferException.malformedVarint()
+pub const PROTOBUF_MALFORMED_VARINT: &str = "CodedInputStream encountered a malformed varint.";
+
+/// Invalid tag (zero)
+/// From: InvalidProtocolBufferException.invalidTag()
+pub const PROTOBUF_INVALID_TAG_ZERO: &str = "Protocol message contained an invalid tag (zero).";
+
+/// Invalid wire type (6 or 7)
+/// From: InvalidProtocolBufferException.invalidWireType()
+pub const PROTOBUF_INVALID_WIRE_TYPE: &str = "Protocol message tag had invalid wire type.";
+
+/// Typed result for varint parsing
+/// Allows callers to distinguish truncated vs malformed varints
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VarintError {
+    /// EOF before varint completed (continuation bit set on last byte)
+    Truncated,
+    /// Varint exceeds 10 bytes (64-bit limit)
+    TooLong,
+}
+
+impl std::fmt::Display for VarintError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VarintError::Truncated => write!(f, "Unexpected end of varint"),
+            VarintError::TooLong => write!(f, "Varint too long"),
+        }
+    }
+}
+
+impl std::error::Error for VarintError {}
+
+/// Typed result for protobuf parsing
+/// Allows callers to map to exact protobuf-java error messages
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProtobufError {
+    /// Truncated input (EOF mid-field, truncated varint, truncated length-delimited)
+    Truncated,
+    /// Malformed varint (too long)
+    MalformedVarint,
+    /// Invalid tag (zero)
+    InvalidTagZero,
+    /// Invalid wire type (6 or 7)
+    InvalidWireType(u8),
+    /// Other errors (with message)
+    Other(String),
+}
+
+impl ProtobufError {
+    /// Convert to protobuf-java 3.21.12 error message for exact parity
+    pub fn to_java_message(&self) -> String {
+        match self {
+            ProtobufError::Truncated => PROTOBUF_TRUNCATED_MESSAGE.to_string(),
+            ProtobufError::MalformedVarint => PROTOBUF_MALFORMED_VARINT.to_string(),
+            ProtobufError::InvalidTagZero => PROTOBUF_INVALID_TAG_ZERO.to_string(),
+            ProtobufError::InvalidWireType(_) => PROTOBUF_INVALID_WIRE_TYPE.to_string(),
+            ProtobufError::Other(msg) => msg.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for ProtobufError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_java_message())
+    }
+}
+
+impl std::error::Error for ProtobufError {}
+
+impl From<VarintError> for ProtobufError {
+    fn from(err: VarintError) -> Self {
+        match err {
+            VarintError::Truncated => ProtobufError::Truncated,
+            VarintError::TooLong => ProtobufError::MalformedVarint,
+        }
+    }
+}
+
 /// Parsed AccountUpdateContract fields
 /// Corresponds to protocol.AccountUpdateContract protobuf message:
 ///   bytes account_name = 1;
@@ -107,6 +196,88 @@ pub(crate) fn read_varint(data: &[u8]) -> Result<(u64, usize), String> {
         shift += 7;
         if shift >= 64 {
             return Err("Varint too long".to_string());
+        }
+    }
+}
+
+/// Read a protobuf varint with typed error reporting
+/// Returns (value, bytes_read) on success, or typed error for parity with protobuf-java
+pub(crate) fn read_varint_typed(data: &[u8]) -> Result<(u64, usize), VarintError> {
+    let mut result: u64 = 0;
+    let mut shift = 0;
+    let mut pos = 0;
+
+    loop {
+        if pos >= data.len() {
+            return Err(VarintError::Truncated);
+        }
+
+        let byte = data[pos];
+        pos += 1;
+
+        result |= ((byte & 0x7F) as u64) << shift;
+
+        if (byte & 0x80) == 0 {
+            return Ok((result, pos));
+        }
+
+        shift += 7;
+        if shift >= 64 {
+            return Err(VarintError::TooLong);
+        }
+    }
+}
+
+/// Skip a protobuf field with bounds checking and typed errors
+/// Returns bytes to skip on success
+pub(crate) fn skip_protobuf_field_checked(
+    data: &[u8],
+    wire_type: u8,
+) -> Result<usize, ProtobufError> {
+    match wire_type {
+        0 => {
+            // Varint - read and discard
+            let (_, bytes_read) = read_varint_typed(data)?;
+            Ok(bytes_read)
+        }
+        1 => {
+            // 64-bit fixed - must have 8 bytes
+            if data.len() < 8 {
+                return Err(ProtobufError::Truncated);
+            }
+            Ok(8)
+        }
+        2 => {
+            // Length-delimited - read length then skip that many bytes
+            let (length, bytes_read) = read_varint_typed(data)?;
+            let total = bytes_read + length as usize;
+            if total > data.len() {
+                return Err(ProtobufError::Truncated);
+            }
+            Ok(total)
+        }
+        5 => {
+            // 32-bit fixed - must have 4 bytes
+            if data.len() < 4 {
+                return Err(ProtobufError::Truncated);
+            }
+            Ok(4)
+        }
+        // Wire types 3 and 4 are START_GROUP and END_GROUP (deprecated)
+        // Wire types 6 and 7 are invalid
+        3 | 4 => {
+            // Groups are deprecated but valid wire types in protobuf
+            // protobuf-java accepts them, but we don't implement group skipping
+            // For simplicity, treat as invalid wire type (may diverge from java for groups)
+            Err(ProtobufError::InvalidWireType(wire_type))
+        }
+        6 | 7 => {
+            // Invalid wire types
+            Err(ProtobufError::InvalidWireType(wire_type))
+        }
+        _ => {
+            // Should not happen (wire_type is 3 bits), but handle gracefully
+            Err(ProtobufError::InvalidWireType(wire_type))
         }
     }
 }
