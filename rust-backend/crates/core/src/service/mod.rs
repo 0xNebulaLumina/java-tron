@@ -6039,28 +6039,57 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use contracts::proto::TransactionResultBuilder;
 
-        let owner = transaction.from;
-        let owner_tron = transaction
+        // 1. Validate contract parameter type (Any.is) and parse owner_address
+        // Java parity: parse owner_address from CancelAllUnfreezeV2Contract protobuf (field 1)
+        let any = transaction
             .metadata
-            .from_raw
-            .as_deref()
-            .unwrap_or(&[]);
+            .contract_parameter
+            .as_ref()
+            .ok_or_else(|| "No contract!".to_string())?;
 
-        debug!("CancelAllUnfreezeV2: owner={}", hex::encode(&owner_tron));
+        if !Self::any_type_url_matches(&any.type_url, "protocol.CancelAllUnfreezeV2Contract") {
+            return Err(
+                "contract type error, expected type [CancelAllUnfreezeV2Contract], real type[class com.google.protobuf.Any]"
+                    .to_string(),
+            );
+        }
 
-        // 1. Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.CancelAllUnfreezeV2Contract") {
-                return Err(
-                    "contract type error, expected type [CancelAllUnfreezeV2Contract], real type[class com.google.protobuf.Any]"
-                        .to_string(),
-                );
+        // Parse owner_address from contract bytes (CancelAllUnfreezeV2Contract: bytes owner_address = 1)
+        let mut owner_tron: Vec<u8> = Vec::new();
+        let mut pos = 0;
+        while pos < any.value.len() {
+            let (field_header, bytes_read) = read_varint(&any.value[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address (bytes, field 1, wire type 2 = length-delimited)
+                    let (length, bytes_read) = read_varint(&any.value[pos..])
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += bytes_read;
+                    if pos + length as usize > any.value.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_tron = any.value[pos..pos + length as usize].to_vec();
+                    pos += length as usize;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&any.value[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
             }
         }
+
+        debug!("CancelAllUnfreezeV2: owner={}", hex::encode(&owner_tron));
 
         // 2. Gate check: supportAllowCancelAllUnfreezeV2() must be true
         let allow_cancel = storage_adapter.support_allow_cancel_all_unfreeze_v2()
@@ -6069,11 +6098,12 @@ impl BackendService {
             return Err("Not support CancelAllUnfreezeV2 transaction, need to be opened by the committee".to_string());
         }
 
-        // 3. Validate owner address
+        // 3. Validate owner address (must be 21 bytes with correct prefix)
         let expected_prefix = storage_adapter.address_prefix();
         if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
             return Err("Invalid address".to_string());
         }
+        let owner = revm_primitives::Address::from_slice(&owner_tron[1..]);
 
         // 4. Validate owner account exists
         let account_proto = storage_adapter.get_account_proto(&owner)
@@ -6206,8 +6236,12 @@ impl BackendService {
         }];
 
         // 12. Build receipt with withdraw_expire_amount and cancel_unfreezeV2_amount map
-        let receipt_bytes = TransactionResultBuilder::new()
-            .with_withdraw_expire_amount(withdraw_expire_amount)
+        // Java parity: withdraw_expire_amount is only emitted when non-zero
+        let mut builder = TransactionResultBuilder::new();
+        if withdraw_expire_amount > 0 {
+            builder = builder.with_withdraw_expire_amount(withdraw_expire_amount);
+        }
+        let receipt_bytes = builder
             .with_cancel_unfreeze_v2_amounts(cancel_bandwidth, cancel_energy, cancel_tron_power)
             .build();
 
