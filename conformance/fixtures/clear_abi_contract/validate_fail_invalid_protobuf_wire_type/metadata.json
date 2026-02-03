@@ -1,0 +1,21 @@
+{
+  "contractType": "CLEAR_ABI_CONTRACT",
+  "contractTypeNum": 48,
+  "caseName": "validate_fail_invalid_protobuf_wire_type",
+  "caseCategory": "validate_fail",
+  "description": "Fail when protobuf contains invalid wire type (6)",
+  "generatedAt": "2026-01-31T15:22:01.985Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "abi",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Protocol message tag had invalid wire type.",
+  "dynamicProperties": {},
+  "notes": []
+}

@@ -1144,6 +1144,185 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
     log.info("ClearABI type mismatch: validationError={}", result.getValidationError());
   }
 
+  @Test
+  public void generateClearABI_invalidProtobufBytes() throws Exception {
+    // Manually build Any with correct type_url but invalid/corrupted value bytes
+    // This covers the InvalidProtocolBufferException catch block in validate()
+    Any invalidAny = Any.newBuilder()
+        .setTypeUrl("type.googleapis.com/" + ClearABIContract.getDescriptor().getFullName())
+        .setValue(ByteString.copyFrom(new byte[]{0x0A, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF})) // invalid varint length for owner_address
+        .build();
+
+    TransactionCapsule trxCap = createTransactionWithRawAny(
+        Transaction.Contract.ContractType.ClearABIContract, invalidAny);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_invalid_protobuf_bytes")
+        .caseCategory("validate_fail")
+        .description("Fail when contract parameter contains invalid/truncated protobuf bytes")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .expectedError("Protocol") // InvalidProtocolBufferException message contains "Protocol"
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI invalid protobuf: validationError={}", result.getValidationError());
+  }
+
+  /**
+   * Test case: invalid tag (zero)
+   * Protobuf wire format: tag = 0x00 (field 0, wire type 0 - invalid)
+   * Expected: InvalidProtocolBufferException with "Protocol message contained an invalid tag (zero)."
+   */
+  @Test
+  public void generateClearABI_invalidProtobufTagZero() throws Exception {
+    Any invalidAny = Any.newBuilder()
+        .setTypeUrl("type.googleapis.com/" + ClearABIContract.getDescriptor().getFullName())
+        .setValue(ByteString.copyFrom(new byte[]{0x00})) // tag = 0 is invalid
+        .build();
+
+    TransactionCapsule trxCap = createTransactionWithRawAny(
+        Transaction.Contract.ContractType.ClearABIContract, invalidAny);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_invalid_protobuf_tag_zero")
+        .caseCategory("validate_fail")
+        .description("Fail when protobuf contains invalid tag (zero)")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .expectedError("invalid tag")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI invalid tag zero: validationError={}", result.getValidationError());
+  }
+
+  /**
+   * Test case: invalid wire type (6)
+   * Protobuf wire format: tag = (1 << 3) | 6 = 0x0E (field 1, wire type 6 - invalid)
+   * Expected: InvalidProtocolBufferException with "Protocol message tag had invalid wire type."
+   */
+  @Test
+  public void generateClearABI_invalidProtobufWireType() throws Exception {
+    Any invalidAny = Any.newBuilder()
+        .setTypeUrl("type.googleapis.com/" + ClearABIContract.getDescriptor().getFullName())
+        .setValue(ByteString.copyFrom(new byte[]{0x0E})) // field 1, wire type 6 (invalid)
+        .build();
+
+    TransactionCapsule trxCap = createTransactionWithRawAny(
+        Transaction.Contract.ContractType.ClearABIContract, invalidAny);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_invalid_protobuf_wire_type")
+        .caseCategory("validate_fail")
+        .description("Fail when protobuf contains invalid wire type (6)")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .expectedError("wire type")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI invalid wire type: validationError={}", result.getValidationError());
+  }
+
+  /**
+   * Test case: malformed varint (too long)
+   * Protobuf wire format: tag 0x0A (field 1, wire type 2) followed by 10 continuation bytes
+   * Expected: InvalidProtocolBufferException with "CodedInputStream encountered a malformed varint."
+   */
+  @Test
+  public void generateClearABI_malformedVarintLength() throws Exception {
+    // 0x0A = field 1, wire type 2 (length-delimited)
+    // Then 10 bytes of 0xFF (continuation bits set) = malformed varint (too long)
+    byte[] malformedData = new byte[]{
+        0x0A, // tag: field 1, wire type 2
+        (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF,
+        (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF  // 10 continuation bytes
+    };
+
+    Any invalidAny = Any.newBuilder()
+        .setTypeUrl("type.googleapis.com/" + ClearABIContract.getDescriptor().getFullName())
+        .setValue(ByteString.copyFrom(malformedData))
+        .build();
+
+    TransactionCapsule trxCap = createTransactionWithRawAny(
+        Transaction.Contract.ContractType.ClearABIContract, invalidAny);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_malformed_varint_length")
+        .caseCategory("validate_fail")
+        .description("Fail when protobuf contains malformed varint (too long)")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .expectedError("malformed varint")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI malformed varint: validationError={}", result.getValidationError());
+  }
+
+  /**
+   * Test case: truncated unknown length-delimited field
+   * Protobuf wire format: unknown field with wire type 2 and length that exceeds remaining data
+   * Expected: InvalidProtocolBufferException with truncated message
+   */
+  @Test
+  public void generateClearABI_truncatedUnknownField() throws Exception {
+    // Use unknown field 99 (not 1 or 2), wire type 2 (length-delimited)
+    // Tag = (99 << 3) | 2 = 794 = varint 0xFA 0x06
+    // Length = 100 (0x64), but only provide 5 bytes
+    byte[] truncatedData = new byte[]{
+        (byte) 0xFA, 0x06, // tag: field 99, wire type 2
+        0x64,              // length: 100 bytes
+        0x01, 0x02, 0x03, 0x04, 0x05  // only 5 bytes provided
+    };
+
+    Any invalidAny = Any.newBuilder()
+        .setTypeUrl("type.googleapis.com/" + ClearABIContract.getDescriptor().getFullName())
+        .setValue(ByteString.copyFrom(truncatedData))
+        .build();
+
+    TransactionCapsule trxCap = createTransactionWithRawAny(
+        Transaction.Contract.ContractType.ClearABIContract, invalidAny);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("CLEAR_ABI_CONTRACT", 48)
+        .caseName("validate_fail_truncated_unknown_field")
+        .caseCategory("validate_fail")
+        .description("Fail when protobuf contains truncated unknown length-delimited field")
+        .database("account")
+        .database("contract")
+        .database("abi")
+        .database("dynamic-properties")
+        .expectedError("Protocol") // truncated message contains "Protocol"
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ClearABI truncated unknown field: validationError={}", result.getValidationError());
+  }
+
   // ==========================================================================
   // Helper Methods
   // ==========================================================================
@@ -1185,5 +1364,28 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
         .build();
 
     return new BlockCapsule(block);
+  }
+
+  /**
+   * Creates a transaction with a pre-built Any parameter (for testing invalid protobuf bytes).
+   * This allows injecting malformed protobuf data to test error handling.
+   */
+  private TransactionCapsule createTransactionWithRawAny(
+      Transaction.Contract.ContractType declaredType,
+      Any rawAny) {
+    Transaction.Contract protoContract = Transaction.Contract.newBuilder()
+        .setType(declaredType)
+        .setParameter(rawAny)
+        .build();
+
+    Transaction transaction = Transaction.newBuilder()
+        .setRawData(Transaction.raw.newBuilder()
+            .addContract(protoContract)
+            .setTimestamp(System.currentTimeMillis())
+            .setExpiration(System.currentTimeMillis() + 3600000)
+            .build())
+        .build();
+
+    return new TransactionCapsule(transaction);
   }
 }
