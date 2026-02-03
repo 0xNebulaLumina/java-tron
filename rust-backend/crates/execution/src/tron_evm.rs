@@ -28,8 +28,9 @@ struct TronExternalContext {
     // CREATE addresses inside EVM execution. The address formula is:
     //   keccak256(root_txid || nonce_be_u64)[12..]
     //
-    // The nonce increments for EVERY internal transaction (CALLs, CREATEs, etc.),
-    // not just CREATEs. This differs from Ethereum's (caller, account_nonce) scheme.
+    // The nonce increments for internal transactions (CALLs, CREATEs, etc.), not just CREATEs.
+    // java-tron does NOT count the root (tx entry) call, and it does not increment for precompile
+    // calls (see `Program.callToPrecompiledAddress`), so we mirror that behavior in the inspector.
     root_transaction_id: Option<revm::primitives::B256>,
     /// Internal transaction counter (starts at 0, increments per internal tx).
     internal_tx_nonce: u64,
@@ -167,12 +168,23 @@ impl<DB: Database> Inspector<DB> for TronExternalContext {
 
     fn call(
         &mut self,
-        _context: &mut EvmContext<DB>,
-        _inputs: &mut revm::interpreter::CallInputs,
+        context: &mut EvmContext<DB>,
+        inputs: &mut revm::interpreter::CallInputs,
     ) -> Option<revm::interpreter::CallOutcome> {
-        // Java-tron increments the internal transaction nonce for CALL operations too.
-        // This affects subsequent CREATE address derivations which use txid + nonce.
-        self.increment_internal_nonce();
+        // java-tron increments the internal transaction nonce for CALL operations too
+        // (see `Program.callToAddress()` -> `increaseNonce()`), which affects subsequent
+        // internal CREATE address derivation (txid + nonce).
+        //
+        // But java-tron does not count:
+        // - the root tx entry call (depth == 0), and
+        // - calls to precompiles (handled by `callToPrecompiledAddress()`; no `increaseNonce()`).
+        //
+        // REVM invokes this hook for the tx entry call, so guard on depth.
+        let is_root_call = context.journaled_state.depth() == 0;
+        let is_precompile_call = context.precompiles.contains(&inputs.bytecode_address);
+        if !is_root_call && !is_precompile_call {
+            self.increment_internal_nonce();
+        }
         None // Let the call proceed normally
     }
 
@@ -1299,4 +1311,136 @@ impl BandwidthAccounting {
     pub fn remaining(&self) -> u64 {
         self.limit.saturating_sub(self.used)
     }
-} 
+}
+
+#[cfg(test)]
+mod internal_nonce_tests {
+    use super::*;
+    use revm::{
+        db::InMemoryDB,
+        primitives::{AccountInfo, Address, Bytecode, Bytes, B256, U256, KECCAK_EMPTY},
+    };
+
+    fn evm_bytecode_call(target: Address) -> Bytes {
+        // Stack args for CALL: gas, to, value, in_offset, in_size, out_offset, out_size.
+        // Push in reverse order.
+        let mut code: Vec<u8> = Vec::new();
+
+        // out_size, out_offset, in_size, in_offset, value
+        for _ in 0..5 {
+            code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0
+        }
+
+        code.push(0x73); // PUSH20
+        code.extend_from_slice(target.as_slice());
+
+        code.extend_from_slice(&[0x61, 0xFF, 0xFF]); // PUSH2 0xFFFF gas
+        code.push(0xF1); // CALL
+        code.push(0x00); // STOP
+
+        Bytes::from(code)
+    }
+
+    fn basic_context() -> TronExecutionContext {
+        TronExecutionContext {
+            block_number: 1,
+            block_timestamp: 1,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 1_000_000,
+            chain_id: 0,
+            energy_price: 0,
+            bandwidth_price: 0,
+            transaction_id: Some(B256::from([0x11u8; 32])),
+        }
+    }
+
+    fn setup_db(from: Address, to: Address, bytecode: Bytes) -> InMemoryDB {
+        let mut db = InMemoryDB::default();
+
+        // Caller (EOA)
+        db.insert_account_info(
+            from,
+            AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 1,
+                code_hash: KECCAK_EMPTY,
+                code: None,
+            },
+        );
+
+        // Callee contract
+        db.insert_account_info(
+            to,
+            AccountInfo::new(
+                U256::from(1_000_000_000u64),
+                1,
+                KECCAK_EMPTY,
+                Bytecode::new_legacy(bytecode),
+            ),
+        );
+
+        db
+    }
+
+    #[test]
+    fn internal_nonce_does_not_count_tx_entry_call() {
+        let from = Address::from_slice(&[0x10u8; 20]);
+        let to = Address::from_slice(&[0x20u8; 20]);
+        let internal_call_target = Address::from_slice(&[0x30u8; 20]);
+
+        let db = setup_db(from, to, evm_bytecode_call(internal_call_target));
+        let config = ExecutionConfig::default();
+        let mut evm = TronEvm::new(db, &config).expect("EVM should initialize");
+
+        let tx = TronTransaction {
+            from,
+            to: Some(to),
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas_limit: 200_000,
+            gas_price: U256::ZERO,
+            nonce: 1,
+            metadata: TxMetadata::default(),
+        };
+
+        let ctx = basic_context();
+        let _ = evm.call_contract(&tx, &ctx).expect("tx call should succeed");
+
+        // Exactly one internal CALL from the contract bytecode; root tx call is not counted.
+        assert_eq!(evm.evm.context.external.internal_tx_nonce, 1);
+    }
+
+    #[test]
+    fn internal_nonce_skips_precompile_calls() {
+        let from = Address::from_slice(&[0x10u8; 20]);
+        let to = Address::from_slice(&[0x20u8; 20]);
+
+        // Ethereum identity precompile at address(0x04).
+        let precompile_addr = Address::from_slice(&[
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
+        ]);
+
+        let db = setup_db(from, to, evm_bytecode_call(precompile_addr));
+        let config = ExecutionConfig::default();
+        let mut evm = TronEvm::new(db, &config).expect("EVM should initialize");
+
+        let tx = TronTransaction {
+            from,
+            to: Some(to),
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas_limit: 200_000,
+            gas_price: U256::ZERO,
+            nonce: 1,
+            metadata: TxMetadata::default(),
+        };
+
+        let ctx = basic_context();
+        let _ = evm.call_contract(&tx, &ctx).expect("tx call should succeed");
+
+        // java-tron does not increment the internal nonce for precompile calls.
+        assert_eq!(evm.evm.context.external.internal_tx_nonce, 0);
+    }
+}
