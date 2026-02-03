@@ -22,6 +22,18 @@ struct TronExternalContext {
     /// not from (caller, nonce) like Ethereum.
     create_address_override: Option<revm::primitives::Address>,
 
+    // === TRON internal transaction nonce ===
+    //
+    // java-tron uses a global per-root-tx internal-transaction counter for deriving
+    // CREATE addresses inside EVM execution. The address formula is:
+    //   keccak256(root_txid || nonce_be_u64)[12..]
+    //
+    // The nonce increments for EVERY internal transaction (CALLs, CREATEs, etc.),
+    // not just CREATEs. This differs from Ethereum's (caller, account_nonce) scheme.
+    root_transaction_id: Option<revm::primitives::B256>,
+    /// Internal transaction counter (starts at 0, increments per internal tx).
+    internal_tx_nonce: u64,
+
     // === Energy accounting (TRON vs Ethereum gas schedule) ===
     //
     // java-tron charges memory expansion/copy costs for these opcodes but does NOT include the
@@ -66,6 +78,36 @@ impl TronExternalContext {
         self.last_create_output = None;
         self.last_create_gas_limit = None;
         self.last_create_gas_remaining = None;
+    }
+
+    /// Derive internal CREATE address using TRON's txid + nonce scheme.
+    ///
+    /// Java reference: `TransactionUtil.generateContractAddress(transactionRootId, nonce)`
+    /// Formula: `keccak256(txid || nonce_be_u64)[12..]`
+    fn derive_internal_create_address(&mut self) -> Option<revm::primitives::Address> {
+        use sha3::{Digest, Keccak256};
+
+        let root_txid = self.root_transaction_id?;
+
+        // Get current nonce and increment for next use
+        let current_nonce = self.internal_tx_nonce;
+        self.internal_tx_nonce = self.internal_tx_nonce.saturating_add(1);
+
+        // Concatenate: txid (32 bytes) || nonce (8 bytes big-endian)
+        let mut combined = [0u8; 40];
+        combined[..32].copy_from_slice(root_txid.as_slice());
+        combined[32..40].copy_from_slice(&current_nonce.to_be_bytes());
+
+        // keccak256 and take last 20 bytes
+        let hash = Keccak256::digest(&combined);
+        let address_bytes: [u8; 20] = hash[12..32].try_into().ok()?;
+
+        Some(revm::primitives::Address::from(address_bytes))
+    }
+
+    /// Increment internal transaction nonce (for CALLs that don't CREATE).
+    fn increment_internal_nonce(&mut self) {
+        self.internal_tx_nonce = self.internal_tx_nonce.saturating_add(1);
     }
 
     fn tron_energy_opcode_adjustment(&self) -> u64 {
@@ -123,6 +165,17 @@ impl<DB: Database> Inspector<DB> for TronExternalContext {
         }
     }
 
+    fn call(
+        &mut self,
+        _context: &mut EvmContext<DB>,
+        _inputs: &mut revm::interpreter::CallInputs,
+    ) -> Option<revm::interpreter::CallOutcome> {
+        // Java-tron increments the internal transaction nonce for CALL operations too.
+        // This affects subsequent CREATE address derivations which use txid + nonce.
+        self.increment_internal_nonce();
+        None // Let the call proceed normally
+    }
+
     fn create_end(
         &mut self,
         _context: &mut EvmContext<DB>,
@@ -158,15 +211,27 @@ fn tron_create_with_optional_override<DB: Database>(
         FrameOrResult, CALL_STACK_LIMIT,
     };
 
-    // Only override legacy CREATE, and consume the override exactly once.
-    let created_address_override = if inputs.scheme == CreateScheme::Create {
-        context.external.create_address_override.take()
-    } else {
-        None
-    };
-
-    let Some(created_address) = created_address_override else {
-        return context.evm.make_create_frame(spec_id, &inputs);
+    // TRON address derivation differs from Ethereum:
+    // - Top-level CreateSmartContract: uses pre-computed override (txid + owner_address)
+    // - Internal CREATE opcode: uses txid + internal_tx_nonce
+    // - CREATE2: uses standard salt-based derivation (handled by REVM)
+    let created_address = match inputs.scheme {
+        CreateScheme::Create => {
+            // First check for top-level override (CreateSmartContract)
+            if let Some(override_addr) = context.external.create_address_override.take() {
+                override_addr
+            } else if let Some(nonce_addr) = context.external.derive_internal_create_address() {
+                // Internal CREATE: use TRON's txid + nonce scheme
+                nonce_addr
+            } else {
+                // Fallback to REVM's Ethereum-style derivation (shouldn't happen in normal TRON execution)
+                return context.evm.make_create_frame(spec_id, &inputs);
+            }
+        }
+        CreateScheme::Create2 { .. } => {
+            // CREATE2 uses salt-based derivation - let REVM handle it
+            return context.evm.make_create_frame(spec_id, &inputs);
+        }
     };
 
     let return_error = |e| {
@@ -648,6 +713,11 @@ where
     fn setup_environment(&mut self, tx: &TronTransaction, context: &TronExecutionContext) {
         // Set transaction environment
         self.evm.context.external.reset_energy_counters();
+
+        // Set root transaction ID for TRON's internal CREATE address derivation.
+        // java-tron derives internal CREATE addresses using: keccak256(txid || nonce)[12..]
+        self.evm.context.external.root_transaction_id = context.transaction_id;
+        self.evm.context.external.internal_tx_nonce = 0;
         // Ensure per-tx config flags don't leak between executions.
         self.evm.context.evm.inner.env.cfg.disable_balance_check = false;
         self.evm.context.evm.inner.env.tx.caller = tx.from;

@@ -244,17 +244,30 @@ Examples:
 
 ---
 
-## Bottom line
+## Bottom line (Updated after implementation)
 
-- For *simple* deployments where:
-  - contract creation does not rely on internal `CREATE`,
-  - TRC-10 call-token transfers are not used,
-  - `ALLOW_TVM_COMPATIBLE_EVM` is not required for downstream semantics,
-  the Rust path is **close** on the headline behavior (top-level contract address, init code, metadata).
+**Implemented fixes:**
 
-- For full java-tron parity, the current Rust implementation is **not equivalent**. The biggest gaps are:
-  - missing persisted `SmartContract.version` handling,
-  - internal `CREATE` address derivation (txid+nonce) semantics,
-  - TRC-10 call-token transfers during creation,
-  - incomplete energy-limit/resource capping.
+1. **SmartContract.version handling** ✅ - `persist_smart_contract_metadata()` now sets `version = 1` when `ALLOW_TVM_COMPATIBLE_EVM == 1`.
+
+2. **Internal CREATE address derivation** ✅ - Implemented TRON's `keccak256(txid || nonce)` scheme:
+   - Added `root_transaction_id` and `internal_tx_nonce` to `TronExternalContext`
+   - `derive_internal_create_address()` generates addresses using txid + nonce
+   - Inspector's `call` hook increments nonce for CALLs (matching Java behavior)
+   - `tron_create_with_optional_override` uses TRON derivation for internal CREATEs
+
+3. **TRC-10 call-token transfers** ✅ - Implemented via `extract_create_contract_trc10_transfer()`:
+   - Emits `Trc10Change::AssetTransferred` on successful contract creation
+   - Rollback is natural (change not emitted on failure)
+
+**Remaining gaps:**
+
+- **Energy-limit/resource capping** - Requires Java-side changes to send pre-computed energy limit
+  or Rust implementation of frozen energy + window computation
+
+- For *simple* deployments where contract creation does not rely on complex energy capping,
+  the Rust path now has **good parity** with java-tron.
+
+- For full java-tron parity including energy capping, the Java side should compute
+  `getAccountEnergyLimitWithFixRatio()` and send the result to Rust.
 

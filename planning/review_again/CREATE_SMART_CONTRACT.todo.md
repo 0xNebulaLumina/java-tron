@@ -16,12 +16,12 @@ This checklist assumes we want to resolve the gaps identified in `planning/revie
 
 Goal: match `VMActuator.create()` which forces `version = 1` for newly created contracts when `ALLOW_TVM_COMPATIBLE_EVM == 1`.
 
-- [ ] In `rust-backend/crates/core/src/service/mod.rs` (`persist_smart_contract_metadata`):
-  - [ ] Read `ALLOW_TVM_COMPATIBLE_EVM` from dynamic properties (getter already exists on the storage adapter).
-  - [ ] If enabled, set `smart_contract.version = 1` before `put_smart_contract(...)`.
-  - [ ] If disabled, ensure `smart_contract.version` is `0` (or leave as-is if the wire value is already `0`).
+- [x] In `rust-backend/crates/core/src/service/mod.rs` (`persist_smart_contract_metadata`):
+  - [x] Read `ALLOW_TVM_COMPATIBLE_EVM` from dynamic properties (getter already exists on the storage adapter).
+  - [x] If enabled, set `smart_contract.version = 1` before `put_smart_contract(...)`.
+  - [x] If disabled, ensure `smart_contract.version` is `0` (or leave as-is if the wire value is already `0`).
 - [ ] Add tests:
-  - [ ] “create contract persists version=1 when allow_tvm_compatible_evm=1”
+  - [ ] "create contract persists version=1 when allow_tvm_compatible_evm=1"
   - [ ] TransferContract validation against the newly created contract rejects with Java message when version==1 (end-to-end parity check).
 
 ## 2) Implement TRON legacy `CREATE` address derivation (txid + internal nonce)
@@ -33,16 +33,16 @@ Goal: match Java internal `CREATE` address derivation:
 
 Checklist:
 
-- [ ] Extend `TronExternalContext` to carry:
-  - [ ] `root_txid: Option<B256>`
-  - [ ] `internal_tx_nonce: u64` (init to 0 each top-level tx)
-- [ ] Set `root_txid` during `TronEvm::setup_environment()` from `ExecutionContext.transaction_id`.
-- [ ] Override address derivation for **every** legacy `CREATE` (not just the first/top-level), using:
-  - [ ] top-level CreateSmartContract: still uses `txid + owner_address` (WalletUtil scheme)
-  - [ ] internal CREATE opcode: uses `txid + internal_tx_nonce` (TransactionUtil scheme)
-- [ ] Implement `internal_tx_nonce` increments to match Java ordering:
-  - [ ] Increment on CALL-start events (since Java increments for internal CALL transactions).
-  - [ ] For CREATE: derive address using current nonce, then increment (Java derives using current nonce, increments later).
+- [x] Extend `TronExternalContext` to carry:
+  - [x] `root_txid: Option<B256>` (implemented as `root_transaction_id`)
+  - [x] `internal_tx_nonce: u64` (init to 0 each top-level tx)
+- [x] Set `root_txid` during `TronEvm::setup_environment()` from `ExecutionContext.transaction_id`.
+- [x] Override address derivation for **every** legacy `CREATE` (not just the first/top-level), using:
+  - [x] top-level CreateSmartContract: still uses `txid + owner_address` (WalletUtil scheme)
+  - [x] internal CREATE opcode: uses `txid + internal_tx_nonce` (TransactionUtil scheme) via `derive_internal_create_address()`
+- [x] Implement `internal_tx_nonce` increments to match Java ordering:
+  - [x] Increment on CALL-start events (via Inspector::call hook)
+  - [x] For CREATE: derive address using current nonce, then increment (inside `derive_internal_create_address()`)
   - [ ] Confirm whether to count precompile calls the same way Java does (java-tron creates internal tx records for many calls).
 - [ ] Add conformance tests:
   - [ ] Constructor that does `CALL` then `CREATE` and asserts the created sub-contract address matches Java fixture.
@@ -53,17 +53,18 @@ Checklist:
 
 Goal: match Java `MUtil.transferToken(...)` behavior for contract creation when `ALLOW_TVM_TRANSFER_TRC10 == 1`.
 
-- [ ] Decide the rollback model:
-  - [ ] Token transfer must be reverted if contract creation reverts/halts.
-  - [ ] Prefer integrating into the same write buffer / journal as EVM state so failure discards changes.
-- [ ] Implement pre-execution token transfer for CreateSmartContract:
-  - [ ] Decode CreateSmartContract proto from tx.data.
-  - [ ] Compute the created contract address deterministically (txid+owner) before execution.
-  - [ ] Perform the token transfer owner → contract account (after ensuring the contract account exists for the transfer semantics).
-  - [ ] Emit `Trc10Change` so the Java side (or Rust persistence) can mirror the update deterministically.
+- [x] Decide the rollback model:
+  - [x] Token transfer must be reverted if contract creation reverts/halts.
+  - [x] Emit `Trc10Change` only on successful contract creation (Java applies transfer; rollback natural on failure).
+- [x] Implement post-execution token transfer emission for CreateSmartContract:
+  - [x] Decode CreateSmartContract proto from tx.data (in `extract_create_contract_trc10_transfer`).
+  - [x] Use the contract address from EVM result (already computed by EVM).
+  - [x] Emit `Trc10Change::AssetTransferred` so Java can apply the token transfer on success.
+  - [x] Added helper function `extract_create_contract_trc10_transfer` in `service/mod.rs`
+  - [x] Integrated in grpc handler after successful contract creation
 - [ ] Add tests:
   - [ ] token transfer applied on success
-  - [ ] token transfer rolled back on REVERT/OOG
+  - [ ] token transfer rolled back on REVERT/OOG (natural since Trc10Change not emitted on failure)
   - [ ] Java-parity error messages for insufficient token balance / missing asset
 
 ## 4) Match Java energy/resource capping for contract creation
@@ -74,9 +75,19 @@ Goal: approximate `VMActuator.getAccountEnergyLimitWithFixRatio(...)` (and fork-
 - energyFromFeeLimit = feeLimit / energyFee
 - energyLimit = min(availableEnergy, energyFromFeeLimit)
 
+**Current status**: The Java side sends `feeLimit` as `energyLimit` via RemoteExecutionSPI. Full parity requires
+either Java to pre-compute the actual energy limit, or Rust to implement the full frozen energy + window computation.
+
+**Recommended approach**: Have Java compute `getAccountEnergyLimitWithFixRatio()` and send the result in the gRPC request.
+This keeps the complex resource accounting logic in Java where it already exists.
+
 Checklist:
 
-- [ ] Implement “available energy” computation in Rust using:
+- [ ] **Option A (preferred)**: Java-side changes to send computed energy limit:
+  - [ ] In RemoteExecutionSPI, call `VMActuator.getAccountEnergyLimitWithFixRatio()` or equivalent
+  - [ ] Send the computed limit instead of raw `feeLimit` in the ExecuteTransactionRequest
+  - [ ] Rust receives the already-capped value and uses it directly
+- [ ] **Option B**: Implement "available energy" computation in Rust using:
   - [ ] account balance
   - [ ] frozen energy (Freeze V1/V2 + recovery windows, if required)
   - [ ] dynamic property `ENERGY_FEE`
@@ -94,10 +105,30 @@ Checklist:
 
 ## 6) Verification steps
 
-- [ ] Rust:
-  - [ ] `cd rust-backend && cargo test`
+- [x] Rust:
+  - [x] `cargo build --release` - Compiles successfully
+  - [ ] `cd rust-backend && cargo test` - Run unit tests
   - [ ] Run any conformance runner cases that include CreateSmartContract + internal CREATE patterns
 - [ ] Java:
   - [ ] `./gradlew :framework:test`
   - [ ] Run dual-mode tests if available: `./gradlew :framework:test --tests "org.tron.core.storage.spi.DualStorageModeIntegrationTest"`
+
+## Implementation Summary
+
+### Files Modified:
+
+1. **`rust-backend/crates/core/src/service/mod.rs`**:
+   - `persist_smart_contract_metadata()`: Added `version = 1` when `ALLOW_TVM_COMPATIBLE_EVM == 1`
+   - Added `extract_create_contract_trc10_transfer()` for TRC-10 transfer emission
+
+2. **`rust-backend/crates/core/src/service/grpc/mod.rs`**:
+   - Integrated TRC-10 transfer emission after successful contract creation
+
+3. **`rust-backend/crates/execution/src/tron_evm.rs`**:
+   - Extended `TronExternalContext` with `root_transaction_id` and `internal_tx_nonce`
+   - Added `derive_internal_create_address()` for TRON's txid+nonce scheme
+   - Added `increment_internal_nonce()` helper
+   - Updated `Inspector::call` to increment nonce for CALLs
+   - Updated `tron_create_with_optional_override` to use TRON derivation for internal CREATEs
+   - Updated `setup_environment` to initialize root txid and nonce
 
