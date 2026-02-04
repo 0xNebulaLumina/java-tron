@@ -43,7 +43,7 @@ Checklist:
 - [x] Implement `internal_tx_nonce` increments to match Java ordering:
   - [x] Increment on CALL-start events (via Inspector::call hook)
   - [x] For CREATE: derive address using current nonce, then increment (inside `derive_internal_create_address()`)
-  - [ ] Confirm whether to count precompile calls the same way Java does (java-tron creates internal tx records for many calls).
+  - [x] Confirm whether to count precompile calls the same way Java does: **Confirmed - java-tron does NOT count precompile calls** (`Program.callToPrecompiledAddress` does not call `increaseNonce`). Also, the root tx entry call (depth==0) is not counted. Both behaviors now implemented in Inspector::call hook.
 - [ ] Add conformance tests:
   - [ ] Constructor that does `CALL` then `CREATE` and asserts the created sub-contract address matches Java fixture.
   - [ ] Multiple internal creates in one tx (address sequence stable).
@@ -128,7 +128,8 @@ Checklist:
    - Extended `TronExternalContext` with `root_transaction_id` and `internal_tx_nonce`
    - Added `derive_internal_create_address()` for TRON's txid+nonce scheme
    - Added `increment_internal_nonce()` helper
-   - Updated `Inspector::call` to increment nonce for CALLs
+   - Updated `Inspector::call` to increment nonce for CALLs (excludes root call at depth==0 and precompile calls)
    - Updated `tron_create_with_optional_override` to use TRON derivation for internal CREATEs
    - Updated `setup_environment` to initialize root txid and nonce
+   - Added unit tests: `internal_nonce_does_not_count_tx_entry_call`, `internal_nonce_skips_precompile_calls`
 
