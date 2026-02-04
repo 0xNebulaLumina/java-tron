@@ -68,6 +68,11 @@ pub struct ExecutionConfig {
     pub max_cpu_time_of_one_tx: u64,
     /// For TRON parity: suppress EVM-style coinbase/miner payouts (default: false for parity)
     pub evm_eth_coinbase_compat: bool,
+    /// Skip precompile address collision check for CREATE opcode (java-tron parity).
+    /// Java's VMActuator doesn't check if CREATE-derived addresses collide with precompile addresses.
+    /// This is extremely unlikely to happen in practice, but we gate the check for strict parity.
+    /// Default: true (skip the check to match Java behavior)
+    pub skip_precompile_create_collision_check: bool,
     /// TRON fee handling configuration
     pub fees: ExecutionFeeConfig,
     /// Remote execution feature flags
@@ -493,6 +498,7 @@ impl Default for ExecutionConfig {
             bandwidth_limit: 5000,
             max_cpu_time_of_one_tx: 80,
             evm_eth_coinbase_compat: false, // Default off for TRON parity
+            skip_precompile_create_collision_check: true, // Default true for TRON parity (Java doesn't have this check)
             fees: ExecutionFeeConfig::default(),
             remote: RemoteExecutionConfig::default(),
         }
@@ -540,6 +546,7 @@ impl Config {
         builder = builder.set_default("execution.bandwidth_limit", 5000u64)?;
         builder = builder.set_default("execution.max_cpu_time_of_one_tx", 80u64)?;
         builder = builder.set_default("execution.evm_eth_coinbase_compat", false)?;
+        builder = builder.set_default("execution.skip_precompile_create_collision_check", true)?;
         
         // Fee configuration defaults
         builder = builder.set_default("execution.fees.mode", "burn")?;

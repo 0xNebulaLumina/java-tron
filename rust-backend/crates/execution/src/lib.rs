@@ -125,6 +125,19 @@ impl ExecutionModule {
             Ok(storage.tron_dynamic_property_i64(key)?.unwrap_or(default))
         };
 
+        // Helper: TRON address validity check (mirrors java DecodeUtil.addressValid).
+        // Valid TRON address: 21 bytes, first byte = 0x41 (mainnet) or 0xa0 (testnet).
+        let is_valid_tron_address = |addr: &[u8]| -> bool {
+            if addr.is_empty() {
+                return false;
+            }
+            if addr.len() != 21 {
+                return false;
+            }
+            // Accept both mainnet (0x41) and testnet (0xa0) prefixes
+            addr[0] == 0x41 || addr[0] == 0xa0
+        };
+
         // 1) VM enabled (java: DynamicPropertiesStore.supportVM()).
         if dynamic_i64(b"ALLOW_CREATION_OF_CONTRACTS", 1)? != 1 {
             return Err(anyhow::anyhow!(
@@ -140,25 +153,47 @@ impl ExecutionModule {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Cannot get CreateSmartContract from transaction"))?;
 
-        // 3) ownerAddress == originAddress.
+        // 3) Validate owner address format (java: DecodeUtil.addressValid).
+        // This check mirrors Java's validation which logs warnings for invalid addresses.
+        if !is_valid_tron_address(&create_contract.owner_address) {
+            return Err(anyhow::anyhow!("Invalid ownerAddress"));
+        }
+
+        // 4) Validate origin address format.
+        if !is_valid_tron_address(&new_contract.origin_address) {
+            return Err(anyhow::anyhow!("Invalid originAddress"));
+        }
+
+        // 5) ownerAddress == originAddress.
         if create_contract.owner_address != new_contract.origin_address {
             return Err(anyhow::anyhow!("OwnerAddress is not equals OriginAddress"));
         }
 
-        // 4) contractName byte length <= 32.
+        // 6) Owner account existence check (java: VMUtils.validateForSmartContract).
+        // Java's VMActuator.create() accesses creator account at line 372-373 and would
+        // fail with NullPointerException if it doesn't exist. For callValue > 0, it
+        // explicitly checks via VMUtils with "no OwnerAccount" error.
+        // We check upfront for clean error messages regardless of callValue.
+        if storage.get_account(&tx.from)?.is_none() {
+            return Err(anyhow::anyhow!(
+                "Validate InternalTransfer error, no OwnerAccount."
+            ));
+        }
+
+        // 7) contractName byte length <= 32.
         if new_contract.name.as_bytes().len() > MAX_CONTRACT_NAME_BYTES {
             return Err(anyhow::anyhow!(
                 "contractName's length cannot be greater than 32"
             ));
         }
 
-        // 5) consumeUserResourcePercent in [0, 100].
+        // 8) consumeUserResourcePercent in [0, 100].
         let percent = new_contract.consume_user_resource_percent;
         if percent < 0 || percent > ONE_HUNDRED {
             return Err(anyhow::anyhow!("percent must be >= 0 and <= 100"));
         }
 
-        // 6) Derive CreateSmartContract address (txid + owner) and ensure it doesn't exist.
+        // 9) Derive CreateSmartContract address (txid + owner) and ensure it doesn't exist.
         if let (Some(txid), owner_address) =
             (context.transaction_id, create_contract.owner_address.as_slice())
         {
@@ -182,7 +217,7 @@ impl ExecutionModule {
             }
         }
 
-        // 7) feeLimit validation (java: trx.raw_data.fee_limit).
+        // 10) feeLimit validation (java: trx.raw_data.fee_limit).
         let max_fee_limit = dynamic_i64(b"MAX_FEE_LIMIT", i64::MAX)?;
         let max_fee_limit_u64 = if max_fee_limit < 0 {
             0u64
@@ -196,7 +231,7 @@ impl ExecutionModule {
             ));
         }
 
-        // 8) Energy limit hard fork validations (java: StorageUtils.getEnergyLimitHardFork()).
+        // 11) Energy limit hard fork validations (java: StorageUtils.getEnergyLimitHardFork()).
         let call_value = new_contract.call_value;
         if call_value < 0 {
             return Err(anyhow::anyhow!("callValue must be >= 0"));
@@ -217,7 +252,7 @@ impl ExecutionModule {
             return Err(anyhow::anyhow!("The originEnergyLimit must be > 0"));
         }
 
-        // 9) checkTokenValueAndId parity (java: VMActuator.checkTokenValueAndId()).
+        // 12) checkTokenValueAndId parity (java: VMActuator.checkTokenValueAndId()).
         let allow_multi_sign = dynamic_i64(b"ALLOW_MULTI_SIGN", 1)? != 0;
         if allow_tvm_transfer_trc10 && allow_multi_sign {
             if token_id <= MIN_TOKEN_ID && token_id != 0 {
@@ -232,7 +267,8 @@ impl ExecutionModule {
             }
         }
 
-        // 10) callValue transfer validation (java: VMUtils.validateInternalTransfer()).
+        // 13) callValue transfer validation (java: VMUtils.validateInternalTransfer()).
+        // Note: Owner account existence already checked above (#6).
         if call_value > 0 {
             let balance = storage
                 .get_account(&tx.from)?
@@ -245,7 +281,7 @@ impl ExecutionModule {
             }
         }
 
-        // 11) TRC-10 token transfer validation (java: VMUtils.validateForSmartContract()).
+        // 14) TRC-10 token transfer validation (java: VMUtils.validateForSmartContract()).
         if allow_tvm_transfer_trc10 && token_value > 0 {
             let allow_same_token_name = dynamic_i64(b" ALLOW_SAME_TOKEN_NAME", 0)?;
             let token_id_bytes = token_id.to_string().into_bytes();

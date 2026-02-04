@@ -35,6 +35,13 @@ struct TronExternalContext {
     /// Internal transaction counter (starts at 0, increments per internal tx).
     internal_tx_nonce: u64,
 
+    // === Validation parity flags ===
+    //
+    // Java-tron doesn't check if CREATE-derived addresses collide with precompile addresses.
+    // When this flag is true, we skip the precompile collision check for Java parity.
+    // Default: true (skip the check to match Java behavior).
+    skip_precompile_create_collision_check: bool,
+
     // === Energy accounting (TRON vs Ethereum gas schedule) ===
     //
     // java-tron charges memory expansion/copy costs for these opcodes but does NOT include the
@@ -281,7 +288,12 @@ fn tron_create_with_optional_override<DB: Database>(
     }
 
     // The created address is not allowed to be a precompile.
-    if context.evm.precompiles.contains(&created_address) {
+    // NOTE: Java's VMActuator doesn't have this check. The probability of collision with
+    // precompile addresses (0x01-0x09, etc.) is extremely low, but we gate the check
+    // behind a config flag for strict Java parity.
+    if !context.external.skip_precompile_create_collision_check
+        && context.evm.precompiles.contains(&created_address)
+    {
         return return_error(InstructionResult::CreateCollision);
     }
 
@@ -679,8 +691,12 @@ where
 
         // Configure for Tron - access through context
         evm.context.evm.inner.env.cfg.chain_id = 0x2b6653dc; // Tron mainnet chain ID
-        
+
         evm.context.evm.inner.env.cfg.limit_contract_code_size = Some(24576); // 24KB limit
+
+        // Set validation parity flags from config
+        evm.context.external.skip_precompile_create_collision_check =
+            config.skip_precompile_create_collision_check;
 
         let precompiles = TronPrecompiles::new();
         let energy_accounting = EnergyAccounting::new(config.energy_limit);

@@ -98,10 +98,18 @@ Checklist:
 
 ## 5) Tighten validation + error-message parity (optional but recommended)
 
-- [ ] Ensure CreateSmartContract fails when owner account does not exist (even when callValue==0), with Java-parity error text.
-- [ ] Confirm address validity expectations for owner/origin for remote mode:
-  - [ ] If Java remote path already validated, document it; otherwise mirror `DecodeUtil.addressValid`.
-- [ ] Re-evaluate the “disallow precompile address creation” check for TRON parity (either remove or gate behind a compatibility flag).
+- [x] Ensure CreateSmartContract fails when owner account does not exist (even when callValue==0), with Java-parity error text.
+  - [x] Added check in `validate_create_smart_contract()` that fails with "Validate InternalTransfer error, no OwnerAccount." when owner account doesn't exist
+- [x] Confirm address validity expectations for owner/origin for remote mode:
+  - [x] Implemented `is_valid_tron_address()` helper mirroring `DecodeUtil.addressValid`:
+    - Not empty
+    - Length = 21 bytes
+    - First byte = 0x41 (mainnet) or 0xa0 (testnet) prefix
+  - [x] Added validation for both owner_address and origin_address with "Invalid ownerAddress" / "Invalid originAddress" errors
+- [x] Re-evaluate the "disallow precompile address creation" check for TRON parity (either remove or gate behind a compatibility flag).
+  - [x] Java's VMActuator doesn't have this check, so we gated it behind `skip_precompile_create_collision_check` config flag
+  - [x] Default: `true` (skip the check to match Java behavior)
+  - [x] Set to `false` to enable Ethereum-style collision checking
 
 ## 6) Verification steps
 
@@ -131,5 +139,18 @@ Checklist:
    - Updated `Inspector::call` to increment nonce for CALLs (excludes root call at depth==0 and precompile calls)
    - Updated `tron_create_with_optional_override` to use TRON derivation for internal CREATEs
    - Updated `setup_environment` to initialize root txid and nonce
+   - Added `skip_precompile_create_collision_check` flag to `TronExternalContext` (set from config)
+   - Gated precompile collision check behind the flag for Java parity
    - Added unit tests: `internal_nonce_does_not_count_tx_entry_call`, `internal_nonce_skips_precompile_calls`
+
+4. **`rust-backend/crates/execution/src/lib.rs`** (Section 5 additions):
+   - Added `is_valid_tron_address()` helper mirroring Java's `DecodeUtil.addressValid()`
+   - Added owner address validity check with "Invalid ownerAddress" error
+   - Added origin address validity check with "Invalid originAddress" error
+   - Added owner account existence check with "Validate InternalTransfer error, no OwnerAccount." error
+   - Reordered validation steps for clearer Java parity
+
+5. **`rust-backend/crates/common/src/config.rs`** (Section 5 additions):
+   - Added `skip_precompile_create_collision_check` config flag to `ExecutionConfig`
+   - Default: `true` (skip check for Java parity; Java doesn't have this validation)
 
