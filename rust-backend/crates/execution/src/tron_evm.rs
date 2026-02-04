@@ -1459,4 +1459,175 @@ mod internal_nonce_tests {
         // java-tron does not increment the internal nonce for precompile calls.
         assert_eq!(evm.evm.context.external.internal_tx_nonce, 0);
     }
+
+    #[test]
+    fn test_derive_internal_create_address_formula() {
+        // Test the internal CREATE address derivation formula:
+        // keccak256(txid || nonce_be_u64)[12..32]
+
+        let txid = B256::from([0x11u8; 32]);
+        let mut ctx = TronExternalContext::default();
+        ctx.root_transaction_id = Some(txid);
+        ctx.internal_tx_nonce = 0;
+
+        // First CREATE uses nonce 0 and increments to 1
+        let addr1 = ctx.derive_internal_create_address().expect("Should derive address");
+        assert_eq!(ctx.internal_tx_nonce, 1, "Nonce should increment after derivation");
+
+        // Second derivation uses nonce 1 and increments to 2
+        let addr2 = ctx.derive_internal_create_address().expect("Should derive address");
+        assert_eq!(ctx.internal_tx_nonce, 2, "Nonce should increment after derivation");
+
+        // Addresses should be different
+        assert_ne!(addr1, addr2, "Different nonces should produce different addresses");
+
+        // Verify the formula by recomputing manually
+        use sha3::{Digest, Keccak256};
+        let mut combined = [0u8; 40];
+        combined[..32].copy_from_slice(txid.as_slice());
+        combined[32..40].copy_from_slice(&0u64.to_be_bytes());
+        let hash = Keccak256::digest(&combined);
+        let expected_addr1 = Address::from_slice(&hash[12..32]);
+        assert_eq!(addr1, expected_addr1, "Address derivation should match manual calculation");
+    }
+
+    #[test]
+    fn test_derive_internal_create_address_returns_none_without_txid() {
+        let mut ctx = TronExternalContext::default();
+        ctx.root_transaction_id = None;
+        ctx.internal_tx_nonce = 0;
+
+        // Without a txid, derivation should return None
+        let result = ctx.derive_internal_create_address();
+        assert!(result.is_none(), "Should return None when txid is not set");
+        // Nonce should not be incremented when derivation fails
+        assert_eq!(ctx.internal_tx_nonce, 0, "Nonce should not change on failed derivation");
+    }
+
+    #[test]
+    fn test_increment_internal_nonce() {
+        let mut ctx = TronExternalContext::default();
+        ctx.internal_tx_nonce = 0;
+
+        ctx.increment_internal_nonce();
+        assert_eq!(ctx.internal_tx_nonce, 1);
+
+        ctx.increment_internal_nonce();
+        assert_eq!(ctx.internal_tx_nonce, 2);
+
+        // Test saturation (shouldn't overflow)
+        ctx.internal_tx_nonce = u64::MAX;
+        ctx.increment_internal_nonce();
+        assert_eq!(ctx.internal_tx_nonce, u64::MAX, "Should saturate at max");
+    }
+
+    #[test]
+    fn test_multiple_calls_increment_nonce() {
+        // Test that multiple internal CALLs increment the nonce, affecting subsequent CREATE addresses
+        let from = Address::from_slice(&[0x10u8; 20]);
+        let to = Address::from_slice(&[0x20u8; 20]);
+        let target1 = Address::from_slice(&[0x30u8; 20]);
+        let target2 = Address::from_slice(&[0x40u8; 20]);
+
+        // Build bytecode that makes two CALLs to different targets
+        let mut code: Vec<u8> = Vec::new();
+
+        // First CALL to target1
+        for _ in 0..5 {
+            code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0
+        }
+        code.push(0x73); // PUSH20
+        code.extend_from_slice(target1.as_slice());
+        code.extend_from_slice(&[0x61, 0xFF, 0xFF]); // PUSH2 0xFFFF gas
+        code.push(0xF1); // CALL
+        code.push(0x50); // POP (discard return value)
+
+        // Second CALL to target2
+        for _ in 0..5 {
+            code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0
+        }
+        code.push(0x73); // PUSH20
+        code.extend_from_slice(target2.as_slice());
+        code.extend_from_slice(&[0x61, 0xFF, 0xFF]); // PUSH2 0xFFFF gas
+        code.push(0xF1); // CALL
+        code.push(0x00); // STOP
+
+        let bytecode = Bytes::from(code);
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            from,
+            AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 1,
+                code_hash: KECCAK_EMPTY,
+                code: None,
+            },
+        );
+        db.insert_account_info(
+            to,
+            AccountInfo::new(
+                U256::from(1_000_000_000u64),
+                1,
+                KECCAK_EMPTY,
+                Bytecode::new_legacy(bytecode),
+            ),
+        );
+
+        let config = ExecutionConfig::default();
+        let mut evm = TronEvm::new(db, &config).expect("EVM should initialize");
+
+        let tx = TronTransaction {
+            from,
+            to: Some(to),
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas_limit: 300_000,
+            gas_price: U256::ZERO,
+            nonce: 1,
+            metadata: TxMetadata::default(),
+        };
+
+        let ctx = basic_context();
+        let _ = evm.call_contract(&tx, &ctx).expect("tx call should succeed");
+
+        // Two internal CALLs (excluding root tx call) should have incremented nonce twice
+        assert_eq!(evm.evm.context.external.internal_tx_nonce, 2,
+            "Two internal CALLs should increment nonce to 2");
+    }
+
+    #[test]
+    fn test_tron_vs_ethereum_create_address_differs() {
+        // TRON uses keccak256(txid || nonce) for internal CREATE
+        // Ethereum uses keccak256(rlp([sender, nonce]))
+        // They should produce different addresses for the same inputs
+
+        use sha3::{Digest, Keccak256};
+
+        let txid = B256::from([0x11u8; 32]);
+        let sender = Address::from_slice(&[0x22u8; 20]);
+        let nonce: u64 = 0;
+
+        // TRON derivation
+        let mut combined = [0u8; 40];
+        combined[..32].copy_from_slice(txid.as_slice());
+        combined[32..40].copy_from_slice(&nonce.to_be_bytes());
+        let tron_hash = Keccak256::digest(&combined);
+        let tron_addr = Address::from_slice(&tron_hash[12..32]);
+
+        // Ethereum derivation (simplified - RLP encoding)
+        // For nonce 0: keccak256(0xd6 || 0x94 || sender || 0x80)
+        // where 0xd6 = 0xc0 + 22 (list length), 0x94 = 0x80 + 20 (string length), 0x80 = empty byte
+        let mut eth_input = Vec::new();
+        eth_input.push(0xd6);
+        eth_input.push(0x94);
+        eth_input.extend_from_slice(sender.as_slice());
+        eth_input.push(0x80);
+        let eth_hash = Keccak256::digest(&eth_input);
+        let eth_addr = Address::from_slice(&eth_hash[12..32]);
+
+        // The addresses should be different due to different derivation schemes
+        assert_ne!(tron_addr, eth_addr,
+            "TRON and Ethereum CREATE addresses should differ due to different derivation");
+    }
 }

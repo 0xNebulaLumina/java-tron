@@ -20,8 +20,11 @@ Goal: match `VMActuator.create()` which forces `version = 1` for newly created c
   - [x] Read `ALLOW_TVM_COMPATIBLE_EVM` from dynamic properties (getter already exists on the storage adapter).
   - [x] If enabled, set `smart_contract.version = 1` before `put_smart_contract(...)`.
   - [x] If disabled, ensure `smart_contract.version` is `0` (or leave as-is if the wire value is already `0`).
-- [ ] Add tests:
-  - [ ] "create contract persists version=1 when allow_tvm_compatible_evm=1"
+- [x] Add tests:
+  - [x] "create contract persists version=1 when allow_tvm_compatible_evm=1"
+    - Test: `test_create_contract_persists_version_1_when_allow_tvm_compatible_evm_enabled`
+  - [x] "create contract persists version=0 when allow_tvm_compatible_evm=0"
+    - Test: `test_create_contract_persists_version_0_when_allow_tvm_compatible_evm_disabled`
   - [ ] TransferContract validation against the newly created contract rejects with Java message when version==1 (end-to-end parity check).
 
 ## 2) Implement TRON legacy `CREATE` address derivation (txid + internal nonce)
@@ -44,10 +47,21 @@ Checklist:
   - [x] Increment on CALL-start events (via Inspector::call hook)
   - [x] For CREATE: derive address using current nonce, then increment (inside `derive_internal_create_address()`)
   - [x] Confirm whether to count precompile calls the same way Java does: **Confirmed - java-tron does NOT count precompile calls** (`Program.callToPrecompiledAddress` does not call `increaseNonce`). Also, the root tx entry call (depth==0) is not counted. Both behaviors now implemented in Inspector::call hook.
-- [ ] Add conformance tests:
-  - [ ] Constructor that does `CALL` then `CREATE` and asserts the created sub-contract address matches Java fixture.
-  - [ ] Multiple internal creates in one tx (address sequence stable).
-  - [ ] Multiple txs from same contract that do CREATE (no address collisions across txs).
+- [x] Add conformance tests:
+  - [x] Internal nonce tests in `tron_evm.rs`:
+    - `internal_nonce_does_not_count_tx_entry_call` - Verifies root call is not counted
+    - `internal_nonce_skips_precompile_calls` - Verifies precompile calls don't increment nonce
+    - `test_derive_internal_create_address_formula` - Verifies keccak256(txid||nonce) formula
+    - `test_derive_internal_create_address_returns_none_without_txid` - Verifies None returned without txid
+    - `test_increment_internal_nonce` - Verifies nonce increment and saturation behavior
+    - `test_multiple_calls_increment_nonce` - Verifies multiple CALLs increment nonce correctly
+    - `test_tron_vs_ethereum_create_address_differs` - Confirms TRON and ETH schemes differ
+  - [x] Address derivation tests in `create_smart_contract.rs`:
+    - `test_internal_create_address_derivation_formula` - Pure function test
+    - `test_internal_create_addresses_sequence_stable` - Multiple creates produce stable sequence
+    - `test_no_address_collisions_across_different_txids` - No collisions with different txids
+    - `test_top_level_vs_internal_create_address_differs` - Top-level vs internal derivation differs
+  - [ ] Constructor that does `CALL` then `CREATE` and asserts the created sub-contract address matches Java fixture (requires end-to-end EVM execution test with CREATE opcode).
 
 ## 3) Apply TRC-10 `call_token_value` transfer for CreateSmartContract
 
@@ -62,10 +76,12 @@ Goal: match Java `MUtil.transferToken(...)` behavior for contract creation when 
   - [x] Emit `Trc10Change::AssetTransferred` so Java can apply the token transfer on success.
   - [x] Added helper function `extract_create_contract_trc10_transfer` in `service/mod.rs`
   - [x] Integrated in grpc handler after successful contract creation
-- [ ] Add tests:
-  - [ ] token transfer applied on success
-  - [ ] token transfer rolled back on REVERT/OOG (natural since Trc10Change not emitted on failure)
-  - [ ] Java-parity error messages for insufficient token balance / missing asset
+- [x] Add tests in `create_smart_contract.rs`:
+  - [x] `test_trc10_transfer_emitted_on_successful_contract_creation` - Token transfer emitted on success
+  - [x] `test_trc10_transfer_not_emitted_when_call_token_value_zero` - No transfer when value is 0
+  - [x] `test_trc10_transfer_not_emitted_when_trc10_disabled` - No transfer when ALLOW_TVM_TRANSFER_TRC10=0
+  - [ ] Token transfer rolled back on REVERT/OOG (natural since Trc10Change not emitted on failure) - Requires end-to-end EVM revert test
+  - [ ] Java-parity error messages for insufficient token balance / missing asset - Tested in validation, but not end-to-end
 
 ## 4) Match Java energy/resource capping for contract creation
 
@@ -110,12 +126,18 @@ Checklist:
   - [x] Java's VMActuator doesn't have this check, so we gated it behind `skip_precompile_create_collision_check` config flag
   - [x] Default: `true` (skip the check to match Java behavior)
   - [x] Set to `false` to enable Ethereum-style collision checking
+- [x] Add validation tests in `create_smart_contract.rs`:
+  - [x] `test_validation_rejects_missing_owner_account` - "Validate InternalTransfer error, no OwnerAccount." error
+  - [x] `test_validation_rejects_contract_name_too_long` - Name > 32 bytes rejected
+  - [x] `test_validation_rejects_invalid_percent` - percent > 100 rejected
 
 ## 6) Verification steps
 
 - [x] Rust:
   - [x] `cargo build --release` - Compiles successfully
-  - [ ] `cd rust-backend && cargo test` - Run unit tests
+  - [x] `cd rust-backend && cargo test` - Unit tests pass
+    - `cargo test --package tron-backend-core create_smart_contract` - 14 tests pass
+    - `cargo test --package tron-backend-execution internal_nonce` - 7 tests pass
   - [ ] Run any conformance runner cases that include CreateSmartContract + internal CREATE patterns
 - [ ] Java:
   - [ ] `./gradlew :framework:test`
@@ -153,4 +175,21 @@ Checklist:
 5. **`rust-backend/crates/common/src/config.rs`** (Section 5 additions):
    - Added `skip_precompile_create_collision_check` config flag to `ExecutionConfig`
    - Default: `true` (skip check for Java parity; Java doesn't have this validation)
+
+6. **`rust-backend/crates/core/src/service/tests/contracts/create_smart_contract.rs`** (NEW - Tests):
+   - SmartContract.version persistence tests (ALLOW_TVM_COMPATIBLE_EVM)
+   - Internal CREATE address derivation formula tests
+   - Address sequence stability tests
+   - TRC-10 call_token_value transfer tests
+   - Validation parity tests (missing owner account, name too long, invalid percent)
+
+7. **`rust-backend/crates/core/src/service/tests/contracts/mod.rs`**:
+   - Added `mod create_smart_contract;` declaration
+
+8. **`rust-backend/crates/execution/src/tron_evm.rs`** (Additional tests):
+   - `test_derive_internal_create_address_formula` - Verifies TRON's keccak256(txid||nonce) formula
+   - `test_derive_internal_create_address_returns_none_without_txid` - Edge case handling
+   - `test_increment_internal_nonce` - Nonce increment and saturation
+   - `test_multiple_calls_increment_nonce` - Multiple CALLs affect nonce correctly
+   - `test_tron_vs_ethereum_create_address_differs` - TRON vs ETH derivation comparison
 
