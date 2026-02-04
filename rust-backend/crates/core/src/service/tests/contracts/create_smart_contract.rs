@@ -949,3 +949,292 @@ fn test_validation_rejects_invalid_percent() {
     assert!(error_msg.contains("percent") || error_msg.contains("100"),
         "Error should mention percent bounds, got: {}", error_msg);
 }
+
+// ============================================================================
+// SECTION 5: TRC-10 validation error message parity tests
+// ============================================================================
+
+#[test]
+fn test_trc10_validation_rejects_missing_asset() {
+    // Test: "No asset !" error when token_id doesn't exist in AssetIssueStore
+    use tron_backend_execution::ExecutionModule;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    storage_engine.put("properties", b"ALLOW_CREATION_OF_CONTRACTS", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"ALLOW_TVM_TRANSFER_TRC10", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes()).unwrap();
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    let owner_address = Address::from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
+                                       0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
+                                       0xbc, 0xde, 0xf0, 0x12]);
+
+    // Create owner account with sufficient balance
+    let owner_account = AccountInfo {
+        balance: U256::from(10_000_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    storage_adapter.set_account(owner_address, owner_account).unwrap();
+
+    let bytecode = vec![0x60, 0x00, 0x60, 0x00, 0xf3];
+    let token_id: i64 = 9999999; // Non-existent token
+    let call_token_value: i64 = 100;
+
+    let contract_data = build_create_smart_contract_data(
+        &owner_address,
+        "TestContract",
+        &bytecode,
+        50,
+        1000,
+        0,
+        call_token_value,
+        token_id,
+    );
+
+    let txid = B256::from([0xddu8; 32]);
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data,
+        gas_limit: 10_000_000,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(TronContractType::CreateSmartContract),
+            asset_id: None,
+            from_raw: Some(make_from_raw(&owner_address)),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1,
+        block_timestamp: 1000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 420,
+        bandwidth_price: 1000,
+        transaction_id: Some(txid),
+    };
+
+    let config = ExecutionConfig::default();
+    let module = ExecutionModule::new(config);
+
+    let result = module.execute_transaction_with_storage(storage_adapter, &transaction, &context);
+
+    assert!(result.is_err(), "Should fail when token doesn't exist");
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("No asset"),
+        "Error should be 'No asset !' for non-existent token, got: {}", error_msg);
+}
+
+#[test]
+fn test_trc10_validation_rejects_zero_asset_balance() {
+    // Test: "assetBalance must greater than 0." error when owner has no balance for the token
+    use tron_backend_execution::ExecutionModule;
+    use tron_backend_execution::protocol::AssetIssueContractData;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    storage_engine.put("properties", b"ALLOW_CREATION_OF_CONTRACTS", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"ALLOW_TVM_TRANSFER_TRC10", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes()).unwrap();
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    let owner_address = Address::from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
+                                       0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
+                                       0xbc, 0xde, 0xf0, 0x12]);
+
+    // Create owner account with TRX balance but NO token balance
+    let owner_account = AccountInfo {
+        balance: U256::from(10_000_000_000u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    storage_adapter.set_account(owner_address, owner_account).unwrap();
+
+    // Create the asset in the asset store (token exists)
+    let token_id: i64 = 1000001;
+    let token_id_str = token_id.to_string();
+    let asset_issue = AssetIssueContractData {
+        owner_address: make_from_raw(&owner_address),
+        name: b"TestToken".to_vec(),
+        abbr: b"TT".to_vec(),
+        total_supply: 1000000,
+        ..Default::default()
+    };
+    storage_adapter.put_asset_issue(token_id_str.as_bytes(), &asset_issue, true).unwrap();
+
+    // Owner has NO token balance (asset_v2 map is empty or doesn't have this token)
+
+    let bytecode = vec![0x60, 0x00, 0x60, 0x00, 0xf3];
+    let call_token_value: i64 = 100;
+
+    let contract_data = build_create_smart_contract_data(
+        &owner_address,
+        "TestContract",
+        &bytecode,
+        50,
+        1000,
+        0,
+        call_token_value,
+        token_id,
+    );
+
+    let txid = B256::from([0xeeu8; 32]);
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data,
+        gas_limit: 10_000_000,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(TronContractType::CreateSmartContract),
+            asset_id: None,
+            from_raw: Some(make_from_raw(&owner_address)),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1,
+        block_timestamp: 1000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 420,
+        bandwidth_price: 1000,
+        transaction_id: Some(txid),
+    };
+
+    let config = ExecutionConfig::default();
+    let module = ExecutionModule::new(config);
+
+    let result = module.execute_transaction_with_storage(storage_adapter, &transaction, &context);
+
+    assert!(result.is_err(), "Should fail when owner has zero token balance");
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("assetBalance must greater than 0"),
+        "Error should be 'assetBalance must greater than 0.' for zero balance, got: {}", error_msg);
+}
+
+#[test]
+fn test_trc10_validation_rejects_insufficient_asset_balance() {
+    // Test: "assetBalance is not sufficient." error when token_value > balance
+    use tron_backend_execution::ExecutionModule;
+    use tron_backend_execution::protocol::{AssetIssueContractData, Account as ProtoAccount};
+    use std::collections::BTreeMap;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    storage_engine.put("properties", b"ALLOW_CREATION_OF_CONTRACTS", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"ALLOW_TVM_TRANSFER_TRC10", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes()).unwrap();
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    let owner_address = Address::from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
+                                       0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
+                                       0xbc, 0xde, 0xf0, 0x12]);
+
+    // Create the asset in the asset store
+    let token_id: i64 = 1000002;
+    let token_id_str = token_id.to_string();
+    let asset_issue = AssetIssueContractData {
+        owner_address: make_from_raw(&owner_address),
+        name: b"TestToken2".to_vec(),
+        abbr: b"TT2".to_vec(),
+        total_supply: 1000000,
+        ..Default::default()
+    };
+    storage_adapter.put_asset_issue(token_id_str.as_bytes(), &asset_issue, true).unwrap();
+
+    // Create owner account with TRX balance AND some token balance (but not enough)
+    let mut asset_v2 = BTreeMap::new();
+    asset_v2.insert(token_id_str.clone(), 50i64); // Only 50 tokens
+
+    let owner_proto = ProtoAccount {
+        r#type: 0, // Normal account
+        address: make_from_raw(&owner_address),
+        balance: 10_000_000_000i64, // 10,000 TRX
+        asset_v2,
+        ..Default::default()
+    };
+
+    // Store the account proto directly using the public method
+    storage_adapter.put_account_proto(&owner_address, &owner_proto).unwrap();
+
+    let bytecode = vec![0x60, 0x00, 0x60, 0x00, 0xf3];
+    let call_token_value: i64 = 100; // Requesting 100, but only has 50
+
+    let contract_data = build_create_smart_contract_data(
+        &owner_address,
+        "TestContract",
+        &bytecode,
+        50,
+        1000,
+        0,
+        call_token_value,
+        token_id,
+    );
+
+    let txid = B256::from([0xffu8; 32]);
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data,
+        gas_limit: 10_000_000,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(TronContractType::CreateSmartContract),
+            asset_id: None,
+            from_raw: Some(make_from_raw(&owner_address)),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1,
+        block_timestamp: 1000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 420,
+        bandwidth_price: 1000,
+        transaction_id: Some(txid),
+    };
+
+    let config = ExecutionConfig::default();
+    let module = ExecutionModule::new(config);
+
+    let result = module.execute_transaction_with_storage(storage_adapter, &transaction, &context);
+
+    assert!(result.is_err(), "Should fail when token balance is insufficient");
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("assetBalance is not sufficient"),
+        "Error should be 'assetBalance is not sufficient.' for insufficient balance, got: {}", error_msg);
+}

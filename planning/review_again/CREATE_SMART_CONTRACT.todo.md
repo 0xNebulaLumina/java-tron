@@ -81,7 +81,10 @@ Goal: match Java `MUtil.transferToken(...)` behavior for contract creation when 
   - [x] `test_trc10_transfer_not_emitted_when_call_token_value_zero` - No transfer when value is 0
   - [x] `test_trc10_transfer_not_emitted_when_trc10_disabled` - No transfer when ALLOW_TVM_TRANSFER_TRC10=0
   - [ ] Token transfer rolled back on REVERT/OOG (natural since Trc10Change not emitted on failure) - Requires end-to-end EVM revert test
-  - [ ] Java-parity error messages for insufficient token balance / missing asset - Tested in validation, but not end-to-end
+  - [x] Java-parity error messages for insufficient token balance / missing asset:
+    - `test_trc10_validation_rejects_missing_asset` - "No asset !" error
+    - `test_trc10_validation_rejects_zero_asset_balance` - "assetBalance must greater than 0." error
+    - `test_trc10_validation_rejects_insufficient_asset_balance` - "assetBalance is not sufficient." error
 
 ## 4) Match Java energy/resource capping for contract creation
 
@@ -136,7 +139,7 @@ Checklist:
 - [x] Rust:
   - [x] `cargo build --release` - Compiles successfully
   - [x] `cd rust-backend && cargo test` - Unit tests pass
-    - `cargo test --package tron-backend-core create_smart_contract` - 14 tests pass
+    - `cargo test --package tron-backend-core create_smart_contract` - 17 tests pass
     - `cargo test --package tron-backend-execution internal_nonce` - 7 tests pass
   - [ ] Run any conformance runner cases that include CreateSmartContract + internal CREATE patterns
 - [ ] Java:
@@ -176,12 +179,13 @@ Checklist:
    - Added `skip_precompile_create_collision_check` config flag to `ExecutionConfig`
    - Default: `true` (skip check for Java parity; Java doesn't have this validation)
 
-6. **`rust-backend/crates/core/src/service/tests/contracts/create_smart_contract.rs`** (NEW - Tests):
+6. **`rust-backend/crates/core/src/service/tests/contracts/create_smart_contract.rs`** (NEW - 17 Tests):
    - SmartContract.version persistence tests (ALLOW_TVM_COMPATIBLE_EVM)
    - Internal CREATE address derivation formula tests
    - Address sequence stability tests
    - TRC-10 call_token_value transfer tests
    - Validation parity tests (missing owner account, name too long, invalid percent)
+   - TRC-10 validation error message parity tests ("No asset !", "assetBalance must greater than 0.", "assetBalance is not sufficient.")
 
 7. **`rust-backend/crates/core/src/service/tests/contracts/mod.rs`**:
    - Added `mod create_smart_contract;` declaration
