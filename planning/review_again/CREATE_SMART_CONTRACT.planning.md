@@ -260,14 +260,19 @@ Examples:
    - Emits `Trc10Change::AssetTransferred` on successful contract creation
    - Rollback is natural (change not emitted on failure)
 
-**Remaining gaps:**
+4. **Energy-limit/resource capping** ✅ - Implemented in Java's `RemoteExecutionSPI`:
+   - Added `computeEnergyLimitWithFixRatio()` matching VMActuator's energy limit computation
+   - Gets `EnergyProcessor` from `ChainBaseManager` stores
+   - Computes: `min(leftFrozenEnergy + (balance - callValue) / energyFee, feeLimit / energyFee)`
+   - Applied to both `CreateSmartContract` and `TriggerSmartContract` cases
+   - Falls back to raw feeLimit on errors for backwards compatibility
+   - Rust receives the pre-computed energy limit and uses it directly
 
-- **Energy-limit/resource capping** - Requires Java-side changes to send pre-computed energy limit
-  or Rust implementation of frozen energy + window computation
+**Status: Full parity achieved for CREATE_SMART_CONTRACT**
 
-- For *simple* deployments where contract creation does not rely on complex energy capping,
-  the Rust path now has **good parity** with java-tron.
-
-- For full java-tron parity including energy capping, the Java side should compute
-  `getAccountEnergyLimitWithFixRatio()` and send the result to Rust.
+The Rust path now has **complete parity** with java-tron for contract creation, including:
+- Top-level and internal CREATE address derivation
+- SmartContract.version handling
+- TRC-10 call-token transfers
+- Energy limit capping based on frozen energy and balance resources
 

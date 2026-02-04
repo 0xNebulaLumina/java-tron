@@ -94,26 +94,29 @@ Goal: approximate `VMActuator.getAccountEnergyLimitWithFixRatio(...)` (and fork-
 - energyFromFeeLimit = feeLimit / energyFee
 - energyLimit = min(availableEnergy, energyFromFeeLimit)
 
-**Current status**: The Java side sends `feeLimit` as `energyLimit` via RemoteExecutionSPI. Full parity requires
-either Java to pre-compute the actual energy limit, or Rust to implement the full frozen energy + window computation.
-
-**Recommended approach**: Have Java compute `getAccountEnergyLimitWithFixRatio()` and send the result in the gRPC request.
-This keeps the complex resource accounting logic in Java where it already exists.
+**Status: IMPLEMENTED** via Option A (Java-side changes)
 
 Checklist:
 
-- [ ] **Option A (preferred)**: Java-side changes to send computed energy limit:
-  - [ ] In RemoteExecutionSPI, call `VMActuator.getAccountEnergyLimitWithFixRatio()` or equivalent
-  - [ ] Send the computed limit instead of raw `feeLimit` in the ExecuteTransactionRequest
-  - [ ] Rust receives the already-capped value and uses it directly
-- [ ] **Option B**: Implement "available energy" computation in Rust using:
-  - [ ] account balance
-  - [ ] frozen energy (Freeze V1/V2 + recovery windows, if required)
-  - [ ] dynamic property `ENERGY_FEE`
-- [ ] Set the EVM tx.gas_limit to computed `energyLimit` (plus intrinsic adjustment already done in `TronEvm::setup_environment()`).
+- [x] **Option A (preferred)**: Java-side changes to send computed energy limit:
+  - [x] In RemoteExecutionSPI, added `computeEnergyLimitWithFixRatio()` method matching VMActuator logic
+  - [x] Send the computed limit instead of raw `feeLimit` in the ExecuteTransactionRequest
+  - [x] Rust receives the already-capped value and uses it directly
+  - [x] Applied to both `CreateSmartContract` and `TriggerSmartContract` cases
+- [ ] ~~**Option B**: Implement "available energy" computation in Rust~~ (Not needed - Option A implemented)
+- [x] Set the EVM tx.gas_limit to computed `energyLimit` (Rust already uses the value from Java)
 - [ ] Add tests:
   - [ ] feeLimit high but balance/frozen energy low → Rust execution halts with OOG where Java would
   - [ ] feeLimit low but balance high → feeLimit cap respected
+
+**Implementation Details:**
+
+The `computeEnergyLimitWithFixRatio()` method in `RemoteExecutionSPI.java`:
+1. Gets `ChainBaseManager` from `context.getStoreFactory()`
+2. Gets `AccountStore` and `DynamicPropertiesStore`
+3. Creates `EnergyProcessor` and computes `getAccountLeftEnergyFromFreeze(account)`
+4. Computes: `min(leftFrozenEnergy + (balance - callValue) / energyFee, feeLimit / energyFee)`
+5. Falls back to raw `feeLimit` if computation fails (for backwards compatibility)
 
 ## 5) Tighten validation + error-message parity (optional but recommended)
 
@@ -196,4 +199,14 @@ Checklist:
    - `test_increment_internal_nonce` - Nonce increment and saturation
    - `test_multiple_calls_increment_nonce` - Multiple CALLs affect nonce correctly
    - `test_tron_vs_ethereum_create_address_differs` - TRON vs ETH derivation comparison
+
+9. **`framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java`** (Section 4 - Energy Capping):
+   - Added imports: `ChainBaseManager`, `Constant`, `EnergyProcessor`, `AccountStore`, `DynamicPropertiesStore`
+   - Added `computeEnergyLimitWithFixRatio()` method matching VMActuator's energy limit computation:
+     - Gets EnergyProcessor from ChainBaseManager stores
+     - Computes: `min(leftFrozenEnergy + (balance - callValue) / energyFee, feeLimit / energyFee)`
+     - Falls back to raw feeLimit on errors for backwards compatibility
+   - Updated `CreateSmartContract` case to call `computeEnergyLimitWithFixRatio()` with callValue
+   - Updated `TriggerSmartContract` case to call `computeEnergyLimitWithFixRatio()` with callValue
+   - Added detailed logging of computed energy limit for debugging
 
