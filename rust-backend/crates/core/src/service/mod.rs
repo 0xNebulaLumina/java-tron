@@ -226,6 +226,17 @@ impl BackendService {
         // Build the SmartContract proto with all metadata
         let mut smart_contract = new_contract.clone();
 
+        // Java VMActuator.create() forces version = 1 for newly created contracts
+        // when ALLOW_TVM_COMPATIBLE_EVM is enabled. This affects downstream behavior
+        // (e.g., TransferContract rejects transfers to version=1 contracts).
+        let allow_tvm_compatible_evm = storage_adapter
+            .get_allow_tvm_compatible_evm()
+            .map_err(|e| format!("Failed to get ALLOW_TVM_COMPATIBLE_EVM: {}", e))?;
+        if allow_tvm_compatible_evm == 1 {
+            smart_contract.version = 1;
+            debug!("Setting SmartContract.version = 1 (ALLOW_TVM_COMPATIBLE_EVM enabled)");
+        }
+
         // Set the contract_address to the EVM-created address (21-byte TRON format)
         let tron_address = storage_adapter.to_tron_address_21(created_address).to_vec();
         smart_contract.contract_address = tron_address.clone();
@@ -264,8 +275,8 @@ impl BackendService {
         storage_adapter.put_smart_contract(&smart_contract)
             .map_err(|e| format!("Failed to persist SmartContract to ContractStore: {}", e))?;
 
-        info!("Successfully persisted SmartContract: name='{}', origin_energy_limit={}, consume_user_resource_percent={}",
-              smart_contract.name, smart_contract.origin_energy_limit, smart_contract.consume_user_resource_percent);
+        info!("Successfully persisted SmartContract: name='{}', version={}, origin_energy_limit={}, consume_user_resource_percent={}",
+              smart_contract.name, smart_contract.version, smart_contract.origin_energy_limit, smart_contract.consume_user_resource_percent);
 
         // Ensure AccountStore entry for the contract has the correct type/name (Contract account).
         let mut contract_account = storage_adapter
@@ -288,6 +299,74 @@ impl BackendService {
         }
 
         Ok(())
+    }
+
+    /// Extract TRC-10 call_token_value transfer for CreateSmartContract
+    ///
+    /// When ALLOW_TVM_TRANSFER_TRC10 is enabled and call_token_value > 0,
+    /// Java's VMActuator transfers TRC-10 tokens from owner to contract before execution.
+    /// This function returns the corresponding Trc10Change to be emitted on success.
+    ///
+    /// Returns: Some(Trc10Change) if TRC-10 transfer is needed, None otherwise.
+    pub(crate) fn extract_create_contract_trc10_transfer(
+        &self,
+        storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        created_address: &revm_primitives::Address,
+    ) -> Result<Option<tron_backend_execution::Trc10Change>, String> {
+        use prost::Message;
+        use tron_backend_execution::protocol::CreateSmartContract;
+
+        // Check if TRC-10 transfers are enabled
+        let allow_tvm_transfer_trc10 = storage_adapter
+            .tron_dynamic_property_i64(b"ALLOW_TVM_TRANSFER_TRC10")
+            .map_err(|e| format!("Failed to get ALLOW_TVM_TRANSFER_TRC10: {}", e))?
+            .unwrap_or(0);
+
+        if allow_tvm_transfer_trc10 == 0 {
+            return Ok(None);
+        }
+
+        // Parse CreateSmartContract proto
+        let create_contract = CreateSmartContract::decode(transaction.data.as_ref())
+            .map_err(|e| format!("Failed to parse CreateSmartContract proto: {}", e))?;
+
+        let call_token_value = create_contract.call_token_value;
+        let token_id = create_contract.token_id;
+
+        // No transfer needed if token_value is 0 or negative
+        if call_token_value <= 0 {
+            return Ok(None);
+        }
+
+        // Build the TRC-10 transfer change
+        let owner_address = if create_contract.owner_address.len() == 21 {
+            // TRON 21-byte format - strip the 0x41 prefix
+            revm_primitives::Address::from_slice(&create_contract.owner_address[1..])
+        } else if create_contract.owner_address.len() == 20 {
+            revm_primitives::Address::from_slice(&create_contract.owner_address)
+        } else {
+            return Err(format!("Invalid owner_address length: {}", create_contract.owner_address.len()));
+        };
+
+        let token_id_str = token_id.to_string();
+
+        let trc10_change = tron_backend_execution::Trc10Change::AssetTransferred(
+            tron_backend_execution::Trc10AssetTransferred {
+                owner_address,
+                to_address: *created_address,
+                asset_name: token_id_str.as_bytes().to_vec(),
+                token_id: Some(token_id_str),
+                amount: call_token_value,
+            }
+        );
+
+        info!(
+            "CreateSmartContract TRC-10 transfer: owner={:?} -> contract={:?}, token_id={}, amount={}",
+            owner_address, created_address, token_id, call_token_value
+        );
+
+        Ok(Some(trc10_change))
     }
 
     /// Execute a non-VM transaction with contract type dispatch

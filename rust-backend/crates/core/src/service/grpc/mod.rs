@@ -1174,6 +1174,27 @@ impl crate::backend::backend_server::Backend for BackendService {
                                 // Continue - contract was created, but metadata wasn't persisted
                                 // This is recoverable as Java can still access via embedded mode
                             }
+
+                            // Phase 2: Emit TRC-10 call_token_value transfer if applicable
+                            // Java's VMActuator transfers TRC-10 tokens from owner to contract before execution.
+                            // We emit the Trc10Change on success so Java can apply the token transfer.
+                            match self.extract_create_contract_trc10_transfer(
+                                &persist_storage_adapter,
+                                &transaction,
+                                result.contract_address.as_ref().unwrap(),
+                            ) {
+                                Ok(Some(trc10_change)) => {
+                                    result.trc10_changes.push(trc10_change);
+                                    debug!("Added TRC-10 transfer change for CreateSmartContract");
+                                }
+                                Ok(None) => {
+                                    // No TRC-10 transfer needed (call_token_value <= 0 or TRC-10 disabled)
+                                }
+                                Err(e) => {
+                                    warn!("Failed to extract TRC-10 transfer for CreateSmartContract: {}", e);
+                                    // Continue - contract was created, but TRC-10 transfer wasn't emitted
+                                }
+                            }
                         }
 
                         Ok(result)

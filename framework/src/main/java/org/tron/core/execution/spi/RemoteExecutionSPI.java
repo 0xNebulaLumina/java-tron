@@ -14,10 +14,15 @@ import org.tron.common.client.ExecutionGrpcClient;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.ChainBaseManager;
+import org.tron.core.Constant;
+import org.tron.core.db.EnergyProcessor;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
+import org.tron.core.store.AccountStore;
+import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
@@ -286,6 +291,90 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     }
   }
 
+  /**
+   * Compute energy limit with fix ratio, matching VMActuator.getAccountEnergyLimitWithFixRatio().
+   *
+   * This implements the same formula as Java's VMActuator for energy limit computation:
+   * - availableEnergy = leftFrozenEnergy + max(balance - callValue, 0) / sunPerEnergy
+   * - energyFromFeeLimit = feeLimit / sunPerEnergy
+   * - energyLimit = min(availableEnergy, energyFromFeeLimit)
+   *
+   * @param context The transaction context containing store factory
+   * @param ownerAddress The owner/caller address
+   * @param feeLimit The fee limit from the transaction
+   * @param callValue The call value for contract creation/call
+   * @return The computed energy limit, or feeLimit if computation fails
+   */
+  private long computeEnergyLimitWithFixRatio(TransactionContext context, byte[] ownerAddress,
+      long feeLimit, long callValue) {
+    try {
+      // Get stores from context
+      if (context.getStoreFactory() == null) {
+        logger.warn("StoreFactory is null, falling back to feeLimit for energy limit");
+        return feeLimit;
+      }
+
+      ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
+      if (chainBaseManager == null) {
+        logger.warn("ChainBaseManager is null, falling back to feeLimit for energy limit");
+        return feeLimit;
+      }
+
+      AccountStore accountStore = chainBaseManager.getAccountStore();
+      DynamicPropertiesStore dynamicPropertiesStore = chainBaseManager.getDynamicPropertiesStore();
+
+      if (accountStore == null || dynamicPropertiesStore == null) {
+        logger.warn("AccountStore or DynamicPropertiesStore is null, falling back to feeLimit");
+        return feeLimit;
+      }
+
+      // Get account
+      AccountCapsule account = accountStore.get(ownerAddress);
+      if (account == null) {
+        logger.warn("Owner account not found, falling back to feeLimit for energy limit");
+        return feeLimit;
+      }
+
+      // Get energy fee (SUN per energy unit)
+      long sunPerEnergy = Constant.SUN_PER_ENERGY; // Default: 100
+      long energyFee = dynamicPropertiesStore.getEnergyFee();
+      if (energyFee > 0) {
+        sunPerEnergy = energyFee;
+      }
+
+      // Create energy processor and compute left frozen energy
+      EnergyProcessor energyProcessor = new EnergyProcessor(dynamicPropertiesStore, accountStore);
+      long leftFrozenEnergy = energyProcessor.getAccountLeftEnergyFromFreeze(account);
+
+      // Compute energy from balance (matching VMActuator formula)
+      long balanceMinusCallValue = Math.max(account.getBalance() - callValue, 0);
+      long energyFromBalance = balanceMinusCallValue / sunPerEnergy;
+
+      // Compute available energy (overflow-safe addition)
+      long availableEnergy;
+      try {
+        availableEnergy = Math.addExact(leftFrozenEnergy, energyFromBalance);
+      } catch (ArithmeticException e) {
+        availableEnergy = Long.MAX_VALUE;
+      }
+
+      // Compute energy from fee limit
+      long energyFromFeeLimit = feeLimit / sunPerEnergy;
+
+      // Return min of available energy and fee limit energy
+      long computedLimit = Math.min(availableEnergy, energyFromFeeLimit);
+
+      logger.debug("Computed energy limit: {} (leftFrozen={}, fromBalance={}, fromFeeLimit={}, sunPerEnergy={})",
+          computedLimit, leftFrozenEnergy, energyFromBalance, energyFromFeeLimit, sunPerEnergy);
+
+      return computedLimit;
+
+    } catch (Exception e) {
+      logger.warn("Failed to compute energy limit, falling back to feeLimit: {}", e.getMessage());
+      return feeLimit;
+    }
+  }
+
   /** Build ExecuteTransactionRequest from TransactionContext. */
   private ExecuteTransactionRequest buildExecuteTransactionRequest(TransactionContext context) {
     try {
@@ -435,10 +524,19 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             // SmartContract metadata (ABI, name, origin_energy_limit, etc.) after EVM execution
             data = createContract.toByteArray();
             value = createContract.getNewContract().getCallValue();
-            logger.debug("Mapped CreateSmartContract to remote request; owner={}, name={}, origin_energy_limit={}",
+
+            // Phase 4: Compute energy limit with resource capping like VMActuator.getAccountEnergyLimitWithFixRatio()
+            // This ensures parity with Java's energy limit computation which caps based on:
+            // - Available frozen energy
+            // - Balance-based energy: (balance - callValue) / energyFee
+            // - Fee limit energy: feeLimit / energyFee
+            long feeLimit = transaction.getRawData().getFeeLimit();
+            energyLimit = computeEnergyLimitWithFixRatio(context, fromAddress, feeLimit, value);
+            logger.debug("Mapped CreateSmartContract to remote request; owner={}, name={}, origin_energy_limit={}, computed_energy_limit={}",
                 org.tron.common.utils.ByteArray.toHexString(fromAddress),
                 createContract.getNewContract().getName(),
-                createContract.getNewContract().getOriginEnergyLimit());
+                createContract.getNewContract().getOriginEnergyLimit(),
+                energyLimit);
           }
           txKind = TxKind.VM; // Smart contract creation requires VM
           contractType = tron.backend.BackendOuterClass.ContractType.CREATE_SMART_CONTRACT;
@@ -450,6 +548,19 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = triggerContract.getContractAddress().toByteArray();
           data = triggerContract.getData().toByteArray();
           value = triggerContract.getCallValue();
+
+          // Phase 4: Compute energy limit with resource capping like VMActuator.getTotalEnergyLimit()
+          // For TriggerSmartContract, the energy limit is also capped based on caller's resources
+          // Note: Full parity would require getTotalEnergyLimitWithFixRatio which also considers
+          // the contract's origin_energy_limit and consume_user_resource_percent, but the basic
+          // caller-side capping provides the main protection against over-execution.
+          long triggerFeeLimit = transaction.getRawData().getFeeLimit();
+          energyLimit = computeEnergyLimitWithFixRatio(context, fromAddress, triggerFeeLimit, value);
+          logger.debug("Mapped TriggerSmartContract to remote request; owner={}, contract={}, computed_energy_limit={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(toAddress),
+              energyLimit);
+
           txKind = TxKind.VM; // Smart contract invocation requires VM
           contractType = tron.backend.BackendOuterClass.ContractType.TRIGGER_SMART_CONTRACT;
           break;
