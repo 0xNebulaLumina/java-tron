@@ -920,11 +920,14 @@ impl BackendService {
                 .get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &transaction.from,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             )
@@ -934,6 +937,9 @@ impl BackendService {
             storage_adapter
                 .set_account_aext(&transaction.from, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
@@ -1408,11 +1414,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &transaction.from,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -1420,6 +1429,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&transaction.from, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
@@ -1562,11 +1574,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (_path, before_aext, after_aext) = tron_backend_execution::ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64,
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -1574,6 +1589,9 @@ impl BackendService {
             // Persist updated AEXT
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Populate aext_map
             aext_map.insert(owner, (before_aext, after_aext));
@@ -1973,11 +1991,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -1985,6 +2006,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -2196,11 +2220,14 @@ impl BackendService {
                 .get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage
             let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &transaction.from,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -2209,6 +2236,9 @@ impl BackendService {
             storage_adapter
                 .set_account_aext(&transaction.from, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
@@ -2532,11 +2562,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage with netCost (not raw bytes) - matches Java semantics
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 net_cost,  // Use netCost (bytes * rate) for create-account
-                context.block_number as i64,
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -2591,6 +2624,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -4322,11 +4358,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64,
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -4334,6 +4373,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -4916,11 +4958,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -4928,6 +4973,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -7303,6 +7351,38 @@ impl BackendService {
     const WINDOW_SIZE_MS: i64 = 24 * 3600 * 1000; // 24 hours in milliseconds
     const BLOCK_PRODUCED_INTERVAL: i64 = 3000;    // 3 seconds in milliseconds
     const WINDOW_SIZE_SLOTS: i64 = Self::WINDOW_SIZE_MS / Self::BLOCK_PRODUCED_INTERVAL; // 28800 slots
+    const WINDOW_SIZE_PRECISION: i64 = 1000; // Java: Parameter.ChainConstant.WINDOW_SIZE_PRECISION
+
+    /// Normalize Account window size fields to logical "slots" (Java parity).
+    ///
+    /// Java reference: `AccountCapsule.getWindowSize(ResourceCode)`.
+    /// - raw == 0 => default 28800 slots
+    /// - optimized:
+    ///   - raw < 1000 => default 28800 slots
+    ///   - else raw / 1000
+    /// - not optimized => raw
+    fn normalize_window_size_slots(raw: i64, optimized: bool) -> i64 {
+        let default_slots = Self::WINDOW_SIZE_SLOTS;
+        if raw == 0 {
+            return default_slots;
+        }
+
+        let normalized = if optimized {
+            if raw < Self::WINDOW_SIZE_PRECISION {
+                default_slots
+            } else {
+                raw / Self::WINDOW_SIZE_PRECISION
+            }
+        } else {
+            raw
+        };
+
+        if normalized <= 0 {
+            default_slots
+        } else {
+            normalized
+        }
+    }
 
     /// Get V1 frozen balance for bandwidth (sum of account.frozen[].frozen_balance)
     /// Java: AccountCapsule.getFrozenBalance()
@@ -7429,12 +7509,11 @@ impl BackendService {
         let old_net_usage = account.net_usage;
         let latest_consume_time = account.latest_consume_time;
 
-        // Get window size - use account's net_window_size if available, otherwise default
-        let window_size = if account.net_window_size > 0 {
-            account.net_window_size
-        } else {
-            Self::WINDOW_SIZE_SLOTS
-        };
+        // Java parity: AccountCapsule.getWindowSize(BANDWIDTH)
+        let window_size = Self::normalize_window_size_slots(
+            account.net_window_size,
+            account.net_window_optimized,
+        );
 
         // Decay the usage to current time (parity with BandwidthProcessor.updateUsageForDelegated)
         let decayed_net_usage = Self::calculate_decayed_usage(
@@ -7481,14 +7560,14 @@ impl BackendService {
 
         // 1. Get current energy_usage from account and decay it to current time
         let (old_energy_usage, latest_consume_time, window_size) = match &account.account_resource {
-            Some(res) => {
-                let ws = if res.energy_window_size > 0 {
-                    res.energy_window_size
-                } else {
-                    Self::WINDOW_SIZE_SLOTS
-                };
-                (res.energy_usage, res.latest_consume_time_for_energy, ws)
-            }
+            Some(res) => (
+                res.energy_usage,
+                res.latest_consume_time_for_energy,
+                Self::normalize_window_size_slots(
+                    res.energy_window_size,
+                    res.energy_window_optimized,
+                ),
+            ),
             None => (0, 0, Self::WINDOW_SIZE_SLOTS),
         };
 
