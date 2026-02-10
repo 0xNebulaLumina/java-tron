@@ -53,12 +53,21 @@ Primary Java oracles to match:
     - [x] Preserve Java's exact error strings.
       - Error string: `"delegateBalance must be less than or equal to available FreezeBandwidthV2 balance"` / `"... FreezeEnergyV2 balance"`
 
-- [ ] Handle Java's BANDWIDTH "transaction create" estimate (optional parity refinement)
-  - [ ] Determine whether Rust ever sees `tx.isTransactionCreate()` equivalent.
-    - **Note**: This is an optional refinement. Java adds `TransactionUtil.estimateConsumeBandWidthSize()` to `accountNetUsage` only when `tx.isTransactionCreate()` is true. This applies to special transaction scenarios.
-    - [ ] If yes, add a metadata flag in the gRPC request and replicate:
-      - [ ] `TransactionUtil.estimateConsumeBandWidthSize(...)`
-    - [ ] If no (Rust only used for in-block execution), document and intentionally omit.
+- [x] Handle Java's BANDWIDTH "transaction create" estimate (optional parity refinement)
+  - [x] Determine whether Rust ever sees `tx.isTransactionCreate()` equivalent.
+    - **Decision**: Rust intentionally omits this logic. See analysis below.
+  - [x] Analysis completed 2026-02-10:
+    - Java's `isTransactionCreate` flag is set to `true` **only** in `Wallet.createTransactionCapsule()` during API-time validation (pre-broadcast)
+    - After validation completes, it's immediately set back to `false` (line 484 in Wallet.java)
+    - Rust handles **in-block execution only**, where transactions come from blocks, not from API
+    - For in-block transactions, `isTransactionCreate` is always `false`
+    - Therefore, the `estimateConsumeBandWidthSize()` adjustment is **never applied** during in-block execution
+    - **Conclusion**: Rust correctly omits this logic - no parity issue for in-block execution
+  - [x] Documentation of intentional omission:
+    - The estimate is a **pre-broadcast validation** feature that ensures users can't delegate their entire frozen balance when they need some to pay for the delegation transaction itself
+    - This validation happens in Java's API layer before the transaction is broadcast/included in a block
+    - By the time Rust executes the transaction (in-block), the bandwidth has already been charged or will be charged separately by the bandwidth processor
+    - **No code changes needed in Rust**
 
 - [ ] Tests / fixtures
   - [ ] Add a targeted regression/conformance test case where:

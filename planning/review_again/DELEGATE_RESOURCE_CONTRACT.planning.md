@@ -93,13 +93,22 @@ Rust code path for this check:
   `get_frozen_v2_balance_for_bandwidth(...)` / `get_frozen_v2_balance_for_energy(...)`
   which are simple sums over `account.frozen_v2`.
 
-### 2) Bandwidth “tx create” estimate (minor, but still parity-relevant)
+### 2) Bandwidth "tx create" estimate (minor, but still parity-relevant)
 
-Java’s BANDWIDTH validation has a special case:
+Java's BANDWIDTH validation has a special case:
 - If `tx.isTransactionCreate()`, it increases `accountNetUsage` by
   `TransactionUtil.estimateConsumeBandWidthSize(...)` before computing `netUsage`.
 
-Rust has no equivalent “transaction create” flag nor the estimate.
+Rust has no equivalent "transaction create" flag nor the estimate.
+
+**Resolution (2026-02-10)**: This is an **intentional omission** - no parity issue.
+- `isTransactionCreate = true` is only set during API-time validation in `Wallet.createTransactionCapsule()`
+- After validation, it's immediately set back to `false` (Wallet.java:484)
+- Rust handles **in-block execution only** - transactions come from blocks, not API
+- For in-block transactions, `isTransactionCreate` is always `false`
+- The estimate is a **pre-broadcast validation** feature to prevent users from delegating their entire frozen balance when they need some to pay for the delegation tx itself
+- By the time Rust executes (in-block), bandwidth is charged separately by Java's bandwidth processor
+- **No code changes needed in Rust**
 
 ### 3) Owner address source (parity risk)
 
@@ -115,9 +124,14 @@ if `from_raw` and contract owner ever disagree, Rust and Java will not validate 
 
 ## Conclusion
 
-The Rust implementation matches Java for most *structural* logic and state updates, but it **does not match the Java-side validation that constrains delegation by “available FreezeV2 after usage”**.
+~~The Rust implementation matches Java for most *structural* logic and state updates, but it **does not match the Java-side validation that constrains delegation by "available FreezeV2 after usage"**.~~
 
-If Rust execution is enabled and used as the source of truth (or if Java’s pre-validation is bypassed), this mismatch can cause acceptance of invalid transactions or state divergence.
+~~If Rust execution is enabled and used as the source of truth (or if Java's pre-validation is bypassed), this mismatch can cause acceptance of invalid transactions or state divergence.~~
 
-See `planning/review_again/DELEGATE_RESOURCE_CONTRACT.todo.md` for a fix plan/checklist.
+**Update (2026-02-10)**: The major issues have been addressed:
+1. ✅ **"available FreezeV2" validation** - Implemented in Rust with `compute_available_freeze_v2_bandwidth()` and `compute_available_freeze_v2_energy()` functions
+2. ✅ **Bandwidth "tx create" estimate** - Resolved as intentional omission (Rust handles in-block execution only, where `isTransactionCreate = false`)
+3. ⚠️ **Owner address source** - Still uses `transaction.metadata.from_raw` instead of contract's `owner_address` field (parity risk if they ever disagree)
+
+See `planning/review_again/DELEGATE_RESOURCE_CONTRACT.todo.md` for the full checklist and implementation details.
 
