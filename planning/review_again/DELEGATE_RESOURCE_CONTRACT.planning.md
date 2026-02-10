@@ -112,13 +112,19 @@ Rust has no equivalent "transaction create" flag nor the estimate.
 
 ### 3) Owner address source (parity risk)
 
-Java validates `ownerAddress` from the protobuf contract (`DelegateResourceContract.owner_address`).
+~~Java validates `ownerAddress` from the protobuf contract (`DelegateResourceContract.owner_address`).~~
 
-Rust ignores the contract’s field 1 (owner) and instead uses:
-- `transaction.metadata.from_raw`
+~~Rust ignores the contract's field 1 (owner) and instead uses:~~
+~~- `transaction.metadata.from_raw`~~
 
-This is likely equivalent in the remote path (Java populates `from_raw` consistently), but it’s still a divergence:
-if `from_raw` and contract owner ever disagree, Rust and Java will not validate the same address.
+~~This is likely equivalent in the remote path (Java populates `from_raw` consistently), but it's still a divergence:~~
+~~if `from_raw` and contract owner ever disagree, Rust and Java will not validate the same address.~~
+
+**Resolution (2026-02-10)**: This parity issue has been fixed.
+- Rust now parses `owner_address` from `DelegateResourceContract` protobuf (field 1) in `parse_delegate_resource_contract()`
+- The `DelegateResourceInfo` struct now includes `owner_address` field
+- `execute_delegate_resource_contract()` uses `delegate_info.owner_address` instead of `transaction.metadata.from_raw`
+- Tests updated to include `owner_address` in protobuf data
 
 ---
 
@@ -128,10 +134,10 @@ if `from_raw` and contract owner ever disagree, Rust and Java will not validate 
 
 ~~If Rust execution is enabled and used as the source of truth (or if Java's pre-validation is bypassed), this mismatch can cause acceptance of invalid transactions or state divergence.~~
 
-**Update (2026-02-10)**: The major issues have been addressed:
+**Update (2026-02-10)**: All major issues have been addressed:
 1. ✅ **"available FreezeV2" validation** - Implemented in Rust with `compute_available_freeze_v2_bandwidth()` and `compute_available_freeze_v2_energy()` functions
 2. ✅ **Bandwidth "tx create" estimate** - Resolved as intentional omission (Rust handles in-block execution only, where `isTransactionCreate = false`)
-3. ⚠️ **Owner address source** - Still uses `transaction.metadata.from_raw` instead of contract's `owner_address` field (parity risk if they ever disagree)
+3. ✅ **Owner address source** - Fixed to use contract's `owner_address` field (field 1) from DelegateResourceContract protobuf, matching Java's `DelegateResourceActuator.getOwnerAddress()`
 
 See `planning/review_again/DELEGATE_RESOURCE_CONTRACT.todo.md` for the full checklist and implementation details.
 

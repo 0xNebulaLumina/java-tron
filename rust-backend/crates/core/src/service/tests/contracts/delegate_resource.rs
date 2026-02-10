@@ -50,13 +50,14 @@ fn set_latest_block_timestamp(storage_engine: &StorageEngine, timestamp_ms: i64)
 /// Build DelegateResourceContract protobuf data.
 ///
 /// Protobuf format:
-/// - Field 1: owner_address (bytes, length-delimited) - skipped, we use from_raw
+/// - Field 1: owner_address (bytes, length-delimited) - Java parity: must match DelegateResourceContract.owner_address
 /// - Field 2: resource (varint) - 0=BANDWIDTH, 1=ENERGY
 /// - Field 3: balance (varint) - amount to delegate in SUN
 /// - Field 4: receiver_address (bytes, length-delimited)
 /// - Field 5: lock (varint/bool) - optional
 /// - Field 6: lock_period (varint) - optional
 fn build_delegate_resource_proto(
+    owner_address: &[u8],
     resource: i32,
     balance: i64,
     receiver_address: &[u8],
@@ -64,6 +65,11 @@ fn build_delegate_resource_proto(
     lock_period: i64,
 ) -> Vec<u8> {
     let mut data = Vec::new();
+
+    // Field 1: owner_address (length-delimited) - Java parity fix
+    data.push((1 << 3) | 2);
+    encode_varint(&mut data, owner_address.len() as u64);
+    data.extend_from_slice(owner_address);
 
     // Field 2: resource (varint)
     data.push((2 << 3) | 0);
@@ -248,8 +254,10 @@ fn test_delegate_resource_bandwidth_fails_when_usage_exceeds_available() {
     storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
 
     // Build transaction
+    let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
     let proto_data = build_delegate_resource_proto(
+        &owner_raw, // Java parity: owner_address from contract, not from_raw
         0, // BANDWIDTH
         delegate_balance, // 10 TRX
         &receiver_raw,
@@ -268,7 +276,7 @@ fn test_delegate_resource_bandwidth_fails_when_usage_exceeds_available() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
+            from_raw: Some(owner_raw.clone()),
             ..Default::default()
         },
     };
@@ -363,8 +371,10 @@ fn test_delegate_resource_bandwidth_succeeds_when_usage_allows_delegation() {
     };
     storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
 
+    let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
     let proto_data = build_delegate_resource_proto(
+        &owner_raw,
         0,
         delegate_balance,
         &receiver_raw,
@@ -383,7 +393,7 @@ fn test_delegate_resource_bandwidth_succeeds_when_usage_allows_delegation() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
+            from_raw: Some(owner_raw.clone()),
             ..Default::default()
         },
     };
@@ -479,8 +489,10 @@ fn test_delegate_resource_energy_fails_when_usage_exceeds_available() {
     };
     storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
 
+    let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
     let proto_data = build_delegate_resource_proto(
+        &owner_raw,
         1, // ENERGY
         delegate_balance,
         &receiver_raw,
@@ -499,7 +511,7 @@ fn test_delegate_resource_energy_fails_when_usage_exceeds_available() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
+            from_raw: Some(owner_raw.clone()),
             ..Default::default()
         },
     };
@@ -592,8 +604,10 @@ fn test_delegate_resource_energy_succeeds_when_usage_allows_delegation() {
     };
     storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
 
+    let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
     let proto_data = build_delegate_resource_proto(
+        &owner_raw,
         1, // ENERGY
         delegate_balance,
         &receiver_raw,
@@ -612,7 +626,7 @@ fn test_delegate_resource_energy_succeeds_when_usage_allows_delegation() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
+            from_raw: Some(owner_raw.clone()),
             ..Default::default()
         },
     };
@@ -704,10 +718,12 @@ fn test_delegate_resource_with_lock_fails_same_as_without_lock() {
     };
     storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
 
+    let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
 
     // Test with lock=true
     let proto_data = build_delegate_resource_proto(
+        &owner_raw,
         0, // BANDWIDTH
         delegate_balance,
         &receiver_raw,
@@ -726,7 +742,7 @@ fn test_delegate_resource_with_lock_fails_same_as_without_lock() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
+            from_raw: Some(owner_raw.clone()),
             ..Default::default()
         },
     };
@@ -816,8 +832,10 @@ fn test_delegate_resource_with_lock_succeeds_when_available() {
     };
     storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
 
+    let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
     let proto_data = build_delegate_resource_proto(
+        &owner_raw,
         0, // BANDWIDTH
         delegate_balance,
         &receiver_raw,
@@ -836,7 +854,7 @@ fn test_delegate_resource_with_lock_succeeds_when_available() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
+            from_raw: Some(owner_raw.clone()),
             ..Default::default()
         },
     };
@@ -938,8 +956,10 @@ fn test_delegate_resource_usage_decay_increases_available() {
     };
     storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
 
+    let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
     let proto_data = build_delegate_resource_proto(
+        &owner_raw,
         0,
         delegate_balance,
         &receiver_raw,
@@ -958,7 +978,7 @@ fn test_delegate_resource_usage_decay_increases_available() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
+            from_raw: Some(owner_raw.clone()),
             ..Default::default()
         },
     };
@@ -1054,8 +1074,10 @@ fn test_delegate_resource_expired_usage_fully_resets() {
     };
     storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
 
+    let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
     let proto_data = build_delegate_resource_proto(
+        &owner_raw,
         0,
         delegate_balance,
         &receiver_raw,
@@ -1074,7 +1096,7 @@ fn test_delegate_resource_expired_usage_fully_resets() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
+            from_raw: Some(owner_raw.clone()),
             ..Default::default()
         },
     };
@@ -1158,8 +1180,10 @@ fn test_delegate_resource_fails_below_minimum() {
     };
     storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
 
+    let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
     let proto_data = build_delegate_resource_proto(
+        &owner_raw,
         0,
         delegate_balance,
         &receiver_raw,
@@ -1178,7 +1202,7 @@ fn test_delegate_resource_fails_below_minimum() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
+            from_raw: Some(owner_raw.clone()),
             ..Default::default()
         },
     };
@@ -1252,8 +1276,10 @@ fn test_delegate_resource_fails_self_delegation() {
     storage_adapter.set_account(owner_address, owner_evm).unwrap();
 
     // Try to delegate to self
-    let receiver_raw = make_from_raw(&owner_address);
+    let owner_raw = make_from_raw(&owner_address);
+    let receiver_raw = make_from_raw(&owner_address); // Same as owner for self-delegation test
     let proto_data = build_delegate_resource_proto(
+        &owner_raw,
         0,
         delegate_balance,
         &receiver_raw,
@@ -1272,7 +1298,7 @@ fn test_delegate_resource_fails_self_delegation() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
+            from_raw: Some(owner_raw.clone()),
             ..Default::default()
         },
     };

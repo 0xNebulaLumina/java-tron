@@ -93,6 +93,14 @@ Primary Java oracles to match:
     - `test_delegate_resource_expired_usage_fully_resets` (ignored)
     - Note: These tests fail when net_usage > 0 with old timestamps. Core validation works.
 
+- [x] Fix owner address source parity (2026-02-10)
+  - [x] Parse `owner_address` from DelegateResourceContract protobuf field 1 (was previously skipped)
+  - [x] Add `owner_address: Vec<u8>` to `DelegateResourceInfo` struct
+  - [x] Update `parse_delegate_resource_contract()` to extract owner_address instead of skipping it
+  - [x] Update `execute_delegate_resource_contract()` to use `delegate_info.owner_address` instead of `transaction.metadata.from_raw`
+  - [x] Update test `build_delegate_resource_proto()` to include owner_address field
+  - [x] Update all test cases to pass owner_address to protobuf builder
+
 - [ ] Validate end-to-end
   - [ ] Run existing conformance tests that cover resource delegation (fixtures under `framework/src/test/.../ResourceDelegationFixtureGeneratorTest.java`).
   - [ ] If remote execution is used, run a remote-vs-embedded parity diff on a delegation-heavy fixture set.
@@ -129,6 +137,12 @@ Primary Java oracles to match:
    - Validates against available balance after usage, not raw frozen balance
    - Added debug logging for validation parameters
 
+4. **Fixed owner address source parity** (validation step 3, 2026-02-10):
+   - Now uses `delegate_info.owner_address` (from contract protobuf field 1) instead of `transaction.metadata.from_raw`
+   - `DelegateResourceInfo` struct now includes `owner_address: Vec<u8>` field
+   - `parse_delegate_resource_contract()` now parses owner_address instead of skipping it
+   - Matches Java's `DelegateResourceActuator.getOwnerAddress()` which returns `DelegateResourceContract.getOwnerAddress()`
+
 **`rust-backend/crates/core/src/service/tests/contracts/delegate_resource.rs`** (2026-02-10):
 
 1. **Test file created** with comprehensive tests for "available FreezeV2" validation:
@@ -138,6 +152,11 @@ Primary Java oracles to match:
    - Tests for minimum delegate amount (1 TRX)
    - Tests for self-delegation prevention
    - Decay tests (currently ignored pending investigation)
+
+2. **Updated `build_delegate_resource_proto()`** to include `owner_address` parameter:
+   - Now includes owner_address as first field in protobuf (field 1, length-delimited)
+   - All test cases updated to pass owner_address matching the transaction's from address
+   - Ensures Java parity for owner address source validation
 
 ---
 

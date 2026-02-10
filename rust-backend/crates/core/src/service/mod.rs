@@ -6456,8 +6456,9 @@ impl BackendService {
         }
 
         // 3. Validate owner address (DecodeUtil.addressValid)
+        // Java parity: use owner_address from contract protobuf (field 1), not transaction.metadata.from_raw
         let expected_prefix = storage_adapter.address_prefix();
-        let owner_raw = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        let owner_raw = delegate_info.owner_address.as_slice();
         if owner_raw.len() != 21 || owner_raw[0] != expected_prefix {
             return Err("Invalid address".to_string());
         }
@@ -7034,6 +7035,7 @@ impl BackendService {
     fn parse_delegate_resource_contract(&self, data: &[u8]) -> Result<DelegateResourceInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address: Vec<u8> = vec![];
         let mut receiver_address: Vec<u8> = vec![];
         let mut balance: i64 = 0;
         let mut resource: i32 = 0;
@@ -7051,10 +7053,16 @@ impl BackendService {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address - skip
+                    // owner_address - Java parity: parse this field instead of skipping
                     let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_address = data[pos..end].to_vec();
+                    pos = end;
                 }
                 (2, 0) => {
                     // resource (ResourceCode enum, varint)
@@ -7104,11 +7112,17 @@ impl BackendService {
             }
         }
 
+        // Java parity: validate owner_address is present (DelegateResourceContract.owner_address field 1)
+        if owner_address.is_empty() {
+            return Err("Invalid ownerAddress".to_string());
+        }
+
         if receiver_address.is_empty() {
             return Err("Invalid receiverAddress".to_string());
         }
 
         Ok(DelegateResourceInfo {
+            owner_address,
             receiver_address,
             balance,
             resource,
@@ -11093,6 +11107,7 @@ struct AssetIssueInfo {
 /// Parsed DelegateResourceContract information
 #[derive(Debug, Clone)]
 struct DelegateResourceInfo {
+    owner_address: Vec<u8>,     // Java parity: use contract's owner_address, not transaction.from_raw
     receiver_address: Vec<u8>,
     balance: i64,
     resource: i32, // 0 = BANDWIDTH, 1 = ENERGY
