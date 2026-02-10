@@ -7112,9 +7112,9 @@ impl BackendService {
             }
         }
 
-        // Java parity: validate owner_address is present (DelegateResourceContract.owner_address field 1)
+        // Java parity: invalid/missing owner address maps to "Invalid address" (DelegateResourceActuator.validate()).
         if owner_address.is_empty() {
-            return Err("Invalid ownerAddress".to_string());
+            return Err("Invalid address".to_string());
         }
 
         if receiver_address.is_empty() {

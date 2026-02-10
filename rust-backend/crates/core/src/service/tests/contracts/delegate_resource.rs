@@ -44,7 +44,8 @@ fn seed_delegate_resource_properties(storage_engine: &StorageEngine) {
 /// Helper to set the latest block header timestamp for slot calculation.
 fn set_latest_block_timestamp(storage_engine: &StorageEngine, timestamp_ms: i64) {
     let props_db = "properties";
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    // Java parity: stored under lowercase key "latest_block_header_timestamp".
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 }
 
 /// Build DelegateResourceContract protobuf data.
@@ -217,7 +218,7 @@ fn test_delegate_resource_bandwidth_fails_when_usage_exceeds_available() {
 
     // Set timestamp for slot calculation (slot = timestamp_ms / 3000)
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -338,7 +339,7 @@ fn test_delegate_resource_bandwidth_succeeds_when_usage_allows_delegation() {
     storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -456,7 +457,7 @@ fn test_delegate_resource_energy_fails_when_usage_exceeds_available() {
     storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -571,7 +572,7 @@ fn test_delegate_resource_energy_succeeds_when_usage_allows_delegation() {
     storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -685,7 +686,7 @@ fn test_delegate_resource_with_lock_fails_same_as_without_lock() {
     storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -799,7 +800,7 @@ fn test_delegate_resource_with_lock_succeeds_when_available() {
     storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -884,11 +885,7 @@ fn test_delegate_resource_with_lock_succeeds_when_available() {
 // Test: Usage decay affects available balance
 // ============================================================================
 
-// TODO: Investigate why decay tests fail - the core validation logic works correctly
-// but these tests fail when net_usage > 0 with old timestamps. May be an issue with
-// how the window normalization interacts with certain account field values.
 #[test]
-#[ignore] // Ignored pending investigation - core validation tests pass
 fn test_delegate_resource_usage_decay_increases_available() {
     // If usage occurred in the past, it should decay, making more balance available.
     //
@@ -922,7 +919,7 @@ fn test_delegate_resource_usage_decay_increases_available() {
     storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -1005,7 +1002,6 @@ fn test_delegate_resource_usage_decay_increases_available() {
 }
 
 #[test]
-#[ignore] // Ignored pending investigation - see test_delegate_resource_usage_decay_increases_available
 fn test_delegate_resource_expired_usage_fully_resets() {
     // If usage is older than the window, it should fully reset to zero.
     //
@@ -1040,7 +1036,7 @@ fn test_delegate_resource_expired_usage_fully_resets() {
     storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -1149,7 +1145,7 @@ fn test_delegate_resource_fails_below_minimum() {
     storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -1254,7 +1250,7 @@ fn test_delegate_resource_fails_self_delegation() {
     storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"LATEST_BLOCK_HEADER_TIMESTAMP", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
