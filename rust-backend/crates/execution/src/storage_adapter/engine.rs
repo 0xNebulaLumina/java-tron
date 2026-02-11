@@ -2643,6 +2643,48 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Apply bandwidth-related AEXT fields to the Account proto stored in the `account` DB.
+    ///
+    /// This keeps `protocol::Account` as a usable source-of-truth for:
+    /// - `net_usage`, `free_net_usage`
+    /// - `latest_consume_time`, `latest_consume_free_time`
+    /// - `net_window_size`, `net_window_optimized`
+    ///
+    /// NOTE: This intentionally does **not** touch energy-related fields since the current
+    /// ResourceTracker only updates bandwidth usage.
+    ///
+    /// Java reference:
+    /// - `AccountCapsule.getWindowSize(ResourceCode)` / `getWindowSizeV2(ResourceCode)`
+    /// - `WINDOW_SIZE_PRECISION = 1000`
+    pub fn apply_bandwidth_aext_to_account_proto(
+        &self,
+        address: &Address,
+        aext: &AccountAext,
+    ) -> Result<()> {
+        const WINDOW_SIZE_PRECISION: i64 = 1000;
+
+        let Some(mut account) = self.get_account_proto(address)? else {
+            return Ok(());
+        };
+
+        account.net_usage = aext.net_usage;
+        account.free_net_usage = aext.free_net_usage;
+        account.latest_consume_time = aext.latest_consume_time;
+        account.latest_consume_free_time = aext.latest_consume_free_time;
+
+        account.net_window_optimized = aext.net_window_optimized;
+        account.net_window_size = if aext.net_window_size == 0 {
+            0
+        } else if aext.net_window_optimized {
+            aext.net_window_size.saturating_mul(WINDOW_SIZE_PRECISION)
+        } else {
+            aext.net_window_size
+        };
+
+        self.put_account_proto(address, &account)?;
+        Ok(())
+    }
+
     // Phase C: Method alias shims (preferred names going forward)
     // See planning/storage_adapter_namings.planning.md for rationale
 

@@ -920,11 +920,14 @@ impl BackendService {
                 .get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &transaction.from,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             )
@@ -934,6 +937,9 @@ impl BackendService {
             storage_adapter
                 .set_account_aext(&transaction.from, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
@@ -1408,11 +1414,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &transaction.from,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -1420,6 +1429,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&transaction.from, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
@@ -1562,11 +1574,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (_path, before_aext, after_aext) = tron_backend_execution::ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64,
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -1574,6 +1589,9 @@ impl BackendService {
             // Persist updated AEXT
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Populate aext_map
             aext_map.insert(owner, (before_aext, after_aext));
@@ -1973,11 +1991,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -1985,6 +2006,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -2196,11 +2220,14 @@ impl BackendService {
                 .get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage
             let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &transaction.from,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -2209,6 +2236,9 @@ impl BackendService {
             storage_adapter
                 .set_account_aext(&transaction.from, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
@@ -2532,11 +2562,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage with netCost (not raw bytes) - matches Java semantics
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 net_cost,  // Use netCost (bytes * rate) for create-account
-                context.block_number as i64,
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -2591,6 +2624,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -4322,11 +4358,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64,
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -4334,6 +4373,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -4916,11 +4958,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -4928,6 +4973,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -6408,8 +6456,9 @@ impl BackendService {
         }
 
         // 3. Validate owner address (DecodeUtil.addressValid)
+        // Java parity: use owner_address from contract protobuf (field 1), not transaction.metadata.from_raw
         let expected_prefix = storage_adapter.address_prefix();
-        let owner_raw = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        let owner_raw = delegate_info.owner_address.as_slice();
         if owner_raw.len() != 21 || owner_raw[0] != expected_prefix {
             return Err("Invalid address".to_string());
         }
@@ -6426,17 +6475,72 @@ impl BackendService {
             return Err("delegateBalance must be greater than or equal to 1 TRX".to_string());
         }
 
-        // 6. Validate sufficient frozen balance for the resource type
+        // 6. Validate sufficient AVAILABLE frozen balance for the resource type
+        // Java parity: DelegateResourceActuator.validate() - uses "available FreezeV2" which
+        // accounts for current resource usage (net_usage / energy_usage after decay)
+        //
+        // Get timestamp and compute head_slot for usage decay calculation
+        let now_timestamp = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
+        let head_slot = (now_timestamp as i64) / 3000; // slot = timestamp_ms / BLOCK_PRODUCED_INTERVAL
+
         match delegate_info.resource {
             0 => { // BANDWIDTH
-                let frozen_v2_bandwidth = Self::get_frozen_v2_balance_for_bandwidth(&owner_account);
-                if frozen_v2_bandwidth < delegate_info.balance {
+                // Get global totals for bandwidth
+                let total_net_weight = storage_adapter.get_total_net_weight()
+                    .map_err(|e| format!("Failed to get total net weight: {}", e))?;
+                let total_net_limit = storage_adapter.get_total_net_limit()
+                    .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+
+                // Compute available FreezeV2 balance after accounting for usage
+                let available_bandwidth = Self::compute_available_freeze_v2_bandwidth(
+                    &owner_account,
+                    total_net_weight,
+                    total_net_limit,
+                    head_slot,
+                );
+
+                debug!("DelegateResource BANDWIDTH validation: frozen_v2={}, available={}, delegate_balance={}, net_usage={}, latest_consume_time={}, head_slot={}",
+                       Self::get_frozen_v2_balance_for_bandwidth(&owner_account),
+                       available_bandwidth,
+                       delegate_info.balance,
+                       owner_account.net_usage,
+                       owner_account.latest_consume_time,
+                       head_slot);
+
+                if available_bandwidth < delegate_info.balance {
                     return Err("delegateBalance must be less than or equal to available FreezeBandwidthV2 balance".to_string());
                 }
             }
             1 => { // ENERGY
-                let frozen_v2_energy = Self::get_frozen_v2_balance_for_energy(&owner_account);
-                if frozen_v2_energy < delegate_info.balance {
+                // Get global totals for energy
+                let total_energy_weight = storage_adapter.get_total_energy_weight()
+                    .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
+                let total_energy_limit = storage_adapter.get_total_energy_limit()
+                    .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
+
+                // Compute available FreezeV2 balance after accounting for usage
+                let available_energy = Self::compute_available_freeze_v2_energy(
+                    &owner_account,
+                    total_energy_weight,
+                    total_energy_limit,
+                    head_slot,
+                );
+
+                let (energy_usage, latest_consume_time) = match &owner_account.account_resource {
+                    Some(res) => (res.energy_usage, res.latest_consume_time_for_energy),
+                    None => (0, 0),
+                };
+
+                debug!("DelegateResource ENERGY validation: frozen_v2={}, available={}, delegate_balance={}, energy_usage={}, latest_consume_time={}, head_slot={}",
+                       Self::get_frozen_v2_balance_for_energy(&owner_account),
+                       available_energy,
+                       delegate_info.balance,
+                       energy_usage,
+                       latest_consume_time,
+                       head_slot);
+
+                if available_energy < delegate_info.balance {
                     return Err("delegateBalance must be less than or equal to available FreezeEnergyV2 balance".to_string());
                 }
             }
@@ -6463,9 +6567,8 @@ impl BackendService {
             .map_err(|e| format!("Failed to get receiver account: {}", e))?
             .ok_or_else(|| format!("Account[{}] not exists", readable_receiver_address))?;
 
-        // 10. Get timestamp and calculate expiration
-        let now = storage_adapter.get_latest_block_header_timestamp()
-            .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
+        // 10. Calculate expiration (reuse now_timestamp from step 6)
+        let now = now_timestamp;
 
         let support_max_delegate_lock_period = storage_adapter.support_max_delegate_lock_period()
             .map_err(|e| format!("Failed to check supportMaxDelegateLockPeriod: {}", e))?;
@@ -6932,6 +7035,7 @@ impl BackendService {
     fn parse_delegate_resource_contract(&self, data: &[u8]) -> Result<DelegateResourceInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address: Vec<u8> = vec![];
         let mut receiver_address: Vec<u8> = vec![];
         let mut balance: i64 = 0;
         let mut resource: i32 = 0;
@@ -6949,10 +7053,16 @@ impl BackendService {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address - skip
+                    // owner_address - Java parity: parse this field instead of skipping
                     let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_address = data[pos..end].to_vec();
+                    pos = end;
                 }
                 (2, 0) => {
                     // resource (ResourceCode enum, varint)
@@ -7002,11 +7112,17 @@ impl BackendService {
             }
         }
 
+        // Java parity: invalid/missing owner address maps to "Invalid address" (DelegateResourceActuator.validate()).
+        if owner_address.is_empty() {
+            return Err("Invalid address".to_string());
+        }
+
         if receiver_address.is_empty() {
             return Err("Invalid receiverAddress".to_string());
         }
 
         Ok(DelegateResourceInfo {
+            owner_address,
             receiver_address,
             balance,
             resource,
@@ -7237,6 +7353,262 @@ impl BackendService {
         if let Some(ref mut res) = account.account_resource {
             res.acquired_delegated_frozen_v2_balance_for_energy = amount;
         }
+    }
+
+    // ========================================================================
+    // Helper methods for "available FreezeV2" calculation for delegation
+    // Java parity: DelegateResourceActuator.validate()
+    // ========================================================================
+
+    /// Constants for resource calculation
+    const PRECISION: i64 = 1_000_000;
+    const WINDOW_SIZE_MS: i64 = 24 * 3600 * 1000; // 24 hours in milliseconds
+    const BLOCK_PRODUCED_INTERVAL: i64 = 3000;    // 3 seconds in milliseconds
+    const WINDOW_SIZE_SLOTS: i64 = Self::WINDOW_SIZE_MS / Self::BLOCK_PRODUCED_INTERVAL; // 28800 slots
+    const WINDOW_SIZE_PRECISION: i64 = 1000; // Java: Parameter.ChainConstant.WINDOW_SIZE_PRECISION
+
+    /// Normalize Account window size fields to logical "slots" (Java parity).
+    ///
+    /// Java reference: `AccountCapsule.getWindowSize(ResourceCode)`.
+    /// - raw == 0 => default 28800 slots
+    /// - optimized:
+    ///   - raw < 1000 => default 28800 slots
+    ///   - else raw / 1000
+    /// - not optimized => raw
+    fn normalize_window_size_slots(raw: i64, optimized: bool) -> i64 {
+        let default_slots = Self::WINDOW_SIZE_SLOTS;
+        if raw == 0 {
+            return default_slots;
+        }
+
+        let normalized = if optimized {
+            if raw < Self::WINDOW_SIZE_PRECISION {
+                default_slots
+            } else {
+                raw / Self::WINDOW_SIZE_PRECISION
+            }
+        } else {
+            raw
+        };
+
+        if normalized <= 0 {
+            default_slots
+        } else {
+            normalized
+        }
+    }
+
+    /// Get V1 frozen balance for bandwidth (sum of account.frozen[].frozen_balance)
+    /// Java: AccountCapsule.getFrozenBalance()
+    fn get_frozen_v1_balance_for_bandwidth(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.frozen.iter()
+            .map(|f| f.frozen_balance)
+            .sum()
+    }
+
+    /// Get V1 frozen balance for energy (account_resource.frozen_balance_for_energy.frozen_balance)
+    /// Java: AccountCapsule.getEnergyFrozenBalance()
+    fn get_frozen_v1_balance_for_energy(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.account_resource.as_ref()
+            .and_then(|r| r.frozen_balance_for_energy.as_ref())
+            .map(|f| f.frozen_balance)
+            .unwrap_or(0)
+    }
+
+    /// Get acquired delegated V1 balance for bandwidth
+    /// Java: AccountCapsule.getAcquiredDelegatedFrozenBalanceForBandwidth()
+    fn get_acquired_delegated_frozen_v1_balance_for_bandwidth(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.acquired_delegated_frozen_balance_for_bandwidth
+    }
+
+    /// Get acquired delegated V1 balance for energy
+    /// Java: AccountCapsule.getAcquiredDelegatedFrozenBalanceForEnergy()
+    fn get_acquired_delegated_frozen_v1_balance_for_energy(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.account_resource.as_ref()
+            .map(|r| r.acquired_delegated_frozen_balance_for_energy)
+            .unwrap_or(0)
+    }
+
+    /// Calculate decayed usage using the Java resource decay algorithm.
+    /// Java: ResourceProcessor.increase(lastUsage, usage=0, lastTime, now, windowSize)
+    ///
+    /// This implements the decay portion (usage=0 case) which is what updateUsageForDelegated uses.
+    /// The formula:
+    ///   averageLastUsage = divideCeil(lastUsage * precision, windowSize)
+    ///   if lastTime != now:
+    ///       if lastTime + windowSize > now:
+    ///           decay = (windowSize - (now - lastTime)) / windowSize
+    ///           averageLastUsage = round(averageLastUsage * decay)
+    ///       else:
+    ///           averageLastUsage = 0
+    ///   return averageLastUsage * windowSize / precision
+    fn calculate_decayed_usage(last_usage: i64, last_time: i64, now: i64, window_size: i64) -> i64 {
+        if last_usage <= 0 {
+            return 0;
+        }
+
+        // divideCeil(lastUsage * precision, windowSize)
+        let precision = Self::PRECISION;
+        let numerator = last_usage.saturating_mul(precision);
+        let mut average_last_usage = numerator / window_size + if numerator % window_size > 0 { 1 } else { 0 };
+
+        if last_time != now {
+            if last_time + window_size > now {
+                let delta = now - last_time;
+                let decay = (window_size - delta) as f64 / window_size as f64;
+                // Java: round(averageLastUsage * decay)
+                // Java's Math.round rounds to nearest integer (half-up)
+                average_last_usage = (average_last_usage as f64 * decay).round() as i64;
+            } else {
+                average_last_usage = 0;
+            }
+        }
+
+        // getUsage: averageLastUsage * windowSize / precision
+        average_last_usage * window_size / precision
+    }
+
+    /// Calculate V2 net usage for bandwidth delegation validation.
+    /// Java: FreezeV2Util.getV2NetUsage(ownerCapsule, netUsage, disableJavaLangMath)
+    ///
+    /// v2NetUsage = max(0, netUsage - frozenBalanceV1 - acquiredDelegatedV1 - acquiredDelegatedV2)
+    fn get_v2_net_usage(account: &tron_backend_execution::protocol::Account, net_usage: i64) -> i64 {
+        let frozen_v1 = Self::get_frozen_v1_balance_for_bandwidth(account);
+        let acquired_delegated_v1 = Self::get_acquired_delegated_frozen_v1_balance_for_bandwidth(account);
+        let acquired_delegated_v2 = Self::get_acquired_delegated_frozen_v2_balance_for_bandwidth(account);
+
+        let v2_net_usage = net_usage
+            .saturating_sub(frozen_v1)
+            .saturating_sub(acquired_delegated_v1)
+            .saturating_sub(acquired_delegated_v2);
+
+        std::cmp::max(0, v2_net_usage)
+    }
+
+    /// Calculate V2 energy usage for energy delegation validation.
+    /// Java: FreezeV2Util.getV2EnergyUsage(ownerCapsule, energyUsage, disableJavaLangMath)
+    ///
+    /// v2EnergyUsage = max(0, energyUsage - energyFrozenBalanceV1 - acquiredDelegatedV1 - acquiredDelegatedV2)
+    fn get_v2_energy_usage(account: &tron_backend_execution::protocol::Account, energy_usage: i64) -> i64 {
+        let frozen_v1 = Self::get_frozen_v1_balance_for_energy(account);
+        let acquired_delegated_v1 = Self::get_acquired_delegated_frozen_v1_balance_for_energy(account);
+        let acquired_delegated_v2 = Self::get_acquired_delegated_frozen_v2_balance_for_energy(account);
+
+        let v2_energy_usage = energy_usage
+            .saturating_sub(frozen_v1)
+            .saturating_sub(acquired_delegated_v1)
+            .saturating_sub(acquired_delegated_v2);
+
+        std::cmp::max(0, v2_energy_usage)
+    }
+
+    /// Compute available FreezeV2 balance for bandwidth delegation.
+    /// Java: DelegateResourceActuator.validate() BANDWIDTH case
+    ///
+    /// Steps:
+    /// 1. Update net_usage by decaying old usage to current time (like BandwidthProcessor.updateUsageForDelegated)
+    /// 2. Calculate weighted net_usage in SUN: netUsage = accountNetUsage * TRX_PRECISION * (totalNetWeight / totalNetLimit)
+    /// 3. Calculate V2-only usage: v2NetUsage = max(0, netUsage - frozenV1 - acquiredDelegatedV1 - acquiredDelegatedV2)
+    /// 4. Return: frozenV2Balance - v2NetUsage
+    fn compute_available_freeze_v2_bandwidth(
+        account: &tron_backend_execution::protocol::Account,
+        total_net_weight: i64,
+        total_net_limit: i64,
+        head_slot: i64,
+    ) -> i64 {
+        // Get frozen V2 balance
+        let frozen_v2_bandwidth = Self::get_frozen_v2_balance_for_bandwidth(account);
+
+        // 1. Get current net_usage from account and decay it to current time
+        let old_net_usage = account.net_usage;
+        let latest_consume_time = account.latest_consume_time;
+
+        // Java parity: AccountCapsule.getWindowSize(BANDWIDTH)
+        let window_size = Self::normalize_window_size_slots(
+            account.net_window_size,
+            account.net_window_optimized,
+        );
+
+        // Decay the usage to current time (parity with BandwidthProcessor.updateUsageForDelegated)
+        let decayed_net_usage = Self::calculate_decayed_usage(
+            old_net_usage,
+            latest_consume_time,
+            head_slot,
+            window_size,
+        );
+
+        // 2. Calculate weighted net usage in SUN units
+        // Java: (long) (accountNetUsage * TRX_PRECISION * ((double) totalNetWeight / totalNetLimit))
+        if total_net_limit == 0 {
+            // Avoid division by zero - if no limit, all frozen balance is available
+            return frozen_v2_bandwidth;
+        }
+
+        let net_usage_scaled = (decayed_net_usage as f64
+            * TRX_PRECISION as f64
+            * (total_net_weight as f64 / total_net_limit as f64)) as i64;
+
+        // 3. Calculate V2 usage (subtract V1 and acquired delegated amounts)
+        let v2_net_usage = Self::get_v2_net_usage(account, net_usage_scaled);
+
+        // 4. Return available balance
+        frozen_v2_bandwidth.saturating_sub(v2_net_usage)
+    }
+
+    /// Compute available FreezeV2 balance for energy delegation.
+    /// Java: DelegateResourceActuator.validate() ENERGY case
+    ///
+    /// Steps:
+    /// 1. Update energy_usage by decaying old usage to current time (like EnergyProcessor.updateUsage)
+    /// 2. Calculate weighted energy_usage in SUN: energyUsage = accountEnergyUsage * TRX_PRECISION * (totalEnergyWeight / totalEnergyCurrentLimit)
+    /// 3. Calculate V2-only usage: v2EnergyUsage = max(0, energyUsage - frozenV1 - acquiredDelegatedV1 - acquiredDelegatedV2)
+    /// 4. Return: frozenV2Balance - v2EnergyUsage
+    fn compute_available_freeze_v2_energy(
+        account: &tron_backend_execution::protocol::Account,
+        total_energy_weight: i64,
+        total_energy_current_limit: i64,
+        head_slot: i64,
+    ) -> i64 {
+        // Get frozen V2 balance
+        let frozen_v2_energy = Self::get_frozen_v2_balance_for_energy(account);
+
+        // 1. Get current energy_usage from account and decay it to current time
+        let (old_energy_usage, latest_consume_time, window_size) = match &account.account_resource {
+            Some(res) => (
+                res.energy_usage,
+                res.latest_consume_time_for_energy,
+                Self::normalize_window_size_slots(
+                    res.energy_window_size,
+                    res.energy_window_optimized,
+                ),
+            ),
+            None => (0, 0, Self::WINDOW_SIZE_SLOTS),
+        };
+
+        // Decay the usage to current time (parity with EnergyProcessor.updateUsage)
+        let decayed_energy_usage = Self::calculate_decayed_usage(
+            old_energy_usage,
+            latest_consume_time,
+            head_slot,
+            window_size,
+        );
+
+        // 2. Calculate weighted energy usage in SUN units
+        // Java: (long) (ownerCapsule.getEnergyUsage() * TRX_PRECISION * ((double) totalEnergyWeight / totalEnergyCurrentLimit))
+        if total_energy_current_limit == 0 {
+            // Avoid division by zero - if no limit, all frozen balance is available
+            return frozen_v2_energy;
+        }
+
+        let energy_usage_scaled = (decayed_energy_usage as f64
+            * TRX_PRECISION as f64
+            * (total_energy_weight as f64 / total_energy_current_limit as f64)) as i64;
+
+        // 3. Calculate V2 usage (subtract V1 and acquired delegated amounts)
+        let v2_energy_usage = Self::get_v2_energy_usage(account, energy_usage_scaled);
+
+        // 4. Return available balance
+        frozen_v2_energy.saturating_sub(v2_energy_usage)
     }
 
     // ==========================================================================
@@ -10735,6 +11107,7 @@ struct AssetIssueInfo {
 /// Parsed DelegateResourceContract information
 #[derive(Debug, Clone)]
 struct DelegateResourceInfo {
+    owner_address: Vec<u8>,     // Java parity: use contract's owner_address, not transaction.from_raw
     receiver_address: Vec<u8>,
     balance: i64,
     resource: i32, // 0 = BANDWIDTH, 1 = ENERGY
