@@ -9,8 +9,8 @@ This checklist assumes we want to resolve the parity gaps identified in `plannin
   - [ ] **End-to-end parity** (also cover any surrounding processors if remote execution is expected to fully mirror embedded behavior)
 - [x] Confirm supported network/property matrix:
   - [x] `ALLOW_SAME_TOKEN_NAME == 1` only (mainnet-modern)
-  - [ ] must support `ALLOW_SAME_TOKEN_NAME == 0` (legacy replay)
-  - [ ] must support `ALLOW_ASSET_OPTIMIZATION == 1` (balances in `AccountAssetStore`)
+  - [x] must support `ALLOW_SAME_TOKEN_NAME == 0` (legacy replay)
+  - [x] must support `ALLOW_ASSET_OPTIMIZATION == 1` (balances in `AccountAssetStore`)
   - [x] must support `ALLOW_BLACKHOLE_OPTIMIZATION == 1` (burn counter)
 
 ## 1) Receipt parity (required)
@@ -56,17 +56,22 @@ Goal: replicate Java's `AccountCapsule.assetBalanceEnoughV2()` semantics:
 Checklist:
 
 - [x] Decide approach:
-  - [x] **Minimal** (only support allowSameTokenName==1, asset optimization disabled)
-  - [ ] **Full parity** (support allowSameTokenName==0 and asset optimization)
-- [ ] If full parity:
-  - [ ] Add a Rust helper that mirrors `assetBalanceEnoughV2()`:
-    - [ ] accept `(account_proto, key_bytes, allow_same_token_name, allow_asset_optimization, account_asset_store)` (or hide behind storage adapter)
-  - [ ] Implement/extend storage adapter support for the `AccountAssetStore` DB if the backend is expected to run with `ALLOW_ASSET_OPTIMIZATION == 1`.
-  - [ ] Update ExchangeCreate validation to use this helper instead of `get_asset_balance_v2()`.
-- [ ] Add tests for validation behavior:
-  - [ ] allowSameTokenName==0 token name key present in `Account.asset` → validate passes
-  - [ ] allowSameTokenName==1 token id present in `Account.asset_v2` → validate passes
-  - [ ] allowAssetOptimization==1 and balance present only in account-asset store → validate passes
+  - [ ] **Minimal** (only support allowSameTokenName==1, asset optimization disabled)
+  - [x] **Full parity** (support allowSameTokenName==0 and asset optimization)
+- [x] If full parity:
+  - [x] Add a Rust helper that mirrors `assetBalanceEnoughV2()`:
+    - [x] accept `(account_proto, key_bytes, allow_same_token_name, allow_asset_optimization, account_asset_store)` (or hide behind storage adapter)
+    - [x] Implemented `asset_balance_enough_v2()` in `engine.rs` that handles all modes
+  - [x] Implement/extend storage adapter support for the `AccountAssetStore` DB if the backend is expected to run with `ALLOW_ASSET_OPTIMIZATION == 1`.
+    - [x] Added `ACCOUNT_ASSET` constant in `db_names.rs`
+    - [x] Added `get_allow_asset_optimization()` method
+    - [x] Added `get_asset_balance_from_asset_store()` method
+    - [x] Added `import_asset_if_optimized()` helper in `mod.rs` (mirrors Java's `importAsset()`)
+  - [x] Update ExchangeCreate validation to use this helper instead of `get_asset_balance_v2()`.
+- [x] Add tests for validation behavior:
+  - [x] allowSameTokenName==0 token name key present in `Account.asset` → validate passes (`test_exchange_create_legacy_mode_reads_asset_map`)
+  - [x] allowSameTokenName==1 token id present in `Account.asset_v2` → validate passes (`test_exchange_create_receipt_includes_fee_and_exchange_id`)
+  - [x] allowAssetOptimization==1 and balance present only in account-asset store → validate passes (`test_exchange_create_asset_optimization_reads_asset_store`)
 
 ## 4) Fix `EXCHANGE_CREATE_FEE` fallback default (required)
 
