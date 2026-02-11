@@ -6,7 +6,7 @@ This checklist assumes we want to resolve the parity gaps identified in `plannin
 
 - [x] Confirm scope:
   - [x] **Actuator-only parity** (match `ExchangeCreateActuator` + TRC-10 balance helpers + receipts)
-  - [ ] **End-to-end parity** (also cover any surrounding processors if remote execution is expected to fully mirror embedded behavior)
+  - [x] **End-to-end parity** (also cover any surrounding processors if remote execution is expected to fully mirror embedded behavior)
 - [x] Confirm supported network/property matrix:
   - [x] `ALLOW_SAME_TOKEN_NAME == 1` only (mainnet-modern)
   - [x] must support `ALLOW_SAME_TOKEN_NAME == 0` (legacy replay)
@@ -25,7 +25,7 @@ Goal: match Java's `ret.setStatus(fee, SUCESS)` + `ret.setExchangeId(id)` serial
 - [x] Add a small Rust test that decodes the returned `tron_transaction_result` bytes and asserts:
   - [x] field 1 == exchange_create_fee
   - [x] field 21 == exchange_id
-  - [ ] matches fixture `conformance/fixtures/exchange_create_contract/*/expected/result.pb`
+  - [x] matches fixture `conformance/fixtures/exchange_create_contract/*/expected/result.pb` (`test_exchange_create_receipt_matches_conformance_fixture`)
 
 ## 2) Fee sink parity: burn vs blackhole credit (required)
 
@@ -80,19 +80,39 @@ Goal: align Rust fallback with Java's initialization value.
 - [x] In `rust-backend/crates/execution/src/storage_adapter/engine.rs`:
   - [x] Change the fallback default for `get_exchange_create_fee()` to `1024000000` (1024 TRX in SUN)
   - [x] Fix the comment to match Java
-- [ ] Add a unit test for "missing key" behavior (if you keep defaults):
-  - [ ] missing `EXCHANGE_CREATE_FEE` → returns `1024000000`
+- [x] Add a unit test for "missing key" behavior (if you keep defaults):
+  - [x] missing `EXCHANGE_CREATE_FEE` → returns `1024000000` (`test_exchange_create_fee_default_when_missing`)
 
-## 5) Verification steps (before enabling in config)
+## 5) End-to-end parity tests (surrounding processors)
+
+Goal: Verify state changes match Java's behavior after full transaction execution.
+
+- [x] Add tests for state changes after execution:
+  - [x] Owner TRX balance deduction: fee + TRX deposit (`test_exchange_create_deducts_owner_trx_balance`)
+  - [x] Owner TRC-10 balance deduction (`test_exchange_create_deducts_owner_trc10_balance`)
+  - [x] Exchange record storage in ExchangeV2Store (`test_exchange_create_stores_exchange_record`)
+  - [x] Exchange record content verification (creator, balances, token IDs)
+  - [x] Token-to-token exchange (no TRX involved) (`test_exchange_create_token_to_token`)
+  - [x] LATEST_EXCHANGE_NUM update (`test_exchange_create_increments_exchange_id`)
+- [x] Add validation error tests:
+  - [x] Insufficient balance for fee (`test_exchange_create_fails_insufficient_balance_for_fee`)
+  - [x] Insufficient TRX for deposit (`test_exchange_create_fails_insufficient_trx_for_deposit`)
+  - [x] Insufficient TRC-10 balance (`test_exchange_create_fails_insufficient_trc10_balance`)
+  - [x] Same tokens (`test_exchange_create_fails_same_tokens`)
+  - [x] Zero balance (`test_exchange_create_fails_zero_balance`)
+  - [x] Balance exceeds limit (`test_exchange_create_fails_balance_exceeds_limit`)
+  - [x] Invalid token ID (`test_exchange_create_fails_invalid_token_id`)
+
+## 6) Verification steps (before enabling in config)
 
 - [x] Rust:
-  - [x] `cd rust-backend && cargo test` (exchange_create tests pass)
+  - [x] `cd rust-backend && cargo test` (exchange_create tests pass - 19 tests)
   - [ ] Run the conformance runner for `exchange_create_contract` fixtures with `exchange_create_enabled=true`
 - [ ] Java (optional, if running in dual/remote mode):
   - [ ] `./gradlew :framework:test --tests "org.tron.core.storage.spi.DualStorageModeIntegrationTest"`
   - [ ] Validate receipt bytes parsed by `ExecutionProgramResult.fromExecutionResult()` include fee + exchange_id
 
-## 6) Rollout checklist (after fixes)
+## 7) Rollout checklist (after fixes)
 
 - [ ] Keep `exchange_create_enabled` default `false` until conformance passes
 - [ ] Enable it in controlled environments (devnet / conformance runs) first
