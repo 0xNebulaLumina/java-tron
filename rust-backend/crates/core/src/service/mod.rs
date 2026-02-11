@@ -8665,9 +8665,16 @@ impl BackendService {
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
         // Handle fee (burn or blackhole)
+        // Java: DynamicPropertiesStore.supportBlackHoleOptimization()
+        //   - if true: burnTrx(fee) -> increment BURN_TRX_AMOUNT
+        //   - if false: credit blackhole account balance
         let support_black_hole = storage_adapter.support_black_hole_optimization()
-            .unwrap_or(true);
-        if !support_black_hole {
+            .map_err(|e| format!("Failed to get blackhole optimization flag: {}", e))?;
+        if support_black_hole {
+            // Burn the fee by incrementing BURN_TRX_AMOUNT
+            storage_adapter.burn_trx(exchange_create_fee as u64)
+                .map_err(|e| format!("Failed to burn fee: {}", e))?;
+        } else {
             // Credit blackhole account
             let blackhole_addr = storage_adapter.get_blackhole_address_evm();
             storage_adapter.add_balance(&blackhole_addr, exchange_create_fee as u64)
@@ -8695,8 +8702,11 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        // Build receipt with exchange_id
+        // Build receipt with fee and exchange_id
+        // Java: ret.setStatus(fee, SUCESS) + ret.setExchangeId(id)
+        // Proto fields: fee=1, exchange_id=21
         let receipt = TransactionResultBuilder::new()
+            .with_fee(exchange_create_fee)
             .with_exchange_id(exchange_id)
             .build();
 

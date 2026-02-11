@@ -5136,7 +5136,8 @@ impl EngineBackedEvmStateStore {
 
     /// Get EXCHANGE_CREATE_FEE dynamic property
     /// Fee charged to create an exchange (in SUN)
-    /// Default in Java: 1024_000_000_000L (1024 TRX)
+    /// Java default: 1024_000_000L (1024 TRX in SUN)
+    /// See: DynamicPropertiesStore.java initialization
     pub fn get_exchange_create_fee(&self) -> Result<i64> {
         let key = b"EXCHANGE_CREATE_FEE";
         match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
@@ -5147,12 +5148,14 @@ impl EngineBackedEvmStateStore {
                     Ok(fee)
                 } else {
                     tracing::warn!("EXCHANGE_CREATE_FEE has invalid length: {}", data.len());
-                    Ok(1024_000_000_000i64) // Default
+                    // Java default: 1024_000_000L (1024 TRX in SUN)
+                    Ok(1024_000_000i64)
                 }
             },
             None => {
                 tracing::debug!("EXCHANGE_CREATE_FEE not found, returning default");
-                Ok(1024_000_000_000i64) // Default: 1024 TRX
+                // Java default: 1024_000_000L (1024 TRX in SUN)
+                Ok(1024_000_000i64)
             }
         }
     }

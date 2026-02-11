@@ -9,6 +9,7 @@ mod asset_issue;
 mod cancel_all_unfreeze_v2;
 mod create_smart_contract;
 mod delegate_resource;
+mod exchange_create;
 mod freeze_balance;
 mod trc10_transfer;
 mod witness_update;
