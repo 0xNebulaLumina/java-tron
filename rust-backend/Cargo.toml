@@ -54,6 +54,10 @@ prometheus = "0.13"
 name = "tron-backend"
 path = "src/main.rs"
 
+[[bin]]
+name = "tron-backend-migrate-aext"
+path = "src/bin/migrate_aext.rs"
+
 [features]
 default = ["storage", "execution"]
 storage = ["tron-backend-storage"]

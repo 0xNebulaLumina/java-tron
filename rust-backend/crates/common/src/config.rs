@@ -440,6 +440,25 @@ pub struct RemoteExecutionConfig {
     /// Default: false for backward compatibility (uses safe defaults)
     /// Set to true for conformance testing or strict Java parity
     pub strict_dynamic_properties: bool,
+
+    // === AEXT Migration: Lazy Backfill (Phase 2) ===
+    //
+    // When migrating from account-resource (persisted AEXT) to protocol::Account,
+    // operators may upgrade without running the offline migrator first.
+    // Lazy backfill provides a safety net: when we detect an account with
+    // default/empty resource fields but a non-empty AEXT record, we apply
+    // the AEXT fields to the proto and delete the AEXT key.
+
+    /// Enable lazy AEXT→Account backfill during execution
+    ///
+    /// When true: On first tracked bandwidth update for an account, if proto resource
+    /// fields are default/empty AND account-resource has non-default values, apply
+    /// AEXT→proto and delete the AEXT key.
+    ///
+    /// When false: Skip lazy backfill (requires running offline migrator first).
+    ///
+    /// Default: true for one release cycle to protect upgrades without offline migration.
+    pub lazy_aext_backfill: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -615,6 +634,9 @@ impl Config {
         builder = builder.set_default("execution.remote.market_sell_asset_enabled", false)?;
         builder = builder.set_default("execution.remote.market_cancel_order_enabled", false)?;
 
+        // AEXT Migration: Lazy backfill (Phase 2)
+        builder = builder.set_default("execution.remote.lazy_aext_backfill", true)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -675,6 +697,8 @@ impl Default for RemoteExecutionConfig {
             market_cancel_order_enabled: false, // Default false for safe rollout
             // Task 5: Dynamic property strictness
             strict_dynamic_properties: false, // Default false for backward compatibility
+            // AEXT Migration: Lazy backfill (Phase 2)
+            lazy_aext_backfill: true, // Default true for upgrade safety - disable after migration window
         }
     }
 } 

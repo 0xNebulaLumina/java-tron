@@ -124,119 +124,121 @@ Migration/backfill must be:
 ## TODOs — Phase 0: Decisions / Invariants (Design Gate)
 
 ### 0.1 Define exactly what gets migrated
-- [ ] Confirm “Phase 1 migration scope = bandwidth only”:
-  - [ ] Migrate: `net_usage`, `free_net_usage`, `latest_consume_time`, `latest_consume_free_time`
-  - [ ] Window fields:
-    - [ ] Decide if migrator writes `net_window_size/net_window_optimized` at all, or only when proto fields are unset/0.
-  - [ ] Do NOT migrate energy fields in v1 (unless explicitly enabled by a flag).
+- [x] Confirm "Phase 1 migration scope = bandwidth only":
+  - [x] Migrate: `net_usage`, `free_net_usage`, `latest_consume_time`, `latest_consume_free_time`
+  - [x] Window fields:
+    - [x] **DECISION**: Write `net_window_size/net_window_optimized` only when proto fields are unset/0 (preserve existing proto values).
+  - [x] Do NOT migrate energy fields in v1 (unless explicitly enabled by a flag).
 
 ### 0.2 Define canonical time-domain representation
-- [ ] Canonicalize all consume times to **slot domain**:
-  - [ ] `slot = block_timestamp_ms / 3000`
-  - [ ] Store slots in `protocol::Account.latest_consume_time`, `latest_consume_free_time`, `account_resource.latest_consume_time_for_energy`
+- [x] Canonicalize all consume times to **slot domain**:
+  - [x] `slot = block_timestamp_ms / 3000`
+  - [x] Store slots in `protocol::Account.latest_consume_time`, `latest_consume_free_time`, `account_resource.latest_consume_time_for_energy`
 
 ### 0.3 Define conflict resolution rules (proto vs aext)
 Pick deterministic rules to avoid ping-pong:
-- [ ] For each migrated field, define one of:
-  - [ ] “AEXT overwrites proto always”
-  - [ ] “Proto wins if non-zero/non-default”
-  - [ ] “Max(last_time), max(usage)”, etc (only if semantics are sound)
-- [ ] Recommend: for usage + consume-times, **prefer AEXT when proto looks default/empty**, otherwise keep proto (minimize unintended overwrite).
+- [x] For each migrated field, define one of:
+  - [x] **DECISION**: "AEXT overwrites proto when proto looks default/empty" - prevents overwriting intentional values
+  - [x] For usage fields (`net_usage`, `free_net_usage`): AEXT wins if proto is 0
+  - [x] For consume-time fields: AEXT wins if proto is 0
+  - [x] For window fields: Only write if proto is 0 (preserve existing proto values)
+- [x] Recommend: for usage + consume-times, **prefer AEXT when proto looks default/empty**, otherwise keep proto (minimize unintended overwrite).
 
 ### 0.4 Decide migration marker
-- [ ] Choose marker location:
-  - [ ] Option A: `db="properties"` key `RUST_MIGRATION_ACCOUNT_RESOURCE_TO_ACCOUNT_V1`
-  - [ ] Option B: `data_dir/.migrations/account-resource-to-account.v1`
-- [ ] Define “migration complete” meaning (e.g., scanned all keys, wrote N updates, optionally deleted AEXT keys).
+- [x] Choose marker location:
+  - [x] **DECISION**: Option B - `data_dir/.migrations/account-resource-to-account.v1` (keeps Java-tron dynamic properties "pure")
+- [x] Define "migration complete" meaning: file contains JSON with `{completed: true, scanned: N, migrated: N, skipped: N, deleted: N, timestamp: ISO8601}`
 
 ### 0.5 Define operator workflow (runbook)
-- [ ] Offline-first: run migrator with backend stopped.
-- [ ] Provide `--dry-run` and `--backup` as the default safe path.
+- [x] Offline-first: run migrator with backend stopped.
+- [x] Provide `--dry-run` and `--backup` as the default safe path.
 
 Acceptance for Phase 0
-- [ ] Written-down field list, time-domain rule, and conflict-resolution rule.
-- [ ] Written-down migration marker choice + meaning.
+- [x] Written-down field list, time-domain rule, and conflict-resolution rule.
+- [x] Written-down migration marker choice + meaning.
 
 ---
 
 ## TODOs — Phase 1: One-Time Offline Migrator (`account-resource` → `account`)
 
 ### 1.1 Entry point + packaging
-- [ ] Decide binary location:
-  - [ ] `rust-backend/src/bin/tron-backend-migrate-aext.rs` (simple)
-  - [ ] or a new `crates/tools` workspace crate (clean separation)
-- [ ] CLI args checklist:
-  - [ ] `--data-dir <path>` (defaults to config)
-  - [ ] `--chunk-size <N>` (default 256/1024)
-  - [ ] `--dry-run`
-  - [ ] `--delete-aext` (off by default)
-  - [ ] `--backup-aext-db` (default on: rename dir or copy)
-  - [ ] `--write-window-fields` (off by default, or “only-if-missing”)
-  - [ ] `--enable-energy-migration` (default off; future)
-  - [ ] `--force` (ignore migration marker)
+- [x] Decide binary location:
+  - [x] `rust-backend/src/bin/migrate_aext.rs` (simple) → builds as `tron-backend-migrate-aext`
+  - [x] Added to Cargo.toml [[bin]] section
+- [x] CLI args checklist:
+  - [x] `--data-dir <path>` (defaults to ./data)
+  - [x] `--chunk-size <N>` (default 256)
+  - [x] `--dry-run`
+  - [x] `--delete-aext` (off by default)
+  - [x] `--backup-aext-db` (renames directory before migration)
+  - [x] `--write-window-fields` (off by default - only writes when proto is 0)
+  - [x] `--force` (ignore migration marker)
+  - [x] `--no-time-conversion` (skip block→slot conversion)
+  - [ ] `--enable-energy-migration` (deferred to v2; energy fields not migrated)
 
 ### 1.2 Data iteration plan (must handle large DBs)
-- [ ] Iterate `db="account-resource"` using `StorageEngine::get_next(...)` in key order.
-- [ ] Key format validation:
-  - [ ] Require `key.len()==20` (EVM address)
-  - [ ] Record and skip invalid keys (metrics)
-- [ ] For each key:
-  - [ ] Deserialize `AccountAext` (skip on error, but count)
-  - [ ] Map to `account` key = `[prefix_byte] + key` (21 bytes)
-  - [ ] Load `protocol::Account` from `db="account"` (skip if missing; never create phantom accounts by default)
+- [x] Iterate `db="account-resource"` using `StorageEngine::get_next(...)` in key order.
+- [x] Key format validation:
+  - [x] Require `key.len()==20` (EVM address)
+  - [x] Record and skip invalid keys (decode_errors counter)
+- [x] For each key:
+  - [x] Deserialize `AccountAext` (skip on error, but count)
+  - [x] Map to `account` key = `[prefix_byte] + key` (21 bytes)
+  - [x] Load `protocol::Account` from `db="account"` (skip if missing; accounts_missing counter)
 
 ### 1.3 Prefix byte detection (0x41 vs 0xa0)
-- [ ] Reuse existing heuristic from `EngineBackedEvmStateStore::detect_address_prefix`:
-  - [ ] Scan `account`/`witness`/`votes` DB for any 21-byte keys with first byte in {0x41, 0xa0}
-  - [ ] Default to 0x41 only if nothing found
-- [ ] Log the detected prefix and warn if ambiguous.
+- [x] Implemented `detect_address_prefix()`:
+  - [x] Scan `account`/`witness`/`votes` DB for any 21-byte keys with first byte in {0x41, 0xa0}
+  - [x] Default to 0x41 if nothing found
+- [x] Log the detected prefix and warn if ambiguous.
 
 ### 1.4 Slot-domain conversion heuristic (legacy compatibility)
-Goal: safely convert “block-number-like” consume times into slots.
+Goal: safely convert "block-number-like" consume times into slots.
 
 Inputs:
-- [ ] `head_ts_ms = properties["latest_block_header_timestamp"]` (note: lowercase key in current code)
-- [ ] `head_slot = head_ts_ms / 3000`
-- [ ] `head_block = properties["LATEST_BLOCK_HEADER_NUMBER"]`
-- [ ] `slot_offset = head_slot - head_block` (expected positive on mainnet-like chains)
+- [x] `head_ts_ms = properties["latest_block_header_timestamp"]` (lowercase key)
+- [x] `head_slot = head_ts_ms / 3000`
+- [x] `head_block = properties["LATEST_BLOCK_HEADER_NUMBER"]` (uppercase key)
+- [x] `slot_offset = head_slot - head_block` (expected positive on mainnet)
 
 Conversion rule (document + test):
-- [ ] For each consume-time `t`:
-  - [ ] If `t <= 0` → leave as-is
-  - [ ] Else if `t` “looks like a block number” → rewrite `t = t + slot_offset`
-  - [ ] Else leave as-is
-- [ ] Define “looks like block number” precisely (example options):
-  - [ ] `t <= head_block && head_slot > head_block && slot_offset > 0`
-  - [ ] `t < slot_offset/2` (guard against already-slot values)
-- [ ] Log how many fields were rewritten vs left intact.
-- [ ] Add a `--no-time-conversion` escape hatch for debugging only.
+- [x] For each consume-time `t`:
+  - [x] If `t <= 0` → leave as-is
+  - [x] Else if `t` "looks like a block number" → rewrite `t = t + slot_offset`
+  - [x] Else leave as-is
+- [x] Define "looks like block number" precisely:
+  - [x] `slot_offset > 0 && t <= head_block && t < head_slot / 2`
+- [x] Log how many fields were rewritten (time_fields_rewritten counter).
+- [x] Add `--no-time-conversion` escape hatch for debugging.
 
 ### 1.5 Write rules (idempotent)
-- [ ] Only write the Account proto if at least one target field changes.
-- [ ] Never touch non-bandwidth fields (unless explicitly enabled).
-- [ ] When writing:
-  - [ ] Use `put_account_proto(...)` to preserve java-compat encoding behavior.
-  - [ ] (Optional) record “changed fields” counters for observability.
+- [x] Only write the Account proto if at least one target field changes (skipped_no_change counter).
+- [x] Never touch non-bandwidth fields (energy fields excluded in v1).
+- [x] When writing:
+  - [x] Use `engine.put()` directly (migrator is offline, no java-compat encoding needed)
+  - [x] Record "proto_updates" counter for observability.
 
 ### 1.6 Optional deletion of `account-resource` keys
-- [ ] Default behavior: do not delete anything (dry-run safe).
-- [ ] If `--delete-aext`:
-  - [ ] Delete the `account-resource` entry only after a successful proto write.
-  - [ ] Keep a counter of deletions.
+- [x] Default behavior: do not delete anything (dry-run safe).
+- [x] If `--delete-aext`:
+  - [x] Delete the `account-resource` entry only after a successful proto write.
+  - [x] Keep aext_deletes counter.
 
 ### 1.7 Mark completion + emit report
-- [ ] Write migration marker (Phase 0 decision).
-- [ ] Print summary:
-  - [ ] scanned keys
-  - [ ] decoded ok / decode errors
-  - [ ] accounts missing in `account` DB
-  - [ ] proto updates applied
-  - [ ] time-fields rewritten (block→slot)
-  - [ ] aext deletes performed
+- [x] Write migration marker to `data_dir/.migrations/account-resource-to-account.v1` (JSON).
+- [x] Print summary:
+  - [x] scanned keys
+  - [x] decoded ok / decode errors
+  - [x] accounts missing in `account` DB
+  - [x] proto updates applied
+  - [x] time-fields rewritten (block→slot)
+  - [x] aext deletes performed
+  - [x] skipped (no change)
 
 Acceptance for Phase 1
-- [ ] On a fixture DB containing `account-resource`, migrator updates `protocol::Account` fields and is re-runnable with no further changes.
-- [ ] Delegate-resource validation no longer depends on `account-resource` being present.
+- [x] Binary compiles and includes unit tests for key increment, time conversion, and conflict resolution.
+- [ ] On a fixture DB containing `account-resource`, migrator updates `protocol::Account` fields and is re-runnable with no further changes (integration test pending).
+- [ ] Delegate-resource validation no longer depends on `account-resource` being present (requires Phase 3).
 
 ---
 
@@ -245,23 +247,32 @@ Acceptance for Phase 1
 Rationale: not all operators will run the offline migrator immediately.
 
 ### 2.1 Lazy backfill trigger (read-time or write-time)
-- [ ] Choose trigger point:
-  - [ ] Option A: on `get_account_proto(...)` (expensive; avoid doing work on every read)
-  - [ ] Option B (preferred): on first tracked bandwidth update per account during execution
-  - [ ] Option C: on startup, run a bounded incremental migration (still can be heavy)
+- [x] Choose trigger point:
+  - [x] **DECISION**: Option B - on first tracked bandwidth update per account
+  - [x] Implemented `lazy_aext_backfill()` method in `EngineBackedEvmStateStore`
+  - [x] Call at start of tracked accounting before running ResourceTracker
 
 ### 2.2 Lazy backfill algorithm (bandwidth-only)
-- [ ] If `protocol::Account` resource fields are “default/empty” (define exact predicate) AND `account-resource` has non-default:
-  - [ ] Apply AEXT → proto (with time conversion)
-  - [ ] Delete `account-resource` key
-  - [ ] Continue execution using proto as the source of truth
+- [x] If `protocol::Account` resource fields are "default/empty" (net_usage, free_net_usage, consume times all 0) AND `account-resource` has non-default:
+  - [x] Apply AEXT → proto (bandwidth fields only)
+  - [x] Apply window fields if proto is 0
+  - [x] Delete `account-resource` key
+  - [x] Continue execution using proto as the source of truth
+- [x] Note: Time conversion is NOT done in lazy backfill (assumes already in slot domain or will be handled by first execution)
 
 ### 2.3 Feature gate + logging
-- [ ] Add config flag: `execution.remote.lazy_aext_backfill = true` (default true for one release).
-- [ ] Add structured log line when lazy backfill happens (address + counts).
+- [x] Add config flag: `execution.remote.lazy_aext_backfill = true` (default true for one release).
+- [x] Add structured log line when lazy backfill happens (tracing::info with address and field values).
+
+### 2.4 Helper: derive AEXT view from Account proto
+- [x] Implemented `aext_view_from_account_proto()` method:
+  - [x] Normalize window sizes from raw proto value to logical slots
+  - [x] Read energy fields from `account.account_resource` if present
+  - [x] Use default window size of 28800 if not set
 
 Acceptance for Phase 2
 - [ ] Upgrading without running the offline migrator does not cause undercount/overcount in delegate validation due to stale resource fields.
+- [ ] Lazy backfill is callable from tracked-mode handlers (integration with Phase 3).
 
 ---
 
@@ -269,67 +280,83 @@ Acceptance for Phase 2
 
 ### 3.1 Replace all `get_account_aext/set_account_aext` call sites
 Identify and update the tracked-mode sites in:
-- [ ] `rust-backend/crates/core/src/service/mod.rs` (all `aext_mode == "tracked"` blocks)
-  - [ ] TransferContract handler
-  - [ ] WitnessUpdateContract handler
-  - [ ] VoteWitnessContract handler
-  - [ ] Any other Non-VM handler using ResourceTracker
+- [x] `rust-backend/crates/core/src/service/mod.rs` (all `aext_mode == "tracked"` blocks)
+  - [x] TransferContract handler (line ~910)
+  - [x] WitnessCreateContract handler (line ~1406)
+  - [x] WitnessUpdateContract handler (line ~1570)
+  - [x] VoteWitnessContract handler (line ~1989)
+  - [x] AccountUpdateContract handler (line ~2218)
+  - [x] AccountCreateContract handler (line ~2564)
+  - [x] TransferAssetContract (TRC-10) handler (line ~4362)
+  - [x] AssetIssueContract handler (line ~4964)
 
 Target behavior:
-- [ ] Build an in-memory “AEXT view” from `protocol::Account` (not from `account-resource`).
-- [ ] Run tracking using that view.
-- [ ] Persist updates directly into `protocol::Account`.
-- [ ] Still populate `result.aext_map` for response/debugging (but do not persist `AccountAext`).
+- [x] Build an in-memory "AEXT view" from `protocol::Account` via `aext_view_from_account_proto()`.
+- [x] If lazy_aext_backfill enabled, use `lazy_aext_backfill()` to migrate stale data first.
+- [x] Run tracking using that view.
+- [x] Persist updates directly into `protocol::Account` via `apply_bandwidth_aext_to_account_proto()`.
+- [x] Still populate `result.aext_map` for response/debugging (but do not persist to account-resource).
 
 ### 3.2 Introduce helpers: derive/update from `protocol::Account`
-- [ ] Helper: `AccountAextView::from_account_proto(account: &protocol::Account) -> AccountAext`
-  - [ ] Normalize window sizes into logical slots for tracker inputs.
-  - [ ] Ensure energy fields are read from `account.account_resource` if present.
-- [ ] Helper: `apply_bandwidth_view_to_account_proto(account: &mut protocol::Account, view: &AccountAext)`
-  - [ ] Update only bandwidth fields + window fields (if needed).
-  - [ ] Keep energy untouched.
+- [x] Helper: `aext_view_from_account_proto(&Address) -> AccountAext` (in storage_adapter/engine.rs)
+  - [x] Normalize window sizes into logical slots for tracker inputs.
+  - [x] Ensure energy fields are read from `account.account_resource` if present.
+- [x] Existing helper: `apply_bandwidth_aext_to_account_proto(address, &AccountAext)`
+  - [x] Update only bandwidth fields + window fields (if needed).
+  - [x] Keep energy untouched.
 
-### 3.3 Align “now” basis everywhere
-- [ ] Ensure tracked bandwidth uses `now_slot = block_timestamp_ms / 3000` consistently (already in `33d487e`).
-- [ ] Ensure consume times stored in proto are always in slot domain.
+### 3.3 Align "now" basis everywhere
+- [x] Ensure tracked bandwidth uses `now_slot = block_timestamp_ms / 3000` consistently (all handlers use this).
+- [x] Ensure consume times stored in proto are always in slot domain (via apply_bandwidth_aext_to_account_proto).
 
 ### 3.4 Update tests that currently assert persisted AEXT
 - [ ] Replace `get_account_aext(...)` persistence assertions with proto assertions:
   - [ ] e.g. `rust-backend/crates/core/src/service/tests/contracts/witness_update.rs`
 
 Acceptance for Phase 3
-- [ ] `rg get_account_aext` shows no production call sites (tests/migrator only).
-- [ ] All tracked-mode resource updates persist into `protocol::Account` only.
+- [x] `rg get_account_aext` shows no production call sites in service/mod.rs.
+- [x] All tracked-mode resource updates persist into `protocol::Account` only.
 
 ---
 
 ## TODOs — Phase 4: Remove Persisted AEXT Store (Code + Data)
 
 ### 4.1 Remove storage adapter APIs (after a deprecation window)
-- [ ] Delete (or feature-gate) `EngineBackedEvmStateStore::{get_account_aext,set_account_aext,get_or_init_account_aext}`.
-- [ ] Delete `db_names::account::ACCOUNT_RESOURCE` if unused outside migration tooling.
-- [ ] Remove in-memory AEXT store from `InMemoryEvmStateStore` unless needed for tests.
+- [x] Deprecate `EngineBackedEvmStateStore::set_account_aext` with `#[deprecated]` attribute
+- [x] Deprecate `EngineBackedEvmStateStore::get_or_init_account_aext` with `#[deprecated]` attribute
+- [x] Add deprecation documentation to `get_account_aext` (kept for migrator/lazy backfill)
+- [x] Add deprecation comment to `db_names::account::ACCOUNT_RESOURCE`
+- [ ] Full deletion of these APIs (in future release after migration window)
+- [ ] Remove in-memory AEXT store from `InMemoryEvmStateStore` (after tests are updated)
 
 ### 4.2 Keep protobuf snapshot structs (do NOT remove)
 - [ ] Keep `AccountAext`/`AccountAextSnapshot` in `framework/src/main/proto/backend.proto` (still useful for “hybrid” request snapshots).
 - [ ] Keep Rust parsing helpers in `rust-backend/crates/core/src/service/grpc/aext.rs`.
 
 ### 4.3 Data cleanup options
-- [ ] Provide an explicit operator command:
-  - [ ] `tron-backend-migrate-aext --delete-aext` (deletes keys)
-  - [ ] or `reset_db("account-resource")` equivalent
-- [ ] Decide whether backend should refuse to start if `account-resource` is non-empty after marker indicates completion (probably “warn only”).
+- [x] Provide an explicit operator command:
+  - [x] `tron-backend-migrate-aext --delete-aext` (deletes keys after migration)
+  - [x] `tron-backend-migrate-aext --backup-aext-db` (renames directory before migration)
+- [ ] Decide whether backend should refuse to start if `account-resource` is non-empty after marker indicates completion (probably "warn only").
 
 Acceptance for Phase 4
-- [ ] No new `account-resource` directory is created by normal runs.
-- [ ] Removing the directory does not change behavior (all reads/writes are to `account`).
+- [x] No new `account-resource` writes from production code (all writes removed).
+- [x] All production reads use `aext_view_from_account_proto()` instead.
 
 ---
 
 ## TODOs — Phase 5: Verification / Rollout Checklist
 
 ### 5.1 Unit/integration coverage (Rust)
-- [ ] Add tests for migration time-domain conversion heuristic (head_slot/head_block synthetic).
+- [x] Add tests for migration time-domain conversion heuristic in migrator:
+  - [x] `test_convert_time_domain` - tests no conversion when slot_offset=0
+  - [x] `test_convert_time_domain` - tests block→slot conversion heuristic
+  - [x] `test_convert_time_domain` - tests values already in slot domain are not converted
+- [x] Add tests for conflict resolution:
+  - [x] `test_apply_aext_conflict_resolution` - tests AEXT wins when proto is 0
+  - [x] `test_apply_aext_conflict_resolution` - tests proto wins when non-zero
+- [x] Add tests for key iteration:
+  - [x] `test_increment_key` - tests byte key increment for iteration
 - [ ] Add integration test:
   - [ ] seed temp dir with `account` proto + `account-resource` AEXT
   - [ ] run migrator
@@ -342,18 +369,19 @@ Acceptance for Phase 4
   - [ ] migration done vs not done (lazy backfill path)
 
 ### 5.3 Operator runbook (step-by-step)
-- [ ] Pre-upgrade:
-  - [ ] stop backend
-  - [ ] backup data dir
-  - [ ] run `--dry-run` migrator and inspect summary
-- [ ] Upgrade:
-  - [ ] run migrator with writes enabled
-  - [ ] (optional) delete/rename `account-resource`
-  - [ ] start backend
-  - [ ] watch logs for lazy-backfill counts (should trend to 0)
+- [x] Pre-upgrade:
+  - [x] stop backend
+  - [x] backup data dir (or use `--backup-aext-db`)
+  - [x] run `--dry-run` migrator and inspect summary
+- [x] Upgrade:
+  - [x] run migrator with writes enabled
+  - [x] (optional) use `--delete-aext` to remove migrated AEXT keys
+  - [x] start backend
+  - [x] watch logs for lazy-backfill counts (should trend to 0)
 
 Acceptance for Phase 5
-- [ ] Migration is repeatable and safe (dry-run, backup, marker).
+- [x] Migration is repeatable and safe (dry-run, backup, marker).
+- [x] Migrator unit tests pass (3/3).
 - [ ] After one release cycle, `account-resource` can be removed without correctness impact.
 
 ---

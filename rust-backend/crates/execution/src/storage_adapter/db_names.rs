@@ -32,8 +32,17 @@ pub mod account {
     /// Java: AccountIdIndexStore.java - dbName = "accountid-index"
     pub const ACCOUNT_ID_INDEX: &str = "accountid-index";
 
-    /// Account resource usage tracking (AEXT)
-    /// Custom Rust-side tracking, may not exist in Java
+    /// Account resource usage tracking (AEXT) - **DEPRECATED**
+    ///
+    /// This was a Rust-only sidecar store for resource tracking fields.
+    /// After the AEXT migration (Phase 4), these fields are stored directly
+    /// in `protocol::Account` via the canonical `account` DB.
+    ///
+    /// This constant is retained only for:
+    /// - The offline migrator (`tron-backend-migrate-aext`)
+    /// - The lazy backfill mechanism
+    ///
+    /// New code should NOT use this database.
     pub const ACCOUNT_RESOURCE: &str = "account-resource";
 }
 

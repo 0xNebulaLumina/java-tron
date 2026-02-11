@@ -907,13 +907,19 @@ impl BackendService {
         // Track AEXT for bandwidth if in tracked mode (after validation to ensure validate_fail has 0 writes)
         let mut aext_map = std::collections::HashMap::new();
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::ResourceTracker;
 
-            // Get current AEXT for sender (or initialize with defaults)
-            let current_aext = storage_adapter
-                .get_account_aext(&transaction.from)
-                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
-                .unwrap_or_else(AccountAext::with_defaults);
+            // Phase 3: Read AEXT view from Account proto (not from account-resource DB)
+            // If lazy_aext_backfill is enabled, first migrate any stale AEXT data
+            let current_aext = if execution_config.remote.lazy_aext_backfill {
+                storage_adapter
+                    .lazy_aext_backfill(&transaction.from)
+                    .map_err(|e| format!("Failed to lazy backfill AEXT: {}", e))?
+            } else {
+                storage_adapter
+                    .aext_view_from_account_proto(&transaction.from)
+                    .map_err(|e| format!("Failed to get AEXT view from proto: {}", e))?
+            };
 
             // Get FREE_NET_LIMIT from dynamic properties
             let free_net_limit = storage_adapter
@@ -933,10 +939,7 @@ impl BackendService {
             )
             .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
-            // Persist after AEXT to storage
-            storage_adapter
-                .set_account_aext(&transaction.from, &after_aext)
-                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            // Phase 3: Persist updates directly to Account proto only (no more account-resource writes)
             storage_adapter
                 .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
                 .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
@@ -1403,12 +1406,16 @@ impl BackendService {
         // Track AEXT for bandwidth if in tracked mode
         let mut aext_map = std::collections::HashMap::new();
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::ResourceTracker;
 
-            // Get current AEXT for owner (or initialize with defaults)
-            let current_aext = storage_adapter.get_account_aext(&transaction.from)
-                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
-                .unwrap_or_else(|| AccountAext::with_defaults());
+            // Phase 3: Read AEXT view from Account proto (not from account-resource DB)
+            let current_aext = if execution_config.remote.lazy_aext_backfill {
+                storage_adapter.lazy_aext_backfill(&transaction.from)
+                    .map_err(|e| format!("Failed to lazy backfill AEXT: {}", e))?
+            } else {
+                storage_adapter.aext_view_from_account_proto(&transaction.from)
+                    .map_err(|e| format!("Failed to get AEXT view from proto: {}", e))?
+            };
 
             // Get FREE_NET_LIMIT from dynamic properties
             let free_net_limit = storage_adapter.get_free_net_limit()
@@ -1426,9 +1433,7 @@ impl BackendService {
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
-            // Persist after AEXT to storage
-            storage_adapter.set_account_aext(&transaction.from, &after_aext)
-                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            // Phase 3: Persist updates directly to Account proto only
             storage_adapter
                 .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
                 .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
@@ -1565,10 +1570,14 @@ impl BackendService {
         if aext_mode == "tracked" {
             debug!("AEXT tracking enabled for WITNESS_UPDATE_CONTRACT");
 
-            // Load current AEXT or default
-            let current_aext = storage_adapter.get_account_aext(&owner)
-                .map_err(|e| format!("Failed to load AEXT: {}", e))?
-                .unwrap_or_default();
+            // Phase 3: Read AEXT view from Account proto (not from account-resource DB)
+            let current_aext = if execution_config.remote.lazy_aext_backfill {
+                storage_adapter.lazy_aext_backfill(&owner)
+                    .map_err(|e| format!("Failed to lazy backfill AEXT: {}", e))?
+            } else {
+                storage_adapter.aext_view_from_account_proto(&owner)
+                    .map_err(|e| format!("Failed to get AEXT view from proto: {}", e))?
+            };
 
             // Load FREE_NET_LIMIT from dynamic properties
             let free_net_limit = storage_adapter.get_free_net_limit()
@@ -1586,9 +1595,7 @@ impl BackendService {
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
-            // Persist updated AEXT
-            storage_adapter.set_account_aext(&owner, &after_aext)
-                .map_err(|e| format!("Failed to persist AEXT: {}", e))?;
+            // Phase 3: Persist updates directly to Account proto only
             storage_adapter
                 .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
@@ -1980,12 +1987,16 @@ impl BackendService {
         // Track AEXT for bandwidth if in tracked mode
         let mut aext_map = std::collections::HashMap::new();
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::ResourceTracker;
 
-            // Get current AEXT for owner (or initialize with defaults)
-            let current_aext = storage_adapter.get_account_aext(&owner)
-                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
-                .unwrap_or_else(|| AccountAext::with_defaults());
+            // Phase 3: Read AEXT view from Account proto (not from account-resource DB)
+            let current_aext = if execution_config.remote.lazy_aext_backfill {
+                storage_adapter.lazy_aext_backfill(&owner)
+                    .map_err(|e| format!("Failed to lazy backfill AEXT: {}", e))?
+            } else {
+                storage_adapter.aext_view_from_account_proto(&owner)
+                    .map_err(|e| format!("Failed to get AEXT view from proto: {}", e))?
+            };
 
             // Get FREE_NET_LIMIT from dynamic properties
             let free_net_limit = storage_adapter.get_free_net_limit()
@@ -2003,9 +2014,7 @@ impl BackendService {
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
-            // Persist after AEXT to storage
-            storage_adapter.set_account_aext(&owner, &after_aext)
-                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            // Phase 3: Persist updates directly to Account proto only
             storage_adapter
                 .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
@@ -2207,13 +2216,18 @@ impl BackendService {
 
         let mut aext_map = std::collections::HashMap::new();
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::ResourceTracker;
 
-            // Get current AEXT for owner (or initialize with proper defaults including window size 28800)
-            let current_aext = storage_adapter
-                .get_account_aext(&transaction.from)
-                .map_err(|e| format!("Failed to get owner AEXT: {}", e))?
-                .unwrap_or_else(|| AccountAext::with_defaults());
+            // Phase 3: Read AEXT view from Account proto (not from account-resource DB)
+            let current_aext = if execution_config.remote.lazy_aext_backfill {
+                storage_adapter
+                    .lazy_aext_backfill(&transaction.from)
+                    .map_err(|e| format!("Failed to lazy backfill AEXT: {}", e))?
+            } else {
+                storage_adapter
+                    .aext_view_from_account_proto(&transaction.from)
+                    .map_err(|e| format!("Failed to get AEXT view from proto: {}", e))?
+            };
 
             // Get free net limit from dynamic properties (default: 5000)
             let free_net_limit = storage_adapter
@@ -2232,10 +2246,7 @@ impl BackendService {
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
-            // Persist after AEXT to storage
-            storage_adapter
-                .set_account_aext(&transaction.from, &after_aext)
-                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            // Phase 3: Persist updates directly to Account proto only
             storage_adapter
                 .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
                 .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
@@ -2551,12 +2562,16 @@ impl BackendService {
         let mut create_account_fee_charged: u64 = 0;
 
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker, BandwidthPath};
+            use tron_backend_execution::{ResourceTracker, BandwidthPath};
 
-            // Get current AEXT for owner (or initialize with defaults)
-            let current_aext = storage_adapter.get_account_aext(&owner)
-                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
-                .unwrap_or_else(|| AccountAext::with_defaults());
+            // Phase 3: Read AEXT view from Account proto (not from account-resource DB)
+            let current_aext = if execution_config.remote.lazy_aext_backfill {
+                storage_adapter.lazy_aext_backfill(&owner)
+                    .map_err(|e| format!("Failed to lazy backfill AEXT: {}", e))?
+            } else {
+                storage_adapter.aext_view_from_account_proto(&owner)
+                    .map_err(|e| format!("Failed to get AEXT view from proto: {}", e))?
+            };
 
             // Get FREE_NET_LIMIT from dynamic properties
             let free_net_limit = storage_adapter.get_free_net_limit()
@@ -2621,9 +2636,7 @@ impl BackendService {
                 // on the Java side, so we just track the path here.
             }
 
-            // Persist after AEXT to storage
-            storage_adapter.set_account_aext(&owner, &after_aext)
-                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            // Phase 3: Persist updates directly to Account proto only
             storage_adapter
                 .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
@@ -4347,12 +4360,16 @@ impl BackendService {
         // 4. Track AEXT for bandwidth if in tracked mode
         let mut aext_map = std::collections::HashMap::new();
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::ResourceTracker;
 
-            // Get current AEXT for owner (or initialize with defaults)
-            let current_aext = storage_adapter.get_account_aext(&owner)
-                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
-                .unwrap_or_else(|| AccountAext::with_defaults());
+            // Phase 3: Read AEXT view from Account proto (not from account-resource DB)
+            let current_aext = if execution_config.remote.lazy_aext_backfill {
+                storage_adapter.lazy_aext_backfill(&owner)
+                    .map_err(|e| format!("Failed to lazy backfill AEXT: {}", e))?
+            } else {
+                storage_adapter.aext_view_from_account_proto(&owner)
+                    .map_err(|e| format!("Failed to get AEXT view from proto: {}", e))?
+            };
 
             // Get FREE_NET_LIMIT from dynamic properties
             let free_net_limit = storage_adapter.get_free_net_limit()
@@ -4370,9 +4387,7 @@ impl BackendService {
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
-            // Persist after AEXT to storage
-            storage_adapter.set_account_aext(&owner, &after_aext)
-                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            // Phase 3: Persist updates directly to Account proto only
             storage_adapter
                 .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
@@ -4947,12 +4962,16 @@ impl BackendService {
         let mut aext_map = std::collections::HashMap::new();
 
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::ResourceTracker;
 
-            // Get current AEXT for owner (or initialize with defaults)
-            let current_aext = storage_adapter.get_account_aext(&owner)
-                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
-                .unwrap_or_else(|| AccountAext::with_defaults());
+            // Phase 3: Read AEXT view from Account proto (not from account-resource DB)
+            let current_aext = if execution_config.remote.lazy_aext_backfill {
+                storage_adapter.lazy_aext_backfill(&owner)
+                    .map_err(|e| format!("Failed to lazy backfill AEXT: {}", e))?
+            } else {
+                storage_adapter.aext_view_from_account_proto(&owner)
+                    .map_err(|e| format!("Failed to get AEXT view from proto: {}", e))?
+            };
 
             // Get FREE_NET_LIMIT from dynamic properties
             let free_net_limit = storage_adapter.get_free_net_limit()
@@ -4970,9 +4989,7 @@ impl BackendService {
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
-            // Persist after AEXT to storage
-            storage_adapter.set_account_aext(&owner, &after_aext)
-                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            // Phase 3: Persist updates directly to Account proto only
             storage_adapter
                 .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;

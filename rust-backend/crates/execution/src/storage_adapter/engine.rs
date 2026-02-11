@@ -2590,7 +2590,15 @@ impl EngineBackedEvmStateStore {
         address.as_slice().to_vec()
     }
 
-    /// Get account AEXT (resource tracking fields) for an address
+    /// Get account AEXT (resource tracking fields) for an address.
+    ///
+    /// **DEPRECATED (Phase 4)**: This method reads from the legacy `account-resource` DB.
+    /// After AEXT migration, use `aext_view_from_account_proto()` instead.
+    /// This method is retained only for:
+    /// - The offline migrator (`tron-backend-migrate-aext`)
+    /// - The lazy backfill mechanism (`lazy_aext_backfill()`)
+    ///
+    /// Production code should NOT call this directly.
     pub fn get_account_aext(&self, address: &Address) -> Result<Option<AccountAext>> {
         let key = self.account_aext_key(address);
         tracing::debug!("Getting account AEXT for address {:?}, key: {}",
@@ -2618,7 +2626,13 @@ impl EngineBackedEvmStateStore {
         }
     }
 
-    /// Set account AEXT (resource tracking fields) for an address
+    /// Set account AEXT (resource tracking fields) for an address.
+    ///
+    /// **DEPRECATED (Phase 4)**: This method writes to the legacy `account-resource` DB.
+    /// After AEXT migration, use `apply_bandwidth_aext_to_account_proto()` instead.
+    /// Production code should NOT call this directly - changes should go directly to
+    /// `protocol::Account` via `apply_bandwidth_aext_to_account_proto()`.
+    #[deprecated(note = "Use apply_bandwidth_aext_to_account_proto() instead. This writes to legacy account-resource DB.")]
     pub fn set_account_aext(&self, address: &Address, aext: &AccountAext) -> Result<()> {
         let key = self.account_aext_key(address);
         let data = aext.serialize();
@@ -2632,7 +2646,13 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
-    /// Get or initialize account AEXT with defaults
+    /// Get or initialize account AEXT with defaults.
+    ///
+    /// **DEPRECATED (Phase 4)**: This method reads/writes the legacy `account-resource` DB.
+    /// After AEXT migration, use `aext_view_from_account_proto()` instead.
+    /// Production code should NOT call this directly.
+    #[deprecated(note = "Use aext_view_from_account_proto() instead. This uses legacy account-resource DB.")]
+    #[allow(deprecated)]
     pub fn get_or_init_account_aext(&self, address: &Address) -> Result<AccountAext> {
         if let Some(aext) = self.get_account_aext(address)? {
             Ok(aext)
@@ -2683,6 +2703,144 @@ impl EngineBackedEvmStateStore {
 
         self.put_account_proto(address, &account)?;
         Ok(())
+    }
+
+    // =========================================================================
+    // AEXT Migration: Lazy Backfill (Phase 2)
+    // =========================================================================
+    // When upgrading without running the offline migrator, this provides a safety net.
+    // If proto resource fields are default/empty but account-resource has non-default
+    // values, we apply AEXT→proto and optionally delete the AEXT key.
+
+    /// Perform lazy backfill from AEXT to Account proto if needed.
+    ///
+    /// Returns the AccountAext to use (either from backfill or freshly loaded).
+    /// If backfill occurred, also deletes the AEXT key.
+    ///
+    /// This is called at the start of tracked bandwidth accounting to ensure
+    /// the proto is up-to-date before we compute resource changes.
+    ///
+    /// Note: This method intentionally uses the deprecated `get_account_aext()` to
+    /// read from the legacy store during the migration transition period.
+    #[allow(deprecated)]
+    pub fn lazy_aext_backfill(&self, address: &Address) -> Result<AccountAext> {
+        // Load current AEXT (if any)
+        let aext = match self.get_account_aext(address)? {
+            Some(a) => a,
+            None => return Ok(AccountAext::with_defaults()),
+        };
+
+        // Check if AEXT has non-default values that we should migrate
+        let aext_has_data = aext.net_usage != 0
+            || aext.free_net_usage != 0
+            || aext.latest_consume_time != 0
+            || aext.latest_consume_free_time != 0;
+
+        if !aext_has_data {
+            return Ok(aext);
+        }
+
+        // Load Account proto to check if it needs backfill
+        let Some(mut account) = self.get_account_proto(address)? else {
+            // No proto exists - just return AEXT, don't create phantom accounts
+            return Ok(aext);
+        };
+
+        // Check if proto has default/empty resource fields
+        let proto_is_default = account.net_usage == 0
+            && account.free_net_usage == 0
+            && account.latest_consume_time == 0
+            && account.latest_consume_free_time == 0;
+
+        if !proto_is_default {
+            // Proto already has values, no backfill needed
+            return Ok(aext);
+        }
+
+        // Perform backfill: apply AEXT to proto
+        tracing::info!(
+            "Lazy AEXT backfill for {:?}: net_usage={}, free_net_usage={}, latest_consume_time={}",
+            address,
+            aext.net_usage,
+            aext.free_net_usage,
+            aext.latest_consume_time
+        );
+
+        account.net_usage = aext.net_usage;
+        account.free_net_usage = aext.free_net_usage;
+        account.latest_consume_time = aext.latest_consume_time;
+        account.latest_consume_free_time = aext.latest_consume_free_time;
+
+        // Apply window fields only if proto is 0
+        if account.net_window_size == 0 && aext.net_window_size != 0 {
+            const WINDOW_SIZE_PRECISION: i64 = 1000;
+            account.net_window_size = if aext.net_window_optimized {
+                aext.net_window_size.saturating_mul(WINDOW_SIZE_PRECISION)
+            } else {
+                aext.net_window_size
+            };
+            account.net_window_optimized = aext.net_window_optimized;
+        }
+
+        // Write updated proto
+        self.put_account_proto(address, &account)?;
+
+        // Delete the AEXT key (migration complete for this account)
+        let aext_key = self.account_aext_key(address);
+        self.storage_engine.delete(self.account_aext_database(), &aext_key)?;
+
+        tracing::debug!("Lazy backfill complete, AEXT key deleted for {:?}", address);
+
+        Ok(aext)
+    }
+
+    /// Build an AccountAext view from a protocol::Account proto.
+    ///
+    /// This is used after Phase 3 when we no longer read from account-resource,
+    /// and need to derive the AEXT "view" from the canonical Account proto.
+    pub fn aext_view_from_account_proto(&self, address: &Address) -> Result<AccountAext> {
+        let Some(account) = self.get_account_proto(address)? else {
+            return Ok(AccountAext::with_defaults());
+        };
+
+        const WINDOW_SIZE_PRECISION: i64 = 1000;
+
+        // Normalize window size from raw proto value to logical slots
+        let net_window_size = if account.net_window_optimized && account.net_window_size > 0 {
+            account.net_window_size / WINDOW_SIZE_PRECISION
+        } else if account.net_window_size > 0 {
+            account.net_window_size
+        } else {
+            28800 // Default window size
+        };
+
+        // Energy window (if AccountResource present)
+        let (energy_usage, latest_consume_time_for_energy, energy_window_size, energy_window_optimized) =
+            if let Some(ref ar) = account.account_resource {
+                let ews = if ar.energy_window_optimized && ar.energy_window_size > 0 {
+                    ar.energy_window_size / WINDOW_SIZE_PRECISION
+                } else if ar.energy_window_size > 0 {
+                    ar.energy_window_size
+                } else {
+                    28800
+                };
+                (ar.energy_usage, ar.latest_consume_time_for_energy, ews, ar.energy_window_optimized)
+            } else {
+                (0, 0, 28800, false)
+            };
+
+        Ok(AccountAext {
+            net_usage: account.net_usage,
+            free_net_usage: account.free_net_usage,
+            energy_usage,
+            latest_consume_time: account.latest_consume_time,
+            latest_consume_free_time: account.latest_consume_free_time,
+            latest_consume_time_for_energy,
+            net_window_size,
+            net_window_optimized: account.net_window_optimized,
+            energy_window_size,
+            energy_window_optimized,
+        })
     }
 
     // Phase C: Method alias shims (preferred names going forward)
