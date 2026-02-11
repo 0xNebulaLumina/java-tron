@@ -4812,6 +4812,117 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get ALLOW_ASSET_OPTIMIZATION dynamic property
+    /// Java: DynamicPropertiesStore.getAllowAssetOptimization()
+    /// Returns 0 (disabled) or 1 (enabled)
+    /// Default: 0 (disabled)
+    pub fn get_allow_asset_optimization(&self) -> Result<i64> {
+        let key = b"ALLOW_ASSET_OPTIMIZATION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0) // Default disabled
+                }
+            }
+            None => Ok(0), // Default disabled
+        }
+    }
+
+    /// Get the account-asset database name
+    /// Java: AccountAssetStore - dbName = "account-asset"
+    fn account_asset_database(&self) -> &str {
+        db_names::account::ACCOUNT_ASSET
+    }
+
+    /// Get asset balance from AccountAssetStore
+    /// Java: AccountAssetStore.getBalance(account, key)
+    /// Key format: address + tokenId bytes
+    /// Value format: i64 balance as big-endian 8 bytes
+    pub fn get_asset_balance_from_asset_store(&self, address: &Address, token_id: &[u8]) -> Result<i64> {
+        // Build key: address (21 bytes TRON format) + tokenId
+        let mut key = Vec::with_capacity(21 + token_id.len());
+        key.push(0x41u8); // TRON mainnet prefix
+        key.extend_from_slice(address.as_slice());
+        key.extend_from_slice(token_id);
+
+        match self.storage_engine.get(self.account_asset_database(), &key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Check if account has sufficient TRC-10 asset balance
+    /// Mirrors Java's AccountCapsule.assetBalanceEnoughV2()
+    ///
+    /// This method handles:
+    /// - ALLOW_SAME_TOKEN_NAME == 0: reads from Account.asset map (token name as key)
+    /// - ALLOW_SAME_TOKEN_NAME == 1: reads from Account.asset_v2 map (token ID as key)
+    /// - ALLOW_ASSET_OPTIMIZATION == 1: also checks AccountAssetStore
+    ///
+    /// Returns Ok(true) if amount > 0 && balance >= amount
+    pub fn asset_balance_enough_v2(
+        &self,
+        address: &Address,
+        token_id: &[u8],
+        amount: i64,
+    ) -> Result<bool> {
+        if amount <= 0 {
+            return Ok(false);
+        }
+
+        let allow_same_token_name = self.get_allow_same_token_name()?;
+        let allow_asset_optimization = self.get_allow_asset_optimization()?;
+
+        // Get the account proto
+        let account = match self.get_account_proto(address)? {
+            Some(acc) => acc,
+            None => return Ok(false),
+        };
+
+        let token_key = String::from_utf8_lossy(token_id).to_string();
+
+        // First, determine which map to read from based on ALLOW_SAME_TOKEN_NAME
+        let current_amount = if allow_same_token_name == 0 {
+            // Legacy mode: read from Account.asset map (token name as key)
+            account.asset.get(&token_key).copied()
+        } else {
+            // Modern mode: read from Account.asset_v2 map (token ID as key)
+            account.asset_v2.get(&token_key).copied()
+        };
+
+        // If we have a balance in the account map, use it
+        if let Some(balance) = current_amount {
+            return Ok(balance >= amount);
+        }
+
+        // If ALLOW_ASSET_OPTIMIZATION is enabled, check AccountAssetStore
+        // Java: importAsset() loads from AccountAssetStore when the key is not in assetV2Map
+        if allow_asset_optimization == 1 && allow_same_token_name == 1 {
+            // Check if account has assetOptimized flag set
+            // For simplicity, we always try the asset store lookup when optimization is enabled
+            let balance = self.get_asset_balance_from_asset_store(address, token_id)?;
+            if balance > 0 {
+                return Ok(balance >= amount);
+            }
+        }
+
+        Ok(false)
+    }
+
     /// Get TOKEN_ID_NUM with strict mode (errors when missing).
     /// Java: "not found TOKEN_ID_NUM"
     pub fn get_token_id_num_strict(&self) -> Result<i64> {
@@ -5136,7 +5247,8 @@ impl EngineBackedEvmStateStore {
 
     /// Get EXCHANGE_CREATE_FEE dynamic property
     /// Fee charged to create an exchange (in SUN)
-    /// Default in Java: 1024_000_000_000L (1024 TRX)
+    /// Java default: 1024_000_000L (1024 TRX in SUN)
+    /// See: DynamicPropertiesStore.java initialization
     pub fn get_exchange_create_fee(&self) -> Result<i64> {
         let key = b"EXCHANGE_CREATE_FEE";
         match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
@@ -5147,12 +5259,14 @@ impl EngineBackedEvmStateStore {
                     Ok(fee)
                 } else {
                     tracing::warn!("EXCHANGE_CREATE_FEE has invalid length: {}", data.len());
-                    Ok(1024_000_000_000i64) // Default
+                    // Java default: 1024_000_000L (1024 TRX in SUN)
+                    Ok(1024_000_000i64)
                 }
             },
             None => {
                 tracing::debug!("EXCHANGE_CREATE_FEE not found, returning default");
-                Ok(1024_000_000_000i64) // Default: 1024 TRX
+                // Java default: 1024_000_000L (1024 TRX in SUN)
+                Ok(1024_000_000i64)
             }
         }
     }

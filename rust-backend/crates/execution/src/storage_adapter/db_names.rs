@@ -35,6 +35,14 @@ pub mod account {
     /// Account resource usage tracking (AEXT)
     /// Custom Rust-side tracking, may not exist in Java
     pub const ACCOUNT_RESOURCE: &str = "account-resource";
+
+    /// Account asset store (AccountAssetStore)
+    /// Java: AccountAssetStore.java - dbName = "account-asset"
+    /// Used when ALLOW_ASSET_OPTIMIZATION == 1 to store TRC-10 balances
+    /// separately from account records
+    /// Key format: address + tokenId bytes
+    /// Value format: i64 balance as big-endian 8 bytes
+    pub const ACCOUNT_ASSET: &str = "account-asset";
 }
 
 /// Delegation-related database names

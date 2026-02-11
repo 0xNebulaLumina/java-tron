@@ -8414,6 +8414,46 @@ impl BackendService {
         Ok(())
     }
 
+    /// Import asset balance from AccountAssetStore into account.asset_v2 map
+    /// when ALLOW_ASSET_OPTIMIZATION == 1.
+    ///
+    /// This mirrors Java's AccountCapsule.importAsset() which loads balances
+    /// from the external AccountAssetStore into the in-memory asset map.
+    fn import_asset_if_optimized(
+        storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore,
+        account: &mut tron_backend_execution::protocol::Account,
+        token_id: &[u8],
+        address: &revm_primitives::Address,
+    ) -> Result<(), String> {
+        // Check if asset optimization is enabled
+        let allow_asset_optimization = storage_adapter.get_allow_asset_optimization()
+            .map_err(|e| format!("Failed to get ALLOW_ASSET_OPTIMIZATION: {}", e))?;
+        let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
+
+        // Only import when asset optimization is enabled and using V2 format
+        if allow_asset_optimization != 1 || allow_same_token_name != 1 {
+            return Ok(());
+        }
+
+        let token_key = String::from_utf8_lossy(token_id).to_string();
+
+        // Skip if already in the asset_v2 map
+        if account.asset_v2.contains_key(&token_key) {
+            return Ok(());
+        }
+
+        // Import from AccountAssetStore
+        let balance = storage_adapter.get_asset_balance_from_asset_store(address, token_id)
+            .map_err(|e| format!("Failed to read from AccountAssetStore: {}", e))?;
+
+        if balance > 0 {
+            account.asset_v2.insert(token_key, balance);
+        }
+
+        Ok(())
+    }
+
     fn valid_readable_bytes(bytes: &[u8], max_length: usize) -> bool {
         if bytes.is_empty() || bytes.len() > max_length {
             return false;
@@ -8530,9 +8570,16 @@ impl BackendService {
                 return Err("balance is not enough".to_string());
             }
         } else {
-            let asset_balance = storage_adapter.get_asset_balance_v2(&owner, &create_info.first_token_id)
-                .map_err(|e| format!("Failed to get first token balance: {}", e))?;
-            if asset_balance < create_info.first_token_balance {
+            // Use asset_balance_enough_v2 which handles:
+            // - ALLOW_SAME_TOKEN_NAME == 0: reads Account.asset (token name key)
+            // - ALLOW_SAME_TOKEN_NAME == 1: reads Account.asset_v2 (token ID key)
+            // - ALLOW_ASSET_OPTIMIZATION == 1: also checks AccountAssetStore
+            let has_enough = storage_adapter.asset_balance_enough_v2(
+                &owner,
+                &create_info.first_token_id,
+                create_info.first_token_balance,
+            ).map_err(|e| format!("Failed to check first token balance: {}", e))?;
+            if !has_enough {
                 return Err("first token balance is not enough".to_string());
             }
         }
@@ -8543,9 +8590,16 @@ impl BackendService {
                 return Err("balance is not enough".to_string());
             }
         } else {
-            let asset_balance = storage_adapter.get_asset_balance_v2(&owner, &create_info.second_token_id)
-                .map_err(|e| format!("Failed to get second token balance: {}", e))?;
-            if asset_balance < create_info.second_token_balance {
+            // Use asset_balance_enough_v2 which handles:
+            // - ALLOW_SAME_TOKEN_NAME == 0: reads Account.asset (token name key)
+            // - ALLOW_SAME_TOKEN_NAME == 1: reads Account.asset_v2 (token ID key)
+            // - ALLOW_ASSET_OPTIMIZATION == 1: also checks AccountAssetStore
+            let has_enough = storage_adapter.asset_balance_enough_v2(
+                &owner,
+                &create_info.second_token_id,
+                create_info.second_token_balance,
+            ).map_err(|e| format!("Failed to check second token balance: {}", e))?;
+            if !has_enough {
                 return Err("second token balance is not enough".to_string());
             }
         }
@@ -8584,6 +8638,13 @@ impl BackendService {
         if is_trx(&create_info.first_token_id) {
             updated_account.balance -= create_info.first_token_balance;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &create_info.first_token_id,
+                &owner,
+            )?;
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &create_info.first_token_id,
@@ -8597,6 +8658,13 @@ impl BackendService {
         if is_trx(&create_info.second_token_id) {
             updated_account.balance -= create_info.second_token_balance;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &create_info.second_token_id,
+                &owner,
+            )?;
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &create_info.second_token_id,
@@ -8665,9 +8733,16 @@ impl BackendService {
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
         // Handle fee (burn or blackhole)
+        // Java: DynamicPropertiesStore.supportBlackHoleOptimization()
+        //   - if true: burnTrx(fee) -> increment BURN_TRX_AMOUNT
+        //   - if false: credit blackhole account balance
         let support_black_hole = storage_adapter.support_black_hole_optimization()
-            .unwrap_or(true);
-        if !support_black_hole {
+            .map_err(|e| format!("Failed to get blackhole optimization flag: {}", e))?;
+        if support_black_hole {
+            // Burn the fee by incrementing BURN_TRX_AMOUNT
+            storage_adapter.burn_trx(exchange_create_fee as u64)
+                .map_err(|e| format!("Failed to burn fee: {}", e))?;
+        } else {
             // Credit blackhole account
             let blackhole_addr = storage_adapter.get_blackhole_address_evm();
             storage_adapter.add_balance(&blackhole_addr, exchange_create_fee as u64)
@@ -8695,8 +8770,11 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        // Build receipt with exchange_id
+        // Build receipt with fee and exchange_id
+        // Java: ret.setStatus(fee, SUCESS) + ret.setExchangeId(id)
+        // Proto fields: fee=1, exchange_id=21
         let receipt = TransactionResultBuilder::new()
+            .with_fee(exchange_create_fee)
             .with_exchange_id(exchange_id)
             .build();
 
