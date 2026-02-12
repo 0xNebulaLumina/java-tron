@@ -1,0 +1,25 @@
+{
+  "contractType": "EXCHANGE_CREATE_CONTRACT",
+  "contractTypeNum": 41,
+  "caseName": "legacy_mode_trx_to_token_create",
+  "caseCategory": "happy",
+  "description": "Create TRX to token exchange with ALLOW_SAME_TOKEN_NAME=0 (legacy mode)",
+  "generatedAt": "2026-02-12T04:07:56.361Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "exchange",
+    "exchange-v2",
+    "asset-issue",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {
+    "ALLOW_SAME_TOKEN_NAME": 0,
+    "EXCHANGE_CREATE_FEE": 1024000000
+  },
+  "notes": []
+}
