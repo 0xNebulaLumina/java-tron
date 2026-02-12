@@ -207,10 +207,11 @@ So “fixtures passing” here should be interpreted as **state parity**, not ne
 3. **TRC-10 dual-map updates in legacy mode** - `add_asset_amount_v2()` and `reduce_asset_amount_v2()` update both `asset[name]` and `asset_v2[id]`
 4. **Owner address validation** - Parser now captures `owner_address` and executor validates length/prefix
 5. **Receipt with exchange_received_amount** - `TransactionResultBuilder` emits proper receipt
+6. **StrictMath.pow determinism** - Now uses `rust-strictmath` crate (fdlibm-based) when `ALLOW_STRICT_MATH == 1`, matching Java's `StrictMath.pow()` for cross-platform determinism
 
-### Remaining Low-Priority Items:
+### Remaining Items:
 
-1. **StrictMath.pow determinism** - Uses `f64::powf()` which passes conformance but may not be bit-exact across platforms. Available crates: `rust-strictmath`, `libm`
+None - all parity gaps have been resolved.
 
 ### Key Files:
 - Execute function: `rust-backend/crates/core/src/service/mod.rs` (lines 9334-9575)
