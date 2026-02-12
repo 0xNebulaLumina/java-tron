@@ -12,9 +12,11 @@ import org.tron.common.utils.ByteArray;
 import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.AccountCapsule;
+import org.tron.core.capsule.AssetIssueCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ExchangeCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
 import org.tron.core.config.args.Args;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.AccountType;
@@ -2097,13 +2099,55 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
    */
   private void initializeTestDataLegacy() {
     // Set dynamic properties for legacy mode
-    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(1000000);
+    long blockTimestamp = 1000000;
+    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(blockTimestamp);
     dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(10);
     dbManager.getDynamicPropertiesStore().saveLatestExchangeNum(0);
     dbManager.getDynamicPropertiesStore().saveExchangeCreateFee(EXCHANGE_CREATE_FEE);
     dbManager.getDynamicPropertiesStore().saveExchangeBalanceLimit(EXCHANGE_BALANCE_LIMIT);
     // LEGACY MODE: allowSameTokenName=0
     dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(0);
+
+    // Create AssetIssueCapsules for legacy mode tokens (required for validation)
+    // In legacy mode, assets are looked up by NAME in the asset issue store
+    AssetIssueContract assetA = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setName(ByteString.copyFrom(TOKEN_NAME_A))
+        .setAbbr(ByteString.copyFromUtf8("TKA"))
+        .setTotalSupply(100_000_000_000_000L)
+        .setTrxNum(1)
+        .setNum(1)
+        .setPrecision(6)
+        .setStartTime(blockTimestamp - 86400000)
+        .setEndTime(blockTimestamp + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("Test Token A for legacy exchange tests"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com/tokenA"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId("1000001") // Numeric ID for v2 transformation
+        .build();
+    AssetIssueCapsule assetCapsuleA = new AssetIssueCapsule(assetA);
+    // In legacy mode, store by name key
+    dbManager.getAssetIssueStore().put(assetCapsuleA.createDbKey(), assetCapsuleA);
+
+    AssetIssueContract assetB = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setName(ByteString.copyFrom(TOKEN_NAME_B))
+        .setAbbr(ByteString.copyFromUtf8("TKB"))
+        .setTotalSupply(100_000_000_000_000L)
+        .setTrxNum(1)
+        .setNum(1)
+        .setPrecision(6)
+        .setStartTime(blockTimestamp - 86400000)
+        .setEndTime(blockTimestamp + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("Test Token B for legacy exchange tests"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com/tokenB"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId("1000002") // Numeric ID for v2 transformation
+        .build();
+    AssetIssueCapsule assetCapsuleB = new AssetIssueCapsule(assetB);
+    dbManager.getAssetIssueStore().put(assetCapsuleB.createDbKey(), assetCapsuleB);
 
     // Create owner account with high balance
     AccountCapsule ownerAccount = new AccountCapsule(
@@ -2155,6 +2199,7 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("exchange")        // v1 store
         .database("exchange-v2")     // also updated
+        .database("asset-issue")     // required for token lookup in legacy mode
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
@@ -2193,6 +2238,7 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("exchange")
         .database("exchange-v2")
+        .database("asset-issue")     // required for token lookup in legacy mode
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
@@ -2231,6 +2277,7 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("exchange")
         .database("exchange-v2")
+        .database("asset-issue")     // required for token lookup in legacy mode
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
@@ -2270,6 +2317,7 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("exchange")
         .database("exchange-v2")
+        .database("asset-issue")     // required for token lookup in legacy mode
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
@@ -2306,6 +2354,7 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("exchange")
         .database("exchange-v2")
+        .database("asset-issue")     // required for token lookup in legacy mode
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
@@ -2343,6 +2392,7 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("exchange")
         .database("exchange-v2")
+        .database("asset-issue")     // required for token lookup in legacy mode
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
