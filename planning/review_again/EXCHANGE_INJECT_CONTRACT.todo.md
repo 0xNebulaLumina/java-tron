@@ -4,14 +4,14 @@ This checklist assumes we want to resolve the parity gaps identified in `plannin
 
 ## 0) Decide the parity target (do this first)
 
-- [ ] Confirm which modes must be supported:
-  - [ ] Only `ALLOW_SAME_TOKEN_NAME == 1` (modern/mainnet replay after the proposal)
-  - [ ] Must support `ALLOW_SAME_TOKEN_NAME == 0` (legacy replay)
-  - [ ] Must support `ALLOW_ASSET_OPTIMIZATION == 1` / account-asset store import semantics
-- [ ] Confirm what "parity" means operationally:
-  - [ ] correctness of state (exchange + account DB contents)
-  - [ ] exact error strings
-  - [ ] receipt bytes/fields
+- [x] Confirm which modes must be supported:
+  - [x] Only `ALLOW_SAME_TOKEN_NAME == 1` (modern/mainnet replay after the proposal) - **Supported**
+  - [x] Must support `ALLOW_SAME_TOKEN_NAME == 0` (legacy replay) - **Supported**
+  - [x] Must support `ALLOW_ASSET_OPTIMIZATION == 1` / account-asset store import semantics - **Supported**
+- [x] Confirm what "parity" means operationally:
+  - [x] correctness of state (exchange + account DB contents) - **Implemented**
+  - [x] exact error strings - **Implemented**
+  - [x] receipt bytes/fields - **Already implemented**
 
 ## 1) Fix exchange store routing (required for `ALLOW_SAME_TOKEN_NAME == 0`)
 
@@ -52,15 +52,27 @@ Goal: mirror `AccountCapsule.assetBalanceEnoughV2()` semantics.
 - Updated `execute_exchange_inject_contract` to use `get_asset_balance_routed` for balance checks
 - Also updated `execute_exchange_transaction_contract` for consistency
 
-- [ ] If asset optimization must be supported:
-  - [ ] implement account-asset store lookups/import equivalent to Java's `importAsset(key)`
-  - [ ] update the helper to consult the account-asset store when enabled
+- [x] If asset optimization must be supported:
+  - [x] implement account-asset store lookups/import equivalent to Java's `importAsset(key)`
+  - [x] update the helper to consult the account-asset store when enabled
+
+**Implementation details:**
+- `import_asset_if_optimized()` was already implemented
+- Added calls to `import_asset_if_optimized()` before asset deduction/addition in:
+  - `execute_exchange_inject_contract` (before `reduce_asset_amount_v2` calls)
+  - `execute_exchange_withdraw_contract` (before `add_asset_amount_v2` calls)
+  - `execute_exchange_transaction_contract` (before `reduce_asset_amount_v2` and `add_asset_amount_v2` calls)
 
 ## 3) Align missing-owner error string (optional but improves parity)
 
-- [ ] Change `"Owner account not found"` to Java-style:
-  - [ ] `account[<hex-address>] not exists`
-  - [ ] ensure the same address formatting used by other conformance fixtures (`StringUtil.createReadableString` → hex)
+- [x] Change `"Owner account not found"` to Java-style:
+  - [x] `account[<hex-address>] not exists`
+  - [x] ensure the same address formatting used by other conformance fixtures (`StringUtil.createReadableString` → hex)
+
+**Implementation details:**
+- Updated error strings in all exchange contracts to use `format!("account[{}] not exists", hex::encode(&owner_tron))`
+- Updated: `execute_exchange_inject_contract`, `execute_exchange_withdraw_contract`, `execute_exchange_transaction_contract`
+- `execute_exchange_create_contract` already had the correct format
 
 ## 4) Add/extend conformance coverage (recommended)
 
@@ -78,7 +90,7 @@ Goal: ensure we don't regress and that legacy mode is actually validated.
 
 - [x] Rust:
   - [x] `cd rust-backend && cargo check` - compiles successfully (warnings only)
-  - [ ] `cd rust-backend && cargo test`
+  - [x] `cd rust-backend && cargo test` - all tests pass
   - [ ] run the conformance runner for `exchange_inject_contract` fixtures with `exchange_inject_enabled=true`
 - [ ] Java (optional, if validating remote mode end-to-end):
   - [ ] `./gradlew :framework:test --tests "org.tron.core.actuator.ExchangeInjectActuatorTest"`
@@ -95,14 +107,23 @@ Goal: ensure we don't regress and that legacy mode is actually validated.
 ### Files Modified:
 
 1. **`rust-backend/crates/execution/src/storage_adapter/engine.rs`**
-   - Added `get_asset_balance_routed(address, asset_key, allow_same_token_name)` - routes TRC-10 balance lookup based on `allow_same_token_name` flag (lines 5316-5336)
-   - Added `put_exchange_dual_write(exchange, allow_same_token_name)` - performs dual-write to both v1 and v2 stores when `allow_same_token_name == 0`, with token name → ID transformation (lines 5179-5233)
-   - Added `get_exchange_routed(exchange_id, allow_same_token_name)` - routes exchange read to appropriate store (lines 5236-5239)
+   - Added `get_asset_balance_routed(address, asset_key, allow_same_token_name)` - routes TRC-10 balance lookup based on `allow_same_token_name` flag
+   - Added `put_exchange_dual_write(exchange, allow_same_token_name)` - performs dual-write to both v1 and v2 stores when `allow_same_token_name == 0`, with token name → ID transformation
+   - Added `get_exchange_routed(exchange_id, allow_same_token_name)` - routes exchange read to appropriate store
 
 2. **`rust-backend/crates/core/src/service/mod.rs`**
-   - `execute_exchange_inject_contract`: Updated to use `get_exchange_routed`, `get_asset_balance_routed`, and `put_exchange_dual_write`
-   - `execute_exchange_withdraw_contract`: Updated to use `get_exchange_routed` and `put_exchange_dual_write`
-   - `execute_exchange_transaction_contract`: Updated to use `get_exchange_routed`, `get_asset_balance_routed`, and `put_exchange_dual_write`
+   - `execute_exchange_inject_contract`:
+     - Updated to use `get_exchange_routed`, `get_asset_balance_routed`, and `put_exchange_dual_write`
+     - Added `import_asset_if_optimized` calls before asset deductions
+     - Fixed error string to match Java format
+   - `execute_exchange_withdraw_contract`:
+     - Updated to use `get_exchange_routed` and `put_exchange_dual_write`
+     - Added `import_asset_if_optimized` calls before asset additions
+     - Fixed error string to match Java format
+   - `execute_exchange_transaction_contract`:
+     - Updated to use `get_exchange_routed`, `get_asset_balance_routed`, and `put_exchange_dual_write`
+     - Added `import_asset_if_optimized` calls before asset deductions/additions
+     - Fixed error string to match Java format
 
 ### Key Behaviors Now Matching Java:
 
@@ -117,3 +138,9 @@ Goal: ensure we don't regress and that legacy mode is actually validated.
 3. **TRC-10 Balance Validation** (`AccountCapsule.assetBalanceEnoughV2`):
    - `allow_same_token_name == 0`: Reads from `account.asset` (keyed by token name)
    - `allow_same_token_name == 1`: Reads from `account.asset_v2` (keyed by token ID)
+
+4. **Asset Optimization** (`AccountCapsule.importAsset`):
+   - When `ALLOW_ASSET_OPTIMIZATION == 1`: Imports balances from AccountAssetStore before modifications
+
+5. **Error Strings**:
+   - Account not found: `account[<hex>] not exists` (matches Java's `StringUtil.createReadableString`)

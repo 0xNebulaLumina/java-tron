@@ -8829,11 +8829,12 @@ impl BackendService {
         );
 
         // 2. Get owner account
+        // Java: ExchangeInjectActuator.validate() - "account[<hex>] not exists"
         let owner = transaction.from;
         let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
         let account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or("Owner account not found")?;
+            .ok_or_else(|| format!("account[{}] not exists", hex::encode(&owner_tron)))?;
 
         // 3. Get exchange (routed by allowSameTokenName)
         // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
@@ -8992,6 +8993,13 @@ impl BackendService {
         if is_trx(&inject_info.token_id) {
             updated_account.balance -= inject_info.quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &inject_info.token_id,
+                &owner,
+            )?;
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &inject_info.token_id,
@@ -9005,6 +9013,13 @@ impl BackendService {
         if is_trx(&another_token_id) {
             updated_account.balance -= another_token_quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &another_token_id,
+                &owner,
+            )?;
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &another_token_id,
@@ -9098,11 +9113,12 @@ impl BackendService {
         );
 
         // 2. Get owner account
+        // Java: ExchangeWithdrawActuator.validate() - "account[<hex>] not exists"
         let owner = transaction.from;
         let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
         let account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or("Owner account not found")?;
+            .ok_or_else(|| format!("account[{}] not exists", hex::encode(&owner_tron)))?;
 
         // 3. Get exchange (routed by allowSameTokenName)
         // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
@@ -9215,6 +9231,13 @@ impl BackendService {
         if is_trx(&withdraw_info.token_id) {
             updated_account.balance += withdraw_info.quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &withdraw_info.token_id,
+                &owner,
+            )?;
             Self::add_asset_amount_v2(
                 &mut updated_account,
                 &withdraw_info.token_id,
@@ -9228,6 +9251,13 @@ impl BackendService {
         if is_trx(&another_token_id) {
             updated_account.balance += another_token_quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &another_token_id,
+                &owner,
+            )?;
             Self::add_asset_amount_v2(
                 &mut updated_account,
                 &another_token_id,
@@ -9322,10 +9352,12 @@ impl BackendService {
         );
 
         // 2. Get owner account
+        // Java: ExchangeTransactionActuator.validate() - "account[<hex>] not exists"
         let owner = transaction.from;
+        let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
         let account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or("Owner account not found")?;
+            .ok_or_else(|| format!("account[{}] not exists", hex::encode(&owner_tron)))?;
 
         // 3. Get exchange and properties (routed by allowSameTokenName)
         // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
@@ -9435,6 +9467,13 @@ impl BackendService {
         if is_trx(&tx_info.token_id) {
             updated_account.balance -= tx_info.quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &tx_info.token_id,
+                &owner,
+            )?;
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &tx_info.token_id,
@@ -9448,6 +9487,13 @@ impl BackendService {
         if is_trx(&another_token_id) {
             updated_account.balance += another_token_quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &another_token_id,
+                &owner,
+            )?;
             Self::add_asset_amount_v2(
                 &mut updated_account,
                 &another_token_id,
