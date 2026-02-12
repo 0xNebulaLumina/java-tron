@@ -141,12 +141,20 @@ The Rust implementation of `EXCHANGE_TRANSACTION_CONTRACT` achieves full parity 
 5. ✅ Asset optimization (`ALLOW_ASSET_OPTIMIZATION == 1`) support
 6. ✅ Receipt with `exchange_received_amount`
 7. ✅ Conformance fixture for legacy mode
-8. ✅ Owner address validation (21 bytes, correct prefix)
+8. ✅ Owner address validation (21 bytes, correct prefix) - **all 4 exchange contracts updated**:
+   - ExchangeCreateContract (type 41) - already had owner_address
+   - ExchangeInjectContract (type 42) - added owner_address validation
+   - ExchangeWithdrawContract (type 43) - added owner_address validation
+   - ExchangeTransactionContract (type 44) - added owner_address validation
 
 ### Outstanding Items (Low Priority):
 1. ⚠️ StrictMath parity - uses `f64::powf()` which passes conformance but is not guaranteed to be bit-exact with Java's `StrictMath.pow()` across all platforms
 
 ### Key Implementation Files:
-- **Execute function**: `rust-backend/crates/core/src/service/mod.rs` lines 9334-9568
+- **Exchange contracts**: `rust-backend/crates/core/src/service/mod.rs`
+  - ExchangeCreateContract: lines 8496-8815
+  - ExchangeInjectContract: lines 8816-9096
+  - ExchangeWithdrawContract: lines 9102-9334
+  - ExchangeTransactionContract: lines 9340-9581
 - **Storage adapter**: `rust-backend/crates/execution/src/storage_adapter/engine.rs` lines 5100-5405
 - **Exchange math**: `rust-backend/crates/core/src/service/contracts/exchange.rs`

@@ -8828,7 +8828,13 @@ impl BackendService {
             inject_info.quant
         );
 
-        // 2. Get owner account
+        // 2. Validate owner address (Java: DecodeUtil.addressValid)
+        let address_prefix = storage_adapter.address_prefix();
+        if inject_info.owner_address.len() != 21 || inject_info.owner_address[0] != address_prefix {
+            return Err("Invalid address".to_string());
+        }
+
+        // 3. Get owner account
         // Java: ExchangeInjectActuator.validate() - "account[<hex>] not exists"
         let owner = transaction.from;
         let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
@@ -8836,7 +8842,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or_else(|| format!("account[{}] not exists", hex::encode(&owner_tron)))?;
 
-        // 3. Get exchange (routed by allowSameTokenName)
+        // 4. Get exchange (routed by allowSameTokenName)
         // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
@@ -8844,7 +8850,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get exchange: {}", e))?
             .ok_or(format!("Exchange[{}] not exists", inject_info.exchange_id))?;
 
-        // 4. Validate
+        // 5. Validate
         // - Must be creator
         if owner_tron != exchange.creator_address {
             return Err(format!("account[{}] is not creator", hex::encode(&owner_tron)));
@@ -9112,7 +9118,13 @@ impl BackendService {
             withdraw_info.quant
         );
 
-        // 2. Get owner account
+        // 2. Validate owner address (Java: DecodeUtil.addressValid)
+        let address_prefix = storage_adapter.address_prefix();
+        if withdraw_info.owner_address.len() != 21 || withdraw_info.owner_address[0] != address_prefix {
+            return Err("Invalid address".to_string());
+        }
+
+        // 3. Get owner account
         // Java: ExchangeWithdrawActuator.validate() - "account[<hex>] not exists"
         let owner = transaction.from;
         let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
@@ -9120,7 +9132,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or_else(|| format!("account[{}] not exists", hex::encode(&owner_tron)))?;
 
-        // 3. Get exchange (routed by allowSameTokenName)
+        // 4. Get exchange (routed by allowSameTokenName)
         // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
@@ -9128,7 +9140,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get exchange: {}", e))?
             .ok_or(format!("Exchange[{}] not exists", withdraw_info.exchange_id))?;
 
-        // 4. Validate
+        // 5. Validate
         // - Must be creator
         if owner_tron != exchange.creator_address {
             return Err(format!("account[{}] is not creator", hex::encode(&owner_tron)));
@@ -9655,6 +9667,7 @@ impl BackendService {
     fn parse_exchange_inject_contract(&self, data: &[u8]) -> Result<ExchangeInjectInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut exchange_id: i64 = 0;
         let mut token_id = Vec::new();
         let mut quant: i64 = 0;
@@ -9668,11 +9681,13 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip)
+                // owner_address = 1
                 1 => {
                     if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // exchange_id = 2
                 2 => {
@@ -9706,7 +9721,7 @@ impl BackendService {
             }
         }
 
-        Ok(ExchangeInjectInfo { exchange_id, token_id, quant })
+        Ok(ExchangeInjectInfo { owner_address, exchange_id, token_id, quant })
     }
 
     /// Parse ExchangeWithdrawContract protobuf bytes
@@ -9714,6 +9729,7 @@ impl BackendService {
         // Same structure as inject
         let inject_info = self.parse_exchange_inject_contract(data)?;
         Ok(ExchangeWithdrawInfo {
+            owner_address: inject_info.owner_address,
             exchange_id: inject_info.exchange_id,
             token_id: inject_info.token_id,
             quant: inject_info.quant,
@@ -11187,6 +11203,7 @@ struct ExchangeCreateInfo {
 /// Parsed ExchangeInjectContract information
 #[derive(Debug, Clone)]
 struct ExchangeInjectInfo {
+    owner_address: Vec<u8>,
     exchange_id: i64,
     token_id: Vec<u8>,
     quant: i64,
@@ -11195,6 +11212,7 @@ struct ExchangeInjectInfo {
 /// Parsed ExchangeWithdrawContract information
 #[derive(Debug, Clone)]
 struct ExchangeWithdrawInfo {
+    owner_address: Vec<u8>,
     exchange_id: i64,
     token_id: Vec<u8>,
     quant: i64,
