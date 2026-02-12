@@ -64,12 +64,19 @@ Goal: match Java `StrictMath.pow` bit-for-bit in strict mode.
 
 - [ ] Replace the strict branch in `ExchangeProcessor::pow()` (`rust-backend/crates/core/src/service/contracts/exchange.rs`) with a deterministic implementation that matches fdlibm semantics
   - [ ] evaluate options:
-    - [ ] use a vetted fdlibm port crate
+    - [ ] use `rust-strictmath` crate (v0.1.1 - inspired by Java StrictMath, provides `pow`)
+    - [ ] use `libm` crate (pure Rust fdlibm port)
     - [ ] vendor/port the relevant fdlibm pow implementation (with tests)
 - [ ] Add targeted regression tests with vectors that are known to be rounding-sensitive after the `(double)->long` truncation
 - [ ] Add/extend conformance fixtures where `ALLOW_STRICT_MATH == 1` and the expected received amount differs if pow rounding drifts
 
 **Current status**: `ExchangeProcessor::pow()` uses `f64::powf()` in both modes. Conformance test `happy_path_strict_math_enabled` passes, suggesting practical parity on the same platform, but bit-exact cross-platform determinism is not guaranteed.
+
+**Available crates for fdlibm parity**:
+- [`rust-strictmath`](https://docs.rs/crate/rust-strictmath/latest) - Inspired by Java StrictMath, uses fdlibm algorithms. Use v0.1.1 (v0.1.2 has build issues).
+- [`libm`](https://rust-lang.github.io/packed_simd/libm/index.html) - Pure Rust libm implementation with F64Ext extension trait.
+
+**Recommendation**: Leave as-is unless cross-platform determinism becomes a concrete requirement. The current implementation passes all conformance tests.
 
 ## 5) Owner-address validation parity (optional but improves correctness/error ordering)
 
