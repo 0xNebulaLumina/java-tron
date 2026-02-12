@@ -9351,7 +9351,14 @@ impl BackendService {
             tx_info.expected
         );
 
-        // 2. Get owner account
+        // 2. Validate owner address (Java: DecodeUtil.addressValid)
+        // Must be 21 bytes with correct network prefix
+        let address_prefix = storage_adapter.address_prefix();
+        if tx_info.owner_address.len() != 21 || tx_info.owner_address[0] != address_prefix {
+            return Err("Invalid address".to_string());
+        }
+
+        // 3. Get owner account
         // Java: ExchangeTransactionActuator.validate() - "account[<hex>] not exists"
         let owner = transaction.from;
         let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
@@ -9359,7 +9366,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or_else(|| format!("account[{}] not exists", hex::encode(&owner_tron)))?;
 
-        // 3. Get exchange and properties (routed by allowSameTokenName)
+        // 4. Get exchange and properties (routed by allowSameTokenName)
         // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
@@ -9369,7 +9376,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get exchange: {}", e))?
             .ok_or(format!("Exchange[{}] not exists", tx_info.exchange_id))?;
 
-        // 4. Validate
+        // 5. Validate
         // - Token ID format validation
         if allow_same_token_name == 1 && !is_trx(&tx_info.token_id) && !is_number(&tx_info.token_id) {
             return Err("token id is not a valid number".to_string());
@@ -9438,7 +9445,7 @@ impl BackendService {
             return Err("token required must greater than expected".to_string());
         }
 
-        // 5. Execute
+        // 6. Execute
         let mut updated_account = account.clone();
 
         let token_id_str = if is_trx(&tx_info.token_id) {
@@ -9519,7 +9526,7 @@ impl BackendService {
         storage_adapter.set_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
-        // 6. Build result - ExchangeTransaction
+        // 7. Build result - ExchangeTransaction
         let account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(updated_account.balance as u64),
             nonce: 0,
@@ -9717,6 +9724,7 @@ impl BackendService {
     fn parse_exchange_transaction_contract(&self, data: &[u8]) -> Result<ExchangeTransactionInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut exchange_id: i64 = 0;
         let mut token_id = Vec::new();
         let mut quant: i64 = 0;
@@ -9731,11 +9739,13 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip)
+                // owner_address = 1
                 1 => {
                     if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // exchange_id = 2
                 2 => {
@@ -9776,7 +9786,7 @@ impl BackendService {
             }
         }
 
-        Ok(ExchangeTransactionInfo { exchange_id, token_id, quant, expected })
+        Ok(ExchangeTransactionInfo { owner_address, exchange_id, token_id, quant, expected })
     }
 
     // ==========================================================================
@@ -11193,6 +11203,7 @@ struct ExchangeWithdrawInfo {
 /// Parsed ExchangeTransactionContract information
 #[derive(Debug, Clone)]
 struct ExchangeTransactionInfo {
+    owner_address: Vec<u8>,
     exchange_id: i64,
     token_id: Vec<u8>,
     quant: i64,
