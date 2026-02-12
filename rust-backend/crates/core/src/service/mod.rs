@@ -8835,10 +8835,11 @@ impl BackendService {
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or("Owner account not found")?;
 
-        // 3. Get exchange
+        // 3. Get exchange (routed by allowSameTokenName)
+        // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
-        let exchange = storage_adapter.get_exchange(inject_info.exchange_id)
+        let exchange = storage_adapter.get_exchange_routed(inject_info.exchange_id, allow_same_token_name)
             .map_err(|e| format!("Failed to get exchange: {}", e))?
             .ok_or(format!("Exchange[{}] not exists", inject_info.exchange_id))?;
 
@@ -8911,12 +8912,13 @@ impl BackendService {
         }
 
         // - Sufficient balance for token
+        // Java: AccountCapsule.assetBalanceEnoughV2() routes by allowSameTokenName
         if is_trx(&inject_info.token_id) {
             if account.balance < inject_info.quant {
                 return Err("balance is not enough".to_string());
             }
         } else {
-            let balance = storage_adapter.get_asset_balance_v2(&owner, &inject_info.token_id)
+            let balance = storage_adapter.get_asset_balance_routed(&owner, &inject_info.token_id, allow_same_token_name)
                 .map_err(|e| format!("Failed to get token balance: {}", e))?;
             if balance < inject_info.quant {
                 return Err("token balance is not enough".to_string());
@@ -8929,7 +8931,7 @@ impl BackendService {
                 return Err("balance is not enough".to_string());
             }
         } else {
-            let balance = storage_adapter.get_asset_balance_v2(&owner, &another_token_id)
+            let balance = storage_adapter.get_asset_balance_routed(&owner, &another_token_id, allow_same_token_name)
                 .map_err(|e| format!("Failed to get another token balance: {}", e))?;
             if balance < another_token_quant_validate {
                 return Err("another token balance is not enough".to_string());
@@ -9012,18 +9014,19 @@ impl BackendService {
             )?;
         }
 
-        // Update exchange
+        // Update exchange (dual-write when allowSameTokenName=0)
+        // Java: Commons.putExchangeCapsule() writes to both v1 and v2 in legacy mode
         let mut updated_exchange = exchange.clone();
         updated_exchange.first_token_balance = new_first_balance;
         updated_exchange.second_token_balance = new_second_balance;
-        storage_adapter.put_exchange(&updated_exchange)
+        storage_adapter.put_exchange_dual_write(&updated_exchange, allow_same_token_name)
             .map_err(|e| format!("Failed to update exchange: {}", e))?;
 
         // Update account
         storage_adapter.set_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
-        // 6. Build result
+        // 6. Build result - ExchangeInject
         let account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(updated_account.balance as u64),
             nonce: 0,
@@ -9101,10 +9104,11 @@ impl BackendService {
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or("Owner account not found")?;
 
-        // 3. Get exchange
+        // 3. Get exchange (routed by allowSameTokenName)
+        // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
-        let exchange = storage_adapter.get_exchange(withdraw_info.exchange_id)
+        let exchange = storage_adapter.get_exchange_routed(withdraw_info.exchange_id, allow_same_token_name)
             .map_err(|e| format!("Failed to get exchange: {}", e))?
             .ok_or(format!("Exchange[{}] not exists", withdraw_info.exchange_id))?;
 
@@ -9233,18 +9237,19 @@ impl BackendService {
             )?;
         }
 
-        // Update exchange
+        // Update exchange (dual-write when allowSameTokenName=0)
+        // Java: Commons.putExchangeCapsule() writes to both v1 and v2 in legacy mode
         let mut updated_exchange = exchange.clone();
         updated_exchange.first_token_balance = new_first_balance;
         updated_exchange.second_token_balance = new_second_balance;
-        storage_adapter.put_exchange(&updated_exchange)
+        storage_adapter.put_exchange_dual_write(&updated_exchange, allow_same_token_name)
             .map_err(|e| format!("Failed to update exchange: {}", e))?;
 
         // Update account
         storage_adapter.set_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
-        // 6. Build result
+        // 6. Build result - ExchangeWithdraw
         let account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(updated_account.balance as u64),
             nonce: 0,
@@ -9322,12 +9327,13 @@ impl BackendService {
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or("Owner account not found")?;
 
-        // 3. Get exchange and properties
+        // 3. Get exchange and properties (routed by allowSameTokenName)
+        // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
         let use_strict_math = storage_adapter.allow_strict_math()
             .map_err(|e| format!("Failed to get allowStrictMath: {}", e))?;
-        let mut exchange = storage_adapter.get_exchange(tx_info.exchange_id)
+        let mut exchange = storage_adapter.get_exchange_routed(tx_info.exchange_id, allow_same_token_name)
             .map_err(|e| format!("Failed to get exchange: {}", e))?
             .ok_or(format!("Exchange[{}] not exists", tx_info.exchange_id))?;
 
@@ -9368,12 +9374,13 @@ impl BackendService {
         }
 
         // - Sufficient balance for token
+        // Java: AccountCapsule.assetBalanceEnoughV2() routes by allowSameTokenName
         if is_trx(&tx_info.token_id) {
             if account.balance < tx_info.quant {
                 return Err("balance is not enough".to_string());
             }
         } else {
-            let balance = storage_adapter.get_asset_balance_v2(&owner, &tx_info.token_id)
+            let balance = storage_adapter.get_asset_balance_routed(&owner, &tx_info.token_id, allow_same_token_name)
                 .map_err(|e| format!("Failed to get token balance: {}", e))?;
             if balance < tx_info.quant {
                 return Err("token balance is not enough".to_string());
@@ -9450,7 +9457,8 @@ impl BackendService {
             )?;
         }
 
-        // Update exchange balances
+        // Update exchange balances (dual-write when allowSameTokenName=0)
+        // Java: Commons.putExchangeCapsule() writes to both v1 and v2 in legacy mode
         if is_first_token {
             exchange.first_token_balance += tx_info.quant;
             exchange.second_token_balance -= another_token_quant;
@@ -9458,14 +9466,14 @@ impl BackendService {
             exchange.first_token_balance -= another_token_quant;
             exchange.second_token_balance += tx_info.quant;
         }
-        storage_adapter.put_exchange(&exchange)
+        storage_adapter.put_exchange_dual_write(&exchange, allow_same_token_name)
             .map_err(|e| format!("Failed to update exchange: {}", e))?;
 
         // Update account
         storage_adapter.set_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
-        // 6. Build result
+        // 6. Build result - ExchangeTransaction
         let account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(updated_account.balance as u64),
             nonce: 0,

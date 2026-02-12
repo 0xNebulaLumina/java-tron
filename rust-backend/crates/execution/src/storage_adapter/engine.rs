@@ -5174,6 +5174,71 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
+    /// Store exchange following Java's Commons.putExchangeCapsule() semantics:
+    /// - allowSameTokenName == 0: write to BOTH legacy (v1) and v2 stores
+    ///   - v1 store uses token names as-is
+    ///   - v2 store gets token names transformed to numeric IDs
+    /// - allowSameTokenName == 1: write to v2 store only
+    ///
+    /// Java reference: Commons.putExchangeCapsule() in chainbase/src/main/java/org/tron/common/utils/Commons.java
+    pub fn put_exchange_dual_write(
+        &mut self,
+        exchange: &crate::protocol::Exchange,
+        allow_same_token_name: i64,
+    ) -> Result<()> {
+        if allow_same_token_name == 0 {
+            // Legacy mode: dual-write to both stores
+            // 1. Write original exchange (with token names) to legacy store
+            self.put_exchange_to_store(exchange, false)?;
+
+            // 2. Transform token names to IDs and write to v2 store
+            let mut exchange_v2 = exchange.clone();
+
+            // Transform first_token_id if not TRX ("_")
+            if exchange.first_token_id != b"_" {
+                if let Ok(Some(asset)) = self.get_asset_issue(&exchange.first_token_id, 0) {
+                    if !asset.id.is_empty() {
+                        exchange_v2.first_token_id = asset.id.into_bytes();
+                    }
+                }
+            }
+
+            // Transform second_token_id if not TRX ("_")
+            if exchange.second_token_id != b"_" {
+                if let Ok(Some(asset)) = self.get_asset_issue(&exchange.second_token_id, 0) {
+                    if !asset.id.is_empty() {
+                        exchange_v2.second_token_id = asset.id.into_bytes();
+                    }
+                }
+            }
+
+            self.put_exchange_to_store(&exchange_v2, true)?;
+
+            tracing::debug!(
+                "Dual-wrote exchange {} - legacy tokens: {}/{}, v2 tokens: {}/{}",
+                exchange.exchange_id,
+                String::from_utf8_lossy(&exchange.first_token_id),
+                String::from_utf8_lossy(&exchange.second_token_id),
+                String::from_utf8_lossy(&exchange_v2.first_token_id),
+                String::from_utf8_lossy(&exchange_v2.second_token_id)
+            );
+        } else {
+            // Modern mode: write to v2 store only
+            self.put_exchange_to_store(exchange, true)?;
+        }
+        Ok(())
+    }
+
+    /// Get exchange following Java's Commons.getExchangeStoreFinal() semantics:
+    /// - allowSameTokenName == 0: read from legacy (v1) store (token names)
+    /// - allowSameTokenName == 1: read from v2 store (token ids)
+    ///
+    /// Java reference: Commons.getExchangeStoreFinal() in chainbase/src/main/java/org/tron/common/utils/Commons.java
+    pub fn get_exchange_routed(&self, exchange_id: i64, allow_same_token_name: i64) -> Result<Option<crate::protocol::Exchange>> {
+        let v2_store = allow_same_token_name != 0;
+        self.get_exchange_from_store(exchange_id, v2_store)
+    }
+
     /// Check if exchange exists in V2 store
     pub fn has_exchange(&self, exchange_id: i64) -> Result<bool> {
         self.has_exchange_in_store(exchange_id, true)
@@ -5309,6 +5374,31 @@ impl EngineBackedEvmStateStore {
             // Look up in assetV2 map
             if let Some(&balance) = account.asset_v2.get(&token_key) {
                 return Ok(balance);
+            }
+        }
+        Ok(0)
+    }
+
+    /// Get asset balance for an account, routing by allowSameTokenName
+    /// Mirrors Java's AccountCapsule.assetBalanceEnoughV2() semantics:
+    /// - allowSameTokenName == 0: reads from account.asset (token names)
+    /// - allowSameTokenName == 1: reads from account.asset_v2 (token ids)
+    ///
+    /// Java reference: AccountCapsule.assetBalanceEnoughV2()
+    pub fn get_asset_balance_routed(&self, address: &Address, asset_key: &[u8], allow_same_token_name: i64) -> Result<i64> {
+        if let Some(account) = self.get_account_proto(address)? {
+            let key_str = String::from_utf8_lossy(asset_key).to_string();
+
+            if allow_same_token_name == 0 {
+                // Legacy mode: read from account.asset (keyed by token name)
+                if let Some(&balance) = account.asset.get(&key_str) {
+                    return Ok(balance);
+                }
+            } else {
+                // Modern mode: read from account.asset_v2 (keyed by token id)
+                if let Some(&balance) = account.asset_v2.get(&key_str) {
+                    return Ok(balance);
+                }
             }
         }
         Ok(0)
