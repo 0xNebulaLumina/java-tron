@@ -12,7 +12,7 @@ This checklist assumes we want to resolve the parity gaps identified in `plannin
   - [x] correct **state** (account + exchange DB contents) - **IMPLEMENTED**
   - [x] exact **error strings** and **error ordering** - **IMPLEMENTED** (matches Java error messages)
   - [x] exact **receipt bytes** (`Transaction.Result` encoding) - **IMPLEMENTED** (uses TransactionResultBuilder)
-  - [ ] deterministic math parity when `ALLOW_STRICT_MATH == 1` - **PARTIALLY IMPLEMENTED** (uses f64::powf, see section 4)
+  - [x] deterministic math parity when `ALLOW_STRICT_MATH == 1` - **IMPLEMENTED** (uses `rust-strictmath` fdlibm-based pow, see section 4)
 
 ## 1) Fix exchange store routing for `ALLOW_SAME_TOKEN_NAME == 0` (required for legacy parity)
 
@@ -132,7 +132,7 @@ Goal: match Java's early `"Invalid address"` behavior and ensure contract owner 
 
 ## Summary
 
-**Implementation Status: COMPLETE (with minor caveats)**
+**Implementation Status: COMPLETE**
 
 The Rust implementation of `EXCHANGE_TRANSACTION_CONTRACT` achieves full parity with Java for both modern and legacy modes:
 
@@ -149,12 +149,10 @@ The Rust implementation of `EXCHANGE_TRANSACTION_CONTRACT` achieves full parity 
    - ExchangeInjectContract (type 42) - added owner_address validation
    - ExchangeWithdrawContract (type 43) - added owner_address validation
    - ExchangeTransactionContract (type 44) - added owner_address validation
+9. ✅ StrictMath parity - uses `rust-strictmath` crate (fdlibm-based) when `ALLOW_STRICT_MATH == 1`, matching Java's `StrictMath.pow()` for cross-platform determinism
 
 ### Outstanding Items:
 None - all parity gaps have been resolved.
-
-### Recently Completed:
-1. ✅ StrictMath parity - now uses `rust-strictmath` crate (fdlibm-based) when `ALLOW_STRICT_MATH == 1`, matching Java's `StrictMath.pow()` behavior for cross-platform determinism
 
 ### Key Implementation Files:
 - **Exchange contracts**: `rust-backend/crates/core/src/service/mod.rs`
