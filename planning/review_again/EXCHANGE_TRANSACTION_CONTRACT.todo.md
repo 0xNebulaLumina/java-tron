@@ -68,7 +68,11 @@ Goal: match Java `StrictMath.pow` bit-for-bit in strict mode.
     - [ ] use `libm` crate (pure Rust fdlibm port) - not needed
     - [ ] vendor/port the relevant fdlibm pow implementation (with tests) - not needed
 - [x] Add targeted regression tests with vectors that are known to be rounding-sensitive after the `(double)->long` truncation - **IMPLEMENTED** (`test_strict_math_determinism`, `test_strict_vs_non_strict_math`, `test_fdlibm_pow_known_values`)
-- [ ] Add/extend conformance fixtures where `ALLOW_STRICT_MATH == 1` and the expected received amount differs if pow rounding drifts - existing `happy_path_strict_math_enabled` fixture passes
+- [x] Add/extend conformance fixtures where `ALLOW_STRICT_MATH == 1` and the expected received amount differs if pow rounding drifts - **IMPLEMENTED** (2026-02-13)
+  - `happy_path_strict_math_enabled` - original fixture
+  - `happy_path_strict_math_large_quant` - large trade stressing pow(ratio, 2000) calculation
+  - `happy_path_strict_math_imbalanced_pool` - imbalanced 10:1 liquidity pool
+  - `happy_path_strict_math_precision_edge` - non-round values stressing floating-point precision
 
 **Implementation Details**:
 - Added `rust-strictmath = "0.1"` dependency to `crates/core/Cargo.toml`
@@ -107,18 +111,32 @@ Goal: match Java's early `"Invalid address"` behavior and ensure contract owner 
     - [x] v1 exchange (`exchange`) updated with token names
     - [x] v2 exchange (`exchange-v2`) updated with token ids
     - [x] account `asset["abc"]` updated (not `asset["1"]`)
-  - [ ] token-name → token-name swap (`"abc"` ↔ `"def"`)
-  - [ ] legacy failure modes (wrong token, insufficient token balance, slippage) using token names
+  - [x] token-name → token-name swap (`"abc"` ↔ `"def"`) - **IMPLEMENTED** (2026-02-13)
+    - `legacy_mode_happy_path_transaction` - TOKEN_NAME_A → TOKEN_NAME_B swap
+  - [x] legacy failure modes (wrong token, insufficient token balance, slippage) using token names - **IMPLEMENTED** (2026-02-13)
+    - `legacy_mode_validate_fail_wrong_token` - swap with token name not in exchange
+    - `legacy_mode_validate_fail_insufficient_token_balance` - insufficient token balance
+    - `legacy_mode_validate_fail_slippage` - expected output exceeds AMM calculation
+  - [x] TRX swap in legacy mode - **IMPLEMENTED** (2026-02-13)
+    - `legacy_mode_happy_path_trx_swap` - TRX swap with ALLOW_SAME_TOKEN_NAME=0
 
-**Current status**: `legacy_mode_happy_path_transaction` fixture exists (added 2026-02-12) and tests legacy mode with `ALLOW_SAME_TOKEN_NAME=0`.
+**Current status**: Full legacy mode coverage with 5 fixtures (2026-02-13):
+- `legacy_mode_happy_path_transaction` - token-name → token-name swap
+- `legacy_mode_happy_path_trx_swap` - TRX swap in legacy mode
+- `legacy_mode_validate_fail_wrong_token` - wrong token failure
+- `legacy_mode_validate_fail_insufficient_token_balance` - insufficient balance failure
+- `legacy_mode_validate_fail_slippage` - slippage failure
 
 ## 8) Verification steps
 
 - [x] Rust:
   - [x] `cd rust-backend && cargo test` - compiles and tests pass
   - [x] run conformance runner on:
-    - [x] `exchange_transaction_contract` fixtures (existing) - 15 fixtures available (14 modern + 1 legacy)
-    - [x] new legacy fixtures (if added) - `legacy_mode_happy_path_transaction` added
+    - [x] `exchange_transaction_contract` fixtures - **22 fixtures total** (2026-02-13):
+      - 14 modern mode fixtures (V2)
+      - 5 legacy mode fixtures (V1, ALLOW_SAME_TOKEN_NAME=0)
+      - 4 StrictMath edge case fixtures (ALLOW_STRICT_MATH=1)
+    - Note: Some fixtures test validation failures (expected behavior)
 - [ ] Java (optional end-to-end validation):
   - [ ] `./gradlew :framework:test --tests "org.tron.core.actuator.ExchangeTransactionActuatorTest"`
 

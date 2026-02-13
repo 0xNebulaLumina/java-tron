@@ -196,7 +196,7 @@ So “fixtures passing” here should be interpreted as **state parity**, not ne
 
 ---
 
-## Implementation Status (Updated 2026-02-12)
+## Implementation Status (Updated 2026-02-13)
 
 **All major parity gaps have been resolved.** The Rust implementation now achieves full parity with Java for both modern and legacy modes:
 
@@ -208,6 +208,12 @@ So “fixtures passing” here should be interpreted as **state parity**, not ne
 4. **Owner address validation** - Parser now captures `owner_address` and executor validates length/prefix
 5. **Receipt with exchange_received_amount** - `TransactionResultBuilder` emits proper receipt
 6. **StrictMath.pow determinism** - Now uses `rust-strictmath` crate (fdlibm-based) when `ALLOW_STRICT_MATH == 1`, matching Java's `StrictMath.pow()` for cross-platform determinism
+
+### Conformance Coverage (22 fixtures total):
+
+- **Modern mode (V2)**: 14 fixtures covering happy paths and validation failures
+- **Legacy mode (V1)**: 5 fixtures covering token-name swaps and failure modes
+- **StrictMath edge cases**: 4 fixtures with imbalanced pools and precision-stressing values
 
 ### Remaining Items:
 
