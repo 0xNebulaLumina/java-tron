@@ -49,6 +49,10 @@ sha3 = "0.10"
 # Temporary directory for fixture execution
 tempfile = "3.8"
 
+# StrictMath for deterministic floating-point operations (fdlibm-based)
+# Used for exchange AMM calculations when ALLOW_STRICT_MATH == 1
+rust-strictmath = "0.1"
+
 [dev-dependencies]
 
 [build-dependencies]

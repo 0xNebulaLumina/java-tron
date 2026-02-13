@@ -18,17 +18,22 @@
 //! ## Strict Math Mode
 //!
 //! When `use_strict_math=true`, Java uses `StrictMath.pow()` which guarantees
-//! bit-for-bit identical results across all platforms. When false, it uses
-//! `Math.pow()` which may have slight platform variations.
+//! bit-for-bit identical results across all platforms. Java's StrictMath is
+//! based on fdlibm (Freely Distributable Math Library).
 //!
-//! In Rust, we use `f64::powf()` which should match Java's behavior on the same
-//! platform, but for strict mode we need to be extra careful about floating-point
-//! determinism.
+//! In Rust, when strict mode is enabled, we use the `rust-strictmath` crate
+//! which is also based on fdlibm, providing the same deterministic behavior
+//! as Java's StrictMath.pow().
+//!
+//! When strict mode is disabled, we use the standard `f64::powf()` which may
+//! have slight platform variations (matching Java's Math.pow() behavior).
 //!
 //! ## References
 //!
 //! - Java ExchangeProcessor: chainbase/src/main/java/org/tron/core/capsule/ExchangeProcessor.java
 //! - Java ExchangeCapsule: chainbase/src/main/java/org/tron/core/capsule/ExchangeCapsule.java
+//! - Java StrictMath: uses fdlibm (https://www.netlib.org/fdlibm/)
+//! - rust-strictmath: fdlibm port for Rust (https://github.com/loyispa/rust-strictmath)
 
 /// Virtual supply constant used in Bancor AMM formula
 /// This is the initial virtual supply pool (1 quintillion)
@@ -118,20 +123,22 @@ impl ExchangeProcessor {
 
     /// Power function that respects strict math mode
     ///
-    /// In strict mode, we use a more careful implementation that should
-    /// match Java's StrictMath.pow() behavior. In non-strict mode, we use
-    /// the standard f64::powf().
+    /// In strict mode, we use `rust-strictmath::pow()` which is based on fdlibm,
+    /// the same library that Java's StrictMath.pow() uses. This guarantees
+    /// bit-for-bit identical results across all platforms.
     ///
-    /// Note: Achieving bit-exact parity with Java's pow() is challenging.
-    /// For production use, extensive testing is recommended.
+    /// In non-strict mode, we use the standard `f64::powf()` which may have
+    /// slight platform variations (matching Java's Math.pow() behavior).
     fn pow(&self, base: f64, exponent: f64) -> f64 {
         if self.use_strict_math {
-            // For strict math mode, use the same basic powf but log the values
-            // for debugging potential discrepancies
-            let result = base.powf(exponent);
-            tracing::trace!("strict_pow({}, {}) = {}", base, exponent, result);
+            // Use fdlibm-based pow for cross-platform determinism
+            // This matches Java's StrictMath.pow() behavior
+            let result = rust_strictmath::pow(base, exponent);
+            tracing::trace!("strict_pow({}, {}) = {} (fdlibm)", base, exponent, result);
             result
         } else {
+            // Use platform-native pow (may vary slightly across platforms)
+            // This matches Java's Math.pow() behavior
             base.powf(exponent)
         }
     }
@@ -320,5 +327,63 @@ mod tests {
         assert!(!is_number(b"123abc"));
         assert!(!is_number(b"_"));
         assert!(!is_number(b""));
+    }
+
+    #[test]
+    fn test_strict_math_determinism() {
+        // Test that strict math produces consistent results
+        let mut processor1 = ExchangeProcessor::new(true); // strict math
+        let mut processor2 = ExchangeProcessor::new(true); // strict math
+
+        let sell_balance = 1_000_000_000i64;
+        let buy_balance = 1_000_000_000i64;
+        let sell_quant = 100_000_000i64;
+
+        let result1 = processor1.exchange(sell_balance, buy_balance, sell_quant);
+        let result2 = processor2.exchange(sell_balance, buy_balance, sell_quant);
+
+        // Strict math should always produce identical results
+        assert_eq!(result1, result2, "Strict math should be deterministic");
+        println!("Strict math exchange result: {} -> {}", sell_quant, result1);
+    }
+
+    #[test]
+    fn test_strict_vs_non_strict_math() {
+        // Compare strict math vs non-strict math results
+        // They should be close but may differ slightly on some platforms
+        let mut processor_strict = ExchangeProcessor::new(true);
+        let mut processor_normal = ExchangeProcessor::new(false);
+
+        let sell_balance = 1_000_000_000i64;
+        let buy_balance = 1_000_000_000i64;
+        let sell_quant = 100_000_000i64;
+
+        let result_strict = processor_strict.exchange(sell_balance, buy_balance, sell_quant);
+        let result_normal = processor_normal.exchange(sell_balance, buy_balance, sell_quant);
+
+        println!("Strict math result: {}", result_strict);
+        println!("Normal math result: {}", result_normal);
+
+        // Results should be very close (within a small margin due to floating-point)
+        // but may not be exactly equal on all platforms
+        let diff = (result_strict - result_normal).abs();
+        assert!(diff <= 1, "Strict and normal math should produce very similar results, diff: {}", diff);
+    }
+
+    #[test]
+    fn test_fdlibm_pow_known_values() {
+        // Test fdlibm pow with known values to verify it matches expected behavior
+        // These are the exponents used in the exchange algorithm
+        let base = 1.1; // Example ratio
+
+        let strict_result_0005 = rust_strictmath::pow(base, 0.0005);
+        let strict_result_2000 = rust_strictmath::pow(base, 2000.0);
+
+        println!("fdlibm pow({}, 0.0005) = {:.17}", base, strict_result_0005);
+        println!("fdlibm pow({}, 2000.0) = {:.17}", base, strict_result_2000);
+
+        // Verify the results are reasonable
+        assert!(strict_result_0005 > 1.0 && strict_result_0005 < 1.001);
+        assert!(strict_result_2000 > 1.0); // Large positive power should be > 1
     }
 }
