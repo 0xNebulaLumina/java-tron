@@ -2796,6 +2796,68 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get ALLOW_NEW_REWARD dynamic property value.
+    /// Java reference: DynamicPropertiesStore.getAllowNewReward()
+    /// Returns the raw value (0 or 1 typically). Defaults to 0 if not found.
+    pub fn get_allow_new_reward(&self) -> Result<i64> {
+        let key = b"ALLOW_NEW_REWARD";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    tracing::warn!("ALLOW_NEW_REWARD has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("ALLOW_NEW_REWARD not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Check if new reward algorithm is allowed.
+    /// Java reference: DynamicPropertiesStore.allowNewReward()
+    /// Returns true if ALLOW_NEW_REWARD == 1
+    pub fn allow_new_reward(&self) -> Result<bool> {
+        Ok(self.get_allow_new_reward()? == 1)
+    }
+
+    /// Get ALLOW_DELEGATE_OPTIMIZATION dynamic property value.
+    /// Java reference: DynamicPropertiesStore.getAllowDelegateOptimization()
+    /// Returns the raw value (0 or 1 typically). Defaults to 0 if not found.
+    pub fn get_allow_delegate_optimization(&self) -> Result<i64> {
+        let key = b"ALLOW_DELEGATE_OPTIMIZATION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    tracing::warn!("ALLOW_DELEGATE_OPTIMIZATION has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("ALLOW_DELEGATE_OPTIMIZATION not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Check if delegate optimization is supported.
+    /// Java reference: DynamicPropertiesStore.supportAllowDelegateOptimization()
+    /// Returns true if ALLOW_DELEGATE_OPTIMIZATION == 1
+    pub fn support_allow_delegate_optimization(&self) -> Result<bool> {
+        Ok(self.get_allow_delegate_optimization()? == 1)
+    }
+
     // --- Delegation Store Read Methods ---
 
     /// Get the begin cycle for an address from delegation store.
@@ -3915,6 +3977,146 @@ impl EngineBackedEvmStateStore {
                 receiver_index.encode_to_vec(),
             )?;
         }
+
+        Ok(())
+    }
+
+    // --- Optimized Delegation Index Methods (V1 with ALLOW_DELEGATE_OPTIMIZATION) ---
+
+    /// Prefix bytes for V1 optimized delegation index keys
+    const V1_FROM_PREFIX: u8 = 0x01;
+    const V1_TO_PREFIX: u8 = 0x02;
+
+    /// Convert legacy delegation index to optimized layout for an address.
+    ///
+    /// Java oracle: DelegatedResourceAccountIndexStore.convert()
+    /// This migrates old-style lists (key=address, value=proto with lists) to
+    /// new prefix-based keys (0x01||from||to and 0x02||to||from).
+    pub fn convert_delegated_resource_account_index_v1(&self, address: &Address) -> Result<()> {
+        let tron_addr = self.to_tron_address_21(address).to_vec();
+
+        // Check if legacy index exists for this address
+        let index_data = match self.buffered_get(
+            self.delegated_resource_account_index_database(),
+            &tron_addr,
+        )? {
+            Some(data) => data,
+            None => {
+                // No legacy data - either already converted or never had delegation
+                return Ok(());
+            }
+        };
+
+        let index = crate::protocol::DelegatedResourceAccountIndex::decode(&index_data[..])
+            .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?;
+
+        // Convert to_accounts list: for each target, use index+1 as timestamp to preserve order
+        for (i, to_account) in index.to_accounts.iter().enumerate() {
+            let timestamp = (i + 1) as i64;
+            self.delegate_v1_optimized_internal(&tron_addr, to_account, timestamp)?;
+        }
+
+        // Convert from_accounts list: for each source, use index+1 as timestamp
+        for (i, from_account) in index.from_accounts.iter().enumerate() {
+            let timestamp = (i + 1) as i64;
+            self.delegate_v1_optimized_internal(from_account, &tron_addr, timestamp)?;
+        }
+
+        // Delete the legacy key after successful conversion
+        self.buffered_delete(
+            self.delegated_resource_account_index_database(),
+            tron_addr,
+        )?;
+
+        Ok(())
+    }
+
+    /// Write optimized V1 delegation index entries.
+    ///
+    /// Java oracle: DelegatedResourceAccountIndexStore.delegate(from, to, time)
+    /// Writes two prefix keys:
+    /// - 0x01 || from || to → DelegatedResourceAccountIndex(account=to, timestamp=time)
+    /// - 0x02 || to || from → DelegatedResourceAccountIndex(account=from, timestamp=time)
+    pub fn delegate_v1_optimized(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        timestamp: i64,
+    ) -> Result<()> {
+        let from_tron = self.to_tron_address_21(owner).to_vec();
+        let to_tron = self.to_tron_address_21(receiver).to_vec();
+        self.delegate_v1_optimized_internal(&from_tron, &to_tron, timestamp)
+    }
+
+    /// Internal helper for optimized delegation using raw 21-byte addresses.
+    fn delegate_v1_optimized_internal(
+        &self,
+        from_tron: &[u8],
+        to_tron: &[u8],
+        timestamp: i64,
+    ) -> Result<()> {
+        // Key: 0x01 || from || to
+        let mut from_key = Vec::with_capacity(1 + 21 + 21);
+        from_key.push(Self::V1_FROM_PREFIX);
+        from_key.extend_from_slice(from_tron);
+        from_key.extend_from_slice(to_tron);
+
+        let to_index = crate::protocol::DelegatedResourceAccountIndex {
+            account: to_tron.to_vec(),
+            timestamp,
+            ..Default::default()
+        };
+
+        self.buffered_put(
+            self.delegated_resource_account_index_database(),
+            from_key,
+            to_index.encode_to_vec(),
+        )?;
+
+        // Key: 0x02 || to || from
+        let mut to_key = Vec::with_capacity(1 + 21 + 21);
+        to_key.push(Self::V1_TO_PREFIX);
+        to_key.extend_from_slice(to_tron);
+        to_key.extend_from_slice(from_tron);
+
+        let from_index = crate::protocol::DelegatedResourceAccountIndex {
+            account: from_tron.to_vec(),
+            timestamp,
+            ..Default::default()
+        };
+
+        self.buffered_put(
+            self.delegated_resource_account_index_database(),
+            to_key,
+            from_index.encode_to_vec(),
+        )?;
+
+        Ok(())
+    }
+
+    /// Remove optimized V1 delegation index entries.
+    ///
+    /// Java oracle: DelegatedResourceAccountIndexStore.unDelegate(from, to)
+    /// Deletes both prefix keys.
+    pub fn undelegate_v1_optimized(&self, owner: &Address, receiver: &Address) -> Result<()> {
+        let from_tron = self.to_tron_address_21(owner).to_vec();
+        let to_tron = self.to_tron_address_21(receiver).to_vec();
+
+        // Key: 0x01 || from || to
+        let mut from_key = Vec::with_capacity(1 + 21 + 21);
+        from_key.push(Self::V1_FROM_PREFIX);
+        from_key.extend_from_slice(&from_tron);
+        from_key.extend_from_slice(&to_tron);
+
+        self.buffered_delete(self.delegated_resource_account_index_database(), from_key)?;
+
+        // Key: 0x02 || to || from
+        let mut to_key = Vec::with_capacity(1 + 21 + 21);
+        to_key.push(Self::V1_TO_PREFIX);
+        to_key.extend_from_slice(&to_tron);
+        to_key.extend_from_slice(&from_tron);
+
+        self.buffered_delete(self.delegated_resource_account_index_database(), to_key)?;
 
         Ok(())
     }

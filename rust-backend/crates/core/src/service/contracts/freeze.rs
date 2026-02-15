@@ -207,13 +207,34 @@ impl BackendService {
         );
 
         // Determine whether to use the new reward algorithm for weight deltas.
+        // Java reference: DynamicPropertiesStore.allowNewReward() -> ALLOW_NEW_REWARD == 1
         let allow_new_reward = storage_adapter
-            .get_current_cycle_number()
-            .and_then(|current| {
-                storage_adapter
-                    .get_new_reward_algorithm_effective_cycle()
-                    .map(|effective| current >= effective)
-            })
+            .allow_new_reward()
+            .unwrap_or(false);
+
+        // Java: initialize oldTronPower when the new resource model is enabled and oldTronPower==0.
+        // This must be done BEFORE applying the freeze mutation.
+        // Java reference: FreezeBalanceActuator.execute() -> initializeOldTronPower()
+        let mut owner_proto = owner_proto;
+        if support_allow_new_resource_model && owner_proto.old_tron_power == 0 {
+            let tron_power = storage_adapter
+                .get_tron_power_in_sun(&transaction.from, false)
+                .map_err(|e| format!("Failed to compute tron power: {}", e))?;
+            owner_proto.old_tron_power = if tron_power == 0 {
+                -1
+            } else {
+                tron_power
+                    .try_into()
+                    .map_err(|_| "tron power exceeds i64::MAX".to_string())?
+            };
+            debug!("Initialized oldTronPower to {} for owner={}",
+                   owner_proto.old_tron_power,
+                   tron_backend_common::to_tron_address(&transaction.from));
+        }
+
+        // Check if delegate optimization is enabled for index updates.
+        let support_delegate_optimization = storage_adapter
+            .support_allow_delegate_optimization()
             .unwrap_or(false);
 
         // Apply balance delta (common to self-freeze and delegated-freeze).
@@ -247,9 +268,26 @@ impl BackendService {
                             expiration_timestamp,
                         )
                         .map_err(|e| format!("Failed to update DelegatedResource (v1): {}", e))?;
-                    storage_adapter
-                        .delegate_resource_account_index_v1(&transaction.from, &receiver)
-                        .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e))?;
+
+                    // Update delegation account index: use optimized layout when enabled.
+                    // Java reference: FreezeBalanceActuator.delegateResource() checks supportAllowDelegateOptimization()
+                    if support_delegate_optimization {
+                        // Convert any legacy index entries for both addresses first
+                        storage_adapter
+                            .convert_delegated_resource_account_index_v1(&transaction.from)
+                            .map_err(|e| format!("Failed to convert owner delegation index: {}", e))?;
+                        storage_adapter
+                            .convert_delegated_resource_account_index_v1(&receiver)
+                            .map_err(|e| format!("Failed to convert receiver delegation index: {}", e))?;
+                        // Write optimized prefix keys
+                        storage_adapter
+                            .delegate_v1_optimized(&transaction.from, &receiver, now_ms)
+                            .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1 optimized): {}", e))?;
+                    } else {
+                        storage_adapter
+                            .delegate_resource_account_index_v1(&transaction.from, &receiver)
+                            .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e))?;
+                    }
 
                     // Update owner delegated balance.
                     new_owner_proto.delegated_frozen_balance_for_bandwidth = new_owner_proto
@@ -287,9 +325,23 @@ impl BackendService {
                             expiration_timestamp,
                         )
                         .map_err(|e| format!("Failed to update DelegatedResource (v1): {}", e))?;
-                    storage_adapter
-                        .delegate_resource_account_index_v1(&transaction.from, &receiver)
-                        .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e))?;
+
+                    // Update delegation account index: use optimized layout when enabled.
+                    if support_delegate_optimization {
+                        storage_adapter
+                            .convert_delegated_resource_account_index_v1(&transaction.from)
+                            .map_err(|e| format!("Failed to convert owner delegation index: {}", e))?;
+                        storage_adapter
+                            .convert_delegated_resource_account_index_v1(&receiver)
+                            .map_err(|e| format!("Failed to convert receiver delegation index: {}", e))?;
+                        storage_adapter
+                            .delegate_v1_optimized(&transaction.from, &receiver, now_ms)
+                            .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1 optimized): {}", e))?;
+                    } else {
+                        storage_adapter
+                            .delegate_resource_account_index_v1(&transaction.from, &receiver)
+                            .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e))?;
+                    }
 
                     // Ensure AccountResource exists on both accounts.
                     if new_owner_proto.account_resource.is_none() {
@@ -638,13 +690,14 @@ impl BackendService {
             .map_err(|e| format!("Failed to get ALLOW_TVM_SOLIDITY_059: {}", e))?;
 
         // Determine whether to use the new reward algorithm for weight deltas.
+        // Java reference: DynamicPropertiesStore.allowNewReward() -> ALLOW_NEW_REWARD == 1
         let allow_new_reward = storage_adapter
-            .get_current_cycle_number()
-            .and_then(|current| {
-                storage_adapter
-                    .get_new_reward_algorithm_effective_cycle()
-                    .map(|effective| current >= effective)
-            })
+            .allow_new_reward()
+            .unwrap_or(false);
+
+        // Check if delegate optimization is enabled for index updates.
+        let support_delegate_optimization = storage_adapter
+            .support_allow_delegate_optimization()
             .unwrap_or(false);
 
         // Load owner proto (we must update frozen fields for fixture parity).
@@ -923,14 +976,28 @@ impl BackendService {
                 storage_adapter
                     .delete_delegated_resource_v1(&transaction.from, &receiver)
                     .map_err(|e| format!("Failed to delete DelegatedResource (v1): {}", e))?;
-                storage_adapter
-                    .undelegate_resource_account_index_v1(&transaction.from, &receiver)
-                    .map_err(|e| {
-                        format!(
-                            "Failed to update DelegatedResourceAccountIndex (v1): {}",
-                            e
-                        )
-                    })?;
+
+                // Update delegation account index: use optimized layout when enabled.
+                // Java reference: UnfreezeBalanceActuator checks supportAllowDelegateOptimization()
+                if support_delegate_optimization {
+                    storage_adapter
+                        .undelegate_v1_optimized(&transaction.from, &receiver)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to update DelegatedResourceAccountIndex (v1 optimized): {}",
+                                e
+                            )
+                        })?;
+                } else {
+                    storage_adapter
+                        .undelegate_resource_account_index_v1(&transaction.from, &receiver)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to update DelegatedResourceAccountIndex (v1): {}",
+                                e
+                            )
+                        })?;
+                }
             } else {
                 storage_adapter
                     .put_delegated_resource_v1(&transaction.from, &receiver, &new_delegated_resource)

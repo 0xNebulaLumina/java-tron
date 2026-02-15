@@ -420,20 +420,31 @@ fn test_unfreeze_balance_emits_freeze_changes_when_enabled() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
+    // Set latest_block_header_timestamp for the unfreeze time check
+    // The freeze expires at 1500000000000ms, so we set timestamp to 1600000000000ms (after expiry)
+    storage_engine.put("properties", b"latest_block_header_timestamp", &1600000000000i64.to_be_bytes()).unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
-    // Setup owner account
+    // Setup owner account with frozen balance using full proto
     let owner_addr = Address::from_slice(&[0x14; 20]);
-    let owner_account = AccountInfo {
-        balance: U256::from(1_000_000_000_000u64),
-        nonce: 0,
-        code_hash: revm_primitives::KECCAK_EMPTY,
-        code: None,
-    };
-    storage_adapter.set_account(owner_addr, owner_account).unwrap();
+    let prefix = storage_adapter.address_prefix();
+    let mut owner_tron = vec![prefix];
+    owner_tron.extend_from_slice(owner_addr.as_slice());
 
-    // Pre-populate freeze record
-    storage_adapter.add_freeze_amount(owner_addr, 0, 500_000, 1700000000000).unwrap();
+    // Create Account proto with frozen balance (self-freeze for bandwidth)
+    let owner_proto = tron_backend_execution::protocol::Account {
+        address: owner_tron,
+        balance: 1_000_000_000_000i64,
+        frozen: vec![tron_backend_execution::protocol::account::Frozen {
+            frozen_balance: 500_000,
+            expire_time: 1500000000000, // Already expired (block_timestamp=1600000000000)
+        }],
+        ..Default::default()
+    };
+    storage_adapter.put_account_proto(&owner_addr, &owner_proto).unwrap();
+
+    // Pre-populate freeze record for Rust-side ledger
+    storage_adapter.add_freeze_amount(owner_addr, 0, 500_000, 1500000000000).unwrap();
 
     // Create UnfreezeBalance transaction
     // Field 10: resource = 0 (BANDWIDTH)
@@ -487,7 +498,7 @@ fn test_unfreeze_balance_emits_freeze_changes_when_enabled() {
     // Execute unfreeze balance
     let result = service.execute_unfreeze_balance_contract(&mut storage_adapter, &tx, &context);
 
-    assert!(result.is_ok(), "Unfreeze execution should succeed");
+    assert!(result.is_ok(), "Unfreeze execution should succeed: {:?}", result.err());
     let exec_result = result.unwrap();
 
     // Verify freeze_changes is populated
@@ -507,25 +518,41 @@ fn test_freeze_balance_v2_emits_with_v2_flag() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
+    // Enable V2 freeze by setting UNFREEZE_DELAY_DAYS > 0
+    storage_engine.put("properties", b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
+    // Set latest_block_header_timestamp
+    storage_engine.put("properties", b"latest_block_header_timestamp", &1600000000000i64.to_be_bytes()).unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
-    // Setup owner account
+    // Setup owner account with full proto
     let owner_addr = Address::from_slice(&[0x15; 20]);
-    let owner_account = AccountInfo {
-        balance: U256::from(2_000_000_000_000u64),
-        nonce: 0,
-        code_hash: revm_primitives::KECCAK_EMPTY,
-        code: None,
+    let prefix = storage_adapter.address_prefix();
+    let mut owner_tron = vec![prefix];
+    owner_tron.extend_from_slice(owner_addr.as_slice());
+
+    let owner_proto = tron_backend_execution::protocol::Account {
+        address: owner_tron,
+        balance: 2_000_000_000_000i64,
+        ..Default::default()
     };
-    storage_adapter.set_account(owner_addr, owner_account).unwrap();
+    storage_adapter.put_account_proto(&owner_addr, &owner_proto).unwrap();
 
     // Create FreezeBalanceV2 transaction
+    // Field 1: owner_address (bytes, 21 bytes with 0x41 prefix)
     // Field 2: frozen_balance = 1_000_000
     // Field 3: resource = 1 (ENERGY)
-    let params_data = vec![
-        0x10, 0xC0, 0x84, 0x3D, // field 2: frozen_balance
-        0x18, 0x01,             // field 3: resource (ENERGY)
-    ];
+    let mut params_data = Vec::new();
+    // Field 1 (owner_address): tag = (1 << 3) | 2 = 0x0A, length = 21
+    params_data.push(0x0A); // field 1, wire type 2 (length-delimited)
+    params_data.push(21);   // length
+    params_data.push(0x41); // TRON mainnet prefix
+    params_data.extend_from_slice(owner_addr.as_slice()); // 20 bytes
+    // Field 2 (frozen_balance): tag = (2 << 3) | 0 = 0x10, value = 1_000_000
+    params_data.push(0x10);
+    encode_varint(&mut params_data, 1_000_000);
+    // Field 3 (resource): tag = (3 << 3) | 0 = 0x18, value = 1 (ENERGY)
+    params_data.push(0x18);
+    params_data.push(0x01);
 
     let tx = TronTransaction {
         from: owner_addr,
@@ -573,7 +600,7 @@ fn test_freeze_balance_v2_emits_with_v2_flag() {
     // Execute freeze balance V2
     let result = service.execute_freeze_balance_v2_contract(&mut storage_adapter, &tx, &context);
 
-    assert!(result.is_ok(), "FreezeV2 execution should succeed");
+    assert!(result.is_ok(), "FreezeV2 execution should succeed: {:?}", result.err());
     let exec_result = result.unwrap();
 
     // Verify freeze_changes is populated with V2 flag
@@ -593,28 +620,46 @@ fn test_unfreeze_balance_v2_partial_unfreeze() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
+    // Enable V2 by setting UNFREEZE_DELAY_DAYS > 0
+    storage_engine.put("properties", b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"latest_block_header_timestamp", &1600000000000i64.to_be_bytes()).unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
-    // Setup owner account
+    // Setup owner account with full proto containing frozen_v2 balance
     let owner_addr = Address::from_slice(&[0x16; 20]);
-    let owner_account = AccountInfo {
-        balance: U256::from(1_000_000_000_000u64),
-        nonce: 0,
-        code_hash: revm_primitives::KECCAK_EMPTY,
-        code: None,
+    let prefix = storage_adapter.address_prefix();
+    let mut owner_tron = vec![prefix];
+    owner_tron.extend_from_slice(owner_addr.as_slice());
+
+    let owner_proto = tron_backend_execution::protocol::Account {
+        address: owner_tron.clone(),
+        balance: 1_000_000_000_000i64,
+        frozen_v2: vec![tron_backend_execution::protocol::account::FreezeV2 {
+            r#type: 0, // BANDWIDTH
+            amount: 1_000_000,
+        }],
+        ..Default::default()
     };
-    storage_adapter.set_account(owner_addr, owner_account).unwrap();
+    storage_adapter.put_account_proto(&owner_addr, &owner_proto).unwrap();
 
     // Pre-populate freeze record with 1_000_000 frozen
     storage_adapter.add_freeze_amount(owner_addr, 0, 1_000_000, 1700000000000).unwrap();
 
     // Create UnfreezeBalanceV2 transaction with partial unfreeze (400_000)
+    // Field 1: owner_address (bytes)
     // Field 2: unfreeze_balance = 400_000
     // Field 3: resource = 0 (BANDWIDTH)
-    let params_data = vec![
-        0x10, 0x80, 0x89, 0x18, // field 2: unfreeze_balance (400_000)
-        0x18, 0x00,             // field 3: resource (BANDWIDTH)
-    ];
+    let mut params_data = Vec::new();
+    // Field 1 (owner_address): tag = 0x0A, length = 21
+    params_data.push(0x0A);
+    params_data.push(21);
+    params_data.extend_from_slice(&owner_tron);
+    // Field 2 (unfreeze_balance): tag = 0x10
+    params_data.push(0x10);
+    encode_varint(&mut params_data, 400_000);
+    // Field 3 (resource): tag = 0x18, value = 0 (BANDWIDTH)
+    params_data.push(0x18);
+    params_data.push(0x00);
 
     let tx = TronTransaction {
         from: owner_addr,
@@ -662,7 +707,7 @@ fn test_unfreeze_balance_v2_partial_unfreeze() {
     // Execute unfreeze balance V2
     let result = service.execute_unfreeze_balance_v2_contract(&mut storage_adapter, &tx, &context);
 
-    assert!(result.is_ok(), "UnfreezeV2 execution should succeed");
+    assert!(result.is_ok(), "UnfreezeV2 execution should succeed: {:?}", result.err());
     let exec_result = result.unwrap();
 
     // Verify freeze_changes shows remaining amount (not 0)
@@ -682,26 +727,46 @@ fn test_unfreeze_balance_v2_full_unfreeze() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
+    // Enable V2 by setting UNFREEZE_DELAY_DAYS > 0
+    storage_engine.put("properties", b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"latest_block_header_timestamp", &1600000000000i64.to_be_bytes()).unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
-    // Setup owner account
+    // Setup owner account with full proto containing frozen_v2 balance
     let owner_addr = Address::from_slice(&[0x17; 20]);
-    let owner_account = AccountInfo {
-        balance: U256::from(1_000_000_000_000u64),
-        nonce: 0,
-        code_hash: revm_primitives::KECCAK_EMPTY,
-        code: None,
+    let prefix = storage_adapter.address_prefix();
+    let mut owner_tron = vec![prefix];
+    owner_tron.extend_from_slice(owner_addr.as_slice());
+
+    let owner_proto = tron_backend_execution::protocol::Account {
+        address: owner_tron.clone(),
+        balance: 1_000_000_000_000i64,
+        frozen_v2: vec![tron_backend_execution::protocol::account::FreezeV2 {
+            r#type: 1, // ENERGY
+            amount: 800_000,
+        }],
+        ..Default::default()
     };
-    storage_adapter.set_account(owner_addr, owner_account).unwrap();
+    storage_adapter.put_account_proto(&owner_addr, &owner_proto).unwrap();
 
     // Pre-populate freeze record
     storage_adapter.add_freeze_amount(owner_addr, 1, 800_000, 1700000000000).unwrap();
 
-    // Create UnfreezeBalanceV2 transaction with full unfreeze (no amount or -1)
+    // Create UnfreezeBalanceV2 transaction with full unfreeze (800_000 to match frozen)
+    // Field 1: owner_address
+    // Field 2: unfreeze_balance = 800_000
     // Field 3: resource = 1 (ENERGY)
-    let params_data = vec![
-        0x18, 0x01, // field 3: resource (ENERGY)
-    ];
+    let mut params_data = Vec::new();
+    // Field 1 (owner_address): tag = 0x0A, length = 21
+    params_data.push(0x0A);
+    params_data.push(21);
+    params_data.extend_from_slice(&owner_tron);
+    // Field 2 (unfreeze_balance): tag = 0x10
+    params_data.push(0x10);
+    encode_varint(&mut params_data, 800_000);
+    // Field 3 (resource): tag = 0x18, value = 1 (ENERGY)
+    params_data.push(0x18);
+    params_data.push(0x01);
 
     let tx = TronTransaction {
         from: owner_addr,
@@ -749,7 +814,7 @@ fn test_unfreeze_balance_v2_full_unfreeze() {
     // Execute unfreeze balance V2
     let result = service.execute_unfreeze_balance_v2_contract(&mut storage_adapter, &tx, &context);
 
-    assert!(result.is_ok(), "UnfreezeV2 full unfreeze should succeed");
+    assert!(result.is_ok(), "UnfreezeV2 full unfreeze should succeed: {:?}", result.err());
     let exec_result = result.unwrap();
 
     // Verify freeze_changes shows amount=0 for full unfreeze
