@@ -827,3 +827,262 @@ fn test_unfreeze_balance_v2_full_unfreeze() {
     assert_eq!(freeze_change.expiration_ms, 0, "Expiration should be 0 after full unfreeze");
     assert_eq!(freeze_change.v2_model, true, "Should be V2 model");
 }
+
+// ==== Regression Tests for Java Parity ====
+
+/// Test oldTronPower initialization when ALLOW_NEW_RESOURCE_MODEL is enabled.
+/// Java reference: FreezeBalanceActuator.execute() -> initializeOldTronPower()
+#[test]
+fn test_freeze_initializes_old_tron_power_when_new_resource_model_enabled() {
+    // Setup
+    let owner_addr = Address::from([0x12; 20]);
+    let owner_tron = make_from_raw(&owner_addr);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+
+    // Enable ALLOW_NEW_RESOURCE_MODEL
+    storage_engine.put("properties", b"ALLOW_NEW_RESOURCE_MODEL", &1i64.to_be_bytes()).unwrap();
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Create account with balance and some legacy frozen bandwidth (tron power = frozen/TRX_PRECISION)
+    let mut owner_proto = tron_backend_execution::protocol::Account::default();
+    owner_proto.balance = 100_000_000; // 100 TRX
+    owner_proto.old_tron_power = 0; // Not initialized
+    // Add legacy frozen bandwidth to create non-zero tron power
+    owner_proto.frozen.push(tron_backend_execution::protocol::account::Frozen {
+        frozen_balance: 5_000_000, // 5 TRX frozen
+        expire_time: 1700000000000,
+    });
+    storage_adapter.put_account_proto(&owner_addr, &owner_proto).unwrap();
+
+    // Create FreezeBalance transaction for 1 TRX
+    let mut params_data = Vec::new();
+    // Field 2 (frozen_balance): 1_000_000
+    params_data.push((2 << 3) | 0);
+    encode_varint(&mut params_data, 1_000_000);
+    // Field 3 (frozen_duration): 3 days
+    params_data.push((3 << 3) | 0);
+    encode_varint(&mut params_data, 3);
+    // Field 10 (resource): BANDWIDTH (0)
+    params_data.push((10 << 3) | 0);
+    encode_varint(&mut params_data, 0);
+
+    let tx = TronTransaction {
+        from: owner_addr,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(params_data),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
+            from_raw: Some(owner_tron),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1000,
+        block_timestamp: 1600000000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 0,
+        bandwidth_price: 0,
+        transaction_id: None,
+    };
+
+    let exec_config = ExecutionConfig {
+        remote: tron_backend_common::RemoteExecutionConfig {
+            freeze_balance_enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut module_manager = tron_backend_common::ModuleManager::new();
+    let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+    module_manager.register("execution", Box::new(exec_module));
+    let service = BackendService::new(module_manager);
+
+    // Execute freeze
+    let result = service.execute_freeze_balance_contract(&mut storage_adapter, &tx, &context);
+    assert!(result.is_ok(), "FreezeBalance should succeed: {:?}", result.err());
+
+    // Verify oldTronPower was initialized
+    let updated_proto = storage_adapter.get_account_proto(&owner_addr).unwrap().unwrap();
+
+    // With 5_000_000 SUN frozen, tron_power = 5_000_000 / 1_000_000 = 5 weight units
+    // Since legacy tron power is non-zero (5_000_000), oldTronPower should be set to that value
+    assert_ne!(updated_proto.old_tron_power, 0,
+               "oldTronPower should be initialized to non-zero when legacy tron power exists");
+    // oldTronPower stores the raw SUN amount, not the weight
+    assert_eq!(updated_proto.old_tron_power, 5_000_000,
+               "oldTronPower should be set to legacy tron power snapshot (5_000_000 SUN)");
+}
+
+/// Test oldTronPower is set to -1 when legacy tron power is zero.
+/// Java reference: AccountCapsule.initializeOldTronPower() sets to -1 if getTronPower() == 0
+#[test]
+fn test_freeze_initializes_old_tron_power_to_minus_one_when_legacy_power_is_zero() {
+    let owner_addr = Address::from([0x13; 20]);
+    let owner_tron = make_from_raw(&owner_addr);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+
+    // Enable ALLOW_NEW_RESOURCE_MODEL
+    storage_engine.put("properties", b"ALLOW_NEW_RESOURCE_MODEL", &1i64.to_be_bytes()).unwrap();
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Create account with balance but NO legacy frozen (tron power = 0)
+    let mut owner_proto = tron_backend_execution::protocol::Account::default();
+    owner_proto.balance = 100_000_000; // 100 TRX
+    owner_proto.old_tron_power = 0; // Not initialized
+    // No frozen balance - tron power will be 0
+    storage_adapter.put_account_proto(&owner_addr, &owner_proto).unwrap();
+
+    // Create FreezeBalance transaction for 1 TRX
+    let mut params_data = Vec::new();
+    params_data.push((2 << 3) | 0);
+    encode_varint(&mut params_data, 1_000_000);
+    params_data.push((3 << 3) | 0);
+    encode_varint(&mut params_data, 3);
+    params_data.push((10 << 3) | 0);
+    encode_varint(&mut params_data, 0);
+
+    let tx = TronTransaction {
+        from: owner_addr,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(params_data),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
+            from_raw: Some(owner_tron),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1000,
+        block_timestamp: 1600000000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 0,
+        bandwidth_price: 0,
+        transaction_id: None,
+    };
+
+    let exec_config = ExecutionConfig {
+        remote: tron_backend_common::RemoteExecutionConfig {
+            freeze_balance_enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut module_manager = tron_backend_common::ModuleManager::new();
+    let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+    module_manager.register("execution", Box::new(exec_module));
+    let service = BackendService::new(module_manager);
+
+    // Execute freeze
+    let result = service.execute_freeze_balance_contract(&mut storage_adapter, &tx, &context);
+    assert!(result.is_ok(), "FreezeBalance should succeed: {:?}", result.err());
+
+    // Verify oldTronPower was set to -1
+    let updated_proto = storage_adapter.get_account_proto(&owner_addr).unwrap().unwrap();
+    assert_eq!(updated_proto.old_tron_power, -1,
+               "oldTronPower should be -1 when legacy tron power was zero");
+}
+
+/// Test unknown resource code returns Java-parity error message.
+/// Java reference: FreezeBalanceActuator.validate() default case
+#[test]
+fn test_freeze_unknown_resource_returns_java_error_message() {
+    let owner_addr = Address::from([0x14; 20]);
+    let owner_tron = make_from_raw(&owner_addr);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    // Create account with balance
+    let mut owner_proto = tron_backend_execution::protocol::Account::default();
+    owner_proto.balance = 100_000_000;
+    storage_adapter.put_account_proto(&owner_addr, &owner_proto).unwrap();
+
+    // Create FreezeBalance transaction with unknown resource code (99)
+    let mut params_data = Vec::new();
+    params_data.push((2 << 3) | 0);
+    encode_varint(&mut params_data, 1_000_000);
+    params_data.push((3 << 3) | 0);
+    encode_varint(&mut params_data, 3);
+    params_data.push((10 << 3) | 0);
+    encode_varint(&mut params_data, 99); // Unknown resource code
+
+    let tx = TronTransaction {
+        from: owner_addr,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(params_data),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
+            from_raw: Some(owner_tron),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1000,
+        block_timestamp: 1600000000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 0,
+        bandwidth_price: 0,
+        transaction_id: None,
+    };
+
+    let exec_config = ExecutionConfig {
+        remote: tron_backend_common::RemoteExecutionConfig {
+            freeze_balance_enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut module_manager = tron_backend_common::ModuleManager::new();
+    let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+    module_manager.register("execution", Box::new(exec_module));
+    let service = BackendService::new(module_manager);
+
+    // Execute freeze - should fail with Java-parity error message
+    let result = service.execute_freeze_balance_contract(&mut storage_adapter, &tx, &context);
+    assert!(result.is_err(), "FreezeBalance with unknown resource should fail");
+
+    let error_msg = result.unwrap_err();
+    // Without new resource model, should use "ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]"
+    assert!(error_msg.contains("ResourceCode error"),
+            "Error should mention ResourceCode error: {}", error_msg);
+    assert!(error_msg.contains("BANDWIDTH"),
+            "Error should list valid codes: {}", error_msg);
+}
