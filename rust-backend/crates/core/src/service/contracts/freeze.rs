@@ -16,6 +16,8 @@ pub(super) struct FreezeParams {
     pub(super) frozen_balance: i64,
     pub(super) frozen_duration: i64,
     pub(super) resource: FreezeResource,
+    /// Raw resource code from protobuf (for Java-parity error messages on unknown values).
+    pub(super) resource_raw: i64,
     pub(super) receiver_address: Vec<u8>,
 }
 
@@ -23,6 +25,8 @@ pub(super) struct FreezeParams {
 #[derive(Debug, Clone)]
 pub(super) struct UnfreezeParams {
     pub(super) resource: FreezeResource,
+    /// Raw resource code from protobuf (for Java-parity error messages on unknown values).
+    pub(super) resource_raw: i64,
     pub(super) receiver_address: Vec<u8>,
 }
 
@@ -47,7 +51,15 @@ pub(super) enum FreezeResource {
     Bandwidth = 0,
     Energy = 1,
     TronPower = 2,
+    /// Unknown resource code (for deferred validation matching Java behavior).
+    Unknown = 255,
 }
+
+/// Expected type_url for FreezeBalanceContract in protobuf Any wrapper.
+const FREEZE_BALANCE_TYPE_URL: &str = "type.googleapis.com/protocol.FreezeBalanceContract";
+
+/// Expected type_url for UnfreezeBalanceContract in protobuf Any wrapper.
+const UNFREEZE_BALANCE_TYPE_URL: &str = "type.googleapis.com/protocol.UnfreezeBalanceContract";
 
 impl BackendService {
     pub(crate) fn execute_freeze_balance_contract(
@@ -57,6 +69,17 @@ impl BackendService {
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
+
+        // Java parity: Check type_url in Any wrapper (FreezeBalanceActuator.validate() line 194-198).
+        // If contract_parameter is provided, validate it matches the expected type.
+        if let Some(ref param) = transaction.metadata.contract_parameter {
+            if !param.type_url.ends_with("FreezeBalanceContract") {
+                return Err(format!(
+                    "contract type error,expected type [FreezeBalanceContract],real type[{}]",
+                    param.type_url
+                ));
+            }
+        }
 
         // Parse freeze parameters from transaction data
         let params = Self::parse_freeze_balance_params(&transaction.data)?;
@@ -120,6 +143,7 @@ impl BackendService {
         }
 
         // ResourceCode validation.
+        // Java reference: FreezeBalanceActuator.validate() switch (contract.getResource())
         let support_allow_new_resource_model = storage_adapter
             .support_allow_new_resource_model()
             .map_err(|e| format!("Failed to read ALLOW_NEW_RESOURCE_MODEL: {}", e))?;
@@ -130,6 +154,15 @@ impl BackendService {
                     if !params.receiver_address.is_empty() {
                         return Err("TRON_POWER is not allowed to delegate to other accounts.".to_string());
                     }
+                } else {
+                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
+                }
+            }
+            FreezeResource::Unknown => {
+                // Unknown resource codes: match Java's default case exactly.
+                // Java uses fullwidth comma (U+3001 "、") in error messages.
+                if support_allow_new_resource_model {
+                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY、TRON_POWER]".to_string());
                 } else {
                     return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
                 }
@@ -207,13 +240,34 @@ impl BackendService {
         );
 
         // Determine whether to use the new reward algorithm for weight deltas.
+        // Java reference: DynamicPropertiesStore.allowNewReward() -> ALLOW_NEW_REWARD == 1
         let allow_new_reward = storage_adapter
-            .get_current_cycle_number()
-            .and_then(|current| {
-                storage_adapter
-                    .get_new_reward_algorithm_effective_cycle()
-                    .map(|effective| current >= effective)
-            })
+            .allow_new_reward()
+            .unwrap_or(false);
+
+        // Java: initialize oldTronPower when the new resource model is enabled and oldTronPower==0.
+        // This must be done BEFORE applying the freeze mutation.
+        // Java reference: FreezeBalanceActuator.execute() -> initializeOldTronPower()
+        let mut owner_proto = owner_proto;
+        if support_allow_new_resource_model && owner_proto.old_tron_power == 0 {
+            let tron_power = storage_adapter
+                .get_tron_power_in_sun(&transaction.from, false)
+                .map_err(|e| format!("Failed to compute tron power: {}", e))?;
+            owner_proto.old_tron_power = if tron_power == 0 {
+                -1
+            } else {
+                tron_power
+                    .try_into()
+                    .map_err(|_| "tron power exceeds i64::MAX".to_string())?
+            };
+            debug!("Initialized oldTronPower to {} for owner={}",
+                   owner_proto.old_tron_power,
+                   tron_backend_common::to_tron_address(&transaction.from));
+        }
+
+        // Check if delegate optimization is enabled for index updates.
+        let support_delegate_optimization = storage_adapter
+            .support_allow_delegate_optimization()
             .unwrap_or(false);
 
         // Apply balance delta (common to self-freeze and delegated-freeze).
@@ -247,9 +301,26 @@ impl BackendService {
                             expiration_timestamp,
                         )
                         .map_err(|e| format!("Failed to update DelegatedResource (v1): {}", e))?;
-                    storage_adapter
-                        .delegate_resource_account_index_v1(&transaction.from, &receiver)
-                        .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e))?;
+
+                    // Update delegation account index: use optimized layout when enabled.
+                    // Java reference: FreezeBalanceActuator.delegateResource() checks supportAllowDelegateOptimization()
+                    if support_delegate_optimization {
+                        // Convert any legacy index entries for both addresses first
+                        storage_adapter
+                            .convert_delegated_resource_account_index_v1(&transaction.from)
+                            .map_err(|e| format!("Failed to convert owner delegation index: {}", e))?;
+                        storage_adapter
+                            .convert_delegated_resource_account_index_v1(&receiver)
+                            .map_err(|e| format!("Failed to convert receiver delegation index: {}", e))?;
+                        // Write optimized prefix keys
+                        storage_adapter
+                            .delegate_v1_optimized(&transaction.from, &receiver, now_ms)
+                            .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1 optimized): {}", e))?;
+                    } else {
+                        storage_adapter
+                            .delegate_resource_account_index_v1(&transaction.from, &receiver)
+                            .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e))?;
+                    }
 
                     // Update owner delegated balance.
                     new_owner_proto.delegated_frozen_balance_for_bandwidth = new_owner_proto
@@ -287,9 +358,23 @@ impl BackendService {
                             expiration_timestamp,
                         )
                         .map_err(|e| format!("Failed to update DelegatedResource (v1): {}", e))?;
-                    storage_adapter
-                        .delegate_resource_account_index_v1(&transaction.from, &receiver)
-                        .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e))?;
+
+                    // Update delegation account index: use optimized layout when enabled.
+                    if support_delegate_optimization {
+                        storage_adapter
+                            .convert_delegated_resource_account_index_v1(&transaction.from)
+                            .map_err(|e| format!("Failed to convert owner delegation index: {}", e))?;
+                        storage_adapter
+                            .convert_delegated_resource_account_index_v1(&receiver)
+                            .map_err(|e| format!("Failed to convert receiver delegation index: {}", e))?;
+                        storage_adapter
+                            .delegate_v1_optimized(&transaction.from, &receiver, now_ms)
+                            .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1 optimized): {}", e))?;
+                    } else {
+                        storage_adapter
+                            .delegate_resource_account_index_v1(&transaction.from, &receiver)
+                            .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e))?;
+                    }
 
                     // Ensure AccountResource exists on both accounts.
                     if new_owner_proto.account_resource.is_none() {
@@ -341,6 +426,9 @@ impl BackendService {
                 }
                 FreezeResource::TronPower => {
                     // TRON_POWER delegation is rejected in validation.
+                }
+                FreezeResource::Unknown => {
+                    // Unreachable: Unknown is rejected during validation
                 }
             }
 
@@ -448,6 +536,9 @@ impl BackendService {
                         .add_total_tron_power_weight(weight)
                         .map_err(|e| format!("Failed to update total tron power weight: {}", e))?;
                 }
+                FreezeResource::Unknown => {
+                    // Unreachable: Unknown is rejected during validation
+                }
             }
 
             // Persist updated owner proto.
@@ -500,6 +591,10 @@ impl BackendService {
                     FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
                     FreezeResource::Energy => FreezeLedgerResource::Energy,
                     FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+                    FreezeResource::Unknown => {
+                        // Unreachable: Unknown is rejected during validation
+                        return Err("Unknown resource code".to_string());
+                    }
                 };
 
                 let change = tron_backend_execution::FreezeLedgerChange {
@@ -596,6 +691,17 @@ impl BackendService {
             transaction.data.len()
         );
 
+        // Java parity: Check type_url in Any wrapper (UnfreezeBalanceActuator.validate() line 339-343).
+        // If contract_parameter is provided, validate it matches the expected type.
+        if let Some(ref param) = transaction.metadata.contract_parameter {
+            if !param.type_url.ends_with("UnfreezeBalanceContract") {
+                return Err(format!(
+                    "contract type error, expected type [UnfreezeBalanceContract], real type[{}]",
+                    param.type_url
+                ));
+            }
+        }
+
         // Parse unfreeze parameters from transaction data
         let params = Self::parse_unfreeze_balance_params(&transaction.data)?;
 
@@ -638,13 +744,14 @@ impl BackendService {
             .map_err(|e| format!("Failed to get ALLOW_TVM_SOLIDITY_059: {}", e))?;
 
         // Determine whether to use the new reward algorithm for weight deltas.
+        // Java reference: DynamicPropertiesStore.allowNewReward() -> ALLOW_NEW_REWARD == 1
         let allow_new_reward = storage_adapter
-            .get_current_cycle_number()
-            .and_then(|current| {
-                storage_adapter
-                    .get_new_reward_algorithm_effective_cycle()
-                    .map(|effective| current >= effective)
-            })
+            .allow_new_reward()
+            .unwrap_or(false);
+
+        // Check if delegate optimization is enabled for index updates.
+        let support_delegate_optimization = storage_adapter
+            .support_allow_delegate_optimization()
             .unwrap_or(false);
 
         // Load owner proto (we must update frozen fields for fixture parity).
@@ -923,14 +1030,28 @@ impl BackendService {
                 storage_adapter
                     .delete_delegated_resource_v1(&transaction.from, &receiver)
                     .map_err(|e| format!("Failed to delete DelegatedResource (v1): {}", e))?;
-                storage_adapter
-                    .undelegate_resource_account_index_v1(&transaction.from, &receiver)
-                    .map_err(|e| {
-                        format!(
-                            "Failed to update DelegatedResourceAccountIndex (v1): {}",
-                            e
-                        )
-                    })?;
+
+                // Update delegation account index: use optimized layout when enabled.
+                // Java reference: UnfreezeBalanceActuator checks supportAllowDelegateOptimization()
+                if support_delegate_optimization {
+                    storage_adapter
+                        .undelegate_v1_optimized(&transaction.from, &receiver)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to update DelegatedResourceAccountIndex (v1 optimized): {}",
+                                e
+                            )
+                        })?;
+                } else {
+                    storage_adapter
+                        .undelegate_resource_account_index_v1(&transaction.from, &receiver)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to update DelegatedResourceAccountIndex (v1): {}",
+                                e
+                            )
+                        })?;
+                }
             } else {
                 storage_adapter
                     .put_delegated_resource_v1(&transaction.from, &receiver, &new_delegated_resource)
@@ -1041,6 +1162,15 @@ impl BackendService {
                         .checked_add(unfreeze_amount)
                         .ok_or("Balance overflow")?;
                 }
+                FreezeResource::Unknown => {
+                    // Unknown resource codes: match Java's default case exactly.
+                    // Java reference: UnfreezeBalanceActuator.validate() default case (self-freeze path).
+                    if allow_new_resource_model {
+                        return Err("ResourceCode error.valid ResourceCode[BANDWIDTH、Energy、TRON_POWER]".to_string());
+                    } else {
+                        return Err(INVALID_RESOURCE_CODE.to_string());
+                    }
+                }
             }
         }
 
@@ -1061,6 +1191,9 @@ impl BackendService {
             FreezeResource::TronPower => storage_adapter
                 .add_total_tron_power_weight(weight_delta)
                 .map_err(|e| format!("Failed to update total tron power weight: {}", e))?,
+            FreezeResource::Unknown => {
+                // Unreachable: Unknown is rejected during validation
+            }
         }
 
         // Vote clearing (java-tron: needToClearVote)
@@ -1070,7 +1203,7 @@ impl BackendService {
                 FreezeResource::Bandwidth | FreezeResource::Energy => {
                     need_to_clear_vote = false;
                 }
-                FreezeResource::TronPower => {}
+                FreezeResource::TronPower | FreezeResource::Unknown => {}
             }
         }
 
@@ -1184,6 +1317,10 @@ impl BackendService {
                     .unwrap_or(0);
                 (frozen as u64, expiration)
             }
+            FreezeResource::Unknown => {
+                // Unreachable: Unknown is rejected during validation
+                (0, 0)
+            }
         };
 
         if remaining_frozen > 0 {
@@ -1228,6 +1365,10 @@ impl BackendService {
                 FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
                 FreezeResource::Energy => FreezeLedgerResource::Energy,
                 FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+                FreezeResource::Unknown => {
+                    // Unreachable: Unknown is rejected during validation
+                    return Err("Unknown resource code".to_string());
+                }
             };
 
             let (amount, expiration_ms) = match storage_adapter
@@ -1329,6 +1470,7 @@ impl BackendService {
     pub(crate) fn parse_unfreeze_balance_params(data: &revm_primitives::Bytes) -> Result<UnfreezeParams, String> {
         // Simple protobuf parser for the specific fields we need
         let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
+        let mut resource_raw: i64 = 0; // Track raw value for Java-parity error messages
         let mut receiver_address = Vec::new();
         let mut pos = 0;
 
@@ -1349,13 +1491,15 @@ impl BackendService {
                 },
                 10 => {
                     // resource (enum ResourceCode)
+                    // Java defers validation of unknown values to validate() method, so we don't fail early.
                     if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
                     let (value, new_pos) = read_varint(&data[pos..])?;
+                    resource_raw = value as i64;
                     resource = match value {
                         0 => FreezeResource::Bandwidth,
                         1 => FreezeResource::Energy,
                         2 => FreezeResource::TronPower,
-                        _ => return Err(format!("Invalid resource code: {}", value)),
+                        _ => FreezeResource::Unknown,
                     };
                     pos = pos + new_pos;
                 },
@@ -1388,7 +1532,7 @@ impl BackendService {
             }
         }
 
-        Ok(UnfreezeParams { resource, receiver_address })
+        Ok(UnfreezeParams { resource, resource_raw, receiver_address })
     }
 
     /// Execute a FREEZE_BALANCE_V2_CONTRACT (Phase 2: with freeze ledger changes)
@@ -1404,6 +1548,17 @@ impl BackendService {
             tron_backend_common::to_tron_address(&transaction.from),
             transaction.data.len()
         );
+
+        // Java parity: Check type_url in Any wrapper.
+        // If contract_parameter is provided, validate it matches the expected type.
+        if let Some(ref param) = transaction.metadata.contract_parameter {
+            if !param.type_url.ends_with("FreezeBalanceV2Contract") {
+                return Err(format!(
+                    "contract type error,expected type [FreezeBalanceV2Contract],real type[{}]",
+                    param.type_url
+                ));
+            }
+        }
 
         // === Validation (match java-tron FreezeBalanceV2Actuator messages) ===
         if !storage_adapter
@@ -1469,6 +1624,14 @@ impl BackendService {
                 }
                 FreezeResource::TronPower
             }
+            Some(FreezeResource::Unknown) => {
+                // Unknown resource codes: match Java's default case exactly.
+                if allow_new_resource_model {
+                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY、TRON_POWER]".to_string());
+                } else {
+                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
+                }
+            }
             None => {
                 if allow_new_resource_model {
                     return Err(
@@ -1524,6 +1687,7 @@ impl BackendService {
                     frozen_v2_sum(account, 1) + delegated
                 }
                 FreezeResource::TronPower => frozen_v2_sum(account, 2),
+                FreezeResource::Unknown => 0, // Unreachable: Unknown is rejected during validation
             }
         }
 
@@ -1566,6 +1730,9 @@ impl BackendService {
             FreezeResource::TronPower => storage_adapter
                 .add_total_tron_power_weight(weight_delta)
                 .map_err(|e| format!("Failed to update total tron power weight: {}", e))?,
+            FreezeResource::Unknown => {
+                // Unreachable: Unknown is rejected during validation
+            }
         }
 
         // Update balance last (no effect on weights).
@@ -1627,6 +1794,10 @@ impl BackendService {
                     FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
                     FreezeResource::Energy => FreezeLedgerResource::Energy,
                     FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+                    FreezeResource::Unknown => {
+                        // Unreachable: Unknown is rejected during validation
+                        return Err("Unknown resource code".to_string());
+                    }
                 };
 
                 let change = tron_backend_execution::FreezeLedgerChange {
@@ -1723,6 +1894,17 @@ impl BackendService {
             transaction.data.len()
         );
 
+        // Java parity: Check type_url in Any wrapper.
+        // If contract_parameter is provided, validate it matches the expected type.
+        if let Some(ref param) = transaction.metadata.contract_parameter {
+            if !param.type_url.ends_with("UnfreezeBalanceV2Contract") {
+                return Err(format!(
+                    "contract type error, expected type [UnfreezeBalanceV2Contract], real type[{}]",
+                    param.type_url
+                ));
+            }
+        }
+
         // Parse unfreeze V2 parameters from transaction data
         let params = Self::parse_unfreeze_balance_v2_params(&transaction.data)?;
 
@@ -1796,11 +1978,20 @@ impl BackendService {
                     frozen_v2_sum(account, 1) + delegated
                 }
                 FreezeResource::TronPower => frozen_v2_sum(account, 2),
+                FreezeResource::Unknown => 0, // Unreachable: Unknown is rejected during validation
             }
         }
 
         // ResourceCode validation (java-tron: switch (contract.getResource())).
         let resource = match params.resource {
+            Some(FreezeResource::Unknown) => {
+                // Unknown resource codes: match Java's default case exactly.
+                return Err(if allow_new_resource_model {
+                    "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy、TRON_POWER]".to_string()
+                } else {
+                    "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]".to_string()
+                });
+            }
             Some(r) => r,
             None => {
                 return Err(if allow_new_resource_model {
@@ -1839,6 +2030,9 @@ impl BackendService {
                 if frozen_amount <= 0 {
                     return Err("no frozenBalance(TronPower)".to_string());
                 }
+            }
+            FreezeResource::Unknown => {
+                // Unreachable: Unknown is rejected during validation earlier
             }
         }
 
@@ -1934,6 +2128,7 @@ impl BackendService {
                     FreezeResource::Bandwidth => "BANDWIDTH",
                     FreezeResource::Energy => "Energy",
                     FreezeResource::TronPower => "TronPower",
+                    FreezeResource::Unknown => "Unknown",
                 }
             ));
         }
@@ -1964,6 +2159,9 @@ impl BackendService {
             FreezeResource::TronPower => storage_adapter
                 .add_total_tron_power_weight(weight_delta)
                 .map_err(|e| format!("Failed to update total tron power weight: {}", e))?,
+            FreezeResource::Unknown => {
+                // Unreachable: Unknown is rejected during validation
+            }
         }
 
         // === Update votes (java-tron: UnfreezeBalanceV2Actuator#updateVote) ===
@@ -1975,7 +2173,7 @@ impl BackendService {
                         FreezeResource::Bandwidth | FreezeResource::Energy => {
                             // there is no need to change votes
                         }
-                        FreezeResource::TronPower => {
+                        FreezeResource::TronPower | FreezeResource::Unknown => {
                             // continue to possible rescaling below
                         }
                     }
@@ -2225,6 +2423,10 @@ impl BackendService {
                 FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
                 FreezeResource::Energy => FreezeLedgerResource::Energy,
                 FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+                FreezeResource::Unknown => {
+                    // Unreachable: Unknown is rejected during validation
+                    return Err("Unknown resource code".to_string());
+                }
             };
 
             let change = if remaining_frozen > 0 {
@@ -2492,6 +2694,7 @@ impl BackendService {
         let mut frozen_balance: i64 = 0;
         let mut frozen_duration: i64 = 0;
         let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
+        let mut resource_raw: i64 = 0; // Track raw value for Java-parity error messages
         let mut receiver_address: Vec<u8> = Vec::new();
 
         let mut pos = 0;
@@ -2526,13 +2729,15 @@ impl BackendService {
                 },
                 10 => {
                     // resource (enum ResourceCode)
+                    // Java defers validation of unknown values to validate() method, so we don't fail early.
                     if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
                     let (value, new_pos) = read_varint(&data[pos..])?;
+                    resource_raw = value as i64;
                     resource = match value {
                         0 => FreezeResource::Bandwidth,
                         1 => FreezeResource::Energy,
                         2 => FreezeResource::TronPower,
-                        _ => return Err(format!("Invalid resource code: {}", value)),
+                        _ => FreezeResource::Unknown,
                     };
                     pos = pos + new_pos;
                 },
@@ -2568,6 +2773,7 @@ impl BackendService {
         Ok(FreezeParams {
             frozen_balance,
             resource,
+            resource_raw,
             frozen_duration,
             receiver_address,
         })
