@@ -47,8 +47,11 @@ Primary Java oracles to match:
     - [x] Use it in:
       - [x] V1 `execute_freeze_balance_contract(...)` - uses `allow_new_reward()` instead of cycle-based check
       - [x] V1 `execute_unfreeze_balance_contract(...)` - uses `allow_new_reward()` instead of cycle-based check
-  - [ ] Tests
-    - [ ] Construct a scenario where `ALLOW_NEW_REWARD=0` but `NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE` is "active", and confirm weight deltas follow Java (`amount/TRX_PRECISION`, not `increment`).
+  - [x] Tests
+    - [x] Added `test_freeze_weight_delta_without_new_reward`:
+      - [x] `ALLOW_NEW_REWARD=0`, verifies weight delta uses `amount/TRX_PRECISION` formula
+    - [x] Added `test_freeze_weight_delta_with_new_reward`:
+      - [x] `ALLOW_NEW_REWARD=1`, verifies weight delta uses increment formula
 
 - [x] Implement `ALLOW_DELEGATE_OPTIMIZATION` branch for V1 delegated freeze (major when enabled) **COMPLETED**
   - [x] Add dynamic property getter:
@@ -74,9 +77,16 @@ Primary Java oracles to match:
       - [x] Branch index update based on `supportAllowDelegateOptimization()`.
       - Updated both Bandwidth and Energy delegation paths in `execute_freeze_balance_contract`
       - Updated unfreeze delegation cleanup in `execute_unfreeze_balance_contract`
-  - [ ] Tests
-    - [ ] With `ALLOW_DELEGATE_OPTIMIZATION=1`, assert Rust writes the prefixed keys and deletes legacy key.
-    - [ ] Confirm Java's `getIndex(...)` would reconstruct the same to/from lists from prefix query ordering by timestamp.
+  - [x] Tests
+    - [x] Added `test_freeze_delegation_writes_optimized_keys`:
+      - [x] `ALLOW_DELEGATE_OPTIMIZATION=1`, verifies prefixed keys (0x01||from||to, 0x02||to||from) are written
+      - [x] Verifies legacy key does NOT exist when optimization is enabled
+    - [x] Added `test_freeze_delegation_writes_legacy_keys_without_optimization`:
+      - [x] `ALLOW_DELEGATE_OPTIMIZATION=0`, verifies legacy keys are written
+      - [x] Verifies optimized keys do NOT exist when optimization is disabled
+    - [x] Added `test_freeze_delegation_optimized_preserves_ordering`:
+      - [x] Multiple delegations with different timestamps
+      - [x] Verifies ordering preserved via timestamps in optimized keys
 
 - [x] Preserve Java behavior for unknown `resource` values (edge-case parity) **COMPLETED**
   - [x] Change parsing so unknown enum values do not fail early.
@@ -115,8 +125,8 @@ Primary Java oracles to match:
 ## Verification / rollout checklist
 
 - [x] `cargo test` under `rust-backend/` with new regression tests
-  - All 9 freeze_balance tests pass
-  - 212 total tests pass (3 pre-existing VoteWitness test failures unrelated to freeze changes)
+  - All 17 freeze_balance tests pass (added 8 new tests for ALLOW_NEW_REWARD and ALLOW_DELEGATE_OPTIMIZATION)
+  - Includes tests for: oldTronPower initialization, unknown resource error messages, new reward gating, delegation optimization keys
 - [ ] Run a small remote-vs-embedded parity slice focused on FreezeBalance (including delegation):
   - [ ] compare account bytes for owner/receiver, `DelegatedResource*` stores, and dynamic property totals
   - [ ] confirm error strings for key malformed fixtures (if included in conformance)
@@ -173,4 +183,15 @@ Primary Java oracles to match:
      - `execute_unfreeze_balance_contract` - checks "UnfreezeBalanceContract"
      - `execute_freeze_balance_v2_contract` - checks "FreezeBalanceV2Contract"
      - `execute_unfreeze_balance_v2_contract` - checks "UnfreezeBalanceV2Contract"
+
+### Changes Made (2025-02-21)
+
+7. **ALLOW_NEW_REWARD Tests** (`freeze_balance.rs`)
+   - Added `test_freeze_weight_delta_without_new_reward`: verifies weight delta uses `amount/TRX_PRECISION` when `ALLOW_NEW_REWARD=0`
+   - Added `test_freeze_weight_delta_with_new_reward`: verifies weight delta uses increment calculation when `ALLOW_NEW_REWARD=1`
+
+8. **ALLOW_DELEGATE_OPTIMIZATION Tests** (`freeze_balance.rs`)
+   - Added `test_freeze_delegation_writes_optimized_keys`: verifies prefixed keys (0x01||from||to, 0x02||to||from) are written when optimization is enabled
+   - Added `test_freeze_delegation_writes_legacy_keys_without_optimization`: verifies legacy keys are written when optimization is disabled
+   - Added `test_freeze_delegation_optimized_preserves_ordering`: verifies multiple delegations preserve timestamp ordering in optimized keys
 
