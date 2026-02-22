@@ -1747,9 +1747,11 @@ impl BackendService {
             .map_err(|e| format!("Failed to persist owner account proto: {}", e))?;
 
         // Keep the Rust-side freeze ledger updated (not part of Java DB layout).
+        // IMPORTANT: V2 freeze has NO expiration (Java parity: FreezeBalanceV2Actuator records
+        // oldExpireTime=0 and newExpireTime=0). V2 unfreezing is controlled by unfrozen_v2 entries
+        // with their own unfreeze_expire_time, not by the freeze record itself.
         let freeze_amount = params.frozen_balance as u64;
-        let default_duration_millis = 3 * 86400 * 1000; // 3 days
-        let expiration_timestamp = (context.block_timestamp + default_duration_millis) as i64;
+        let expiration_timestamp: i64 = 0; // V2 has no expiration (Java parity)
 
         // Add to freeze ledger (aggregates if previous freeze exists)
         storage_adapter
@@ -1781,44 +1783,36 @@ impl BackendService {
             .unwrap_or(false);
 
         let freeze_changes = if emit_freeze_changes {
-            // Read back the total frozen amount after aggregation
-            let freeze_record = storage_adapter.get_freeze_record(
-                &owner_address,
-                resource as u8
-            ).map_err(|e| format!("Failed to read freeze record: {}", e))?;
+            // Java parity: Compute amount from account proto (new_owner_proto.frozen_v2),
+            // not from the custom freeze-records DB. Java's domain recording derives
+            // amounts from account state (FreezeBalanceV2Actuator -> recordFreezeChange).
+            let frozen_amount = frozen_v2_sum(&new_owner_proto, resource as i32);
 
-            if let Some(record) = freeze_record {
-                // Map FreezeResource to FreezeLedgerResource
-                use tron_backend_execution::FreezeLedgerResource;
-                let freeze_ledger_resource = match resource {
-                    FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
-                    FreezeResource::Energy => FreezeLedgerResource::Energy,
-                    FreezeResource::TronPower => FreezeLedgerResource::TronPower,
-                    FreezeResource::Unknown => {
-                        // Unreachable: Unknown is rejected during validation
-                        return Err("Unknown resource code".to_string());
-                    }
-                };
+            // Map FreezeResource to FreezeLedgerResource
+            use tron_backend_execution::FreezeLedgerResource;
+            let freeze_ledger_resource = match resource {
+                FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
+                FreezeResource::Energy => FreezeLedgerResource::Energy,
+                FreezeResource::TronPower => FreezeLedgerResource::TronPower,
+                FreezeResource::Unknown => {
+                    // Unreachable: Unknown is rejected during validation
+                    return Err("Unknown resource code".to_string());
+                }
+            };
 
-                let change = tron_backend_execution::FreezeLedgerChange {
-                    owner_address,
-                    resource: freeze_ledger_resource,
-                    amount: record.frozen_amount as i64, // Absolute total after operation
-                    expiration_ms: record.expiration_timestamp,  // Latest expiration
-                    v2_model: true, // FreezeBalanceV2Contract is V2 model
-                };
+            let change = tron_backend_execution::FreezeLedgerChange {
+                owner_address,
+                resource: freeze_ledger_resource,
+                amount: frozen_amount, // Absolute total from account proto (Java parity)
+                expiration_ms: 0,      // V2 has no expiration (Java parity)
+                v2_model: true,        // FreezeBalanceV2Contract is V2 model
+            };
 
-                info!("Emitting freeze V2 change: owner={}, resource={:?}, amount={}, expiration={}",
-                      tron_backend_common::to_tron_address(&owner_address),
-                      freeze_ledger_resource, record.frozen_amount, record.expiration_timestamp);
+            info!("Emitting freeze V2 change: owner={}, resource={:?}, amount={}, expiration=0 (v2 no expiration)",
+                  tron_backend_common::to_tron_address(&owner_address),
+                  freeze_ledger_resource, frozen_amount);
 
-                vec![change]
-            } else {
-                // No record found - this shouldn't happen since we just added it
-                warn!("Freeze record not found after add_freeze_amount for owner={}, resource={:?}",
-                      tron_backend_common::to_tron_address(&owner_address), resource);
-                vec![]
-            }
+            vec![change]
         } else {
             vec![] // Flag disabled, maintain Phase 1 behavior
         };
@@ -2412,14 +2406,13 @@ impl BackendService {
             .unwrap_or(false);
 
         let freeze_changes = if emit_freeze_changes {
-            // Read back the updated freeze record to get absolute amount
-            let updated_record = storage_adapter.get_freeze_record(
-                &transaction.from,
-                freeze_resource
-            ).map_err(|e| format!("Failed to read updated freeze record: {}", e))?;
+            // Java parity: Compute amount from account proto (new_owner_proto.frozen_v2),
+            // not from the custom freeze-records DB. Java's domain recording derives
+            // amounts from account state.
+            let frozen_amount = frozen_v2_sum(&new_owner_proto, resource_type);
 
             use tron_backend_execution::FreezeLedgerResource;
-            let resource = match resource {
+            let ledger_resource = match resource {
                 FreezeResource::Bandwidth => FreezeLedgerResource::Bandwidth,
                 FreezeResource::Energy => FreezeLedgerResource::Energy,
                 FreezeResource::TronPower => FreezeLedgerResource::TronPower,
@@ -2429,27 +2422,16 @@ impl BackendService {
                 }
             };
 
-            let change = if remaining_frozen > 0 {
-                let record = updated_record.ok_or("Freeze record missing after update")?;
-                tron_backend_execution::FreezeLedgerChange {
-                    owner_address: transaction.from,
-                    resource,
-                    amount: record.frozen_amount as i64,
-                    expiration_ms: record.expiration_timestamp,
-                    v2_model: true,
-                }
-            } else {
-                tron_backend_execution::FreezeLedgerChange {
-                    owner_address: transaction.from,
-                    resource,
-                    amount: 0,
-                    expiration_ms: 0,
-                    v2_model: true,
-                }
+            let change = tron_backend_execution::FreezeLedgerChange {
+                owner_address: transaction.from,
+                resource: ledger_resource,
+                amount: frozen_amount, // Absolute total from account proto (Java parity)
+                expiration_ms: 0,      // V2 has no expiration (Java parity)
+                v2_model: true,
             };
 
-            info!("Emitting unfreeze V2 change: owner={}, resource={:?}, amount={} (remaining after unfreeze)",
-                  tron_backend_common::to_tron_address(&transaction.from), resource, change.amount);
+            info!("Emitting unfreeze V2 change: owner={}, resource={:?}, amount={}, expiration=0 (v2 no expiration)",
+                  tron_backend_common::to_tron_address(&transaction.from), ledger_resource, frozen_amount);
 
             vec![change]
         } else {
@@ -2523,7 +2505,7 @@ impl BackendService {
     /// Parse FreezeBalanceV2Contract parameters from protobuf-encoded data
     ///
     /// FreezeBalanceV2Contract protobuf structure:
-    /// - owner_address: bytes (field 1) - we get this from transaction.from
+    /// - owner_address: bytes (field 1) - parsed from contract data and validated (Java parity)
     /// - frozen_balance: int64 (field 2)
     /// - resource: ResourceCode enum (field 3)
     pub(crate) fn parse_freeze_balance_v2_params(data: &revm_primitives::Bytes) -> Result<FreezeV2Params, String> {

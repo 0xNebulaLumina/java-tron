@@ -4,7 +4,7 @@
   "caseName": "edge_freeze_bandwidth_twice_accumulates",
   "caseCategory": "edge",
   "description": "Freeze BANDWIDTH twice - accumulation semantics (50 + 30 = 80 TRX)",
-  "generatedAt": "2026-01-25T09:15:26.658Z",
+  "generatedAt": "2026-02-22T09:20:03.450Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

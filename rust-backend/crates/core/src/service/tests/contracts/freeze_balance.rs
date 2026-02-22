@@ -611,7 +611,8 @@ fn test_freeze_balance_v2_emits_with_v2_flag() {
     assert_eq!(freeze_change.resource, tron_backend_execution::FreezeLedgerResource::Energy);
     assert_eq!(freeze_change.amount, 1_000_000);
     assert_eq!(freeze_change.v2_model, true, "Should be V2 model"); // Key difference!
-    assert!(freeze_change.expiration_ms > 0);
+    // Java parity: V2 freeze has NO expiration (FreezeBalanceV2Actuator records expireTime=0)
+    assert_eq!(freeze_change.expiration_ms, 0, "V2 freeze should have expiration_ms=0 (Java parity)");
 }
 
 #[test]
