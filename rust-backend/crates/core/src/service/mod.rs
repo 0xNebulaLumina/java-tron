@@ -9835,6 +9835,16 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing MARKET_CANCEL_ORDER_CONTRACT");
 
+        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.MarketCancelOrderContract") {
+                return Err(
+                    "contract type error,expected type [MarketCancelOrderContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
         // Parse the contract
         let MarketCancelOrderInfo {
             owner_address,
@@ -9931,8 +9941,10 @@ impl BackendService {
         // 9. Update MarketAccountOrder (remove order from account's list)
         if let Some(mut account_order) = storage_adapter.get_market_account_order(&owner)
             .map_err(|e| format!("Failed to get account order: {}", e))? {
-            // Remove order_id from the list
-            account_order.orders.retain(|id| id != &order_id);
+            // Remove first occurrence of order_id from the list (Java List.remove semantics)
+            if let Some(pos) = account_order.orders.iter().position(|id| id == &order_id) {
+                account_order.orders.remove(pos);
+            }
             account_order.count -= 1;
             storage_adapter.put_market_account_order(&owner, &account_order)
                 .map_err(|e| format!("Failed to update account order: {}", e))?;
