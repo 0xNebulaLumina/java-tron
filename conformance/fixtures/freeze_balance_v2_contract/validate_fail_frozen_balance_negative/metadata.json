@@ -4,7 +4,7 @@
   "caseName": "validate_fail_frozen_balance_negative",
   "caseCategory": "validate_fail",
   "description": "Fail when frozenBalance is negative",
-  "generatedAt": "2026-01-25T09:15:26.623Z",
+  "generatedAt": "2026-02-22T09:20:03.378Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

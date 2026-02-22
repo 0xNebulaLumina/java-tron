@@ -4,7 +4,7 @@
   "caseName": "happy_path_frozen_balance_exact_1_trx",
   "caseCategory": "happy",
   "description": "V2 freeze with exactly 1 TRX (minimum allowed)",
-  "generatedAt": "2026-01-25T09:15:26.684Z",
+  "generatedAt": "2026-02-22T09:20:03.529Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

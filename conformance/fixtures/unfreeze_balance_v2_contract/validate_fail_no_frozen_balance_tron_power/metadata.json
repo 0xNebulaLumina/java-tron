@@ -4,7 +4,7 @@
   "caseName": "validate_fail_no_frozen_balance_tron_power",
   "caseCategory": "validate_fail",
   "description": "Fail when there is no frozenV2(TRON_POWER) balance",
-  "generatedAt": "2026-01-25T09:15:26.629Z",
+  "generatedAt": "2026-02-22T09:20:03.405Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
