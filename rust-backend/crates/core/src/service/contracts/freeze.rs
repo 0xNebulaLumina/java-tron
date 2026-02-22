@@ -1747,9 +1747,11 @@ impl BackendService {
             .map_err(|e| format!("Failed to persist owner account proto: {}", e))?;
 
         // Keep the Rust-side freeze ledger updated (not part of Java DB layout).
+        // IMPORTANT: V2 freeze has NO expiration (Java parity: FreezeBalanceV2Actuator records
+        // oldExpireTime=0 and newExpireTime=0). V2 unfreezing is controlled by unfrozen_v2 entries
+        // with their own unfreeze_expire_time, not by the freeze record itself.
         let freeze_amount = params.frozen_balance as u64;
-        let default_duration_millis = 3 * 86400 * 1000; // 3 days
-        let expiration_timestamp = (context.block_timestamp + default_duration_millis) as i64;
+        let expiration_timestamp: i64 = 0; // V2 has no expiration (Java parity)
 
         // Add to freeze ledger (aggregates if previous freeze exists)
         storage_adapter
