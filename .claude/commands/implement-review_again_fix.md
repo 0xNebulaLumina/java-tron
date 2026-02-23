@@ -6,3 +6,5 @@ Some rules:
 * Remember to test the new code (useful test commands: `./scripts/ci/run_fixture_conformance.sh --rust-only`, `cd rust-backend; cargo test --workspace`).
 * Update the to-do list/checklist progress in $2 as you complete each step.
 * Double-check for any items marked as not done in $2 that have actually been completed, and vice versa.
+
+Your code will be reviewed by GPT, so make sure to implement it carefully.
