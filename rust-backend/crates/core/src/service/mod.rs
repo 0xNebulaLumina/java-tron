@@ -9835,6 +9835,17 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing MARKET_CANCEL_ORDER_CONTRACT");
 
+        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        // Matches Java: MarketCancelOrderActuator.validate() contract-type check
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.MarketCancelOrderContract") {
+                return Err(
+                    "contract type error,expected type [MarketCancelOrderContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
         // Parse the contract
         let MarketCancelOrderInfo {
             owner_address,
@@ -9928,15 +9939,30 @@ impl BackendService {
         updated_order.state = 2; // CANCELED
         updated_order.sell_token_quantity_remain = 0;
 
+        // Get strict parity mode flag
+        let execution_config = self.get_execution_config()?;
+        let strict_parity = execution_config.remote.market_strict_index_parity;
+
         // 9. Update MarketAccountOrder (remove order from account's list)
-        if let Some(mut account_order) = storage_adapter.get_market_account_order(&owner)
-            .map_err(|e| format!("Failed to get account order: {}", e))? {
-            // Remove order_id from the list
-            account_order.orders.retain(|id| id != &order_id);
+        // Java: MarketUtils.updateOrderState() calls marketAccountStore.get(ownerAddress) which
+        // throws ItemNotFoundException if missing. Rust behavior depends on strict_parity flag.
+        let account_order_opt = storage_adapter.get_market_account_order(&owner)
+            .map_err(|e| format!("Failed to get account order: {}", e))?;
+
+        if let Some(mut account_order) = account_order_opt {
+            // Remove order_id from the list - match Java's single-removal semantics
+            // Java's List.remove(orderId) removes only the first occurrence
+            if let Some(pos) = account_order.orders.iter().position(|id| id == &order_id) {
+                account_order.orders.remove(pos);
+            }
             account_order.count -= 1;
             storage_adapter.put_market_account_order(&owner, &account_order)
                 .map_err(|e| format!("Failed to update account order: {}", e))?;
+        } else if strict_parity {
+            // Java throws ItemNotFoundException when MarketAccountStore.get(owner) is missing
+            return Err(format!("MarketAccountOrder not found for owner"));
         }
+        // else: defensive recovery mode - skip removal if not found
 
         // 10. Remove from order book linked list
         let pair_price_key = Self::create_pair_price_key(
@@ -9946,15 +9972,17 @@ impl BackendService {
             order.buy_token_quantity,
         );
 
-        if let Some(mut order_list) = storage_adapter.get_market_order_id_list(&pair_price_key)
-            .map_err(|e| format!("Failed to get order list: {}", e))? {
+        let order_list_opt = storage_adapter.get_market_order_id_list(&pair_price_key)
+            .map_err(|e| format!("Failed to get order list: {}", e))?;
 
+        if let Some(mut order_list) = order_list_opt {
             // Handle linked list removal
             self.remove_order_from_linked_list(
                 storage_adapter,
                 &mut order_list,
                 &updated_order,
                 &pair_price_key,
+                strict_parity,
             )?;
 
             // Update or delete the order list
@@ -9980,7 +10008,11 @@ impl BackendService {
                 storage_adapter.put_market_order_id_list(&pair_price_key, &order_list)
                     .map_err(|e| format!("Failed to update order list: {}", e))?;
             }
+        } else if strict_parity {
+            // Java throws ItemNotFoundException when pairPriceToOrderStore.get(pairPriceKey) is missing
+            return Err(format!("MarketOrderIdList not found for pairPriceKey"));
         }
+        // else: defensive recovery mode - skip orderbook removal if list not found
 
         // Keep `updated_order` consistent with what was persisted during linked-list removal.
         updated_order.prev = vec![];
@@ -10372,11 +10404,15 @@ impl BackendService {
 
                 // Remove maker order from order book when fully consumed.
                 if maker_order.sell_token_quantity_remain == 0 {
+                    // For MARKET_SELL_ASSET, we use strict_parity=true since the order matching
+                    // logic assumes the order book is consistent - a fully consumed order should
+                    // have valid prev/next pointers.
                     self.remove_order_from_linked_list(
                         storage_adapter,
                         &mut order_list,
                         &maker_order,
                         &pair_price_key,
+                        true, // strict parity for order matching
                     )?;
 
                     // Persist list updates even if it becomes empty (matches java-tron behavior).
@@ -11044,12 +11080,20 @@ impl BackendService {
     }
 
     /// Remove order from the linked list in MarketOrderIdList
+    ///
+    /// Java behavior (MarketOrderIdListCapsule.removeOrder):
+    /// - Calls getPrevCapsule/getNextCapsule which call marketOrderStore.get()
+    /// - If prev/next ID is non-empty but order not found, throws ItemNotFoundException
+    ///
+    /// When strict_parity=true, we match Java's behavior and fail on missing neighbors.
+    /// When strict_parity=false, we use defensive recovery (skip updating missing neighbors).
     fn remove_order_from_linked_list(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         order_list: &mut tron_backend_execution::protocol::MarketOrderIdList,
         order: &tron_backend_execution::protocol::MarketOrder,
         _price_key: &[u8],
+        strict_parity: bool,
     ) -> Result<(), String> {
         let order_id = &order.order_id;
 
@@ -11059,12 +11103,18 @@ impl BackendService {
 
         // Update prev's next pointer
         if !prev_id.is_empty() {
-            if let Some(mut prev_order) = storage_adapter.get_market_order(prev_id)
-                .map_err(|e| format!("Failed to get prev order: {}", e))? {
+            let prev_order_opt = storage_adapter.get_market_order(prev_id)
+                .map_err(|e| format!("Failed to get prev order: {}", e))?;
+
+            if let Some(mut prev_order) = prev_order_opt {
                 prev_order.next = next_id.clone();
                 storage_adapter.put_market_order(prev_id, &prev_order)
                     .map_err(|e| format!("Failed to update prev order: {}", e))?;
+            } else if strict_parity {
+                // Java's getPrevCapsule() calls orderStore.get() which throws ItemNotFoundException
+                return Err(format!("Prev order not found: {:?}", hex::encode(prev_id)));
             }
+            // else: defensive recovery - skip updating missing prev neighbor
         } else {
             // Order is head, update list head
             order_list.head = next_id.clone();
@@ -11072,12 +11122,18 @@ impl BackendService {
 
         // Update next's prev pointer
         if !next_id.is_empty() {
-            if let Some(mut next_order) = storage_adapter.get_market_order(next_id)
-                .map_err(|e| format!("Failed to get next order: {}", e))? {
+            let next_order_opt = storage_adapter.get_market_order(next_id)
+                .map_err(|e| format!("Failed to get next order: {}", e))?;
+
+            if let Some(mut next_order) = next_order_opt {
                 next_order.prev = prev_id.clone();
                 storage_adapter.put_market_order(next_id, &next_order)
                     .map_err(|e| format!("Failed to update next order: {}", e))?;
+            } else if strict_parity {
+                // Java's getNextCapsule() calls orderStore.get() which throws ItemNotFoundException
+                return Err(format!("Next order not found: {:?}", hex::encode(next_id)));
             }
+            // else: defensive recovery - skip updating missing next neighbor
         } else {
             // Order is tail, update list tail
             order_list.tail = prev_id.clone();

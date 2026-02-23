@@ -412,6 +412,24 @@ pub struct RemoteExecutionConfig {
     /// Default: false for safe rollout
     pub market_cancel_order_enabled: bool,
 
+    /// Strict market index parity mode
+    ///
+    /// Java's MarketCancelOrderActuator throws ItemNotFoundException when these are missing:
+    /// - MarketAccountStore.get(owner) during updateOrderState()
+    /// - MarketPairPriceToOrderStore.get(pairPriceKey) in the cancel actuator
+    /// - Neighbor orders referenced by prev/next pointers during linked-list removal
+    ///
+    /// Rust's default behavior is more permissive (treats missing entries as optional and continues).
+    ///
+    /// When enabled:
+    /// - Missing MarketAccountOrder for an active order cancel → error
+    /// - Missing MarketOrderIdList for the order's pairPriceKey → error
+    /// - Missing neighbor orders (when prev/next is non-empty) → error
+    ///
+    /// Default: false for backward compatibility (defensive recovery)
+    /// Set to true for strict Java parity
+    pub market_strict_index_parity: bool,
+
     // === Dynamic Property Strictness (Task 5 parity) ===
     //
     // Java's DynamicPropertiesStore throws IllegalArgumentException when keys are missing,
@@ -673,6 +691,7 @@ impl Default for RemoteExecutionConfig {
             // Phase 2.G: Market (DEX) contracts (52/53)
             market_sell_asset_enabled: false, // Default false for safe rollout
             market_cancel_order_enabled: false, // Default false for safe rollout
+            market_strict_index_parity: false, // Default false for backward compatibility (defensive recovery)
             // Task 5: Dynamic property strictness
             strict_dynamic_properties: false, // Default false for backward compatibility
         }
