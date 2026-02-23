@@ -9939,16 +9939,17 @@ impl BackendService {
         updated_order.sell_token_quantity_remain = 0;
 
         // 9. Update MarketAccountOrder (remove order from account's list)
-        if let Some(mut account_order) = storage_adapter.get_market_account_order(&owner)
-            .map_err(|e| format!("Failed to get account order: {}", e))? {
-            // Remove first occurrence of order_id from the list (Java List.remove semantics)
-            if let Some(pos) = account_order.orders.iter().position(|id| id == &order_id) {
-                account_order.orders.remove(pos);
-            }
-            account_order.count -= 1;
-            storage_adapter.put_market_account_order(&owner, &account_order)
-                .map_err(|e| format!("Failed to update account order: {}", e))?;
+        // Java: MarketAccountStore.get(owner) throws ItemNotFoundException if missing
+        let mut account_order = storage_adapter.get_market_account_order(&owner)
+            .map_err(|e| format!("Failed to get account order: {}", e))?
+            .ok_or_else(|| format!("No MarketAccountOrder for address: {}", hex::encode(&owner_address)))?;
+        // Remove first occurrence of order_id from the list (Java List.remove semantics)
+        if let Some(pos) = account_order.orders.iter().position(|id| id == &order_id) {
+            account_order.orders.remove(pos);
         }
+        account_order.count -= 1;
+        storage_adapter.put_market_account_order(&owner, &account_order)
+            .map_err(|e| format!("Failed to update account order: {}", e))?;
 
         // 10. Remove from order book linked list
         let pair_price_key = Self::create_pair_price_key(
@@ -9958,40 +9959,41 @@ impl BackendService {
             order.buy_token_quantity,
         );
 
-        if let Some(mut order_list) = storage_adapter.get_market_order_id_list(&pair_price_key)
-            .map_err(|e| format!("Failed to get order list: {}", e))? {
+        // Java: MarketPairPriceToOrderStore.get(pairPriceKey) throws ItemNotFoundException if missing
+        let mut order_list = storage_adapter.get_market_order_id_list(&pair_price_key)
+            .map_err(|e| format!("Failed to get order list: {}", e))?
+            .ok_or_else(|| format!("No MarketOrderIdList for price key: {}", hex::encode(&pair_price_key)))?;
 
-            // Handle linked list removal
-            self.remove_order_from_linked_list(
-                storage_adapter,
-                &mut order_list,
-                &updated_order,
-                &pair_price_key,
-            )?;
+        // Handle linked list removal
+        self.remove_order_from_linked_list(
+            storage_adapter,
+            &mut order_list,
+            &updated_order,
+            &pair_price_key,
+        )?;
 
-            // Update or delete the order list
-            if order_list.head.is_empty() {
-                // List is empty, delete the price key
-                storage_adapter.delete_market_order_id_list(&pair_price_key)
-                    .map_err(|e| format!("Failed to delete order list: {}", e))?;
+        // Update or delete the order list
+        if order_list.head.is_empty() {
+            // List is empty, delete the price key
+            storage_adapter.delete_market_order_id_list(&pair_price_key)
+                .map_err(|e| format!("Failed to delete order list: {}", e))?;
 
-                // Decrease price count for the pair
-                let pair_key = Self::create_pair_key(&order.sell_token_id, &order.buy_token_id);
-                let price_count = storage_adapter.get_market_pair_price_count(&pair_key)
-                    .map_err(|e| format!("Failed to get price count: {}", e))?;
+            // Decrease price count for the pair
+            let pair_key = Self::create_pair_key(&order.sell_token_id, &order.buy_token_id);
+            let price_count = storage_adapter.get_market_pair_price_count(&pair_key)
+                .map_err(|e| format!("Failed to get price count: {}", e))?;
 
-                if price_count <= 1 {
-                    // Delete the pair
-                    storage_adapter.delete_market_pair(&pair_key)
-                        .map_err(|e| format!("Failed to delete pair: {}", e))?;
-                } else {
-                    storage_adapter.set_market_pair_price_count(&pair_key, price_count - 1)
-                        .map_err(|e| format!("Failed to update price count: {}", e))?;
-                }
+            if price_count <= 1 {
+                // Delete the pair
+                storage_adapter.delete_market_pair(&pair_key)
+                    .map_err(|e| format!("Failed to delete pair: {}", e))?;
             } else {
-                storage_adapter.put_market_order_id_list(&pair_price_key, &order_list)
-                    .map_err(|e| format!("Failed to update order list: {}", e))?;
+                storage_adapter.set_market_pair_price_count(&pair_key, price_count - 1)
+                    .map_err(|e| format!("Failed to update price count: {}", e))?;
             }
+        } else {
+            storage_adapter.put_market_order_id_list(&pair_price_key, &order_list)
+                .map_err(|e| format!("Failed to update order list: {}", e))?;
         }
 
         // Keep `updated_order` consistent with what was persisted during linked-list removal.
@@ -11056,6 +11058,7 @@ impl BackendService {
     }
 
     /// Remove order from the linked list in MarketOrderIdList
+    /// Java parity: orderStore.get() throws ItemNotFoundException if prev/next order is missing
     fn remove_order_from_linked_list(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
@@ -11070,26 +11073,28 @@ impl BackendService {
         let next_id = &order.next;
 
         // Update prev's next pointer
+        // Java: getPrevCapsule calls orderStore.get() which throws ItemNotFoundException if missing
         if !prev_id.is_empty() {
-            if let Some(mut prev_order) = storage_adapter.get_market_order(prev_id)
-                .map_err(|e| format!("Failed to get prev order: {}", e))? {
-                prev_order.next = next_id.clone();
-                storage_adapter.put_market_order(prev_id, &prev_order)
-                    .map_err(|e| format!("Failed to update prev order: {}", e))?;
-            }
+            let mut prev_order = storage_adapter.get_market_order(prev_id)
+                .map_err(|e| format!("Failed to get prev order: {}", e))?
+                .ok_or_else(|| format!("No MarketOrder for prev id: {}", hex::encode(prev_id)))?;
+            prev_order.next = next_id.clone();
+            storage_adapter.put_market_order(prev_id, &prev_order)
+                .map_err(|e| format!("Failed to update prev order: {}", e))?;
         } else {
             // Order is head, update list head
             order_list.head = next_id.clone();
         }
 
         // Update next's prev pointer
+        // Java: getNextCapsule calls orderStore.get() which throws ItemNotFoundException if missing
         if !next_id.is_empty() {
-            if let Some(mut next_order) = storage_adapter.get_market_order(next_id)
-                .map_err(|e| format!("Failed to get next order: {}", e))? {
-                next_order.prev = prev_id.clone();
-                storage_adapter.put_market_order(next_id, &next_order)
-                    .map_err(|e| format!("Failed to update next order: {}", e))?;
-            }
+            let mut next_order = storage_adapter.get_market_order(next_id)
+                .map_err(|e| format!("Failed to get next order: {}", e))?
+                .ok_or_else(|| format!("No MarketOrder for next id: {}", hex::encode(next_id)))?;
+            next_order.prev = prev_id.clone();
+            storage_adapter.put_market_order(next_id, &next_order)
+                .map_err(|e| format!("Failed to update next order: {}", e))?;
         } else {
             // Order is tail, update list tail
             order_list.tail = prev_id.clone();
