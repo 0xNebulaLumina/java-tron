@@ -9835,6 +9835,17 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing MARKET_CANCEL_ORDER_CONTRACT");
 
+        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        // Matches Java: MarketCancelOrderActuator.validate() contract-type check
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.MarketCancelOrderContract") {
+                return Err(
+                    "contract type error,expected type [MarketCancelOrderContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
         // Parse the contract
         let MarketCancelOrderInfo {
             owner_address,
@@ -9907,6 +9918,8 @@ impl BackendService {
         };
 
         // 7. Return remaining sell tokens to owner
+        // This mirrors Java's MarketUtils.returnSellTokenRemain() which calls
+        // AccountCapsule.addAssetAmountV2()
         let sell_token_remain = order.sell_token_quantity_remain;
         if sell_token_remain > 0 {
             let sell_token_id = &order.sell_token_id;
@@ -9916,10 +9929,49 @@ impl BackendService {
                     .ok_or("Balance overflow")?;
             } else {
                 // TRC-10 token
-                let token_key = String::from_utf8_lossy(sell_token_id).to_string();
-                let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
-                let updated = current.checked_add(sell_token_remain).ok_or("Token balance overflow")?;
-                account.asset_v2.insert(token_key, updated);
+                // Java's addAssetAmountV2 behavior depends on ALLOW_SAME_TOKEN_NAME:
+                // - When 0: key is token name, updates both asset[name] and assetV2[id]
+                // - When 1: key is token id, updates only assetV2[id]
+                let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+                    .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
+
+                if allow_same_token_name == 0 {
+                    // Legacy mode: key is token name
+                    // Look up asset by name to get numeric ID
+                    let asset_opt = storage_adapter.get_asset_issue(sell_token_id, 0)
+                        .map_err(|e| format!("Failed to get asset issue: {}", e))?;
+
+                    if let Some(asset) = asset_opt {
+                        let token_name = String::from_utf8_lossy(sell_token_id).to_string();
+                        let token_id = asset.id.clone(); // numeric ID string
+
+                        // Update asset[name] (legacy map)
+                        let current_name = account.asset.get(&token_name).copied().unwrap_or(0);
+                        let updated_name = current_name.checked_add(sell_token_remain)
+                            .ok_or("Token balance overflow (asset)")?;
+                        account.asset.insert(token_name, updated_name);
+
+                        // Update assetV2[id] (modern map)
+                        let current_id = account.asset_v2.get(&token_id).copied().unwrap_or(0);
+                        let updated_id = current_id.checked_add(sell_token_remain)
+                            .ok_or("Token balance overflow (assetV2)")?;
+                        account.asset_v2.insert(token_id, updated_id);
+                    } else {
+                        // Asset not found - fallback to treating key as ID (defensive)
+                        let token_key = String::from_utf8_lossy(sell_token_id).to_string();
+                        let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+                        let updated = current.checked_add(sell_token_remain)
+                            .ok_or("Token balance overflow")?;
+                        account.asset_v2.insert(token_key, updated);
+                    }
+                } else {
+                    // Modern mode: key is token id, only update assetV2[id]
+                    let token_key = String::from_utf8_lossy(sell_token_id).to_string();
+                    let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+                    let updated = current.checked_add(sell_token_remain)
+                        .ok_or("Token balance overflow")?;
+                    account.asset_v2.insert(token_key, updated);
+                }
             }
         }
 
@@ -9928,15 +9980,30 @@ impl BackendService {
         updated_order.state = 2; // CANCELED
         updated_order.sell_token_quantity_remain = 0;
 
+        // Get strict parity mode flag
+        let execution_config = self.get_execution_config()?;
+        let strict_parity = execution_config.remote.market_strict_index_parity;
+
         // 9. Update MarketAccountOrder (remove order from account's list)
-        if let Some(mut account_order) = storage_adapter.get_market_account_order(&owner)
-            .map_err(|e| format!("Failed to get account order: {}", e))? {
-            // Remove order_id from the list
-            account_order.orders.retain(|id| id != &order_id);
+        // Java: MarketUtils.updateOrderState() calls marketAccountStore.get(ownerAddress) which
+        // throws ItemNotFoundException if missing. Rust behavior depends on strict_parity flag.
+        let account_order_opt = storage_adapter.get_market_account_order(&owner)
+            .map_err(|e| format!("Failed to get account order: {}", e))?;
+
+        if let Some(mut account_order) = account_order_opt {
+            // Remove order_id from the list - match Java's single-removal semantics
+            // Java's List.remove(orderId) removes only the first occurrence
+            if let Some(pos) = account_order.orders.iter().position(|id| id == &order_id) {
+                account_order.orders.remove(pos);
+            }
             account_order.count -= 1;
             storage_adapter.put_market_account_order(&owner, &account_order)
                 .map_err(|e| format!("Failed to update account order: {}", e))?;
+        } else if strict_parity {
+            // Java throws ItemNotFoundException when MarketAccountStore.get(owner) is missing
+            return Err(format!("MarketAccountOrder not found for owner"));
         }
+        // else: defensive recovery mode - skip removal if not found
 
         // 10. Remove from order book linked list
         let pair_price_key = Self::create_pair_price_key(
@@ -9944,17 +10011,19 @@ impl BackendService {
             &order.buy_token_id,
             order.sell_token_quantity,
             order.buy_token_quantity,
-        );
+        )?;
 
-        if let Some(mut order_list) = storage_adapter.get_market_order_id_list(&pair_price_key)
-            .map_err(|e| format!("Failed to get order list: {}", e))? {
+        let order_list_opt = storage_adapter.get_market_order_id_list(&pair_price_key)
+            .map_err(|e| format!("Failed to get order list: {}", e))?;
 
+        if let Some(mut order_list) = order_list_opt {
             // Handle linked list removal
             self.remove_order_from_linked_list(
                 storage_adapter,
                 &mut order_list,
                 &updated_order,
                 &pair_price_key,
+                strict_parity,
             )?;
 
             // Update or delete the order list
@@ -9964,7 +10033,7 @@ impl BackendService {
                     .map_err(|e| format!("Failed to delete order list: {}", e))?;
 
                 // Decrease price count for the pair
-                let pair_key = Self::create_pair_key(&order.sell_token_id, &order.buy_token_id);
+                let pair_key = Self::create_pair_key(&order.sell_token_id, &order.buy_token_id)?;
                 let price_count = storage_adapter.get_market_pair_price_count(&pair_key)
                     .map_err(|e| format!("Failed to get price count: {}", e))?;
 
@@ -9980,7 +10049,11 @@ impl BackendService {
                 storage_adapter.put_market_order_id_list(&pair_price_key, &order_list)
                     .map_err(|e| format!("Failed to update order list: {}", e))?;
             }
+        } else if strict_parity {
+            // Java throws ItemNotFoundException when pairPriceToOrderStore.get(pairPriceKey) is missing
+            return Err(format!("MarketOrderIdList not found for pairPriceKey"));
         }
+        // else: defensive recovery mode - skip orderbook removal if list not found
 
         // Keep `updated_order` consistent with what was persisted during linked-list removal.
         updated_order.prev = vec![];
@@ -10318,7 +10391,7 @@ impl BackendService {
 
         let maker_sell_token_id = taker_order.buy_token_id.clone();
         let maker_buy_token_id = taker_order.sell_token_id.clone();
-        let maker_pair_key = Self::create_pair_key(&maker_sell_token_id, &maker_buy_token_id);
+        let maker_pair_key = Self::create_pair_key(&maker_sell_token_id, &maker_buy_token_id)?;
 
         let maker_price_number = storage_adapter
             .get_market_pair_price_count(&maker_pair_key)
@@ -10372,11 +10445,15 @@ impl BackendService {
 
                 // Remove maker order from order book when fully consumed.
                 if maker_order.sell_token_quantity_remain == 0 {
+                    // For MARKET_SELL_ASSET, we use strict_parity=true since the order matching
+                    // logic assumes the order book is consistent - a fully consumed order should
+                    // have valid prev/next pointers.
                     self.remove_order_from_linked_list(
                         storage_adapter,
                         &mut order_list,
                         &maker_order,
                         &pair_price_key,
+                        true, // strict parity for order matching
                     )?;
 
                     // Persist list updates even if it becomes empty (matches java-tron behavior).
@@ -10540,7 +10617,7 @@ impl BackendService {
             &order.buy_token_id,
             order.sell_token_quantity,
             order.buy_token_quantity,
-        );
+        )?;
 
         let existing_order_list = storage_adapter
             .get_market_order_id_list(&pair_price_key)
@@ -10593,7 +10670,7 @@ impl BackendService {
         sell_token_id: &[u8],
         buy_token_id: &[u8],
     ) -> Result<(), String> {
-        let pair_key = Self::create_pair_key(sell_token_id, buy_token_id);
+        let pair_key = Self::create_pair_key(sell_token_id, buy_token_id)?;
         let has_pair = storage_adapter
             .has_market_pair(&pair_key)
             .map_err(|e| format!("Failed to check pair: {}", e))?;
@@ -10612,7 +10689,7 @@ impl BackendService {
             .set_market_pair_price_count(&pair_key, 1)
             .map_err(|e| format!("Failed to set price count: {}", e))?;
 
-        let head_key = Self::create_pair_price_key(sell_token_id, buy_token_id, 0, 0);
+        let head_key = Self::create_pair_price_key(sell_token_id, buy_token_id, 0, 0)?;
         let empty_list = tron_backend_execution::protocol::MarketOrderIdList {
             head: vec![],
             tail: vec![],
@@ -10636,7 +10713,7 @@ impl BackendService {
             return Ok(Vec::new());
         }
 
-        let head_key = Self::create_pair_price_key(sell_token_id, buy_token_id, 0, 0);
+        let head_key = Self::create_pair_price_key(sell_token_id, buy_token_id, 0, 0)?;
         let has_head = storage_adapter
             .has_market_price_key(&head_key)
             .map_err(|e| format!("Failed to check head key: {}", e))?;
@@ -10644,7 +10721,7 @@ impl BackendService {
             return Ok(Vec::new());
         }
 
-        let pair_key = Self::create_pair_key(sell_token_id, buy_token_id);
+        let pair_key = Self::create_pair_key(sell_token_id, buy_token_id)?;
         let mut keys = storage_adapter
             .list_market_pair_price_keys(&pair_key)
             .map_err(|e| format!("Failed to list price keys: {}", e))?;
@@ -11044,12 +11121,20 @@ impl BackendService {
     }
 
     /// Remove order from the linked list in MarketOrderIdList
+    ///
+    /// Java behavior (MarketOrderIdListCapsule.removeOrder):
+    /// - Calls getPrevCapsule/getNextCapsule which call marketOrderStore.get()
+    /// - If prev/next ID is non-empty but order not found, throws ItemNotFoundException
+    ///
+    /// When strict_parity=true, we match Java's behavior and fail on missing neighbors.
+    /// When strict_parity=false, we use defensive recovery (skip updating missing neighbors).
     fn remove_order_from_linked_list(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         order_list: &mut tron_backend_execution::protocol::MarketOrderIdList,
         order: &tron_backend_execution::protocol::MarketOrder,
         _price_key: &[u8],
+        strict_parity: bool,
     ) -> Result<(), String> {
         let order_id = &order.order_id;
 
@@ -11059,12 +11144,18 @@ impl BackendService {
 
         // Update prev's next pointer
         if !prev_id.is_empty() {
-            if let Some(mut prev_order) = storage_adapter.get_market_order(prev_id)
-                .map_err(|e| format!("Failed to get prev order: {}", e))? {
+            let prev_order_opt = storage_adapter.get_market_order(prev_id)
+                .map_err(|e| format!("Failed to get prev order: {}", e))?;
+
+            if let Some(mut prev_order) = prev_order_opt {
                 prev_order.next = next_id.clone();
                 storage_adapter.put_market_order(prev_id, &prev_order)
                     .map_err(|e| format!("Failed to update prev order: {}", e))?;
+            } else if strict_parity {
+                // Java's getPrevCapsule() calls orderStore.get() which throws ItemNotFoundException
+                return Err(format!("Prev order not found: {:?}", hex::encode(prev_id)));
             }
+            // else: defensive recovery - skip updating missing prev neighbor
         } else {
             // Order is head, update list head
             order_list.head = next_id.clone();
@@ -11072,12 +11163,18 @@ impl BackendService {
 
         // Update next's prev pointer
         if !next_id.is_empty() {
-            if let Some(mut next_order) = storage_adapter.get_market_order(next_id)
-                .map_err(|e| format!("Failed to get next order: {}", e))? {
+            let next_order_opt = storage_adapter.get_market_order(next_id)
+                .map_err(|e| format!("Failed to get next order: {}", e))?;
+
+            if let Some(mut next_order) = next_order_opt {
                 next_order.prev = prev_id.clone();
                 storage_adapter.put_market_order(next_id, &next_order)
                     .map_err(|e| format!("Failed to update next order: {}", e))?;
+            } else if strict_parity {
+                // Java's getNextCapsule() calls orderStore.get() which throws ItemNotFoundException
+                return Err(format!("Next order not found: {:?}", hex::encode(next_id)));
             }
+            // else: defensive recovery - skip updating missing next neighbor
         } else {
             // Order is tail, update list tail
             order_list.tail = prev_id.clone();
@@ -11095,28 +11192,64 @@ impl BackendService {
 
     /// Create pair key: sellTokenId(19) + buyTokenId(19) = 38 bytes
     /// Matches MarketUtils.createPairKey
-    fn create_pair_key(sell_token_id: &[u8], buy_token_id: &[u8]) -> Vec<u8> {
+    ///
+    /// Java throws ArrayIndexOutOfBoundsException if token ID length > 19 bytes.
+    /// For strict parity, we return an error in this case.
+    fn create_pair_key(sell_token_id: &[u8], buy_token_id: &[u8]) -> Result<Vec<u8>, String> {
         const TOKEN_ID_LENGTH: usize = 19;
+
+        // Java's System.arraycopy throws ArrayIndexOutOfBoundsException if length > 19
+        if sell_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "sellTokenId length {} exceeds maximum {}",
+                sell_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
+        if buy_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "buyTokenId length {} exceeds maximum {}",
+                buy_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
+
         let mut result = vec![0u8; TOKEN_ID_LENGTH * 2];
 
-        let sell_len = std::cmp::min(sell_token_id.len(), TOKEN_ID_LENGTH);
-        result[..sell_len].copy_from_slice(&sell_token_id[..sell_len]);
+        result[..sell_token_id.len()].copy_from_slice(sell_token_id);
+        result[TOKEN_ID_LENGTH..TOKEN_ID_LENGTH + buy_token_id.len()].copy_from_slice(buy_token_id);
 
-        let buy_len = std::cmp::min(buy_token_id.len(), TOKEN_ID_LENGTH);
-        result[TOKEN_ID_LENGTH..TOKEN_ID_LENGTH + buy_len].copy_from_slice(&buy_token_id[..buy_len]);
-
-        result
+        Ok(result)
     }
 
     /// Create pair price key: sellTokenId(19) + buyTokenId(19) + sellQty(8) + buyQty(8) = 54 bytes
     /// Matches MarketUtils.createPairPriceKey (with GCD normalization)
+    ///
+    /// Java throws ArrayIndexOutOfBoundsException if token ID length > 19 bytes.
+    /// For strict parity, we return an error in this case.
     fn create_pair_price_key(
         sell_token_id: &[u8],
         buy_token_id: &[u8],
         sell_token_quantity: i64,
         buy_token_quantity: i64,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, String> {
         const TOKEN_ID_LENGTH: usize = 19;
+
+        // Java's System.arraycopy throws ArrayIndexOutOfBoundsException if length > 19
+        if sell_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "sellTokenId length {} exceeds maximum {}",
+                sell_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
+        if buy_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "buyTokenId length {} exceeds maximum {}",
+                buy_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
 
         // Calculate GCD for price normalization
         let gcd = Self::find_gcd(sell_token_quantity, buy_token_quantity);
@@ -11129,17 +11262,14 @@ impl BackendService {
         let mut result = vec![0u8; TOKEN_ID_LENGTH * 2 + 16];
 
         // Copy token IDs
-        let sell_len = std::cmp::min(sell_token_id.len(), TOKEN_ID_LENGTH);
-        result[..sell_len].copy_from_slice(&sell_token_id[..sell_len]);
-
-        let buy_len = std::cmp::min(buy_token_id.len(), TOKEN_ID_LENGTH);
-        result[TOKEN_ID_LENGTH..TOKEN_ID_LENGTH + buy_len].copy_from_slice(&buy_token_id[..buy_len]);
+        result[..sell_token_id.len()].copy_from_slice(sell_token_id);
+        result[TOKEN_ID_LENGTH..TOKEN_ID_LENGTH + buy_token_id.len()].copy_from_slice(buy_token_id);
 
         // Append quantities as big-endian
         result[TOKEN_ID_LENGTH * 2..TOKEN_ID_LENGTH * 2 + 8].copy_from_slice(&norm_sell.to_be_bytes());
         result[TOKEN_ID_LENGTH * 2 + 8..].copy_from_slice(&norm_buy.to_be_bytes());
 
-        result
+        Ok(result)
     }
 
     /// Find GCD of two numbers
