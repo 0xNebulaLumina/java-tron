@@ -10135,8 +10135,6 @@ impl BackendService {
         }
 
         let owner = transaction.from;
-        let execution_config = self.get_execution_config()?;
-        let fee_config = &execution_config.fees;
 
         // Parse the contract
         let tx_info = self.parse_market_sell_asset_contract(&transaction.data)?;
@@ -10253,11 +10251,22 @@ impl BackendService {
         account.balance = account.balance.checked_sub(fee)
             .ok_or("Balance underflow")?;
 
-        // Handle fee: burn or credit to blackhole
-        if !fee_config.support_black_hole_optimization && fee > 0 {
-            let blackhole = storage_adapter.get_blackhole_address_evm();
-            storage_adapter.add_balance(&blackhole, fee as u64)
-                .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+        // Handle fee: burn or credit to blackhole (matches Java parity)
+        // Java behavior: MarketSellAssetActuator.execute reads ALLOW_BLACKHOLE_OPTIMIZATION
+        // from DynamicPropertiesStore, not from static config.
+        // When ALLOW_BLACKHOLE_OPTIMIZATION == 1: burnTrx(fee) updates BURN_TRX_AMOUNT
+        // When ALLOW_BLACKHOLE_OPTIMIZATION == 0: credit blackhole account balance
+        let support_blackhole = storage_adapter.support_black_hole_optimization()
+            .map_err(|e| format!("Failed to check ALLOW_BLACKHOLE_OPTIMIZATION: {}", e))?;
+        if fee > 0 {
+            if support_blackhole {
+                storage_adapter.burn_trx(fee as u64)
+                    .map_err(|e| format!("Failed to burn TRX: {}", e))?;
+            } else {
+                let blackhole = storage_adapter.get_blackhole_address_evm();
+                storage_adapter.add_balance(&blackhole, fee as u64)
+                    .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+            }
         }
 
         // 10. Transfer sell tokens from account to order (escrow)

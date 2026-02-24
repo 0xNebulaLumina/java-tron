@@ -13,18 +13,18 @@ This checklist assumes we want to resolve the parity gaps identified in
   - [ ] exact **receipt contents** parity (include `orderDetails[]` or not)
 - [ ] Decide whether Rust should be “strict like Java” (fail on missing indexes) or “defensive” (try to continue).
 
-## 1) Fix fee handling parity (high priority)
+## 1) Fix fee handling parity (high priority) ✅ DONE
 
 Goal: match Java `MarketSellAssetActuator.execute` fee behavior.
 
-- [ ] In `execute_market_sell_asset_contract()` (`rust-backend/crates/core/src/service/mod.rs`):
-  - [ ] Replace config-driven `fee_config.support_black_hole_optimization` branching with:
-    - [ ] `storage_adapter.support_black_hole_optimization()` (reads `ALLOW_BLACKHOLE_OPTIMIZATION`)
-  - [ ] If `support_blackhole == true` and `fee > 0`:
-    - [ ] call `storage_adapter.burn_trx(fee as u64)` (updates `BURN_TRX_AMOUNT`)
-  - [ ] Else (no optimization) and `fee > 0`:
-    - [ ] credit blackhole via `storage_adapter.add_balance(&blackhole, fee as u64)`
-  - [ ] Ensure fee deltas are consistent for REVERT cases (java-tron may still persist the fee).
+- [x] In `execute_market_sell_asset_contract()` (`rust-backend/crates/core/src/service/mod.rs`):
+  - [x] Replace config-driven `fee_config.support_black_hole_optimization` branching with:
+    - [x] `storage_adapter.support_black_hole_optimization()` (reads `ALLOW_BLACKHOLE_OPTIMIZATION`)
+  - [x] If `support_blackhole == true` and `fee > 0`:
+    - [x] call `storage_adapter.burn_trx(fee as u64)` (updates `BURN_TRX_AMOUNT`)
+  - [x] Else (no optimization) and `fee > 0`:
+    - [x] credit blackhole via `storage_adapter.add_balance(&blackhole, fee as u64)`
+  - [x] Ensure fee deltas are consistent for REVERT cases (java-tron may still persist the fee).
 - [ ] Add coverage (fixtures or unit tests):
   - [ ] New conformance fixture where:
     - [ ] `MARKET_SELL_FEE > 0`
