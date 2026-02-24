@@ -11,5 +11,6 @@ mod create_smart_contract;
 mod delegate_resource;
 mod exchange_create;
 mod freeze_balance;
+mod market_sell_asset;
 mod trc10_transfer;
 mod witness_update;

@@ -26,15 +26,15 @@ Goal: match Java `MarketSellAssetActuator.execute` fee behavior.
   - [x] Else (no optimization) and `fee > 0`:
     - [x] credit blackhole via `storage_adapter.add_balance(&blackhole, fee as u64)`
   - [x] Ensure fee deltas are consistent for REVERT cases (java-tron may still persist the fee).
-- [ ] Add coverage (fixtures or unit tests):
-  - [ ] New conformance fixture where:
-    - [ ] `MARKET_SELL_FEE > 0`
-    - [ ] `ALLOW_BLACKHOLE_OPTIMIZATION == 1`
-    - [ ] expected post-state increments `BURN_TRX_AMOUNT` (dynamic-properties.kv differs)
-  - [ ] New conformance fixture where:
-    - [ ] `MARKET_SELL_FEE > 0`
-    - [ ] `ALLOW_BLACKHOLE_OPTIMIZATION == 0`
-    - [ ] expected post-state credits blackhole balance
+- [x] Add coverage (fixtures or unit tests): ✅ DONE (unit tests in market_sell_asset.rs)
+  - [x] Unit test: `test_market_sell_burns_fee_when_blackhole_optimization_enabled`
+    - [x] `MARKET_SELL_FEE > 0`
+    - [x] `ALLOW_BLACKHOLE_OPTIMIZATION == 1`
+    - [x] asserts `BURN_TRX_AMOUNT` increases by fee
+  - [x] Unit test: `test_market_sell_credits_blackhole_when_optimization_disabled`
+    - [x] `MARKET_SELL_FEE > 0`
+    - [x] `ALLOW_BLACKHOLE_OPTIMIZATION == 0`
+    - [x] asserts blackhole balance increases, `BURN_TRX_AMOUNT` unchanged
 
 ## 2) Owner-address parsing parity (medium priority) ✅ DONE
 
@@ -88,14 +88,17 @@ Goal: avoid truncation differences for malformed token ids.
   - [x] `calculate_order_id` updated to return `Result<Vec<u8>, String>` and validate token ID lengths
   - [x] Error surfaces as contract failure (propagated via `?`)
 
-## 6) Receipt parity: add `orderDetails[]` (optional / product-driven)
+## 6) Receipt parity: add `orderDetails[]` (optional / product-driven) ✅ DONE
 
-If full receipt parity matters:
-
-- [ ] Track fills in Rust during `market_match_single_order()`:
-  - [ ] collect maker/taker order ids + fill amounts (sell/buy)
-- [ ] Extend `TransactionResultBuilder` usage to include `orderDetails[]`
-- [ ] Add/extend a conformance fixture that asserts `expected/result.pb` includes order details
+- [x] Track fills in Rust during `market_match_single_order()`:
+  - [x] collect maker/taker order ids + fill amounts (sell/buy)
+  - [x] `market_match_single_order()` returns `Option<MarketOrderDetail>`
+  - [x] `match_market_sell_order()` collects and returns `Vec<MarketOrderDetail>`
+- [x] Extend `TransactionResultBuilder` usage to include `orderDetails[]`:
+  - [x] Added `MarketOrderDetail` struct to `proto.rs`
+  - [x] Added `order_details` field and methods to `TransactionResultBuilder`
+  - [x] Receipt is built with order details in `execute_market_sell_asset_contract()`
+- [x] Unit test: `test_market_sell_receipt_includes_order_details_on_match`
 
 ## 7) Verification plan
 

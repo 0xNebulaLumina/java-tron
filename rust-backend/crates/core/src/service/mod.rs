@@ -19,7 +19,7 @@ pub mod contracts;
 
 // Import utilities from submodules
 use contracts::proto::read_varint;
-use contracts::proto::TransactionResultBuilder;
+use contracts::proto::{TransactionResultBuilder, MarketOrderDetail};
 use grpc::address::{add_tron_address_prefix, add_tron_address_prefix_with, validate_tron_address_prefix};
 
 /// Vote witness contract constants
@@ -10329,8 +10329,8 @@ impl BackendService {
         storage_adapter.put_market_account_order(&owner, &account_order)
             .map_err(|e| format!("Failed to save account order: {}", e))?;
 
-        // 14. Match order (updates maker-side state as it goes).
-        self.match_market_sell_order(storage_adapter, &mut order, &mut account)?;
+        // 14. Match order (updates maker-side state as it goes) and collect fill details.
+        let order_details = self.match_market_sell_order(storage_adapter, &mut order, &mut account)?;
 
         // 15. Save remain order into order book (only if still active with non-zero remain).
         if order.sell_token_quantity_remain != 0 {
@@ -10364,10 +10364,10 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        // Build receipt with order_id
-        // Note: orderDetails are omitted for now (fixtures currently assert DB state only).
+        // Build receipt with order_id and order details (Java parity)
         let receipt = TransactionResultBuilder::new()
             .with_order_id(&order_id)
+            .with_order_details(order_details)
             .build();
 
         debug!("MarketSellAsset: order created with id={}", hex::encode(&order_id));
@@ -10391,13 +10391,17 @@ impl BackendService {
         })
     }
 
+    /// Match taker order against maker orders and return fill details for receipt
     fn match_market_sell_order(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         taker_order: &mut tron_backend_execution::protocol::MarketOrder,
         taker_account: &mut tron_backend_execution::protocol::Account,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<MarketOrderDetail>, String> {
         const MAX_MATCH_NUM: i32 = 20;
+
+        // Collect order details for receipt
+        let mut order_details: Vec<MarketOrderDetail> = Vec::new();
 
         // Get strict parity mode flag for missing-index behavior
         let execution_config = self.get_execution_config()?;
@@ -10411,7 +10415,7 @@ impl BackendService {
             .get_market_pair_price_count(&maker_pair_key)
             .map_err(|e| format!("Failed to get maker price count: {}", e))?;
         if maker_price_number == 0 {
-            return Ok(());
+            return Ok(order_details);
         }
 
         let mut remain_count = maker_price_number;
@@ -10427,12 +10431,12 @@ impl BackendService {
 
         while taker_order.sell_token_quantity_remain != 0 {
             if !self.market_has_match(&price_keys_list, taker_order)? {
-                return Ok(());
+                return Ok(order_details);
             }
 
             let pair_price_key = match price_keys_list.first() {
                 Some(key) => key.clone(),
-                None => return Ok(()),
+                None => return Ok(order_details),
             };
 
             // Java: MarketPairPriceToOrderStore.get(pairPriceKey) throws if missing
@@ -10450,7 +10454,7 @@ impl BackendService {
                         ));
                     }
                     // Defensive recovery: skip this price level
-                    return Ok(());
+                    return Ok(order_details);
                 }
             };
 
@@ -10461,12 +10465,15 @@ impl BackendService {
                     .map_err(|e| format!("Failed to get maker order: {}", e))?
                     .ok_or("Maker order does not exist")?;
 
-                self.market_match_single_order(
+                // Match and collect order detail for receipt
+                if let Some(detail) = self.market_match_single_order(
                     storage_adapter,
                     taker_order,
                     &mut maker_order,
                     taker_account,
-                )?;
+                )? {
+                    order_details.push(detail);
+                }
 
                 // Remove maker order from order book when fully consumed.
                 if maker_order.sell_token_quantity_remain == 0 {
@@ -10518,16 +10525,18 @@ impl BackendService {
             }
         }
 
-        Ok(())
+        Ok(order_details)
     }
 
+    /// Match a single order and return fill details for receipt
+    /// Returns Some(detail) when there's a fill, None when quantity too small
     fn market_match_single_order(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         taker_order: &mut tron_backend_execution::protocol::MarketOrder,
         maker_order: &mut tron_backend_execution::protocol::MarketOrder,
         taker_account: &mut tron_backend_execution::protocol::Account,
-    ) -> Result<(), String> {
+    ) -> Result<Option<MarketOrderDetail>, String> {
         let taker_sell_remain = taker_order.sell_token_quantity_remain;
         let maker_sell_quantity = maker_order.sell_token_quantity;
         let maker_buy_quantity = maker_order.buy_token_quantity;
@@ -10546,7 +10555,7 @@ impl BackendService {
             taker_order.sell_token_quantity_return = taker_order.sell_token_quantity_remain;
             self.market_return_sell_token_remain(taker_order, taker_account)?;
             self.market_update_order_state(storage_adapter, taker_order, 1)?;
-            return Ok(());
+            return Ok(None); // No fill occurred
         }
 
         let (taker_buy_receive, maker_buy_receive) = if taker_buy_remain == maker_sell_remain {
@@ -10599,7 +10608,7 @@ impl BackendService {
                 // Quantity too small, return remaining sellToken to maker (should not happen).
                 maker_order.sell_token_quantity_return = maker_order.sell_token_quantity_remain;
                 self.market_return_sell_token_remain_to_owner(storage_adapter, maker_order)?;
-                return Ok(());
+                return Ok(None); // No fill occurred
             }
 
             maker_order.sell_token_quantity_remain = 0;
@@ -10629,7 +10638,17 @@ impl BackendService {
             maker_buy_receive,
         )?;
 
-        Ok(())
+        // Build order detail for receipt
+        // Java: fillSellQuantity = makerBuyTokenQuantityReceive (what maker received = taker sold)
+        // Java: fillBuyQuantity = takerBuyTokenQuantityReceive (what taker received = maker sold)
+        let order_detail = MarketOrderDetail::new(
+            maker_order.order_id.clone(),
+            taker_order.order_id.clone(),
+            maker_buy_receive,  // fillSellQuantity
+            taker_buy_receive,  // fillBuyQuantity
+        );
+
+        Ok(Some(order_detail))
     }
 
     fn save_remain_market_order(
