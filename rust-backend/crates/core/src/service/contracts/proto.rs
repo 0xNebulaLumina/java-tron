@@ -311,6 +311,69 @@ pub(crate) fn write_tag(buf: &mut Vec<u8>, field_number: u32, wire_type: u8) {
     write_varint(buf, tag);
 }
 
+/// MarketOrderDetail message for market order fill information
+/// Field numbers from Tron.proto MarketOrderDetail:
+/// - bytes makerOrderId = 1;
+/// - bytes takerOrderId = 2;
+/// - int64 fillSellQuantity = 3;
+/// - int64 fillBuyQuantity = 4;
+#[derive(Debug, Clone)]
+pub struct MarketOrderDetail {
+    pub maker_order_id: Vec<u8>,
+    pub taker_order_id: Vec<u8>,
+    pub fill_sell_quantity: i64,
+    pub fill_buy_quantity: i64,
+}
+
+impl MarketOrderDetail {
+    pub fn new(
+        maker_order_id: Vec<u8>,
+        taker_order_id: Vec<u8>,
+        fill_sell_quantity: i64,
+        fill_buy_quantity: i64,
+    ) -> Self {
+        Self {
+            maker_order_id,
+            taker_order_id,
+            fill_sell_quantity,
+            fill_buy_quantity,
+        }
+    }
+
+    /// Encode to protobuf bytes
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+
+        // Field 1: makerOrderId (bytes)
+        if !self.maker_order_id.is_empty() {
+            write_tag(&mut buf, 1, 2); // wire type 2 = length-delimited
+            write_varint(&mut buf, self.maker_order_id.len() as u64);
+            buf.extend_from_slice(&self.maker_order_id);
+        }
+
+        // Field 2: takerOrderId (bytes)
+        if !self.taker_order_id.is_empty() {
+            write_tag(&mut buf, 2, 2);
+            write_varint(&mut buf, self.taker_order_id.len() as u64);
+            buf.extend_from_slice(&self.taker_order_id);
+        }
+
+        // Field 3: fillSellQuantity (int64)
+        if self.fill_sell_quantity != 0 {
+            write_tag(&mut buf, 3, 0); // wire type 0 = varint
+            write_varint(&mut buf, self.fill_sell_quantity as u64);
+        }
+
+        // Field 4: fillBuyQuantity (int64)
+        if self.fill_buy_quantity != 0 {
+            write_tag(&mut buf, 4, 0);
+            write_varint(&mut buf, self.fill_buy_quantity as u64);
+        }
+
+        buf
+    }
+}
+
 /// Transaction.Result protobuf builder
 /// Matches Protocol.Transaction.Result message structure
 ///
@@ -348,6 +411,8 @@ pub struct TransactionResultBuilder {
     pub shielded_transaction_fee: Option<i64>,
     /// bytes orderId = 25
     pub order_id: Option<Vec<u8>>,
+    /// repeated MarketOrderDetail orderDetails = 26
+    pub order_details: Vec<MarketOrderDetail>,
     /// map<string, int64> cancel_unfreezeV2_amount = 28
     /// Keys are resource names: "BANDWIDTH", "ENERGY", "TRON_POWER"
     pub cancel_unfreezeV2_amount: Option<Vec<(String, i64)>>,
@@ -423,6 +488,19 @@ impl TransactionResultBuilder {
     /// Field 25: bytes orderId
     pub fn with_order_id(mut self, order_id: &[u8]) -> Self {
         self.order_id = Some(order_id.to_vec());
+        self
+    }
+
+    /// Add an order detail for MarketSellAsset contract
+    /// Field 26: repeated MarketOrderDetail orderDetails
+    pub fn add_order_detail(mut self, detail: MarketOrderDetail) -> Self {
+        self.order_details.push(detail);
+        self
+    }
+
+    /// Add multiple order details at once
+    pub fn with_order_details(mut self, details: Vec<MarketOrderDetail>) -> Self {
+        self.order_details = details;
         self
     }
 
@@ -516,6 +594,14 @@ impl TransactionResultBuilder {
             write_tag(&mut buf, 25, 2);
             write_varint(&mut buf, order_id.len() as u64);
             buf.extend_from_slice(order_id);
+        }
+
+        // Field 26: orderDetails (repeated MarketOrderDetail, wire type 2 = length-delimited)
+        for detail in &self.order_details {
+            let detail_bytes = detail.encode();
+            write_tag(&mut buf, 26, 2);
+            write_varint(&mut buf, detail_bytes.len() as u64);
+            buf.extend_from_slice(&detail_bytes);
         }
 
         // Field 27: withdraw_expire_amount

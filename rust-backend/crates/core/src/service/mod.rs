@@ -19,7 +19,7 @@ pub mod contracts;
 
 // Import utilities from submodules
 use contracts::proto::read_varint;
-use contracts::proto::TransactionResultBuilder;
+use contracts::proto::{TransactionResultBuilder, MarketOrderDetail};
 use grpc::address::{add_tron_address_prefix, add_tron_address_prefix_with, validate_tron_address_prefix};
 
 /// Vote witness contract constants
@@ -10134,13 +10134,10 @@ impl BackendService {
             }
         }
 
-        let owner = transaction.from;
-        let execution_config = self.get_execution_config()?;
-        let fee_config = &execution_config.fees;
-
         // Parse the contract
         let tx_info = self.parse_market_sell_asset_contract(&transaction.data)?;
-        debug!("MarketSellAsset: sell_token={:?}, sell_qty={}, buy_token={:?}, buy_qty={}",
+        debug!("MarketSellAsset: owner={:?}, sell_token={:?}, sell_qty={}, buy_token={:?}, buy_qty={}",
+            hex::encode(&tx_info.owner_address),
             String::from_utf8_lossy(&tx_info.sell_token_id),
             tx_info.sell_token_quantity,
             String::from_utf8_lossy(&tx_info.buy_token_id),
@@ -10153,12 +10150,14 @@ impl BackendService {
             return Err("Not support Market Transaction, need to be opened by the committee".to_string());
         }
 
-        // 2. Validate owner address (java-tron: DecodeUtil.addressValid)
+        // 2. Validate owner address from contract (java-tron: DecodeUtil.addressValid)
+        // Java validates contract.owner_address, not transaction metadata
         let prefix = storage_adapter.address_prefix();
-        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if owner_from_field.len() != 21 || owner_from_field[0] != prefix {
+        if tx_info.owner_address.len() != 21 || tx_info.owner_address[0] != prefix {
             return Err("Invalid address".to_string());
         }
+        // Derive 20-byte EVM address from 21-byte TRON address
+        let owner = revm_primitives::Address::from_slice(&tx_info.owner_address[1..]);
 
         // 3. Validate account exists (java-tron: AccountStore.get)
         let mut account = storage_adapter.get_account_proto(&owner)
@@ -10253,11 +10252,22 @@ impl BackendService {
         account.balance = account.balance.checked_sub(fee)
             .ok_or("Balance underflow")?;
 
-        // Handle fee: burn or credit to blackhole
-        if !fee_config.support_black_hole_optimization && fee > 0 {
-            let blackhole = storage_adapter.get_blackhole_address_evm();
-            storage_adapter.add_balance(&blackhole, fee as u64)
-                .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+        // Handle fee: burn or credit to blackhole (matches Java parity)
+        // Java behavior: MarketSellAssetActuator.execute reads ALLOW_BLACKHOLE_OPTIMIZATION
+        // from DynamicPropertiesStore, not from static config.
+        // When ALLOW_BLACKHOLE_OPTIMIZATION == 1: burnTrx(fee) updates BURN_TRX_AMOUNT
+        // When ALLOW_BLACKHOLE_OPTIMIZATION == 0: credit blackhole account balance
+        let support_blackhole = storage_adapter.support_black_hole_optimization()
+            .map_err(|e| format!("Failed to check ALLOW_BLACKHOLE_OPTIMIZATION: {}", e))?;
+        if fee > 0 {
+            if support_blackhole {
+                storage_adapter.burn_trx(fee as u64)
+                    .map_err(|e| format!("Failed to burn TRX: {}", e))?;
+            } else {
+                let blackhole = storage_adapter.get_blackhole_address_evm();
+                storage_adapter.add_balance(&blackhole, fee as u64)
+                    .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+            }
         }
 
         // 10. Transfer sell tokens from account to order (escrow)
@@ -10288,7 +10298,7 @@ impl BackendService {
             &tx_info.sell_token_id,
             &tx_info.buy_token_id,
             account_order.total_count,
-        );
+        )?;
 
         let timestamp = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get timestamp: {}", e))?;
@@ -10319,8 +10329,8 @@ impl BackendService {
         storage_adapter.put_market_account_order(&owner, &account_order)
             .map_err(|e| format!("Failed to save account order: {}", e))?;
 
-        // 14. Match order (updates maker-side state as it goes).
-        self.match_market_sell_order(storage_adapter, &mut order, &mut account)?;
+        // 14. Match order (updates maker-side state as it goes) and collect fill details.
+        let order_details = self.match_market_sell_order(storage_adapter, &mut order, &mut account)?;
 
         // 15. Save remain order into order book (only if still active with non-zero remain).
         if order.sell_token_quantity_remain != 0 {
@@ -10354,10 +10364,10 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        // Build receipt with order_id
-        // Note: orderDetails are omitted for now (fixtures currently assert DB state only).
+        // Build receipt with order_id and order details (Java parity)
         let receipt = TransactionResultBuilder::new()
             .with_order_id(&order_id)
+            .with_order_details(order_details)
             .build();
 
         debug!("MarketSellAsset: order created with id={}", hex::encode(&order_id));
@@ -10381,13 +10391,21 @@ impl BackendService {
         })
     }
 
+    /// Match taker order against maker orders and return fill details for receipt
     fn match_market_sell_order(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         taker_order: &mut tron_backend_execution::protocol::MarketOrder,
         taker_account: &mut tron_backend_execution::protocol::Account,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<MarketOrderDetail>, String> {
         const MAX_MATCH_NUM: i32 = 20;
+
+        // Collect order details for receipt
+        let mut order_details: Vec<MarketOrderDetail> = Vec::new();
+
+        // Get strict parity mode flag for missing-index behavior
+        let execution_config = self.get_execution_config()?;
+        let strict_parity = execution_config.remote.market_strict_index_parity;
 
         let maker_sell_token_id = taker_order.buy_token_id.clone();
         let maker_buy_token_id = taker_order.sell_token_id.clone();
@@ -10397,7 +10415,7 @@ impl BackendService {
             .get_market_pair_price_count(&maker_pair_key)
             .map_err(|e| format!("Failed to get maker price count: {}", e))?;
         if maker_price_number == 0 {
-            return Ok(());
+            return Ok(order_details);
         }
 
         let mut remain_count = maker_price_number;
@@ -10413,20 +10431,31 @@ impl BackendService {
 
         while taker_order.sell_token_quantity_remain != 0 {
             if !self.market_has_match(&price_keys_list, taker_order)? {
-                return Ok(());
+                return Ok(order_details);
             }
 
             let pair_price_key = match price_keys_list.first() {
                 Some(key) => key.clone(),
-                None => return Ok(()),
+                None => return Ok(order_details),
             };
 
+            // Java: MarketPairPriceToOrderStore.get(pairPriceKey) throws if missing
+            // when a price key exists but the order list is missing (corrupt index)
             let mut order_list = match storage_adapter
                 .get_market_order_id_list(&pair_price_key)
                 .map_err(|e| format!("Failed to get order list: {}", e))?
             {
                 Some(list) => list,
-                None => return Ok(()),
+                None => {
+                    if strict_parity {
+                        return Err(format!(
+                            "MarketOrderIdList not found for price key (corrupt index): {}",
+                            hex::encode(&pair_price_key)
+                        ));
+                    }
+                    // Defensive recovery: skip this price level
+                    return Ok(order_details);
+                }
             };
 
             while taker_order.sell_token_quantity_remain != 0 && !order_list.head.is_empty() {
@@ -10436,12 +10465,15 @@ impl BackendService {
                     .map_err(|e| format!("Failed to get maker order: {}", e))?
                     .ok_or("Maker order does not exist")?;
 
-                self.market_match_single_order(
+                // Match and collect order detail for receipt
+                if let Some(detail) = self.market_match_single_order(
                     storage_adapter,
                     taker_order,
                     &mut maker_order,
                     taker_account,
-                )?;
+                )? {
+                    order_details.push(detail);
+                }
 
                 // Remove maker order from order book when fully consumed.
                 if maker_order.sell_token_quantity_remain == 0 {
@@ -10493,16 +10525,18 @@ impl BackendService {
             }
         }
 
-        Ok(())
+        Ok(order_details)
     }
 
+    /// Match a single order and return fill details for receipt
+    /// Returns Some(detail) when there's a fill, None when quantity too small
     fn market_match_single_order(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         taker_order: &mut tron_backend_execution::protocol::MarketOrder,
         maker_order: &mut tron_backend_execution::protocol::MarketOrder,
         taker_account: &mut tron_backend_execution::protocol::Account,
-    ) -> Result<(), String> {
+    ) -> Result<Option<MarketOrderDetail>, String> {
         let taker_sell_remain = taker_order.sell_token_quantity_remain;
         let maker_sell_quantity = maker_order.sell_token_quantity;
         let maker_buy_quantity = maker_order.buy_token_quantity;
@@ -10521,7 +10555,7 @@ impl BackendService {
             taker_order.sell_token_quantity_return = taker_order.sell_token_quantity_remain;
             self.market_return_sell_token_remain(taker_order, taker_account)?;
             self.market_update_order_state(storage_adapter, taker_order, 1)?;
-            return Ok(());
+            return Ok(None); // No fill occurred
         }
 
         let (taker_buy_receive, maker_buy_receive) = if taker_buy_remain == maker_sell_remain {
@@ -10574,7 +10608,7 @@ impl BackendService {
                 // Quantity too small, return remaining sellToken to maker (should not happen).
                 maker_order.sell_token_quantity_return = maker_order.sell_token_quantity_remain;
                 self.market_return_sell_token_remain_to_owner(storage_adapter, maker_order)?;
-                return Ok(());
+                return Ok(None); // No fill occurred
             }
 
             maker_order.sell_token_quantity_remain = 0;
@@ -10604,7 +10638,17 @@ impl BackendService {
             maker_buy_receive,
         )?;
 
-        Ok(())
+        // Build order detail for receipt
+        // Java: fillSellQuantity = makerBuyTokenQuantityReceive (what maker received = taker sold)
+        // Java: fillBuyQuantity = takerBuyTokenQuantityReceive (what taker received = maker sold)
+        let order_detail = MarketOrderDetail::new(
+            maker_order.order_id.clone(),
+            taker_order.order_id.clone(),
+            maker_buy_receive,  // fillSellQuantity
+            taker_buy_receive,  // fillBuyQuantity
+        );
+
+        Ok(Some(order_detail))
     }
 
     fn save_remain_market_order(
@@ -10877,11 +10921,16 @@ impl BackendService {
 
         // Remove from account order list when inactive/canceled.
         if state == 1 || state == 2 {
+            // Get strict parity mode flag for missing-index behavior
+            let execution_config = self.get_execution_config()?;
+            let strict_parity = execution_config.remote.market_strict_index_parity;
+
             let owner = Self::market_owner_address(&order.owner_address)?;
-            if let Some(mut account_order) = storage_adapter
+            let account_order_opt = storage_adapter
                 .get_market_account_order(&owner)
-                .map_err(|e| format!("Failed to get account order: {}", e))?
-            {
+                .map_err(|e| format!("Failed to get account order: {}", e))?;
+
+            if let Some(mut account_order) = account_order_opt {
                 account_order.orders.retain(|id| id != &order.order_id);
                 account_order.count = account_order
                     .count
@@ -10890,7 +10939,14 @@ impl BackendService {
                 storage_adapter
                     .put_market_account_order(&owner, &account_order)
                     .map_err(|e| format!("Failed to update account order: {}", e))?;
+            } else if strict_parity {
+                // Java: MarketAccountStore.get(owner) throws ItemNotFoundException if missing
+                return Err(format!(
+                    "MarketAccountOrder not found for owner: {}",
+                    hex::encode(storage_adapter.to_tron_address_21(&owner))
+                ));
             }
+            // else: defensive recovery mode - skip removal if not found
         }
 
         Ok(())
@@ -11049,9 +11105,11 @@ impl BackendService {
     }
 
     /// Parse MarketSellAssetContract protobuf bytes
+    /// Now parses owner_address (field 1) for Java parity validation
     fn parse_market_sell_asset_contract(&self, data: &[u8]) -> Result<MarketSellAssetInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut sell_token_id = Vec::new();
         let mut sell_token_quantity: i64 = 0;
         let mut buy_token_id = Vec::new();
@@ -11066,11 +11124,13 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip)
+                // owner_address = 1 (parse for Java parity)
                 1 => {
                     if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // sell_token_id = 2
                 2 => {
@@ -11113,6 +11173,7 @@ impl BackendService {
         }
 
         Ok(MarketSellAssetInfo {
+            owner_address,
             sell_token_id,
             sell_token_quantity,
             buy_token_id,
@@ -11286,15 +11347,34 @@ impl BackendService {
 
     /// Calculate order ID: SHA3(ownerAddress + sellTokenId(padded) + buyTokenId(padded) + count)
     /// Matches MarketUtils.calculateOrderId
+    /// Calculate order ID using SHA3 hash
+    /// Java's MarketUtils.calculateOrderId throws ArrayIndexOutOfBoundsException if token ID > 19 bytes
     fn calculate_order_id(
         owner_address: &[u8],
         sell_token_id: &[u8],
         buy_token_id: &[u8],
         count: i64,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, String> {
         use sha3::{Digest, Keccak256};
 
         const TOKEN_ID_LENGTH: usize = 19;
+
+        // Java's System.arraycopy throws ArrayIndexOutOfBoundsException if length > 19
+        if sell_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "sellTokenId length {} exceeds maximum {}",
+                sell_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
+        if buy_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "buyTokenId length {} exceeds maximum {}",
+                buy_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
+
         let count_bytes = count.to_be_bytes();
 
         let mut data = Vec::with_capacity(owner_address.len() + TOKEN_ID_LENGTH * 2 + 8);
@@ -11302,21 +11382,19 @@ impl BackendService {
 
         // Pad sell token ID
         let mut sell_padded = vec![0u8; TOKEN_ID_LENGTH];
-        let sell_len = std::cmp::min(sell_token_id.len(), TOKEN_ID_LENGTH);
-        sell_padded[..sell_len].copy_from_slice(&sell_token_id[..sell_len]);
+        sell_padded[..sell_token_id.len()].copy_from_slice(sell_token_id);
         data.extend_from_slice(&sell_padded);
 
         // Pad buy token ID
         let mut buy_padded = vec![0u8; TOKEN_ID_LENGTH];
-        let buy_len = std::cmp::min(buy_token_id.len(), TOKEN_ID_LENGTH);
-        buy_padded[..buy_len].copy_from_slice(&buy_token_id[..buy_len]);
+        buy_padded[..buy_token_id.len()].copy_from_slice(buy_token_id);
         data.extend_from_slice(&buy_padded);
 
         data.extend_from_slice(&count_bytes);
 
         let mut hasher = Keccak256::new();
         hasher.update(&data);
-        hasher.finalize().to_vec()
+        Ok(hasher.finalize().to_vec())
     }
 }
 
@@ -11424,6 +11502,7 @@ struct MarketCancelOrderInfo {
 /// Parsed MarketSellAssetContract information
 #[derive(Debug, Clone)]
 struct MarketSellAssetInfo {
+    owner_address: Vec<u8>,
     sell_token_id: Vec<u8>,
     sell_token_quantity: i64,
     buy_token_id: Vec<u8>,
