@@ -12,5 +12,6 @@ mod delegate_resource;
 mod exchange_create;
 mod freeze_balance;
 mod market_sell_asset;
+mod participate_asset_issue;
 mod trc10_transfer;
 mod witness_update;

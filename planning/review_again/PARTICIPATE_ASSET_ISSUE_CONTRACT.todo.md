@@ -25,10 +25,10 @@ Goal: match Java's early failure behavior for malformed `owner_address`.
   - [x] Decide whether to enforce `owner_address` ↔ `transaction.from` consistency:
     - [ ] ~~**Option A (strict)**: reject mismatch with a clear error (define expected message).~~
     - [x] **Option B (Java-like)**: only validate format; leave signature/ownership mismatch to upstream. ← CHOSEN
-- [ ] Add conformance-style tests in Rust for:
-  - [ ] malformed `owner_address` (too short) → `"Invalid ownerAddress"`
-  - [ ] wrong prefix (e.g., `0xa0` vs DB `0x41`) → `"Invalid ownerAddress"`
-  - Note: Tests deferred - can be added when PARTICIPATE_ASSET_ISSUE_CONTRACT fixtures are created
+- [x] Add conformance-style tests in Rust for:
+  - [x] malformed `owner_address` (empty) → `"Invalid ownerAddress"` ✓
+  - [x] malformed `owner_address` (too short / 20 bytes) → `"Invalid ownerAddress"` ✓
+  - [x] wrong prefix (e.g., `0xa0` vs DB `0x41`) → `"Invalid ownerAddress"` ✓
 
 ## 2) Validate `to_address` like Java (currently length-only)
 
@@ -38,8 +38,10 @@ Goal: match `DecodeUtil.addressValid(toAddress)` behavior.
   - [x] Require 21 bytes with correct prefix (or enforce configured prefix).
   - [x] Map to internal 20-byte address only after validation.
   - [x] Keep error string parity: `"Invalid toAddress"`.
-- [ ] Add tests in Rust for malformed `to_address` lengths and wrong-prefix addresses.
-  - Note: Tests deferred - can be added when PARTICIPATE_ASSET_ISSUE_CONTRACT fixtures are created
+- [x] Add tests in Rust for malformed `to_address` lengths and wrong-prefix addresses.
+  - [x] empty to_address → `"Invalid toAddress"` ✓
+  - [x] 20-byte to_address (missing prefix) → `"Invalid toAddress"` ✓
+  - [x] wrong prefix (0xa0 vs 0x41) → `"Invalid toAddress"` ✓
 
 ## 3) TRC-10 asset optimization support (`account-asset` DB)
 
@@ -61,8 +63,7 @@ Goal: decide whether to match Java's `"No asset named null"` behavior.
 - [x] If strict parity is required:
   - [x] Adjust the error message path to emulate `ByteArray.toStr([]) == null`
     - Implemented: `if participate_info.asset_name.is_empty() { "null" } else { from_utf8_lossy }`
-  - [ ] Add a regression test for empty `asset_name`
-    - Note: Test deferred - can be added when PARTICIPATE_ASSET_ISSUE_CONTRACT fixtures are created
+  - [x] Add a regression test for empty `asset_name` → `"No asset named null"` ✓
 - [ ] ~~If not required: Document the difference as "non-consensus / message-only"~~
 
 ## 5) `token_id` empty handling
@@ -82,6 +83,7 @@ Goal: decide whether Rust should reject empty `asset_issue.id` or mirror Java's 
   - [x] `cd rust-backend && cargo test` - PASSED (226 passed, 3 failed on unrelated VoteWitness tests)
   - [x] Run any existing conformance runner/fixture suite that exercises TRC-10 ParticipateAssetIssue (if present)
     - `./scripts/ci/run_fixture_conformance.sh --rust-only` - ALL PASSED
+  - [x] Run participate_asset_issue unit tests - ALL 13 PASSED
 - [ ] Java (optional, if validating remote mode end-to-end):
   - [ ] `./gradlew :framework:test --tests "org.tron.core.actuator.ParticipateAssetIssueActuatorTest"`
 
@@ -97,4 +99,23 @@ Implementation completed in `rust-backend/crates/core/src/service/mod.rs`:
    - Fixed error message for empty `asset_name` to return `"No asset named null"` (Java parity)
    - Added documentation comment for stricter-than-Java `token_id` empty check
    - Renumbered validation steps for clarity (now 15 steps total)
+
+## Test Coverage
+
+New test file created: `rust-backend/crates/core/src/service/tests/contracts/participate_asset_issue.rs`
+
+Tests added (13 total, all passing):
+- `test_participate_validate_fail_owner_address_empty` - validates empty owner_address fails
+- `test_participate_validate_fail_owner_address_too_short` - validates 20-byte owner fails
+- `test_participate_validate_fail_owner_address_wrong_prefix` - validates wrong prefix (0xa0) fails
+- `test_participate_validate_fail_to_address_empty` - validates empty to_address fails
+- `test_participate_validate_fail_to_address_too_short` - validates 20-byte to_address fails
+- `test_participate_validate_fail_to_address_wrong_prefix` - validates wrong prefix (0xa0) fails
+- `test_participate_validate_fail_empty_asset_name_message_parity` - validates "No asset named null" message
+- `test_participate_validate_fail_amount_zero` - validates zero amount fails
+- `test_participate_validate_fail_self_participation` - validates owner == to fails
+- `test_participate_validate_fail_owner_account_not_exist` - validates missing owner account fails
+- `test_participate_validate_fail_insufficient_balance` - validates insufficient balance fails
+- `test_participate_validate_fail_asset_not_exist` - validates missing asset fails
+- `test_participate_happy_path` - validates successful token sale participation
 
