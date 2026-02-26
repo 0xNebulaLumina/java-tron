@@ -7623,59 +7623,77 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        let owner = transaction.from;
-        let owner_tron = add_tron_address_prefix(&owner);
-
-        // Parse contract data
+        // Parse contract data first to get all fields
         let participate_info = self.parse_participate_asset_issue_contract(&transaction.data)?;
 
+        // Get expected address prefix for validation (Java: DecodeUtil.addressPreFixByte)
+        let expected_prefix = storage_adapter.address_prefix();
+
+        // 1. Validate owner_address (Java parity: DecodeUtil.addressValid(ownerAddress))
+        // Java requires: length == 21 and prefix == configured prefix
+        if participate_info.owner_address.is_empty() || participate_info.owner_address.len() != 21 {
+            return Err("Invalid ownerAddress".to_string());
+        }
+        if participate_info.owner_address[0] != expected_prefix {
+            return Err("Invalid ownerAddress".to_string());
+        }
+        let owner = revm_primitives::Address::from_slice(&participate_info.owner_address[1..]);
+
+        // 2. Validate to_address (Java parity: DecodeUtil.addressValid(toAddress))
+        // Java requires: length == 21 and prefix == configured prefix
+        if participate_info.to_address.is_empty() || participate_info.to_address.len() != 21 {
+            return Err("Invalid toAddress".to_string());
+        }
+        if participate_info.to_address[0] != expected_prefix {
+            return Err("Invalid toAddress".to_string());
+        }
+        let to_address = revm_primitives::Address::from_slice(&participate_info.to_address[1..]);
+
         debug!("ParticipateAssetIssue: owner={}, to={}, asset={}, amount={}",
-               hex::encode(&owner_tron),
+               hex::encode(&participate_info.owner_address),
                hex::encode(&participate_info.to_address),
                String::from_utf8_lossy(&participate_info.asset_name),
                participate_info.amount);
 
-        // 1. Validate addresses
-        let to_address = if participate_info.to_address.len() == 21 {
-            revm_primitives::Address::from_slice(&participate_info.to_address[1..])
-        } else if participate_info.to_address.len() == 20 {
-            revm_primitives::Address::from_slice(&participate_info.to_address)
-        } else {
-            return Err("Invalid to address length".to_string());
-        };
-
-        if owner == to_address {
-            return Err("Cannot participate asset Issue yourself !".to_string());
-        }
-
-        // 2. Validate amount > 0
+        // 3. Validate amount > 0 (before self-participation check, matching Java order)
         if participate_info.amount <= 0 {
             return Err("Amount must greater than 0!".to_string());
         }
 
-        // 3. Validate owner account exists
+        // 4. Validate not self-participation (Java: Arrays.equals(ownerAddress, toAddress))
+        if owner == to_address {
+            return Err("Cannot participate asset Issue yourself !".to_string());
+        }
+
+        // 5. Validate owner account exists
         let owner_account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or("Account does not exist!")?;
 
-        // 4. Validate owner has enough balance (amount + fee)
+        // 6. Validate owner has enough balance (amount + fee)
         // Java oracle validates balance before time window checks.
         let fee = 0i64; // ParticipateAssetIssue has no fee
         if owner_account.balance < participate_info.amount + fee {
             return Err("No enough balance !".to_string());
         }
 
-        // 5. Get asset issue (using asset name as key)
+        // 7. Get asset issue (using asset name as key)
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
 
+        // Java parity: ByteArray.toStr([]) returns "null", not ""
+        let asset_name_display = if participate_info.asset_name.is_empty() {
+            "null".to_string()
+        } else {
+            String::from_utf8_lossy(&participate_info.asset_name).to_string()
+        };
         let asset_issue = storage_adapter.get_asset_issue(&participate_info.asset_name, allow_same_token_name)
             .map_err(|e| format!("Failed to get asset issue: {}", e))?
-            .ok_or_else(|| format!("No asset named {}", String::from_utf8_lossy(&participate_info.asset_name)))?;
+            .ok_or_else(|| format!("No asset named {}", asset_name_display))?;
 
-        // 6. Validate to_address is the asset owner
+        // 8. Validate to_address is the asset owner
         let asset_owner_address = if asset_issue.owner_address.len() == 21 {
             &asset_issue.owner_address[1..]
         } else {
@@ -7688,14 +7706,14 @@ impl BackendService {
             ));
         }
 
-        // 7. Validate time window
+        // 9. Validate time window
         let now = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get timestamp: {}", e))?;
         if now >= asset_issue.end_time || now < asset_issue.start_time {
             return Err("No longer valid period!".to_string());
         }
 
-        // 8. Calculate exchange amount
+        // 10. Calculate exchange amount
         let exchange_amount = Self::safe_multiply_divide(
             participate_info.amount,
             asset_issue.num as i64,
@@ -7705,12 +7723,12 @@ impl BackendService {
             return Err("Can not process the exchange!".to_string());
         }
 
-        // 9. Validate to account exists (asset issuer)
+        // 11. Validate to account exists (asset issuer)
         let to_account = storage_adapter.get_account_proto(&to_address)
             .map_err(|e| format!("Failed to get to account: {}", e))?
             .ok_or("To account does not exist!")?;
 
-        // 10. Validate issuer has enough tokens
+        // 12. Validate issuer has enough tokens
         let issuer_asset_balance = Self::get_asset_balance_v2(&to_account, &participate_info.asset_name, allow_same_token_name);
         if issuer_asset_balance < exchange_amount {
             return Err("Asset balance is not enough !".to_string());
@@ -7721,11 +7739,13 @@ impl BackendService {
         } else {
             String::from_utf8_lossy(&participate_info.asset_name).to_string()
         };
+        // NOTE: This check is stricter than Java. Java does not explicitly validate empty token_id
+        // in the actuator - it relies on the asset's existence. We keep this as a safety invariant.
         if token_id_str.is_empty() {
             return Err("token_id cannot be empty".to_string());
         }
 
-        // 11. Execute the exchange
+        // 13. Execute the exchange
         let mut updated_owner = owner_account.clone();
         let mut updated_to = to_account.clone();
 
@@ -7755,13 +7775,13 @@ impl BackendService {
             allow_same_token_name,
         )?;
 
-        // 12. Persist updated accounts
+        // 14. Persist updated accounts
         storage_adapter.put_account_proto(&owner, &updated_owner)
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
         storage_adapter.put_account_proto(&to_address, &updated_to)
             .map_err(|e| format!("Failed to persist to account: {}", e))?;
 
-        // 13. Build state changes for CSV parity
+        // 15. Build state changes for CSV parity
         let mut state_changes = Vec::new();
 
         let old_owner_info = revm_primitives::AccountInfo {
@@ -8145,9 +8165,13 @@ impl BackendService {
     }
 
     /// Parse ParticipateAssetIssueContract protobuf bytes
+    ///
+    /// Parses all fields including owner_address for Java-parity validation.
+    /// Java oracle: ParticipateAssetIssueActuator validates owner_address via DecodeUtil.addressValid
     fn parse_participate_asset_issue_contract(&self, data: &[u8]) -> Result<ParticipateAssetIssueInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut to_address = Vec::new();
         let mut asset_name = Vec::new();
         let mut amount: i64 = 0;
@@ -8162,13 +8186,18 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip, we use transaction.from)
+                // owner_address = 1 (parsed for Java-parity validation)
                 1 => {
                     if wire_type != 2 {
                         return Err("Invalid wire type for owner_address".to_string());
                     }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Data truncated reading owner_address".to_string());
+                    }
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // to_address = 2
                 2 => {
@@ -8217,6 +8246,7 @@ impl BackendService {
         }
 
         Ok(ParticipateAssetIssueInfo {
+            owner_address,
             to_address,
             asset_name,
             amount,
@@ -11439,6 +11469,7 @@ struct ExchangeTransactionInfo {
 /// Parsed ParticipateAssetIssueContract information
 #[derive(Debug, Clone)]
 struct ParticipateAssetIssueInfo {
+    owner_address: Vec<u8>,
     to_address: Vec<u8>,
     asset_name: Vec<u8>,
     amount: i64,
