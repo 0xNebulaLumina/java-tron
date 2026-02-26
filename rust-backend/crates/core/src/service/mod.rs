@@ -3239,7 +3239,12 @@ impl BackendService {
         if is_add_approval {
             proposal.approvals.push(owner_address_bytes.clone());
         } else {
-            proposal.approvals.retain(|a| a != &owner_address_bytes);
+            // Java parity: removeApproval() removes only the FIRST matching entry
+            // (using ArrayList.remove(Object) semantics), not all occurrences.
+            // This matters if corrupted/non-canonical DB ever contains duplicates.
+            if let Some(idx) = proposal.approvals.iter().position(|a| a == &owner_address_bytes) {
+                proposal.approvals.remove(idx);
+            }
         }
 
         // 7. Persist updated proposal
