@@ -3143,14 +3143,20 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
 
-        // 0. Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.ProposalApproveContract") {
-                return Err(
-                    "contract type error,expected type [ProposalApproveContract],real type[class com.google.protobuf.Any]"
-                        .to_string(),
-                );
-            }
+        // 0. Validate contract parameter presence and type (strict Java parity)
+        // Java: ProposalApproveActuator.validate() throws "No contract!" if this.any is null
+        let any = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .ok_or_else(|| "No contract!".to_string())?;
+
+        // Java: any.is(ProposalApproveContract.class) check
+        if !Self::any_type_url_matches(&any.type_url, "protocol.ProposalApproveContract") {
+            return Err(
+                "contract type error,expected type [ProposalApproveContract],real type[class com.google.protobuf.Any]"
+                    .to_string(),
+            );
         }
 
         // 1. Parse ProposalApproveContract
@@ -3158,12 +3164,7 @@ impl BackendService {
         //   bytes owner_address = 1;
         //   int64 proposal_id = 2;
         //   bool is_add_approval = 3;
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
+        let contract_bytes = any.value.as_slice();
         let (owner_address_bytes, proposal_id, is_add_approval) =
             self.parse_proposal_approve_contract(contract_bytes)?;
         let readable_owner_address = hex::encode(&owner_address_bytes);
@@ -3206,7 +3207,9 @@ impl BackendService {
             return Err(format!("Proposal[{}] not exists", proposal_id));
         }
 
-        let mut proposal = storage_adapter.get_proposal(proposal_id)
+        // Get proposal with raw bytes to preserve unknown protobuf fields (Java parity)
+        // Java's toBuilder()...build() preserves unknown fields; we do the same via surgical update.
+        let (mut proposal, raw_bytes) = storage_adapter.get_proposal_with_raw(proposal_id)
             .map_err(|e| format!("Failed to get proposal: {}", e))?
             .ok_or_else(|| format!("Proposal[{}] not exists", proposal_id))?;
 
@@ -3247,8 +3250,12 @@ impl BackendService {
             }
         }
 
-        // 7. Persist updated proposal
-        storage_adapter.put_proposal(&proposal)
+        // 7. Persist updated proposal using surgical update to preserve unknown protobuf fields
+        // Java's toBuilder()...build() preserves unknown fields when rebuilding the protobuf.
+        // We achieve the same by surgically replacing only field 6 (approvals) in the raw bytes.
+        let updated_bytes = storage_adapter.surgical_update_proposal_approvals(&raw_bytes, &proposal.approvals)
+            .map_err(|e| format!("Failed to update proposal approvals: {}", e))?;
+        storage_adapter.put_proposal_raw(proposal_id, updated_bytes)
             .map_err(|e| format!("Failed to persist proposal: {}", e))?;
 
         info!(

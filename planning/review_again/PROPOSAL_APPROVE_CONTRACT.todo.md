@@ -6,12 +6,12 @@ This checklist assumes we want to eliminate the edge-case parity gaps identified
 
 - [x] Confirm desired scope:
   - [x] **Actuator-only parity** (match `ProposalApproveActuator` + `ProposalCapsule`)
-  - [ ] **Forward-compat parity** (also preserve unknown protobuf fields on stored `Proposal`) - DEFERRED (Option A: pragmatic)
+  - [x] **Forward-compat parity** (also preserve unknown protobuf fields on stored `Proposal`)
 - [x] Confirm whether we care about "corrupted DB" behavior:
   - [ ] treat duplicate approvals as impossible (no fix needed)
   - [x] treat duplicate approvals as possible (match Java's first-occurrence removal)
 
-## 1) Duplicate approval removal semantics (optional but strict parity)
+## 1) Duplicate approval removal semantics (strict parity)
 
 Goal: match `ProposalCapsule.removeApproval`, which removes only one matching approval entry.
 
@@ -33,35 +33,29 @@ Implementation details:
 
 Goal: ensure approving/removing approvals does not delete unknown fields that Java would preserve.
 
-Options (pick one):
+- [x] **Option B (strict)**: round-trip unknown fields by storing and re-emitting raw bytes.
+  - [x] Change proposal read path to retain original serialized bytes alongside decoded fields.
+    - Added `get_proposal_with_raw()` method to storage adapter
+  - [x] Implement a "surgical update" to approvals that preserves all other fields/unknown fields:
+    - [x] parse full message as a protobuf stream, rewrite only field `6` (approvals)
+    - [x] keep all other fields byte-for-byte, including unknown fields
+    - Added `surgical_update_proposal_approvals()` method to storage adapter
+    - Added `put_proposal_raw()` method to storage adapter
+  - [x] Add tests:
+    - [x] Pre-state proposal bytes include an unknown field (e.g., field 99 length-delimited)
+    - [x] After approve/remove, unknown field bytes still present and identical
+    - Added `test_proposal_approve_preserves_unknown_protobuf_fields` test
 
-- [x] **Option A (pragmatic)**: accept current behavior; document that unknown fields may be dropped (no code change).
-- [ ] **Option B (strict)**: round-trip unknown fields by storing and re-emitting raw bytes.
-  - [ ] Change proposal read path to retain original serialized bytes alongside decoded fields.
-  - [ ] Implement a "surgical update" to approvals that preserves all other fields/unknown fields:
-    - [ ] parse full message as a protobuf stream, rewrite only field `6` (approvals)
-    - [ ] keep all other fields byte-for-byte, including unknown fields
-  - [ ] Add tests:
-    - [ ] Pre-state proposal bytes include an unknown field (e.g., field 99 length-delimited)
-    - [ ] After approve/remove, unknown field bytes still present and identical
+## 3) Contract parameter presence/type-url parity (strict)
 
-**Decision**: Option A selected. Unknown fields are not a concern for current conformance testing,
-and the extra complexity of Option B is not justified. This is documented in the planning.md file.
-
-## 3) Contract parameter presence/type-url parity (optional)
-
-Goal: decide whether the Rust backend should require `metadata.contract_parameter` for this contract (Java-like), or keep the current "fallback to transaction.data" behavior.
+Goal: Rust backend requires `metadata.contract_parameter` for this contract (Java-like behavior).
 
 - [x] Decide policy:
-  - [ ] Strict: missing `contract_parameter` returns Java-like `"No contract!"` (or equivalent)
-  - [x] Flexible (current): parse from `transaction.data` when Any is absent
-- [ ] If strict:
-  - [ ] Update the contract parsing entry path for `ProposalApproveContract` to error when Any is missing.
-  - [ ] Add tests for both: missing Any and wrong type_url.
-
-**Decision**: Keep flexible behavior. The current implementation provides flexibility for non-Java
-callers while still validating the type_url when `contract_parameter` is present. This is acceptable
-for conformance testing purposes.
+  - [x] Strict: missing `contract_parameter` returns Java-like `"No contract!"` (ActuatorConstant.CONTRACT_NOT_EXIST)
+  - [ ] ~~Flexible (current): parse from `transaction.data` when Any is absent~~
+- [x] Implementation:
+  - [x] Update `execute_proposal_approve_contract()` to error with "No contract!" when `contract_parameter` is None
+  - [x] Add test `test_proposal_approve_missing_contract_parameter_fails` for missing Any
 
 ## 4) Verification steps
 
@@ -74,9 +68,32 @@ for conformance testing purposes.
 - [ ] Sanity-check Java reference behavior:
   - [ ] `./gradlew :framework:test --tests "org.tron.core.conformance.ProposalFixtureGeneratorTest"`
 
-## Additional tests added
+## Summary of changes
 
-- `test_proposal_approve_add_approval_happy_path` - Tests basic approval addition
-- `test_proposal_approve_remove_first_occurrence_only` - Tests Java parity for duplicate removal
-- `test_proposal_approve_remove_not_approved_fails` - Tests validation error when removing non-existent approval
-- `test_proposal_approve_repeat_approval_fails` - Tests validation error when adding duplicate approval
+### Files modified:
+
+1. **`rust-backend/crates/execution/src/storage_adapter/engine.rs`**:
+   - Added `get_proposal_with_raw()` - returns both decoded Proposal and raw bytes
+   - Added `put_proposal_raw()` - stores raw bytes directly
+   - Added `surgical_update_proposal_approvals()` - updates only field 6 (approvals) in raw bytes, preserving unknown fields
+   - Added `read_varint_from_slice()` helper
+
+2. **`rust-backend/crates/core/src/service/mod.rs`**:
+   - Updated `execute_proposal_approve_contract()`:
+     - Added strict contract parameter check: returns "No contract!" when missing
+     - Changed to use `get_proposal_with_raw()` instead of `get_proposal()`
+     - Changed to use `surgical_update_proposal_approvals()` + `put_proposal_raw()` instead of `put_proposal()`
+     - Uses "remove first occurrence only" for duplicate approval removal
+
+3. **`rust-backend/crates/core/src/service/tests/contracts/proposal_approve.rs`** (new file):
+   - `test_proposal_approve_missing_contract_parameter_fails` - Tests "No contract!" error
+   - `test_proposal_approve_remove_first_occurrence_only` - Tests duplicate removal parity
+   - `test_proposal_approve_add_approval_happy_path` - Tests basic approval addition
+   - `test_proposal_approve_remove_not_approved_fails` - Tests validation error
+   - `test_proposal_approve_repeat_approval_fails` - Tests validation error
+   - `test_proposal_approve_preserves_unknown_protobuf_fields` - Tests unknown field preservation
+
+### Test results:
+- All 6 unit tests pass
+- All 12 PROPOSAL_APPROVE_CONTRACT conformance fixtures pass
+- Full conformance test suite passes
