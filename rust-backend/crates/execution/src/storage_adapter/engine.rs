@@ -3176,7 +3176,7 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get proposal by ID
-    /// Returns the raw Proposal protobuf bytes
+    /// Returns the decoded Proposal
     pub fn get_proposal(&self, proposal_id: i64) -> Result<Option<crate::protocol::Proposal>> {
         use crate::protocol::Proposal;
         let key = self.proposal_key(proposal_id);
@@ -3207,6 +3207,152 @@ impl EngineBackedEvmStateStore {
                 Ok(None)
             }
         }
+    }
+
+    /// Get proposal by ID with raw bytes
+    /// Returns both the decoded Proposal and the raw bytes (for surgical updates that preserve unknown fields)
+    pub fn get_proposal_with_raw(&self, proposal_id: i64) -> Result<Option<(crate::protocol::Proposal, Vec<u8>)>> {
+        use crate::protocol::Proposal;
+        let key = self.proposal_key(proposal_id);
+        tracing::debug!("Getting proposal with raw {}, key: {}", proposal_id, hex::encode(&key));
+
+        match self.storage_engine.get(self.proposal_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found proposal data, length: {}", data.len());
+                match Proposal::decode(data.as_slice()) {
+                    Ok(proposal) => {
+                        tracing::debug!(
+                            "Decoded proposal {} - proposer: {}, state: {:?}, approvals: {}",
+                            proposal.proposal_id,
+                            hex::encode(&proposal.proposer_address),
+                            proposal.state,
+                            proposal.approvals.len()
+                        );
+                        Ok(Some((proposal, data)))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to decode proposal {}: {}", proposal_id, e);
+                        Err(anyhow::anyhow!("Failed to decode proposal: {}", e))
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("Proposal {} not found", proposal_id);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store proposal raw bytes directly (preserves unknown fields)
+    pub fn put_proposal_raw(&self, proposal_id: i64, data: Vec<u8>) -> Result<()> {
+        let key = self.proposal_key(proposal_id);
+        tracing::debug!(
+            "Storing proposal {} raw bytes, length: {}, key: {}",
+            proposal_id,
+            data.len(),
+            hex::encode(&key)
+        );
+        self.buffered_put(self.proposal_database(), key, data)?;
+        Ok(())
+    }
+
+    /// Surgical update of proposal approvals that preserves unknown protobuf fields.
+    ///
+    /// This function parses the raw bytes, replaces only field 6 (approvals) with new values,
+    /// and keeps all other fields (including unknown fields) byte-for-byte identical.
+    /// This matches Java's behavior where `toBuilder()...build()` preserves unknown fields.
+    pub fn surgical_update_proposal_approvals(
+        &self,
+        raw_bytes: &[u8],
+        new_approvals: &[Vec<u8>],
+    ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        let mut pos = 0;
+
+        // Parse and copy all fields except field 6 (approvals)
+        while pos < raw_bytes.len() {
+            let field_start = pos;
+
+            // Read field header (tag)
+            let (field_header, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                .map_err(|e| anyhow::anyhow!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            // Calculate the end position of this field
+            let field_end = match wire_type {
+                0 => {
+                    // Varint - skip the varint value
+                    let (_, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                        .map_err(|e| anyhow::anyhow!("Failed to read varint: {}", e))?;
+                    pos + bytes_read
+                }
+                1 => {
+                    // 64-bit fixed
+                    pos + 8
+                }
+                2 => {
+                    // Length-delimited
+                    let (length, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                        .map_err(|e| anyhow::anyhow!("Failed to read length: {}", e))?;
+                    pos + bytes_read + length as usize
+                }
+                5 => {
+                    // 32-bit fixed
+                    pos + 4
+                }
+                _ => {
+                    return Err(anyhow::anyhow!("Unknown wire type: {}", wire_type));
+                }
+            };
+
+            // If this is field 6 (approvals), skip it (we'll add new approvals at the end)
+            // Otherwise, copy the field bytes as-is
+            if field_number != 6 {
+                output.extend_from_slice(&raw_bytes[field_start..field_end]);
+            }
+
+            pos = field_end;
+        }
+
+        // Append new approvals as field 6
+        for approval in new_approvals {
+            if approval.is_empty() {
+                continue;
+            }
+            self.write_varint(&mut output, (6 << 3) | 2);
+            self.write_varint(&mut output, approval.len() as u64);
+            output.extend_from_slice(approval);
+        }
+
+        Ok(output)
+    }
+
+    /// Helper to read a varint from a slice (returns value and bytes read)
+    fn read_varint_from_slice(&self, data: &[u8]) -> Result<(u64, usize)> {
+        let mut value: u64 = 0;
+        let mut shift = 0;
+        let mut pos = 0;
+
+        loop {
+            if pos >= data.len() {
+                return Err(anyhow::anyhow!("Unexpected end of data reading varint"));
+            }
+            let byte = data[pos];
+            pos += 1;
+            value |= ((byte & 0x7F) as u64) << shift;
+            if byte & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+            if shift >= 64 {
+                return Err(anyhow::anyhow!("Varint too long"));
+            }
+        }
+
+        Ok((value, pos))
     }
 
     /// Store proposal
