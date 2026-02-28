@@ -112,8 +112,8 @@ Phase 2 — Implement Fork Gating (`ForkController.pass`) Equivalent
 Phase 3 — Wire Validator Into Rust Handler
 - [x] Replace the current inline `match code { ... }` with a call to the shared validator per entry.
   - `execute_proposal_create_contract` now calls `contracts::proposal::validate_proposal_parameter()` for each parameter.
-- [ ] Optional parity: if `transaction.metadata.contract_parameter` is present, enforce `type_url == protocol.ProposalCreateContract` (same as Java `any.is(...)`).
-  - Note: This is optional and not implemented in current conformance tests.
+- [x] Optional parity: if `transaction.metadata.contract_parameter` is present, enforce `type_url == protocol.ProposalCreateContract` (same as Java `any.is(...)`).
+  - Implemented in `execute_proposal_create_contract` with Java-parity error message format.
 - [x] Ensure validation happens before any DB writes (so `validate_fail` produces zero mutations).
 
 Phase 4 — Tests / Conformance Expansion
@@ -123,14 +123,15 @@ Phase 4 — Tests / Conformance Expansion
   - [x] prerequisites (dynamic-property dependencies) (implicit in existing fixtures)
   - [x] "already active" prohibitions (implicit in existing fixtures)
   - [x] fork-gated ids (both pass and fail paths) (implicit in existing fixtures)
-- [ ] Extend conformance fixtures to include at least one representative case for each validation family not covered today:
-  - [ ] `MAX_CPU_TIME_OF_ONE_TX` fail (value too high)
-  - [ ] `ALLOW_SAME_TOKEN_NAME` fail (value 0)
-  - [ ] `ALLOW_TVM_CONSTANTINOPLE` prereq fail
-  - [ ] `MARKET_SELL_FEE` fail when market not enabled
-  - [ ] `ALLOW_NEW_REWARD` fail when already active
-  - [ ] `MAX_CREATE_ACCOUNT_TX_SIZE` boundary tests
-  Note: New conformance fixtures can be added as separate work. The Rust validation code is complete.
+- [x] Extend conformance fixtures to include at least one representative case for each validation family not covered today:
+  - [x] `MAX_CPU_TIME_OF_ONE_TX` fail (value too high) - Added `generateProposalCreate_maxCpuTimeTooHigh()`
+  - [x] `ALLOW_SAME_TOKEN_NAME` fail (value 0) - Added `generateProposalCreate_allowSameTokenNameValueZero()`
+  - [x] `ALLOW_TVM_CONSTANTINOPLE` prereq fail - Added `generateProposalCreate_allowTvmConstantinoplePrereqNotMet()`
+  - [x] `MARKET_SELL_FEE` fail when market not enabled - Added `generateProposalCreate_marketSellFeeMarketNotEnabled()`
+  - [x] `ALLOW_NEW_REWARD` fail when already active - Added `generateProposalCreate_allowNewRewardAlreadyActive()`
+  - [x] `MAX_CREATE_ACCOUNT_TX_SIZE` boundary tests - Added boundary test methods for min/max and too-low/too-high
+  Note: New fixture generator test methods added to `ProposalFixtureGeneratorTest.java`. Run with:
+        `./gradlew :framework:test --tests "ProposalFixtureGeneratorTest" -Dconformance.output=../conformance/fixtures`
 
 Phase 5 — Rollout / Safety
 - [ ] Keep `proposal_create_enabled=false` default until full parity is proven.

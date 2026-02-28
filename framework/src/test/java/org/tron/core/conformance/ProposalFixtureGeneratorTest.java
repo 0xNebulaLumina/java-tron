@@ -1072,6 +1072,328 @@ public class ProposalFixtureGeneratorTest extends BaseTest {
     log.info("ProposalCreate maintenance max bound: success={}", result.isSuccess());
   }
 
+  // --- Additional validation rules for Phase 4 coverage ---
+
+  @Test
+  public void generateProposalCreate_maxCpuTimeTooHigh() throws Exception {
+    // Build proposal with MAX_CPU_TIME_OF_ONE_TX (13) above maximum (> 100 when higher limit not enabled)
+    // Ensure ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX is 0
+    dbManager.getDynamicPropertiesStore().saveAllowHigherLimitForMaxCpuTimeOfOneTx(0);
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(13L, 101L);  // MAX_CPU_TIME_OF_ONE_TX above 100 limit
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_max_cpu_time_too_high")
+        .caseCategory("validate_fail")
+        .description("Fail when MAX_CPU_TIME_OF_ONE_TX exceeds limit (100 when higher limit not enabled)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("valid range is [10,100]")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate max cpu time too high: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_allowSameTokenNameValueZero() throws Exception {
+    // Build proposal with ALLOW_SAME_TOKEN_NAME (15) = 0 (must be 1)
+    Map<Long, Long> params = new HashMap<>();
+    params.put(15L, 0L);  // ALLOW_SAME_TOKEN_NAME must be 1
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_allow_same_token_name_value_zero")
+        .caseCategory("validate_fail")
+        .description("Fail when ALLOW_SAME_TOKEN_NAME is not 1")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("ALLOW_SAME_TOKEN_NAME")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate allow same token name zero: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_allowTvmConstantinoplePrereqNotMet() throws Exception {
+    // Set ALLOW_TVM_TRANSFER_TRC10 to 0 before proposing ALLOW_TVM_CONSTANTINOPLE
+    dbManager.getDynamicPropertiesStore().saveAllowTvmTransferTrc10(0);
+    // Enable the fork version for CONSTANTINOPLE
+    dbManager.getDynamicPropertiesStore().statsByVersion(8, new byte[27]); // VERSION_3_6 = 8
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(26L, 1L);  // ALLOW_TVM_CONSTANTINOPLE requires ALLOW_TVM_TRANSFER_TRC10 == 1
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_allow_tvm_constantinople_prereq_not_met")
+        .caseCategory("validate_fail")
+        .description("Fail when ALLOW_TVM_TRANSFER_TRC10 not approved before ALLOW_TVM_CONSTANTINOPLE")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("[ALLOW_TVM_TRANSFER_TRC10] proposal must be approved before [ALLOW_TVM_CONSTANTINOPLE] can be proposed")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate CONSTANTINOPLE prereq not met: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_marketSellFeeMarketNotEnabled() throws Exception {
+    // Ensure ALLOW_MARKET_TRANSACTION is disabled
+    dbManager.getDynamicPropertiesStore().saveAllowMarketTransaction(0);
+    // Enable the fork version for MARKET_SELL_FEE
+    dbManager.getDynamicPropertiesStore().statsByVersion(19, new byte[27]); // VERSION_4_1 = 19
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(45L, 1000L);  // MARKET_SELL_FEE requires ALLOW_MARKET_TRANSACTION == 1
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_market_sell_fee_market_not_enabled")
+        .caseCategory("validate_fail")
+        .description("Fail when MARKET_SELL_FEE proposed without ALLOW_MARKET_TRANSACTION enabled")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Market Transaction is not activated")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate market sell fee without market: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_allowNewRewardAlreadyActive() throws Exception {
+    // Set ALLOW_NEW_REWARD to already enabled
+    dbManager.getDynamicPropertiesStore().saveNewRewardAlgorithmEffectiveCycle();
+    // Enable the fork version for ALLOW_NEW_REWARD
+    dbManager.getDynamicPropertiesStore().statsByVersion(25, new byte[27]); // VERSION_4_6 = 25
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(67L, 1L);  // ALLOW_NEW_REWARD - already active
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_allow_new_reward_already_active")
+        .caseCategory("validate_fail")
+        .description("Fail when ALLOW_NEW_REWARD is already active")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("New reward has been valid")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate allow new reward already active: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_maxCreateAccountTxSizeTooLow() throws Exception {
+    // Enable the fork version for MAX_CREATE_ACCOUNT_TX_SIZE
+    dbManager.getDynamicPropertiesStore().statsByVersion(30, new byte[27]); // VERSION_4_7_5 = 30
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(82L, 100L);  // MAX_CREATE_ACCOUNT_TX_SIZE below minimum (500)
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_max_create_account_tx_size_too_low")
+        .caseCategory("validate_fail")
+        .description("Fail when MAX_CREATE_ACCOUNT_TX_SIZE below minimum (500)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("MAX_CREATE_ACCOUNT_TX_SIZE")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate max create account tx size too low: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_maxCreateAccountTxSizeTooHigh() throws Exception {
+    // Enable the fork version for MAX_CREATE_ACCOUNT_TX_SIZE
+    dbManager.getDynamicPropertiesStore().statsByVersion(30, new byte[27]); // VERSION_4_7_5 = 30
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(82L, 20000L);  // MAX_CREATE_ACCOUNT_TX_SIZE above maximum (10000)
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("validate_fail_max_create_account_tx_size_too_high")
+        .caseCategory("validate_fail")
+        .description("Fail when MAX_CREATE_ACCOUNT_TX_SIZE above maximum (10000)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("MAX_CREATE_ACCOUNT_TX_SIZE")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate max create account tx size too high: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalCreate_happyPathMaxCreateAccountTxSizeMinBound() throws Exception {
+    // Enable the fork version for MAX_CREATE_ACCOUNT_TX_SIZE
+    dbManager.getDynamicPropertiesStore().statsByVersion(30, new byte[27]); // VERSION_4_7_5 = 30
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(82L, 500L);  // MAX_CREATE_ACCOUNT_TX_SIZE at minimum boundary
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("happy_path_max_create_account_tx_size_min_bound")
+        .caseCategory("happy")
+        .description("Create proposal with MAX_CREATE_ACCOUNT_TX_SIZE at minimum boundary (500)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("MAX_CREATE_ACCOUNT_TX_SIZE", 500L)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate max create account tx size min bound: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateProposalCreate_happyPathMaxCreateAccountTxSizeMaxBound() throws Exception {
+    // Enable the fork version for MAX_CREATE_ACCOUNT_TX_SIZE
+    dbManager.getDynamicPropertiesStore().statsByVersion(30, new byte[27]); // VERSION_4_7_5 = 30
+
+    Map<Long, Long> params = new HashMap<>();
+    params.put(82L, 10000L);  // MAX_CREATE_ACCOUNT_TX_SIZE at maximum boundary
+
+    ProposalCreateContract contract = ProposalCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .putAllParameters(params)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_CREATE_CONTRACT", 16)
+        .caseName("happy_path_max_create_account_tx_size_max_bound")
+        .caseCategory("happy")
+        .description("Create proposal with MAX_CREATE_ACCOUNT_TX_SIZE at maximum boundary (10000)")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("MAX_CREATE_ACCOUNT_TX_SIZE", 10000L)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalCreate max create account tx size max bound: success={}", result.isSuccess());
+  }
+
   // ==========================================================================
   // Phase 2: ProposalApproveContract Additional Edge Cases
   // ==========================================================================

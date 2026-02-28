@@ -2780,6 +2780,17 @@ impl BackendService {
         use tron_backend_execution::TronExecutionResult;
         use tron_backend_execution::protocol::Proposal;
 
+        // Java parity: Check type_url in Any wrapper (ProposalCreateActuator.validate()).
+        // If contract_parameter is provided, validate it matches the expected type.
+        if let Some(ref param) = transaction.metadata.contract_parameter {
+            if !param.type_url.ends_with("ProposalCreateContract") {
+                return Err(format!(
+                    "contract type error,expected type [ProposalCreateContract],real type[{}]",
+                    param.type_url
+                ));
+            }
+        }
+
         // 1. Parse ProposalCreateContract from transaction.data
         // ProposalCreateContract:
         //   bytes owner_address = 1;
