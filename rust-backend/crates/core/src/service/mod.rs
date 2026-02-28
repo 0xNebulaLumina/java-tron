@@ -2760,81 +2760,11 @@ impl BackendService {
     // These contracts handle TRON governance proposals (parameter changes).
     // Java reference: ProposalCreateActuator, ProposalApproveActuator, ProposalDeleteActuator
 
+    /// Check if a proposal parameter code is supported.
+    /// Delegates to the proposal module's ProposalType enum.
+    #[allow(dead_code)]
     fn is_supported_proposal_parameter_code(code: i64) -> bool {
-        // Matches java-tron's ProposalUtil.ProposalType enum codes.
-        matches!(
-            code,
-            0 | 1
-                | 2
-                | 3
-                | 4
-                | 5
-                | 6
-                | 7
-                | 8
-                | 9
-                | 10
-                | 11
-                | 12
-                | 13
-                | 14
-                | 15
-                | 16
-                | 17
-                | 18
-                | 19
-                | 20
-                | 21
-                | 22
-                | 23
-                | 24
-                | 25
-                | 26
-                | 29
-                | 30
-                | 31
-                | 32
-                | 33
-                | 35
-                | 39
-                | 40
-                | 41
-                | 44
-                | 45
-                | 46
-                | 47
-                | 48
-                | 49
-                | 51
-                | 52
-                | 53
-                | 59
-                | 60
-                | 61
-                | 62
-                | 63
-                | 65
-                | 66
-                | 67
-                | 68
-                | 69
-                | 70
-                | 71
-                | 72
-                | 73
-                | 74
-                | 75
-                | 76
-                | 77
-                | 78
-                | 79
-                | 81
-                | 82
-                | 83
-                | 87
-                | 88
-                | 89
-        )
+        contracts::proposal::ProposalType::from_code(code).is_some()
     }
 
     /// Execute a PROPOSAL_CREATE_CONTRACT
@@ -2893,67 +2823,10 @@ impl BackendService {
         info!("ProposalCreate: {} parameters", parameters.len());
 
         // 4. Validate proposal parameter values (java-tron: ProposalUtil.validator)
-        const LONG_VALUE: i64 = 100_000_000_000_000_000;
+        // Full parity with Java's ProposalUtil.validator() including fork gating,
+        // prerequisites, and "already active" checks.
         for (&code, &value) in parameters.iter() {
-            match code {
-                0 => {
-                    if value < 3 * 27 * 1000 || value > 24 * 3600 * 1000 {
-                        return Err("Bad chain parameter value, valid range is [3 * 27 * 1000,24 * 3600 * 1000]".to_string());
-                    }
-                }
-                1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 => {
-                    if value < 0 || value > LONG_VALUE {
-                        return Err(format!(
-                            "Bad chain parameter value, valid range is [0,{}]",
-                            LONG_VALUE
-                        ));
-                    }
-                }
-                9 => {
-                    if value != 1 {
-                        return Err(
-                            "This value[ALLOW_CREATION_OF_CONTRACTS] is only allowed to be 1"
-                                .to_string(),
-                        );
-                    }
-                }
-                10 => {
-                    let remove_power = storage_adapter
-                        .get_remove_the_power_of_the_gr()
-                        .map_err(|e| format!("Failed to get REMOVE_THE_POWER_OF_THE_GR: {}", e))?;
-                    if remove_power == -1 {
-                        return Err(
-                            "This proposal has been executed before and is only allowed to be executed once"
-                                .to_string(),
-                        );
-                    }
-                    if value != 1 {
-                        return Err(
-                            "This value[REMOVE_THE_POWER_OF_THE_GR] is only allowed to be 1"
-                                .to_string(),
-                        );
-                    }
-                }
-                18 => {
-                    if value != 1 {
-                        return Err(
-                            "This value[ALLOW_TVM_TRANSFER_TRC10] is only allowed to be 1"
-                                .to_string(),
-                        );
-                    }
-                    let allow_same_token_name = storage_adapter
-                        .get_allow_same_token_name()
-                        .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
-                    if allow_same_token_name == 0 {
-                        return Err("[ALLOW_SAME_TOKEN_NAME] proposal must be approved before [ALLOW_TVM_TRANSFER_TRC10] can be proposed".to_string());
-                    }
-                }
-                _ => {
-                    if !Self::is_supported_proposal_parameter_code(code) {
-                        return Err(format!("Does not support code : {}", code));
-                    }
-                }
-            }
+            contracts::proposal::validate_proposal_parameter(storage_adapter, code, value)?;
         }
 
         // 5. Get next proposal ID
