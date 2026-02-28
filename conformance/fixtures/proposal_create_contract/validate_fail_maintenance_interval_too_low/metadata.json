@@ -4,7 +4,7 @@
   "caseName": "validate_fail_maintenance_interval_too_low",
   "caseCategory": "validate_fail",
   "description": "Fail when MAINTENANCE_TIME_INTERVAL is below minimum",
-  "generatedAt": "2026-01-25T09:15:28.852Z",
+  "generatedAt": "2026-02-28T08:20:50.986Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

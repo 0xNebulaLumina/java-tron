@@ -4651,6 +4651,424 @@ impl EngineBackedEvmStateStore {
                        block_num, threshold, enabled);
         Ok(enabled)
     }
+
+    // ==========================================================================
+    // PROPOSAL_CREATE_CONTRACT: Dynamic Properties for Proposal Validation
+    // ==========================================================================
+
+    /// Get ALLOW_CREATION_OF_CONTRACTS dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowCreationOfContracts()
+    /// Default: 0 if not found.
+    pub fn get_allow_creation_of_contracts(&self) -> Result<i64> {
+        let key = b"ALLOW_CREATION_OF_CONTRACTS";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_DELEGATE_RESOURCE dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowDelegateResource()
+    /// Default: 0 if not found.
+    pub fn get_allow_delegate_resource(&self) -> Result<i64> {
+        let key = b"ALLOW_DELEGATE_RESOURCE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_TVM_TRANSFER_TRC10 dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowTvmTransferTrc10()
+    /// Default: 0 if not found.
+    pub fn get_allow_tvm_transfer_trc10(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_TRANSFER_TRC10";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get CHANGE_DELEGATION dynamic property.
+    /// Java reference: DynamicPropertiesStore.getChangeDelegation()
+    /// Default: 0 if not found.
+    pub fn get_change_delegation(&self) -> Result<i64> {
+        let key = b"CHANGE_DELEGATION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_MARKET_TRANSACTION dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowMarketTransaction()
+    /// Default: 0 if not found.
+    pub fn get_allow_market_transaction(&self) -> Result<i64> {
+        let key = b"ALLOW_MARKET_TRANSACTION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Check if market transaction is supported.
+    /// Java reference: DynamicPropertiesStore.supportAllowMarketTransaction()
+    /// Returns true if ALLOW_MARKET_TRANSACTION == 1
+    pub fn support_allow_market_transaction(&self) -> Result<bool> {
+        Ok(self.get_allow_market_transaction()? == 1)
+    }
+
+    /// Get ALLOW_TVM_LONDON dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowTvmLondon()
+    /// Default: 0 if not found.
+    pub fn get_allow_tvm_london(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_LONDON";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowHigherLimitForMaxCpuTimeOfOneTx()
+    /// Default: 0 if not found.
+    pub fn get_allow_higher_limit_for_max_cpu_time_of_one_tx(&self) -> Result<i64> {
+        let key = b"ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_OLD_REWARD_OPT dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowOldRewardOpt()
+    /// Default: 0 if not found.
+    pub fn get_allow_old_reward_opt(&self) -> Result<i64> {
+        let key = b"ALLOW_OLD_REWARD_OPT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Check if old reward opt is allowed.
+    /// Java reference: DynamicPropertiesStore.allowOldRewardOpt()
+    /// Returns true if ALLOW_OLD_REWARD_OPT == 1
+    pub fn allow_old_reward_opt(&self) -> Result<bool> {
+        Ok(self.get_allow_old_reward_opt()? == 1)
+    }
+
+    /// Get ALLOW_ENERGY_ADJUSTMENT dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowEnergyAdjustment()
+    /// Default: 0 if not found.
+    pub fn get_allow_energy_adjustment(&self) -> Result<i64> {
+        let key = b"ALLOW_ENERGY_ADJUSTMENT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_STRICT_MATH dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowStrictMath()
+    /// Default: 0 if not found.
+    pub fn get_allow_strict_math(&self) -> Result<i64> {
+        let key = b"ALLOW_STRICT_MATH";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Check if strict math is allowed.
+    /// Java reference: DynamicPropertiesStore.allowStrictMath()
+    /// Returns true if ALLOW_STRICT_MATH == 1
+    pub fn allow_strict_math(&self) -> Result<bool> {
+        Ok(self.get_allow_strict_math()? == 1)
+    }
+
+    /// Get CONSENSUS_LOGIC_OPTIMIZATION dynamic property.
+    /// Java reference: DynamicPropertiesStore.getConsensusLogicOptimization()
+    /// Default: 0 if not found.
+    pub fn get_consensus_logic_optimization(&self) -> Result<i64> {
+        let key = b"CONSENSUS_LOGIC_OPTIMIZATION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_TVM_CANCUN dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowTvmCancun()
+    /// Default: 0 if not found.
+    pub fn get_allow_tvm_cancun(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_CANCUN";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_TVM_BLOB dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowTvmBlob()
+    /// Default: 0 if not found.
+    pub fn get_allow_tvm_blob(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_BLOB";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Check if new reward algorithm is used.
+    /// Java reference: DynamicPropertiesStore.useNewRewardAlgorithm()
+    /// Returns true if either ALLOW_NEW_REWARD == 1 or ALLOW_TVM_VOTE == 1
+    pub fn use_new_reward_algorithm(&self) -> Result<bool> {
+        let allow_new_reward = self.get_allow_new_reward()?;
+        let allow_tvm_vote = self.get_allow_tvm_vote()?;
+        Ok(allow_new_reward == 1 || allow_tvm_vote == 1)
+    }
+
+    /// Get ALLOW_TVM_VOTE dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowTvmVote()
+    /// Default: 0 if not found.
+    pub fn get_allow_tvm_vote(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_VOTE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get LATEST_VERSION dynamic property (fork version).
+    /// Java reference: DynamicPropertiesStore.getLatestVersion()
+    /// Default: 0 if not found.
+    pub fn get_latest_version(&self) -> Result<i64> {
+        let key = b"LATEST_VERSION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    // Handle 4-byte int format
+                    Ok(i32::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                    ]) as i64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get statsByVersion for fork gating.
+    /// Java reference: DynamicPropertiesStore.statsByVersion()
+    /// Returns None if not found.
+    pub fn stats_by_version(&self, version: i32) -> Result<Option<Vec<u8>>> {
+        let key = format!("FORK_CONTROLLER_VERSION_{}", version);
+        self.storage_engine.get(self.dynamic_properties_database(), key.as_bytes())
+    }
+
+    /// Check if a fork version has passed (simplified fork controller).
+    /// This is a simplified version that:
+    /// 1. For version > VERSION_4_0 (16): checks hardForkTime and stats approval
+    /// 2. For version <= VERSION_4_0: checks stats only
+    ///
+    /// Note: This is a best-effort approximation for proposal validation.
+    /// In production remote execution, the Java side may do full fork checks.
+    pub fn fork_controller_pass(&self, version: i32) -> Result<bool> {
+        // For energy limit special case (version == 5)
+        if version == 5 {
+            return self.check_for_energy_limit();
+        }
+
+        // For newer forks (VERSION_4_0+), use time-based + stats check
+        if version > 16 {
+            // VERSION_4_0 = 16
+            return self.fork_controller_pass_new(version);
+        }
+
+        // For older forks, check stats only
+        self.fork_controller_pass_old(version)
+    }
+
+    /// Fork pass check for old versions (<=16)
+    fn fork_controller_pass_old(&self, version: i32) -> Result<bool> {
+        let stats = self.stats_by_version(version)?;
+        match stats {
+            Some(data) if !data.is_empty() => {
+                // All bytes must be 1 (VERSION_UPGRADE)
+                Ok(data.iter().all(|&b| b == 1))
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Fork pass check for new versions (>16)
+    /// Uses hardForkTime and stats approval threshold (80%)
+    fn fork_controller_pass_new(&self, version: i32) -> Result<bool> {
+        // Hard fork times for versions (from Parameter.java)
+        // VERSION_4_0_1 (17) and later all have hardForkTime = 1596780000000 (GMT 2020-08-07 06:00:00)
+        let hard_fork_time: i64 = 1596780000000;
+        let hard_fork_rate: i32 = 80;
+
+        let latest_block_time = self.get_latest_block_header_timestamp()?;
+        let maintenance_time_interval = self.get_maintenance_time_interval()?;
+
+        // Calculate aligned hard fork time
+        let aligned_hard_fork_time = if maintenance_time_interval > 0 {
+            ((hard_fork_time - 1) / maintenance_time_interval + 1) * maintenance_time_interval
+        } else {
+            hard_fork_time
+        };
+
+        if latest_block_time < aligned_hard_fork_time {
+            return Ok(false);
+        }
+
+        let stats = self.stats_by_version(version)?;
+        match stats {
+            Some(data) if !data.is_empty() => {
+                // Count approvals (bytes == 1)
+                let count = data.iter().filter(|&&b| b == 1).count();
+                // Java uses Math.ceil for threshold calculation
+                let threshold_ceil =
+                    ((hard_fork_rate as f64 * data.len() as f64 / 100.0).ceil()) as usize;
+                Ok(count >= threshold_ceil)
+            }
+            _ => Ok(false),
+        }
+    }
 }
 
 impl EvmStateStore for EngineBackedEvmStateStore {
@@ -5680,31 +6098,6 @@ impl EngineBackedEvmStateStore {
                 tracing::debug!("EXCHANGE_CREATE_FEE not found, returning default");
                 // Java default: 1024_000_000L (1024 TRX in SUN)
                 Ok(1024_000_000i64)
-            }
-        }
-    }
-
-    /// Get ALLOW_STRICT_MATH dynamic property
-    /// Controls whether strict math mode is used in AMM calculations
-    /// When true, uses StrictMath.pow; when false, uses Math.pow
-    /// Default: 0 (false)
-    pub fn allow_strict_math(&self) -> Result<bool> {
-        let key = b"ALLOW_STRICT_MATH";
-        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
-            Some(data) => {
-                if data.len() == 8 {
-                    let value = i64::from_be_bytes(data.as_slice().try_into()?);
-                    Ok(value != 0)
-                } else if !data.is_empty() {
-                    // Single byte 0 or 1
-                    Ok(data[0] != 0)
-                } else {
-                    Ok(false)
-                }
-            },
-            None => {
-                tracing::debug!("ALLOW_STRICT_MATH not found, returning false");
-                Ok(false)
             }
         }
     }
