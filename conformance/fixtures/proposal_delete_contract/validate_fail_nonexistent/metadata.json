@@ -4,7 +4,7 @@
   "caseName": "validate_fail_nonexistent",
   "caseCategory": "validate_fail",
   "description": "Fail when trying to delete a non-existent proposal",
-  "generatedAt": "2026-02-28T08:20:51.009Z",
+  "generatedAt": "2026-03-01T15:03:09.988Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

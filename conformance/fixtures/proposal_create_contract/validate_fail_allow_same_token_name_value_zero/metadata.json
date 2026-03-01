@@ -4,7 +4,7 @@
   "caseName": "validate_fail_allow_same_token_name_value_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when ALLOW_SAME_TOKEN_NAME is not 1",
-  "generatedAt": "2026-02-28T08:20:50.943Z",
+  "generatedAt": "2026-03-01T15:03:09.912Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

@@ -14,5 +14,6 @@ mod freeze_balance;
 mod market_sell_asset;
 mod participate_asset_issue;
 mod proposal_approve;
+mod proposal_delete;
 mod trc10_transfer;
 mod witness_update;

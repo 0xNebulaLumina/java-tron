@@ -3288,7 +3288,9 @@ impl BackendService {
             return Err(format!("Proposal[{}] not exists", proposal_id));
         }
 
-        let mut proposal = storage_adapter.get_proposal(proposal_id)
+        // Use get_proposal_with_raw to preserve original bytes for byte-level parity.
+        // This avoids re-encoding the proposal (which would reorder BTreeMap parameters).
+        let (proposal, raw_bytes) = storage_adapter.get_proposal_with_raw(proposal_id)
             .map_err(|e| format!("Failed to get proposal: {}", e))?
             .ok_or_else(|| format!("Proposal[{}] not exists", proposal_id))?;
 
@@ -3310,11 +3312,13 @@ impl BackendService {
             return Err(format!("Proposal[{}] canceled", proposal_id));
         }
 
-        // 7. Set state to CANCELED (3)
-        proposal.state = 3;
+        // 7. Surgically patch state to CANCELED (3) in raw bytes, preserving original
+        //    parameter map ordering for byte-level parity with java-tron.
+        let patched_bytes = storage_adapter.surgical_update_proposal_state(&raw_bytes, 3)
+            .map_err(|e| format!("Failed to patch proposal state: {}", e))?;
 
-        // 8. Persist updated proposal
-        storage_adapter.put_proposal(&proposal)
+        // 8. Persist updated proposal raw bytes
+        storage_adapter.put_proposal_raw(proposal_id, patched_bytes)
             .map_err(|e| format!("Failed to persist proposal: {}", e))?;
 
         info!("ProposalDelete completed: id={}, state=CANCELED", proposal_id);
@@ -3340,51 +3344,70 @@ impl BackendService {
         })
     }
 
-    /// Parse ProposalDeleteContract from protobuf bytes
+    /// Parse ProposalDeleteContract from protobuf bytes with Java-compatible error strings.
     /// ProposalDeleteContract:
     ///   bytes owner_address = 1;
     ///   int64 proposal_id = 2;
+    ///
+    /// Error handling matches protobuf-java 3.21.12 for exact parity:
+    /// - Truncated input → PROTOBUF_TRUNCATED_MESSAGE
+    /// - Malformed varint → PROTOBUF_MALFORMED_VARINT
     fn parse_proposal_delete_contract(&self, data: &[u8]) -> Result<(Vec<u8>, i64), String> {
+        use contracts::proto::{
+            read_varint_typed, skip_protobuf_field_checked, VarintError,
+            PROTOBUF_TRUNCATED_MESSAGE, PROTOBUF_MALFORMED_VARINT,
+        };
+
+        let map_varint_error = |e: VarintError| -> String {
+            match e {
+                VarintError::Truncated => PROTOBUF_TRUNCATED_MESSAGE.to_string(),
+                VarintError::TooLong => PROTOBUF_MALFORMED_VARINT.to_string(),
+            }
+        };
+
         let mut owner_address_bytes: Vec<u8> = Vec::new();
         let mut proposal_id: Option<i64> = None;
         let mut pos = 0;
 
         while pos < data.len() {
-            let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            let (field_header, bytes_read) = read_varint_typed(&data[pos..])
+                .map_err(&map_varint_error)?;
             pos += bytes_read;
 
             let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
+            let wire_type = (field_header & 0x7) as u8;
 
             match (field_number, wire_type) {
                 (1, 2) => {
                     // owner_address (bytes)
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    let (length, bytes_read) = read_varint_typed(&data[pos..])
+                        .map_err(&map_varint_error)?;
                     pos += bytes_read;
                     if pos + length as usize > data.len() {
-                        return Err("Invalid ownerAddress".to_string());
+                        return Err(PROTOBUF_TRUNCATED_MESSAGE.to_string());
                     }
                     owner_address_bytes = data[pos..pos + length as usize].to_vec();
                     pos += length as usize;
                 }
                 (2, 0) => {
                     // proposal_id (int64, varint)
-                    let (v, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read proposal_id: {}", e))?;
+                    let (v, bytes_read) = read_varint_typed(&data[pos..])
+                        .map_err(&map_varint_error)?;
                     pos += bytes_read;
                     proposal_id = Some(v as i64);
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(|e| e.to_java_message())?;
                     pos += skip_len;
                 }
             }
         }
 
-        let id = proposal_id.ok_or_else(|| "Missing proposal_id".to_string())?;
+        // Proto3 default: absent proposal_id field defaults to 0, matching java-tron behavior.
+        // Java's protobuf decoding returns 0 for absent int64 fields, so validation
+        // proceeds to "Proposal[0] not exists" rather than a parse-level error.
+        let id = proposal_id.unwrap_or(0);
         Ok((owner_address_bytes, id))
     }
 
