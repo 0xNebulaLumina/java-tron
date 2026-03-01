@@ -4,7 +4,7 @@
   "caseName": "validate_fail_proposal_missing_but_latest_num_allows_it",
   "caseCategory": "validate_fail",
   "description": "Fail when proposal is missing from ProposalStore but latestProposalNum allows it",
-  "generatedAt": "2026-02-28T08:20:50.852Z",
+  "generatedAt": "2026-03-01T09:10:46.469Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

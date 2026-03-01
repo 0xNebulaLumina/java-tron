@@ -4,7 +4,7 @@
   "caseName": "happy_path_delete_even_if_already_approved_by_someone",
   "caseCategory": "happy",
   "description": "Delete succeeds even if proposal already has approvals",
-  "generatedAt": "2026-02-28T08:20:50.963Z",
+  "generatedAt": "2026-03-01T09:10:46.577Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

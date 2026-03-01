@@ -4,7 +4,7 @@
   "caseName": "happy_path_delete",
   "caseCategory": "happy",
   "description": "Delete an existing proposal by its creator",
-  "generatedAt": "2026-02-28T08:20:50.869Z",
+  "generatedAt": "2026-03-01T09:10:46.482Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
