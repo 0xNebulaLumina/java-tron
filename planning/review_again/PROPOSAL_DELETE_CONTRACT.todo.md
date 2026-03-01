@@ -8,7 +8,10 @@ Goal: if we need strict parity (including error strings and persisted proposal b
 - [x] Add a java-tron conformance fixture where the stored proposal has **multiple parameters with a deliberately non-sorted insertion order** (use `LinkedHashMap` to force order, e.g. keys inserted `[16, 0, 1]`) and then run ProposalDelete:
   - [x] Assert java-tron's persisted proposal bytes keep that map entry order and only add/update field 7 (`state = CANCELED`).
   - Added `generateProposalDelete_multiParamNonSortedOrder` in `ProposalFixtureGeneratorTest.java` (case: `happy_path_delete_multi_param_nonsorted`).
-- [ ] (Optional) Add an "invalid protobuf bytes" fixture for ProposalDeleteContract truncation to pin error-string behavior if you care about it.
+- [x] (Optional) Add an "invalid protobuf bytes" fixture for ProposalDeleteContract truncation to pin error-string behavior if you care about it.
+  - Added `generateProposalDelete_invalidProtobufBytes` in `ProposalFixtureGeneratorTest.java` (case: `validate_fail_invalid_protobuf_bytes`).
+  - Updated `parse_proposal_delete_contract` to use `read_varint_typed` + `skip_protobuf_field_checked` with Java-compatible error normalization (maps truncation/EOF to `PROTOBUF_TRUNCATED_MESSAGE`, malformed varint to `PROTOBUF_MALFORMED_VARINT`).
+  - Added Rust tests: `test_proposal_delete_truncated_bytes_error_string` and `test_proposal_delete_truncated_varint_error_string`.
 
 ## B) Fix 1: ProposalDeleteContract parsing should match proto3 defaulting
 - [x] Change `parse_proposal_delete_contract` (`rust-backend/crates/core/src/service/mod.rs`) to treat a missing field `proposal_id` as `0` (proto3 default) instead of returning `Missing proposal_id`.

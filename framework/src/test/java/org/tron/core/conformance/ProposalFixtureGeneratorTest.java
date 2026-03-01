@@ -1878,9 +1878,77 @@ public class ProposalFixtureGeneratorTest extends BaseTest {
     log.info("ProposalDelete multi-param non-sorted: success={}", result.isSuccess());
   }
 
+  @Test
+  public void generateProposalDelete_invalidProtobufBytes() throws Exception {
+    // Manually build Any with correct type_url but truncated/invalid value bytes.
+    // This covers the InvalidProtocolBufferException catch block in validate().
+    // Java truncates mid-field and throws:
+    //   "While parsing a protocol message, the input ended unexpectedly in the middle
+    //    of a field.  This could mean either that the input has been truncated or that
+    //    an embedded message misreported its own length."
+    ProposalDeleteContract validContract = ProposalDeleteContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setProposalId(1)
+        .build();
+
+    byte[] fullBytes = validContract.toByteArray();
+    // Truncate to 3 bytes: tag(0x0a) + length(0x15=21) + 1 byte of address data.
+    // The parser sees length=21 but only 1 byte follows → truncation error.
+    byte[] truncatedBytes = Arrays.copyOf(fullBytes, 3);
+
+    Any truncatedAny = Any.newBuilder()
+        .setTypeUrl("type.googleapis.com/" + ProposalDeleteContract.getDescriptor().getFullName())
+        .setValue(ByteString.copyFrom(truncatedBytes))
+        .build();
+
+    TransactionCapsule trxCap = createTransactionWithRawAny(
+        Transaction.Contract.ContractType.ProposalDeleteContract, truncatedAny);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_DELETE_CONTRACT", 18)
+        .caseName("validate_fail_invalid_protobuf_bytes")
+        .caseCategory("validate_fail")
+        .description("Fail when contract parameter contains invalid/truncated protobuf bytes")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Protocol")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalDelete invalid protobuf: validationError={}", result.getValidationError());
+  }
+
   // ==========================================================================
   // Helper Methods
   // ==========================================================================
+
+  /**
+   * Creates a transaction with a pre-built Any parameter (for testing invalid protobuf bytes).
+   * This allows injecting malformed protobuf data to test error handling.
+   */
+  private TransactionCapsule createTransactionWithRawAny(
+      Transaction.Contract.ContractType declaredType,
+      Any rawAny) {
+    Transaction.Contract protoContract = Transaction.Contract.newBuilder()
+        .setType(declaredType)
+        .setParameter(rawAny)
+        .build();
+
+    Transaction transaction = Transaction.newBuilder()
+        .setRawData(Transaction.raw.newBuilder()
+            .addContract(protoContract)
+            .setTimestamp(System.currentTimeMillis())
+            .setExpiration(System.currentTimeMillis() + 3600000)
+            .build())
+        .build();
+
+    return new TransactionCapsule(transaction);
+  }
 
   private TransactionCapsule createTransaction(Transaction.Contract.ContractType type,
                                                 com.google.protobuf.Message contract) {

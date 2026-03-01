@@ -487,3 +487,136 @@ fn build_proposal_raw_nonsorted_params(
 
     out
 }
+
+// =====================================================================
+// Invalid protobuf bytes tests (error string parity)
+// =====================================================================
+
+/// Java's protobuf InvalidProtocolBufferException.truncatedMessage() exact string.
+const JAVA_TRUNCATED_MESSAGE: &str = "While parsing a protocol message, the input ended \
+    unexpectedly in the middle of a field.  This could mean either that the input has been \
+    truncated or that an embedded message misreported its own length.";
+
+/// Test that truncated ProposalDeleteContract bytes produce Java-compatible error string.
+///
+/// Java's `any.unpack(ProposalDeleteContract.class)` throws InvalidProtocolBufferException
+/// with truncatedMessage() when the protobuf bytes end mid-field. Rust must return the
+/// exact same error string for conformance parity.
+#[test]
+fn test_proposal_delete_truncated_bytes_error_string() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+
+    storage_engine
+        .put("properties", b"LATEST_PROPOSAL_NUM", &5i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
+        .unwrap();
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service();
+
+    let owner_address = Address::from([1u8; 20]);
+    let owner_tron = make_from_raw(&owner_address);
+
+    // Build a valid ProposalDeleteContract and truncate it
+    let valid_bytes = build_proposal_delete_contract(&owner_tron, 1);
+    // Truncate to 3 bytes: tag(0x0a) + length(0x15=21) + 1 byte of address.
+    // Parser sees length=21 but only 1 byte follows → truncation error.
+    let truncated_bytes = valid_bytes[..3].to_vec();
+
+    let contract_param = TronContractParameter {
+        type_url: "type.googleapis.com/protocol.ProposalDeleteContract".to_string(),
+        value: truncated_bytes,
+    };
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::new(),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(TronContractType::ProposalDeleteContract),
+            asset_id: None,
+            from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(contract_param),
+            ..Default::default()
+        },
+    };
+
+    let context = new_test_context(1_000_000);
+    let result =
+        service.execute_proposal_delete_contract(&mut storage_adapter, &transaction, &context);
+
+    assert!(result.is_err(), "Should fail with truncated protobuf bytes");
+    let err = result.unwrap_err();
+    assert_eq!(
+        err, JAVA_TRUNCATED_MESSAGE,
+        "Error should match Java's InvalidProtocolBufferException.truncatedMessage():\n  got: {}",
+        err
+    );
+}
+
+/// Test that a varint truncated mid-byte produces the same Java error.
+///
+/// A varint with continuation bit set (0xFF) but no following byte is truncated.
+/// Java's protobuf parser returns truncatedMessage() for this case.
+#[test]
+fn test_proposal_delete_truncated_varint_error_string() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service();
+
+    let owner_address = Address::from([1u8; 20]);
+    let owner_tron = make_from_raw(&owner_address);
+
+    // Build bytes with an incomplete varint: field 2 tag + truncated varint value
+    // tag for field 2, wire type 0 = 0x10, then 0xFF (continuation bit set, no next byte)
+    let truncated_bytes = vec![0x10, 0xFF];
+
+    let contract_param = TronContractParameter {
+        type_url: "type.googleapis.com/protocol.ProposalDeleteContract".to_string(),
+        value: truncated_bytes,
+    };
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::new(),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(TronContractType::ProposalDeleteContract),
+            asset_id: None,
+            from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(contract_param),
+            ..Default::default()
+        },
+    };
+
+    let context = new_test_context(1_000_000);
+    let result =
+        service.execute_proposal_delete_contract(&mut storage_adapter, &transaction, &context);
+
+    assert!(result.is_err(), "Should fail with truncated varint");
+    let err = result.unwrap_err();
+    assert_eq!(
+        err, JAVA_TRUNCATED_MESSAGE,
+        "Truncated varint should match Java's truncatedMessage():\n  got: {}",
+        err
+    );
+}
