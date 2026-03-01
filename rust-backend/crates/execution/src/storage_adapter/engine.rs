@@ -3330,6 +3330,108 @@ impl EngineBackedEvmStateStore {
         Ok(output)
     }
 
+    /// Surgical update of proposal state that preserves all other protobuf fields byte-for-byte.
+    ///
+    /// This function parses the raw bytes, replaces only field 7 (state) with the new value,
+    /// and keeps all other fields (including map entry order in `parameters`) identical.
+    /// This matches Java's behavior where `ProposalDeleteActuator.execute()` only changes
+    /// the state field while preserving the original parameter map serialization order.
+    ///
+    /// If field 7 is absent (common for PENDING=0), the new state is appended at the position
+    /// where Java would serialize it (after field 6 / approvals, before any higher-numbered fields).
+    pub fn surgical_update_proposal_state(
+        &self,
+        raw_bytes: &[u8],
+        new_state: i32,
+    ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        let mut pos = 0;
+        let mut state_replaced = false;
+        // Track the position after the last field <= 7 for insertion
+        let mut insert_pos_after_field6: Option<usize> = None;
+
+        // First pass: copy all fields, replacing field 7 if found
+        while pos < raw_bytes.len() {
+            let field_start = pos;
+
+            // Read field header (tag)
+            let (field_header, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                .map_err(|e| anyhow::anyhow!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            // Calculate the end position of this field
+            let field_end = match wire_type {
+                0 => {
+                    // Varint - skip the varint value
+                    let (_, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                        .map_err(|e| anyhow::anyhow!("Failed to read varint: {}", e))?;
+                    pos + bytes_read
+                }
+                1 => {
+                    // 64-bit fixed
+                    pos + 8
+                }
+                2 => {
+                    // Length-delimited
+                    let (length, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                        .map_err(|e| anyhow::anyhow!("Failed to read length: {}", e))?;
+                    pos + bytes_read + length as usize
+                }
+                5 => {
+                    // 32-bit fixed
+                    pos + 4
+                }
+                _ => {
+                    return Err(anyhow::anyhow!("Unknown wire type: {}", wire_type));
+                }
+            };
+
+            if field_number == 7 && wire_type == 0 {
+                // Replace field 7 (state) with new value
+                if new_state != 0 {
+                    self.write_varint(&mut output, (7 << 3) | 0);
+                    self.write_varint(&mut output, new_state as u64);
+                }
+                // If new_state == 0, omit the field entirely (proto3 default)
+                state_replaced = true;
+            } else {
+                // Copy field bytes as-is
+                output.extend_from_slice(&raw_bytes[field_start..field_end]);
+            }
+
+            // Track insertion point: after the last field with number <= 6
+            if field_number <= 6 {
+                insert_pos_after_field6 = Some(output.len());
+            }
+
+            pos = field_end;
+        }
+
+        // If field 7 was not present and new_state != 0, insert it
+        if !state_replaced && new_state != 0 {
+            if let Some(insert_pos) = insert_pos_after_field6 {
+                // Insert at the tracked position (after field 6, before any field > 7)
+                let mut state_bytes = Vec::new();
+                self.write_varint(&mut state_bytes, (7 << 3) | 0);
+                self.write_varint(&mut state_bytes, new_state as u64);
+
+                let tail = output[insert_pos..].to_vec();
+                output.truncate(insert_pos);
+                output.extend_from_slice(&state_bytes);
+                output.extend_from_slice(&tail);
+            } else {
+                // No fields <= 6 found, append at end
+                self.write_varint(&mut output, (7 << 3) | 0);
+                self.write_varint(&mut output, new_state as u64);
+            }
+        }
+
+        Ok(output)
+    }
+
     /// Helper to read a varint from a slice (returns value and bytes read)
     fn read_varint_from_slice(&self, data: &[u8]) -> Result<(u64, usize)> {
         let mut value: u64 = 0;

@@ -3288,7 +3288,9 @@ impl BackendService {
             return Err(format!("Proposal[{}] not exists", proposal_id));
         }
 
-        let mut proposal = storage_adapter.get_proposal(proposal_id)
+        // Use get_proposal_with_raw to preserve original bytes for byte-level parity.
+        // This avoids re-encoding the proposal (which would reorder BTreeMap parameters).
+        let (proposal, raw_bytes) = storage_adapter.get_proposal_with_raw(proposal_id)
             .map_err(|e| format!("Failed to get proposal: {}", e))?
             .ok_or_else(|| format!("Proposal[{}] not exists", proposal_id))?;
 
@@ -3310,11 +3312,13 @@ impl BackendService {
             return Err(format!("Proposal[{}] canceled", proposal_id));
         }
 
-        // 7. Set state to CANCELED (3)
-        proposal.state = 3;
+        // 7. Surgically patch state to CANCELED (3) in raw bytes, preserving original
+        //    parameter map ordering for byte-level parity with java-tron.
+        let patched_bytes = storage_adapter.surgical_update_proposal_state(&raw_bytes, 3)
+            .map_err(|e| format!("Failed to patch proposal state: {}", e))?;
 
-        // 8. Persist updated proposal
-        storage_adapter.put_proposal(&proposal)
+        // 8. Persist updated proposal raw bytes
+        storage_adapter.put_proposal_raw(proposal_id, patched_bytes)
             .map_err(|e| format!("Failed to persist proposal: {}", e))?;
 
         info!("ProposalDelete completed: id={}, state=CANCELED", proposal_id);
@@ -3384,7 +3388,10 @@ impl BackendService {
             }
         }
 
-        let id = proposal_id.ok_or_else(|| "Missing proposal_id".to_string())?;
+        // Proto3 default: absent proposal_id field defaults to 0, matching java-tron behavior.
+        // Java's protobuf decoding returns 0 for absent int64 fields, so validation
+        // proceeds to "Proposal[0] not exists" rather than a parse-level error.
+        let id = proposal_id.unwrap_or(0);
         Ok((owner_address_bytes, id))
     }
 

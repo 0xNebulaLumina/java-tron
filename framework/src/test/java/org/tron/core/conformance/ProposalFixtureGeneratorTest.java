@@ -1791,6 +1791,94 @@ public class ProposalFixtureGeneratorTest extends BaseTest {
   }
 
   // ==========================================================================
+  // ProposalDelete Parity Edge Cases
+  // ==========================================================================
+
+  @Test
+  public void generateProposalDelete_proposalIdZero() throws Exception {
+    // ProposalDeleteContract with proposal_id = 0 (proto3 default when field is omitted).
+    // Java's protobuf decoding returns 0 for absent int64 fields, so validation
+    // proceeds to "Proposal[0] not exists".
+    ProposalDeleteContract contract = ProposalDeleteContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setProposalId(0)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalDeleteContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_DELETE_CONTRACT", 18)
+        .caseName("validate_fail_proposal_id_zero")
+        .caseCategory("validate_fail")
+        .description("Fail with proposal_id=0 (proto3 default); error should be 'Proposal[0] not exists'")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Proposal[0] not exists")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalDelete proposal_id=0: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateProposalDelete_multiParamNonSortedOrder() throws Exception {
+    // Create a proposal with multiple parameters in deliberately non-sorted insertion order.
+    // Uses LinkedHashMap to force order: keys inserted [16, 0, 1].
+    // After ProposalDelete, the persisted proposal bytes should keep that map entry order
+    // and only add/update field 7 (state = CANCELED).
+    java.util.LinkedHashMap<Long, Long> params = new java.util.LinkedHashMap<>();
+    params.put(16L, 1L);   // ALLOW_CREATION_OF_CONTRACTS (inserted first)
+    params.put(0L, 1000000L); // MAINTENANCE_TIME_INTERVAL (inserted second)
+    params.put(1L, 3L);    // ACCOUNT_UPGRADE_COST (inserted third)
+
+    long proposalId = 40;
+    ProposalCapsule proposal = new ProposalCapsule(
+        ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)),
+        proposalId);
+    proposal.setParameters(params);
+    proposal.setCreateTime(
+        chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp());
+    proposal.setExpirationTime(
+        chainBaseManager.getDynamicPropertiesStore().getNextMaintenanceTime() + 3 * 4 * 21600000);
+
+    chainBaseManager.getProposalStore().put(proposal.createDbKey(), proposal);
+    chainBaseManager.getDynamicPropertiesStore().saveLatestProposalNum(proposalId);
+
+    // Now delete the proposal
+    ProposalDeleteContract contract = ProposalDeleteContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setProposalId(proposalId)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ProposalDeleteContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("PROPOSAL_DELETE_CONTRACT", 18)
+        .caseName("happy_path_delete_multi_param_nonsorted")
+        .caseCategory("happy")
+        .description("Delete proposal with multi-param non-sorted map order; persisted bytes must preserve original map entry order")
+        .database("account")
+        .database("proposal")
+        .database("dynamic-properties")
+        .database("witness")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("proposal_id", proposalId)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ProposalDelete multi-param non-sorted: success={}", result.isSuccess());
+  }
+
+  // ==========================================================================
   // Helper Methods
   // ==========================================================================
 
