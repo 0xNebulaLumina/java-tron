@@ -4,7 +4,7 @@
   "caseName": "validate_fail_market_sell_fee_market_not_enabled",
   "caseCategory": "validate_fail",
   "description": "Fail when MARKET_SELL_FEE proposed without ALLOW_MARKET_TRANSACTION enabled",
-  "generatedAt": "2026-03-01T09:10:46.542Z",
+  "generatedAt": "2026-03-01T15:03:09.904Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

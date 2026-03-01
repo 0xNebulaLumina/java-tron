@@ -4,7 +4,7 @@
   "caseName": "happy_path_max_create_account_tx_size_max_bound",
   "caseCategory": "happy",
   "description": "Create proposal with MAX_CREATE_ACCOUNT_TX_SIZE at maximum boundary (10000)",
-  "generatedAt": "2026-03-01T09:10:46.566Z",
+  "generatedAt": "2026-03-01T15:03:09.922Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

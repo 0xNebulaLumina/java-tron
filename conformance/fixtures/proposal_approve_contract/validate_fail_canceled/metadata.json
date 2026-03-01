@@ -4,7 +4,7 @@
   "caseName": "validate_fail_canceled",
   "caseCategory": "validate_fail",
   "description": "Fail when trying to approve a canceled proposal",
-  "generatedAt": "2026-03-01T09:10:46.547Z",
+  "generatedAt": "2026-03-01T15:03:09.908Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

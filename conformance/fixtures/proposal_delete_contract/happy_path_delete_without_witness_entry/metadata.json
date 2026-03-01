@@ -4,7 +4,7 @@
   "caseName": "happy_path_delete_without_witness_entry",
   "caseCategory": "happy",
   "description": "Delete succeeds even if owner is no longer a witness (only account + proposer match required)",
-  "generatedAt": "2026-03-01T09:10:46.594Z",
+  "generatedAt": "2026-03-01T15:03:09.944Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
