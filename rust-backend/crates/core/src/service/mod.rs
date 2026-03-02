@@ -803,7 +803,6 @@ impl BackendService {
         }
 
         let execution_config = self.get_execution_config()?;
-        let fee_config = &execution_config.fees;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         // TransferContract amount is a signed long; fixtures encode it into the low 8 bytes of
@@ -817,6 +816,9 @@ impl BackendService {
         };
 
         // Validation parity with java-tron TransferActuator.validate()
+        // Java checks: DecodeUtil.addressValid(ownerAddress) then DecodeUtil.addressValid(toAddress)
+        // addressValid requires: non-null, exactly 21 bytes, prefix == configured prefix byte.
+        // Error ordering: ownerAddress validation MUST happen before toAddress validation.
         let prefix = storage_adapter.address_prefix();
         if let Some(owner_raw) = transaction.metadata.from_raw.as_deref() {
             if owner_raw.len() != 21 || owner_raw[0] != prefix {
@@ -824,10 +826,15 @@ impl BackendService {
             }
         }
 
-        // For TRANSFER_CONTRACT specifically, we need the 'to' address.
-        let to_address = match transaction.to {
-            Some(addr) => addr,
-            None => {
+        // Validate to_raw using the same rules as Java's DecodeUtil.addressValid(toAddress).
+        // We derive the 20-byte EVM address directly from validated to_raw bytes rather than
+        // relying on the pre-converted transaction.to (which may be None for malformed addresses
+        // that failed during gRPC conversion).
+        let to_address = match transaction.metadata.to_raw.as_deref() {
+            Some(raw) if raw.len() == 21 && raw[0] == prefix => {
+                revm_primitives::Address::from_slice(&raw[1..])
+            }
+            _ => {
                 return Err("Invalid toAddress!".to_string());
             }
         };
@@ -876,19 +883,10 @@ impl BackendService {
             0
         };
 
-        // Phase 3 Fix: Only calculate fee if explicitly configured for non-VM transactions
-        let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
-            Some(flat_fee) => {
-                debug!("Using configured flat fee for non-VM: {} SUN", flat_fee);
-                flat_fee
-            },
-            None => {
-                // Phase 3 Fix: Default to no forced TRX fee for non-VM transactions
-                // TRON uses free bandwidth first; only charge TRX when free bandwidth is insufficient
-                debug!("No flat fee configured for non-VM, using 0 (TRON free bandwidth semantics)");
-                0
-            }
-        };
+        // Strict actuator parity: Java's TransferActuator.calcFee() returns TRANSFER_FEE = 0.
+        // The only fee for TransferContract is the create-account-fee when recipient is new.
+        // No additional flat fee is applied at the actuator level.
+        let fee_amount: u64 = 0;
 
         // Contract-type restrictions (java: ForbidTransferToContract, AllowTvmCompatibleEvm).
         // Apply after fee adjustment for existence, but before balance checks.
@@ -935,10 +933,9 @@ impl BackendService {
         }
 
         // Validate sender has enough balance for amount + fees (java: addExact(amount, fee)).
+        // fee = create_account_fee (TRANSFER_FEE is always 0 in Java's TransferActuator).
         let fee_i64 = i64::try_from(create_account_fee)
-            .map_err(|_| "long overflow".to_string())?
-            .checked_add(i64::try_from(fee_amount).map_err(|_| "long overflow".to_string())?)
-            .ok_or_else(|| "long overflow".to_string())?;
+            .map_err(|_| "long overflow".to_string())?;
         let total_cost_i64 = amount_i64
             .checked_add(fee_i64)
             .ok_or_else(|| "long overflow".to_string())?;
@@ -1162,67 +1159,9 @@ impl BackendService {
             }
         }
 
-        // Handle fee based on configuration (only if fee_amount > 0)
-        if fee_amount > 0 {
-            match fee_config.mode.as_str() {
-                "burn" => {
-                    debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
-                    // No additional state change - fee is burned (supply reduction)
-                },
-                "blackhole" => {
-                    if !fee_config.blackhole_address_base58.is_empty() {
-                        // Parse blackhole address and credit it
-                        match tron_backend_common::from_tron_address(&fee_config.blackhole_address_base58) {
-                            Ok(blackhole_bytes) => {
-                                let blackhole_address = revm_primitives::Address::from_slice(&blackhole_bytes);
-                                
-                                // Load blackhole account (track existence)
-                                let blackhole_opt = storage_adapter.get_account(&blackhole_address)
-                                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?;
-                                let blackhole_account = blackhole_opt.clone().unwrap_or_default();
-                                
-                                // Credit blackhole account with fee
-                                let new_blackhole_balance = blackhole_account.balance + revm_primitives::U256::from(fee_amount);
-                                let new_blackhole_account = revm_primitives::AccountInfo {
-                                    balance: new_blackhole_balance,
-                                    nonce: blackhole_account.nonce,
-                                    code_hash: blackhole_account.code_hash,
-                                    code: blackhole_account.code.clone(),
-                                };
-                                
-                                // Add blackhole account change
-                                let old_blackhole_account = if blackhole_opt.is_none() {
-                                    None // Account creation if needed
-                                } else {
-                                    Some(blackhole_account)
-                                };
-                                
-                                state_changes.push(TronStateChange::AccountChange {
-                                    address: blackhole_address,
-                                    old_account: old_blackhole_account,
-                                    new_account: Some(new_blackhole_account.clone()),
-                                });
-                                // Persist blackhole account update
-                                storage_adapter
-                                    .set_account(blackhole_address, new_blackhole_account.clone())
-                                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
-                                
-                                debug!("Credited fee {} SUN to blackhole address {}", fee_amount, fee_config.blackhole_address_base58);
-                            },
-                            Err(e) => {
-                                warn!("Invalid blackhole address '{}': {}, falling back to burn mode", 
-                                      fee_config.blackhole_address_base58, e);
-                            }
-                        }
-                    }
-                },
-                _ => {
-                    debug!("Unknown fee mode '{}', defaulting to burn", fee_config.mode);
-                }
-            }
-        } else {
-            debug!("No fee to process (fee_amount = 0), skipping fee handling");
-        }
+        // fee_amount is always 0 for TransferContract (strict actuator parity).
+        // Only create-account-fee is charged (handled above).
+        debug_assert_eq!(fee_amount, 0, "TransferContract fee_amount must be 0 for actuator parity");
         
         // Sort state changes deterministically for digest parity
         state_changes.sort_by(|a, b| {
@@ -1247,8 +1186,8 @@ impl BackendService {
             }
         });
         
-        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, fee: {} SUN, state_changes: {}",
-               bandwidth_used, fee_amount, state_changes.len());
+        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, create_account_fee: {}, state_changes: {}",
+               bandwidth_used, create_account_fee, state_changes.len());
 
         Ok(TronExecutionResult {
             success: true,
