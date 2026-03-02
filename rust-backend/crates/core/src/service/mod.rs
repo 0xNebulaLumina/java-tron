@@ -42,6 +42,60 @@ impl BackendService {
         }
     }
 
+    /// Parse `asset_name` (field 1, length-delimited) from a serialized
+    /// `TransferAssetContract` protobuf message.
+    ///
+    /// Proto definition (asset_issue_contract.proto):
+    ///   bytes asset_name = 1;
+    ///   bytes owner_address = 2;
+    ///   bytes to_address = 3;
+    ///   int64 amount = 4;
+    ///
+    /// Wire format: tag = (field_number << 3) | wire_type
+    /// Field 1, wire type 2 (length-delimited) → tag byte = 0x0a
+    fn parse_asset_name_from_transfer_asset_contract(data: &[u8]) -> Option<Vec<u8>> {
+        let mut pos = 0;
+        while pos < data.len() {
+            let (tag, bytes_read) = read_varint(&data[pos..]).ok()?;
+            pos += bytes_read;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x07;
+
+            match wire_type {
+                0 => {
+                    // Varint: skip
+                    let (_, vr) = read_varint(&data[pos..]).ok()?;
+                    pos += vr;
+                }
+                2 => {
+                    // Length-delimited
+                    let (len, lr) = read_varint(&data[pos..]).ok()?;
+                    pos += lr;
+                    let len = len as usize;
+                    if pos + len > data.len() {
+                        return None;
+                    }
+                    if field_number == 1 {
+                        // asset_name
+                        return Some(data[pos..pos + len].to_vec());
+                    }
+                    pos += len;
+                }
+                5 => {
+                    // 32-bit fixed
+                    pos += 4;
+                }
+                1 => {
+                    // 64-bit fixed
+                    pos += 8;
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
     pub fn new(module_manager: ModuleManager) -> Self {
         Self {
             module_manager,
@@ -4049,30 +4103,59 @@ impl BackendService {
         }
 
         // Validation parity: DecodeUtil.addressValid(ownerAddress)
-        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
-            let owner_address_valid = match from_raw.len() {
-                21 => from_raw[0] == 0x41 || from_raw[0] == 0xa0,
-                20 => true,
-                _ => false,
-            };
-            if !owner_address_valid {
+        // Java requires exactly 21 bytes and prefix == configured network prefix.
+        // Missing or empty from_raw is invalid (mirrors Java's ArrayUtils.isEmpty check).
+        let prefix = storage_adapter.address_prefix();
+        match transaction.metadata.from_raw.as_deref() {
+            None | Some(&[]) => {
                 return Err("Invalid ownerAddress".to_string());
+            }
+            Some(from_raw) => {
+                if from_raw.len() != 21 || from_raw[0] != prefix {
+                    return Err("Invalid ownerAddress".to_string());
+                }
+            }
+        }
+
+        // Validation parity: DecodeUtil.addressValid(toAddress)
+        // Java checks toAddress is non-empty, 21 bytes, and has the correct prefix.
+        match transaction.metadata.to_raw.as_deref() {
+            None | Some(&[]) => {
+                return Err("Invalid toAddress".to_string());
+            }
+            Some(to_raw) => {
+                if to_raw.len() != 21 || to_raw[0] != prefix {
+                    return Err("Invalid toAddress".to_string());
+                }
             }
         }
 
         // 1. Extract required fields from transaction
-        // Validation parity: DecodeUtil.addressValid(toAddress)
         let to_address = transaction.to.ok_or_else(|| "Invalid toAddress".to_string())?;
         let to_tron = tron_backend_common::to_tron_address(&to_address);
 
-        // Get asset_id from metadata (Java passes it as metadata.asset_id)
-        let asset_id = transaction.metadata.asset_id.as_ref()
-            .ok_or("asset_id is required for TransferAssetContract")?
-            .clone();
-
-        if asset_id.is_empty() {
-            return Err("asset_id cannot be empty".to_string());
-        }
+        // Get asset_id from metadata (Java passes it as metadata.asset_id).
+        // If metadata.asset_id is absent (Java omits empty bytes), fall back to parsing
+        // TransferAssetContract from contract_parameter.value to extract asset_name bytes.
+        // Java's TransferAssetActuator treats empty asset_name as "No asset!" via store lookup.
+        let asset_id = match transaction.metadata.asset_id.as_ref() {
+            Some(id) if !id.is_empty() => id.clone(),
+            _ => {
+                // Try to parse asset_name from the raw TransferAssetContract protobuf
+                let asset_name_from_proto = transaction
+                    .metadata
+                    .contract_parameter
+                    .as_ref()
+                    .and_then(|param| Self::parse_asset_name_from_transfer_asset_contract(&param.value));
+                match asset_name_from_proto {
+                    Some(name) if !name.is_empty() => name,
+                    _ => {
+                        // Java: empty asset_name → store.has() returns false → "No asset!"
+                        return Err("No asset!".to_string());
+                    }
+                }
+            }
+        };
 
         // Java uses ByteArray.toStr(assetName) as the TRC-10 map key.
         let asset_key_str = String::from_utf8_lossy(&asset_id).to_string();
@@ -4173,20 +4256,77 @@ impl BackendService {
         }
 
         // Java execute(): create recipient when absent, update TRC-10 balances, and apply fee.
+        // When creating a missing recipient, java-tron's AccountCapsule constructor initializes
+        // default permissions if ALLOW_MULTI_SIGN == 1 (owner_permission id=0, active_permission id=2).
         let mut recipient_account_proto = match recipient_proto_opt {
             Some(acc) => acc,
             None => {
                 use tron_backend_execution::protocol::{Account as ProtoAccount, AccountType as ProtoAccountType};
+                use tron_backend_execution::protocol::permission::PermissionType;
+                use tron_backend_execution::protocol::{Key, Permission};
                 let create_time = storage_adapter
                     .get_latest_block_header_timestamp()
                     .map_err(|e| format!("Failed to get LATEST_BLOCK_HEADER_TIMESTAMP: {}", e))?;
-                ProtoAccount {
-                    address: storage_adapter.to_tron_address_21(&to_address).to_vec(),
+                let recipient_address_bytes = storage_adapter.to_tron_address_21(&to_address).to_vec();
+
+                let mut new_account = ProtoAccount {
+                    address: recipient_address_bytes.clone(),
                     create_time,
                     r#type: ProtoAccountType::Normal as i32,
                     ..Default::default()
+                };
+
+                // Mirror java-tron: withDefaultPermission = (ALLOW_MULTI_SIGN == 1)
+                let allow_multi_sign = storage_adapter
+                    .get_allow_multi_sign()
+                    .map_err(|e| format!("Failed to get ALLOW_MULTI_SIGN: {}", e))?;
+
+                if allow_multi_sign {
+                    let active_default_operations = storage_adapter
+                        .get_active_default_operations()
+                        .map_err(|e| format!("Failed to get ACTIVE_DEFAULT_OPERATIONS: {}", e))?;
+
+                    let default_key = Key {
+                        address: recipient_address_bytes,
+                        weight: 1,
+                    };
+
+                    new_account.owner_permission = Some(Permission {
+                        r#type: PermissionType::Owner as i32,
+                        id: 0,
+                        permission_name: "owner".to_string(),
+                        threshold: 1,
+                        parent_id: 0,
+                        operations: Vec::new(),
+                        keys: vec![default_key.clone()],
+                    });
+
+                    new_account.active_permission = vec![Permission {
+                        r#type: PermissionType::Active as i32,
+                        id: 2,
+                        permission_name: "active".to_string(),
+                        threshold: 1,
+                        parent_id: 0,
+                        operations: active_default_operations,
+                        keys: vec![default_key],
+                    }];
                 }
+
+                new_account
             }
+        };
+
+        // Capture old_account snapshots BEFORE any mutations for state_changes parity.
+        // Java's revoking session journals account deltas; we must replicate by snapshotting
+        // pre-execution state and emitting real AccountChange entries.
+        let old_owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or("Owner account does not exist".to_string())?;
+        let old_recipient_account = if !recipient_was_missing {
+            storage_adapter.get_account(&to_address)
+                .map_err(|e| format!("Failed to load recipient account: {}", e))?
+        } else {
+            None
         };
 
         Self::reduce_asset_amount_v2(
@@ -4218,7 +4358,24 @@ impl BackendService {
             .put_account_proto(&to_address, &recipient_account_proto)
             .map_err(|e| format!("Failed to persist recipient Account proto: {}", e))?;
 
+        // Handle create-account fee at the EVM layer + blackhole crediting/burning.
+        // Track blackhole change for state_changes emission.
+        let mut blackhole_state_change: Option<(Address, Option<revm_primitives::AccountInfo>, revm_primitives::AccountInfo)> = None;
         if create_account_fee > 0 {
+            // Also deduct create-account fee from owner EVM AccountInfo balance
+            // so state_changes reflect the real delta.
+            let fee_u256 = revm_primitives::U256::from(create_account_fee);
+            let new_owner_evm = revm_primitives::AccountInfo {
+                balance: old_owner_account.balance.checked_sub(fee_u256)
+                    .ok_or("Owner balance underflow for create-account fee".to_string())?,
+                nonce: old_owner_account.nonce,
+                code_hash: old_owner_account.code_hash,
+                code: old_owner_account.code.clone(),
+            };
+            storage_adapter
+                .set_account(owner, new_owner_evm)
+                .map_err(|e| format!("Failed to persist owner EVM account: {}", e))?;
+
             let support_blackhole = storage_adapter
                 .support_black_hole_optimization()
                 .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
@@ -4230,37 +4387,43 @@ impl BackendService {
                 .get_blackhole_address()
                 .map_err(|e| format!("Failed to get blackhole address: {}", e))?
             {
-                let blackhole_account = storage_adapter
+                let old_blackhole_account = storage_adapter
                     .get_account(&blackhole_addr)
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
-                let fee_u256 = revm_primitives::U256::from(create_account_fee);
-                let new_blackhole_balance = blackhole_account
+                let new_blackhole_balance = old_blackhole_account
                     .balance
                     .checked_add(fee_u256)
                     .ok_or("Blackhole balance overflow")?;
                 let new_blackhole_account = revm_primitives::AccountInfo {
                     balance: new_blackhole_balance,
-                    nonce: blackhole_account.nonce,
-                    code_hash: blackhole_account.code_hash,
-                    code: blackhole_account.code.clone(),
+                    nonce: old_blackhole_account.nonce,
+                    code_hash: old_blackhole_account.code_hash,
+                    code: old_blackhole_account.code.clone(),
                 };
 
                 storage_adapter
-                    .set_account(blackhole_addr, new_blackhole_account)
+                    .set_account(blackhole_addr, new_blackhole_account.clone())
                     .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
+
+                // Track for state_changes emission
+                let old_bh = if old_blackhole_account.balance.is_zero() && old_blackhole_account.nonce == 0 {
+                    None
+                } else {
+                    Some(old_blackhole_account)
+                };
+                blackhole_state_change = Some((blackhole_addr, old_bh, new_blackhole_account));
             }
         }
 
         info!(
-            "TRC-10 Transfer: owner={}, to={}, asset_id_len={}, amount={}",
-            owner_tron, to_tron, asset_id.len(), amount
+            "TRC-10 Transfer: owner={}, to={}, asset_id_len={}, amount={}, create_fee={}",
+            owner_tron, to_tron, asset_id.len(), amount, create_account_fee
         );
 
         // 2. Get execution configuration
         let execution_config = self.get_execution_config()?;
-        let fee_config = &execution_config.fees;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         // 3. Calculate bandwidth usage
@@ -4309,150 +4472,37 @@ impl BackendService {
             );
         }
 
-        // 5. Build state changes
+        // 5. Build state changes with real pre/post snapshots.
         let mut state_changes = Vec::new();
 
-        // Load owner account for AccountChange (needed for AEXT passthrough)
-        let owner_account = storage_adapter.get_account(&owner)
-            .map_err(|e| format!("Failed to load owner account: {}", e))?
-            .ok_or("Owner account does not exist".to_string())?;
+        // Owner account: emit real delta (balance changes if create_account_fee > 0)
+        let new_owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to reload owner account: {}", e))?
+            .ok_or("Owner account does not exist after mutation".to_string())?;
 
-        // Check if there's a TRX fee configured for non-VM transactions
-        let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
-            Some(flat_fee) => {
-                debug!("Using configured flat fee for TRC-10 transfer: {} SUN", flat_fee);
-                flat_fee
-            },
-            None => {
-                // Default: no TRX fee for TRC-10 transfers (TRON free bandwidth semantics)
-                debug!("No flat fee configured for TRC-10 transfer, using 0 (TRON free bandwidth semantics)");
-                0
-            }
-        };
+        state_changes.push(TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(old_owner_account),
+            new_account: Some(new_owner_account),
+        });
 
-        if fee_amount > 0 {
-            // Validate owner has enough TRX for fee
-            let fee_u256 = revm_primitives::U256::from(fee_amount);
-            if owner_account.balance < fee_u256 {
-                return Err(format!(
-                    "Insufficient TRX balance for fee: owner has {} SUN, fee is {} SUN",
-                    owner_account.balance, fee_amount
-                ));
-            }
+        // Recipient account: emit creation (old=None) or delta
+        let new_recipient_account = storage_adapter.get_account(&to_address)
+            .map_err(|e| format!("Failed to reload recipient account: {}", e))?;
+        let new_recip = new_recipient_account
+            .ok_or_else(|| "Recipient account not found after mutation; storage inconsistency".to_string())?;
+        state_changes.push(TronStateChange::AccountChange {
+            address: to_address,
+            old_account: old_recipient_account,
+            new_account: Some(new_recip),
+        });
 
-            // Deduct fee from owner
-            let new_owner_balance = owner_account.balance - fee_u256;
-            let new_owner_account = revm_primitives::AccountInfo {
-                balance: new_owner_balance,
-                nonce: owner_account.nonce, // Do NOT increment nonce for non-VM
-                code_hash: owner_account.code_hash,
-                code: owner_account.code.clone(),
-            };
-
-            // Emit owner account change
+        // Blackhole account: emit delta when credited (not burning)
+        if let Some((bh_addr, old_bh, new_bh)) = blackhole_state_change {
             state_changes.push(TronStateChange::AccountChange {
-                address: owner,
-                old_account: Some(owner_account.clone()),
-                new_account: Some(new_owner_account.clone()),
-            });
-
-            // Persist owner account update
-            storage_adapter
-                .set_account(owner, new_owner_account.clone())
-                .map_err(|e| format!("Failed to persist owner account: {}", e))?;
-
-            // Handle fee crediting based on mode
-            match fee_config.mode.as_str() {
-                "burn" => {
-                    debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
-                },
-                "blackhole" => {
-                    if !fee_config.blackhole_address_base58.is_empty() {
-                        match tron_backend_common::from_tron_address(&fee_config.blackhole_address_base58) {
-                            Ok(blackhole_bytes) => {
-                                let blackhole_address = revm_primitives::Address::from_slice(&blackhole_bytes);
-
-                                let blackhole_account = storage_adapter.get_account(&blackhole_address)
-                                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
-                                    .unwrap_or_default();
-
-                                let new_blackhole_balance = blackhole_account.balance + fee_u256;
-                                let new_blackhole_account = revm_primitives::AccountInfo {
-                                    balance: new_blackhole_balance,
-                                    nonce: blackhole_account.nonce,
-                                    code_hash: blackhole_account.code_hash,
-                                    code: blackhole_account.code.clone(),
-                                };
-
-                                let old_blackhole_account = if blackhole_account.balance.is_zero() && blackhole_account.nonce == 0 {
-                                    None
-                                } else {
-                                    Some(blackhole_account)
-                                };
-
-                                state_changes.push(TronStateChange::AccountChange {
-                                    address: blackhole_address,
-                                    old_account: old_blackhole_account,
-                                    new_account: Some(new_blackhole_account.clone()),
-                                });
-
-                                storage_adapter
-                                    .set_account(blackhole_address, new_blackhole_account.clone())
-                                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
-
-                                debug!("Credited fee {} SUN to blackhole address {}",
-                                       fee_amount, fee_config.blackhole_address_base58);
-                            },
-                            Err(e) => {
-                                warn!("Invalid blackhole address '{}': {}, falling back to burn mode",
-                                      fee_config.blackhole_address_base58, e);
-                            }
-                        }
-                    }
-                },
-                _ => {
-                    debug!("Unknown fee mode '{}', defaulting to burn", fee_config.mode);
-                }
-            }
-        } else {
-            // No TRX fee - emit a no-op AccountChange for owner to carry AEXT
-            // This ensures the owner account is included in state changes for CSV parity
-            state_changes.push(TronStateChange::AccountChange {
-                address: owner,
-                old_account: Some(owner_account.clone()),
-                new_account: Some(owner_account.clone()), // Same account (no-op)
-            });
-        }
-
-        // 6. Also include a no-op AccountChange for recipient to mirror embedded journaling
-        //    so that both sender and recipient appear in account_changes/state_changes.
-        //    This carries AEXT if present and stabilizes CSV parity.
-        if let Ok(Some(recipient_account)) = storage_adapter.get_account(&to_address) {
-            state_changes.push(TronStateChange::AccountChange {
-                address: to_address,
-                // If the protocol-level account was missing before execution, mirror embedded
-                // journaling semantics by emitting an account creation (old_account absent).
-                old_account: if recipient_was_missing {
-                    None
-                } else {
-                    Some(recipient_account.clone())
-                },
-                // Ledger updates are tracked separately; we still carry AccountInfo (incl. AEXT)
-                // so Java can derive account/resource usage deltas deterministically.
-                new_account: Some(recipient_account),
-            });
-        } else {
-            // If recipient account does not exist yet, fabricate a minimal placeholder
-            // with zero fields so Java side still sees an account-level entry for CSV parity.
-            let placeholder = AccountInfo::default();
-            state_changes.push(TronStateChange::AccountChange {
-                address: to_address,
-                old_account: if recipient_was_missing {
-                    None
-                } else {
-                    Some(placeholder.clone())
-                },
-                new_account: Some(placeholder),
+                address: bh_addr,
+                old_account: old_bh,
+                new_account: Some(new_bh),
             });
         }
 
@@ -4477,8 +4527,8 @@ impl BackendService {
         );
 
         info!(
-            "TRC-10 Transfer completed: owner={}, to={}, asset_id_len={}, amount={}, fee={} SUN, state_changes={}, bandwidth={}",
-            owner_tron, to_tron, asset_id.len(), amount, fee_amount, state_changes.len(), bandwidth_used
+            "TRC-10 Transfer completed: owner={}, to={}, asset_id_len={}, amount={}, create_fee={} SUN, state_changes={}, bandwidth={}",
+            owner_tron, to_tron, asset_id.len(), amount, create_account_fee, state_changes.len(), bandwidth_used
         );
 
         Ok(TronExecutionResult {

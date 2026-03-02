@@ -4,7 +4,7 @@
   "caseName": "edge_create_recipient_burn_fee",
   "caseCategory": "happy",
   "description": "Create recipient with allowBlackHoleOptimization=1 (fee is burned)",
-  "generatedAt": "2026-01-25T09:15:31.172Z",
+  "generatedAt": "2026-03-02T08:21:28.629Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
