@@ -122,11 +122,23 @@ Format: `<type>(<scope>): <subject>`
 - Subject: Present tense, lowercase, no period, <50 characters
 - Example: `feat(storage): implement dual storage mode`
 
+### Git Workflow
+- When committing changes, always include ALL modified and new files (including planning docs, TODOs, and markdown files) unless explicitly told otherwise. Run `git status` before committing to verify nothing is missed.
+- When outputting PR descriptions, always use markdown format.
+- When pushing to remote, verify SSH key permissions first with a dry-run or `ssh -T git@<host>` before attempting the push.
+
+### Rust Development
+- After editing function signatures, always search for and update ALL call sites before attempting compilation. Run `cargo check` after every round of edits.
+
+#### Java Parity
+- When implementing Java-to-Rust parity: always match Java's exact failure semantics (strict errors, not defensive recovery). Never silently succeed where Java would fail. Ask if unsure about error handling behavior.
+
 ### Testing Strategy
 - **Unit Tests**: Use JUnit 4.13.2, located in src/test/ directories
 - **Integration Tests**: Cross-module testing with real components
 - **Performance Tests**: Storage and execution benchmarks in Makefile
 - **Blockchain Workload Tests**: Comprehensive Tron-specific testing scenarios
+- **Test Fixtures**: When generating test fixtures or conformance data, validate that outputs produce meaningful non-trivial values (e.g., non-zero token amounts, populated database records). If fixtures require precondition data (like AssetIssueCapsule records), include them in setup.
 
 ## Performance and Optimization
 
