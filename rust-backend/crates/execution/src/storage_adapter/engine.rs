@@ -3687,16 +3687,24 @@ impl EngineBackedEvmStateStore {
         db_names::account::ACCOUNT_ID_INDEX
     }
 
-    /// Convert account ID to lowercase key format
-    /// Java: AccountIdIndexStore.getLowerCaseAccountId() converts to lowercase UTF-8
-    fn account_id_key(&self, account_id: &[u8]) -> Vec<u8> {
-        // Convert bytes to UTF-8 string, lowercase, then back to bytes
-        if let Ok(s) = std::str::from_utf8(account_id) {
-            s.to_lowercase().into_bytes()
-        } else {
-            // If not valid UTF-8, just use the raw bytes
-            account_id.to_vec()
-        }
+    /// Convert account ID to lowercase key format using ASCII-only lowercasing.
+    ///
+    /// Java's `AccountIdIndexStore.getLowerCaseAccountId()` uses `String.toLowerCase()`
+    /// which is locale-dependent (e.g., Turkish locale lowercases 'I' → 'ı').
+    /// Since `validAccountId` restricts bytes to printable ASCII (0x21–0x7E),
+    /// ASCII-only lowercasing (A–Z → a–z) is deterministic and matches the
+    /// intended behavior of Java's `toLowerCase()` under the default (English) locale.
+    pub fn account_id_key(&self, account_id: &[u8]) -> Vec<u8> {
+        account_id
+            .iter()
+            .map(|&b| {
+                if b.is_ascii_uppercase() {
+                    b.to_ascii_lowercase()
+                } else {
+                    b
+                }
+            })
+            .collect()
     }
 
     /// Check if an account ID already exists in the index
