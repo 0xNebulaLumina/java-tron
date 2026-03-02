@@ -42,11 +42,17 @@ impl BackendService {
         }
     }
 
-    /// Parse `asset_name` (field 2, length-delimited) from a serialized
+    /// Parse `asset_name` (field 1, length-delimited) from a serialized
     /// `TransferAssetContract` protobuf message.
     ///
+    /// Proto definition (asset_issue_contract.proto):
+    ///   bytes asset_name = 1;
+    ///   bytes owner_address = 2;
+    ///   bytes to_address = 3;
+    ///   int64 amount = 4;
+    ///
     /// Wire format: tag = (field_number << 3) | wire_type
-    /// Field 2, wire type 2 (length-delimited) → tag byte = 0x12
+    /// Field 1, wire type 2 (length-delimited) → tag byte = 0x0a
     fn parse_asset_name_from_transfer_asset_contract(data: &[u8]) -> Option<Vec<u8>> {
         let mut pos = 0;
         while pos < data.len() {
@@ -70,7 +76,7 @@ impl BackendService {
                     if pos + len > data.len() {
                         return None;
                     }
-                    if field_number == 2 {
+                    if field_number == 1 {
                         // asset_name
                         return Some(data[pos..pos + len].to_vec());
                     }
