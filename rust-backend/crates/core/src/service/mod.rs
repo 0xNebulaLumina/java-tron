@@ -3437,11 +3437,6 @@ impl BackendService {
             }
         }
 
-        let owner = transaction.from;
-        let owner_tron = tron_backend_common::to_tron_address(&owner);
-
-        info!("SetAccountId owner={}", owner_tron);
-
         // 1. Parse SetAccountIdContract
         // SetAccountIdContract:
         //   bytes account_id = 1;
@@ -3452,53 +3447,52 @@ impl BackendService {
             .as_ref()
             .map(|any| any.value.as_slice())
             .unwrap_or(transaction.data.as_ref());
-        let account_id = self.parse_set_account_id_contract(contract_bytes)?;
+        let (account_id, owner_address_bytes) = self.parse_set_account_id_contract(contract_bytes)?;
 
-        info!("SetAccountId: owner={}, account_id={:?}",
-              owner_tron, String::from_utf8_lossy(&account_id));
-
-        // 2. Validate account ID format
+        // 2. Validate account ID format (java-tron: TransactionUtil.validAccountId)
+        // Java validates accountId BEFORE ownerAddress.
         if !self.validate_account_id(&account_id) {
             return Err("Invalid accountId".to_string());
         }
 
-        // 2.5 Validate owner address
-        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
-            let prefix = storage_adapter.address_prefix();
-            let owner_address_valid = match from_raw.len() {
-                21 => from_raw[0] == prefix,
-                20 => true,
-                _ => false,
-            };
-            if !owner_address_valid {
-                return Err("Invalid ownerAddress".to_string());
-            }
+        // 3. Validate owner address from contract bytes (java-tron: DecodeUtil.addressValid)
+        // Java requires exactly 21 bytes with the correct TRON prefix (0x41).
+        let expected_prefix = storage_adapter.address_prefix();
+        if owner_address_bytes.len() != 21 || owner_address_bytes[0] != expected_prefix {
+            return Err("Invalid ownerAddress".to_string());
         }
 
-        // 3. Get owner account
+        // Derive the 20-byte EVM address from the parsed 21-byte TRON address
+        let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        info!("SetAccountId: owner={}, account_id={:?}",
+              owner_tron, String::from_utf8_lossy(&account_id));
+
+        // 4. Get owner account
         let mut account_proto = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .ok_or_else(|| "Account has not existed".to_string())?;
 
-        // 4. Check if account already has an ID
+        // 5. Check if account already has an ID
         if !account_proto.account_id.is_empty() {
             return Err("This account id already set".to_string());
         }
 
-        // 5. Check if account ID is already taken
+        // 6. Check if account ID is already taken
         if storage_adapter.has_account_id(&account_id)
             .map_err(|e| format!("Failed to check account id: {}", e))? {
             return Err("This id has existed".to_string());
         }
 
-        // 6. Set account ID
+        // 7. Set account ID
         account_proto.account_id = account_id.clone();
 
-        // 7. Persist account
+        // 8. Persist account
         storage_adapter.put_account_proto(&owner, &account_proto)
             .map_err(|e| format!("Failed to persist account: {}", e))?;
 
-        // 8. Add to account ID index
+        // 9. Add to account ID index
         let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
 
         storage_adapter.put_account_id_index(&account_id, &owner_address_bytes)
@@ -3528,12 +3522,15 @@ impl BackendService {
         })
     }
 
-    /// Parse SetAccountIdContract from protobuf bytes
+    /// Parse SetAccountIdContract from protobuf bytes.
+    /// Returns `(account_id, owner_address)`.
+    ///
     /// SetAccountIdContract:
     ///   bytes account_id = 1;
     ///   bytes owner_address = 2;
-    fn parse_set_account_id_contract(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+    fn parse_set_account_id_contract(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
         let mut account_id: Option<Vec<u8>> = None;
+        let mut owner_address: Option<Vec<u8>> = None;
         let mut pos = 0;
 
         while pos < data.len() {
@@ -3558,10 +3555,16 @@ impl BackendService {
                     pos = end;
                 }
                 (2, 2) => {
-                    // owner_address - skip
+                    // owner_address (bytes)
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_address = Some(data[pos..end].to_vec());
+                    pos = end;
                 }
                 _ => {
                     let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
@@ -3572,7 +3575,7 @@ impl BackendService {
         }
 
         // In proto3, empty bytes fields are omitted on the wire; treat missing as empty.
-        Ok(account_id.unwrap_or_default())
+        Ok((account_id.unwrap_or_default(), owner_address.unwrap_or_default()))
     }
 
     /// Validate account ID format
