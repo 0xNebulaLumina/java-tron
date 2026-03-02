@@ -155,10 +155,17 @@ impl BackendService {
             value: any.value.clone(),
         });
 
+        let to_raw = if !tx.to.is_empty() {
+            Some(tx.to.clone())
+        } else {
+            None
+        };
+
         let metadata = tron_backend_execution::TxMetadata {
             contract_type,
             asset_id,
             from_raw: Some(tx.from.clone()),
+            to_raw,
             contract_parameter,
         };
 

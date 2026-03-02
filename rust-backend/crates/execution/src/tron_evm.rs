@@ -442,6 +442,10 @@ pub struct TxMetadata {
     /// Some fixtures intentionally include malformed owner addresses; storing the raw bytes allows
     /// contract-level validation to match java-tron error ordering and messages.
     pub from_raw: Option<Vec<u8>>,
+    /// Raw `to` bytes as received over the wire.
+    /// Mirrors `from_raw` for recipient address validation parity with java-tron's
+    /// `DecodeUtil.addressValid(toAddress)` check.
+    pub to_raw: Option<Vec<u8>>,
     /// Raw `google.protobuf.Any` from Protocol.Transaction.Contract.parameter, when provided by Java.
     /// Carries both `type_url` and `value` so Rust can mirror java-tron `any.is(...)` behavior.
     pub contract_parameter: Option<TronContractParameter>,
@@ -459,6 +463,7 @@ impl Default for TxMetadata {
             contract_type: None,
             asset_id: None,
             from_raw: None,
+            to_raw: None,
             contract_parameter: None,
         }
     }

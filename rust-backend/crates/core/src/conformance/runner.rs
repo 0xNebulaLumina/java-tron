@@ -419,7 +419,7 @@ impl ConformanceRunner {
             None
         } else {
             let allow_malformed_to =
-                matches!(contract_type, Some(TronContractType::TransferContract) | Some(TronContractType::TriggerSmartContract));
+                matches!(contract_type, Some(TronContractType::TransferContract) | Some(TronContractType::TransferAssetContract) | Some(TronContractType::TriggerSmartContract));
 
             let (to_bytes, to_is_valid) = if tx.to.len() == 21 {
                 if tx.to[0] == 0x41 || tx.to[0] == 0xa0 {
@@ -478,6 +478,7 @@ impl ConformanceRunner {
                 contract_type,
                 asset_id,
                 from_raw: Some(tx.from.clone()),
+                to_raw: if tx.to.is_empty() { None } else { Some(tx.to.clone()) },
                 contract_parameter: tx.contract_parameter.as_ref().map(|any| TronContractParameter {
                     type_url: any.type_url.clone(),
                     value: any.value.clone(),
