@@ -1,0 +1,21 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "validate_fail_empty_asset_name",
+  "caseCategory": "validate_fail",
+  "description": "Fail with 'No asset!' when asset_name is empty",
+  "generatedAt": "2026-03-02T08:21:28.654Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "No asset!",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
+  "dynamicProperties": {},
+  "notes": []
+}

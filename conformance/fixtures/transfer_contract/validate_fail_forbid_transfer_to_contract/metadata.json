@@ -4,7 +4,7 @@
   "caseName": "validate_fail_forbid_transfer_to_contract",
   "caseCategory": "validate_fail",
   "description": "Fail when forbidTransferToContract=1 and recipient is Contract type",
-  "generatedAt": "2026-01-25T09:15:31.228Z",
+  "generatedAt": "2026-03-02T08:21:28.795Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
