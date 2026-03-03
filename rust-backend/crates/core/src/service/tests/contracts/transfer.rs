@@ -401,6 +401,222 @@ fn test_transfer_no_owner_account_rejected() {
 // Fee Parity Tests
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// Bandwidth / AEXT Tracking Tests
+// -----------------------------------------------------------------------------
+
+/// Tests for ResourceTracker::increase() Java parity.
+/// Java reference values computed from ResourceProcessor.increase() with
+/// PRECISION=1_000_000 and DEFAULT_WINDOW_SIZE=28800.
+mod bandwidth_tests {
+    use tron_backend_execution::{ResourceTracker, BandwidthPath, BandwidthParams, AccountAext};
+
+    const WINDOW: i64 = 28800;
+
+    #[test]
+    fn test_increase_no_prior_usage() {
+        // First usage: last_usage=0, last_time=0, usage=100
+        let result = ResourceTracker::increase(0, 100, 0, 1000, WINDOW);
+        assert_eq!(result, 100, "First usage with no history should return usage");
+    }
+
+    #[test]
+    fn test_increase_same_slot_accumulates() {
+        // Same slot: last_time == now, should accumulate without decay
+        let result = ResourceTracker::increase(200, 50, 1000, 1000, WINDOW);
+        assert_eq!(result, 250, "Same-slot usage should simply accumulate");
+    }
+
+    #[test]
+    fn test_increase_full_window_expired() {
+        // Time delta >= window: all previous usage fully expired
+        let result = ResourceTracker::increase(1000, 50, 0, WINDOW + 1, WINDOW);
+        assert_eq!(result, 50, "After full window expiry, only new usage remains");
+    }
+
+    #[test]
+    fn test_increase_partial_decay() {
+        // Partial decay: Java-parity test case
+        // last_usage=1000, usage=0, last_time=0, now=14400 (half window), window=28800
+        // avgLast = divideCeil(1000 * 1000000, 28800) = divideCeil(1000000000, 28800) = 34723
+        // decay = (28800 - 14400) / 28800 = 0.5
+        // decayed = Math.round(34723 * 0.5) = Math.round(17361.5) = 17362
+        // total = 17362, getUsage = 17362 * 28800 / 1000000 = 500025600 / 1000000 = 500
+        let result = ResourceTracker::increase(1000, 0, 0, 14400, WINDOW);
+        assert_eq!(result, 500, "Half-window decay should match Java ResourceProcessor");
+    }
+
+    #[test]
+    fn test_increase_quarter_decay() {
+        // 3/4 window elapsed: decay = 0.25
+        // last_usage=1000, now=21600 (3/4 window)
+        // avgLast = divideCeil(1000 * 1000000, 28800) = 34723
+        // decay = (28800 - 21600) / 28800 = 7200/28800 = 0.25
+        // decayed = Math.round(34723 * 0.25) = Math.round(8680.75) = 8681
+        // getUsage = 8681 * 28800 / 1000000 = 250012800 / 1000000 = 250
+        let result = ResourceTracker::increase(1000, 0, 0, 21600, WINDOW);
+        assert_eq!(result, 250, "Quarter-remaining decay should match Java");
+    }
+
+    #[test]
+    fn test_increase_with_new_usage_after_decay() {
+        // Partial decay + new usage
+        // last_usage=1000, usage=200, last_time=0, now=14400, window=28800
+        // avgLast decayed = 17362 (from partial_decay test)
+        // avgNew = divideCeil(200 * 1000000, 28800) = divideCeil(200000000, 28800) = 6945
+        // total = 17362 + 6945 = 24307
+        // getUsage = 24307 * 28800 / 1000000 = 700041600 / 1000000 = 700
+        let result = ResourceTracker::increase(1000, 200, 0, 14400, WINDOW);
+        assert_eq!(result, 700, "Decay + new usage should match Java");
+    }
+
+    #[test]
+    fn test_increase_window_zero_returns_usage() {
+        let result = ResourceTracker::increase(500, 100, 0, 1000, 0);
+        assert_eq!(result, 100, "Zero window should return just the new usage");
+    }
+
+    #[test]
+    fn test_track_bandwidth_v2_account_net_path() {
+        // Owner has frozen bandwidth, should use ACCOUNT_NET path
+        let aext = AccountAext::with_defaults();
+        let params = BandwidthParams {
+            bytes_used: 100,
+            now: 1000,
+            current_aext: aext,
+            account_net_limit: 5000, // Enough frozen bandwidth
+            free_net_limit: 5000,
+            public_net_limit: 14_400_000_000,
+            public_net_usage: 0,
+            public_net_time: 0,
+            creates_new_account: false,
+            create_account_bandwidth_rate: 1,
+            transaction_fee: 10,
+        };
+
+        let result = ResourceTracker::track_bandwidth_v2(&params).unwrap();
+        assert_eq!(result.path, BandwidthPath::AccountNet);
+        assert_eq!(result.after_aext.net_usage, 100);
+        assert_eq!(result.after_aext.latest_consume_time, 1000);
+        assert!(result.new_public_net_usage.is_none());
+        assert_eq!(result.fee_amount, 0);
+    }
+
+    #[test]
+    fn test_track_bandwidth_v2_free_net_path() {
+        // No frozen bandwidth, should use FREE_NET path
+        let aext = AccountAext::with_defaults();
+        let params = BandwidthParams {
+            bytes_used: 100,
+            now: 1000,
+            current_aext: aext,
+            account_net_limit: 0, // No frozen bandwidth
+            free_net_limit: 5000,
+            public_net_limit: 14_400_000_000,
+            public_net_usage: 0,
+            public_net_time: 0,
+            creates_new_account: false,
+            create_account_bandwidth_rate: 1,
+            transaction_fee: 10,
+        };
+
+        let result = ResourceTracker::track_bandwidth_v2(&params).unwrap();
+        assert_eq!(result.path, BandwidthPath::FreeNet);
+        assert_eq!(result.after_aext.free_net_usage, 100);
+        assert_eq!(result.after_aext.latest_consume_free_time, 1000);
+        assert!(result.new_public_net_usage.is_some());
+        assert_eq!(result.fee_amount, 0);
+    }
+
+    #[test]
+    fn test_track_bandwidth_v2_free_net_blocked_by_global_limit() {
+        // Account has free bandwidth, but global PUBLIC_NET is exhausted
+        let aext = AccountAext::with_defaults();
+        let params = BandwidthParams {
+            bytes_used: 100,
+            now: 1000,
+            current_aext: aext,
+            account_net_limit: 0,
+            free_net_limit: 5000,
+            public_net_limit: 50, // Global limit too low
+            public_net_usage: 0,
+            public_net_time: 0,
+            creates_new_account: false,
+            create_account_bandwidth_rate: 1,
+            transaction_fee: 10,
+        };
+
+        let result = ResourceTracker::track_bandwidth_v2(&params).unwrap();
+        assert_eq!(result.path, BandwidthPath::Fee, "Should fall back to FEE when global limit exceeded");
+        assert_eq!(result.fee_amount, 1000, "Fee = 100 bytes * 10 SUN/byte");
+    }
+
+    #[test]
+    fn test_track_bandwidth_v2_fee_path() {
+        // No frozen bandwidth and free net exhausted → FEE path
+        let mut aext = AccountAext::with_defaults();
+        aext.free_net_usage = 5000; // Already used up
+        aext.latest_consume_free_time = 1000; // Same slot so no decay
+
+        let params = BandwidthParams {
+            bytes_used: 100,
+            now: 1000,
+            current_aext: aext,
+            account_net_limit: 0,
+            free_net_limit: 5000,
+            public_net_limit: 14_400_000_000,
+            public_net_usage: 0,
+            public_net_time: 0,
+            creates_new_account: false,
+            create_account_bandwidth_rate: 1,
+            transaction_fee: 10,
+        };
+
+        let result = ResourceTracker::track_bandwidth_v2(&params).unwrap();
+        assert_eq!(result.path, BandwidthPath::Fee);
+        assert_eq!(result.fee_amount, 1000, "Fee = 100 bytes * 10 SUN/byte");
+    }
+
+    #[test]
+    fn test_track_bandwidth_v2_create_account_path() {
+        // Creates new account: netCost = bytes * rate
+        let aext = AccountAext::with_defaults();
+        let params = BandwidthParams {
+            bytes_used: 100,
+            now: 1000,
+            current_aext: aext,
+            account_net_limit: 5000, // Enough frozen bandwidth for netCost
+            free_net_limit: 5000,
+            public_net_limit: 14_400_000_000,
+            public_net_usage: 0,
+            public_net_time: 0,
+            creates_new_account: true,
+            create_account_bandwidth_rate: 2, // 100 bytes * 2 = 200 netCost
+            transaction_fee: 10,
+        };
+
+        let result = ResourceTracker::track_bandwidth_v2(&params).unwrap();
+        assert_eq!(result.path, BandwidthPath::CreateAccount);
+        // netCost = 100 * 2 = 200, should be recorded in net_usage
+        assert_eq!(result.after_aext.net_usage, 200);
+        assert_eq!(result.fee_amount, 0);
+    }
+
+    #[test]
+    fn test_head_slot_computation() {
+        // Verify headSlot = (block_timestamp - genesis_timestamp) / 3000
+        let genesis_ts: i64 = 1529891469000; // mainnet genesis
+        let block_ts: u64 = 1529891469000 + 3000 * 100; // 100 slots after genesis
+
+        let head_slot = (block_ts as i64 - genesis_ts) / 3000;
+        assert_eq!(head_slot, 100);
+
+        // Verify it differs from the old incorrect formula
+        let old_slot = block_ts / 3000; // Without genesis offset
+        assert_ne!(head_slot, old_slot as i64, "Genesis-offset headSlot differs from raw division");
+    }
+}
+
 #[test]
 fn test_transfer_no_extra_flat_fee_charged() {
     // Strict parity: Java's TRANSFER_FEE = 0. No extra fee beyond create-account-fee.

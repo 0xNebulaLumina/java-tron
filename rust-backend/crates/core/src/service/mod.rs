@@ -958,7 +958,7 @@ impl BackendService {
         // Track AEXT for bandwidth if in tracked mode (after validation to ensure validate_fail has 0 writes)
         let mut aext_map = std::collections::HashMap::new();
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::{AccountAext, ResourceTracker, BandwidthParams};
 
             // Get current AEXT for sender (or initialize with defaults)
             let current_aext = storage_adapter
@@ -966,43 +966,104 @@ impl BackendService {
                 .map_err(|e| format!("Failed to get account AEXT: {}", e))?
                 .unwrap_or_else(AccountAext::with_defaults);
 
-            // Get FREE_NET_LIMIT from dynamic properties
+            // Get dynamic properties for bandwidth tracking
             let free_net_limit = storage_adapter
                 .get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+            let public_net_limit = storage_adapter
+                .get_public_net_limit()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_LIMIT: {}", e))?;
+            let public_net_usage = storage_adapter
+                .get_public_net_usage()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_USAGE: {}", e))?;
+            let public_net_time = storage_adapter
+                .get_public_net_time()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_TIME: {}", e))?;
+            let transaction_fee = storage_adapter
+                .get_transaction_fee()
+                .map_err(|e| format!("Failed to get TRANSACTION_FEE: {}", e))?;
+            let create_account_bandwidth_rate = storage_adapter
+                .get_create_new_account_bandwidth_rate()
+                .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?;
 
-            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
-            let now_slot = (context.block_timestamp / 3000) as i64;
+            // Compute account_net_limit from frozen bandwidth
+            let account_net_limit = {
+                let freeze_record = storage_adapter
+                    .get_freeze_record(&transaction.from, 0) // 0 = BANDWIDTH
+                    .map_err(|e| format!("Failed to get freeze record: {}", e))?;
+                let total_net_weight = storage_adapter
+                    .get_total_net_weight()
+                    .map_err(|e| format!("Failed to get TOTAL_NET_WEIGHT: {}", e))?;
+                let total_net_limit = storage_adapter
+                    .get_total_net_limit()
+                    .map_err(|e| format!("Failed to get TOTAL_NET_LIMIT: {}", e))?;
+                if let Some(record) = freeze_record {
+                    if total_net_weight > 0 {
+                        // Java: calculateGlobalNetLimit = (frozenBalance / TRX_PRECISION) * (totalNetLimit / totalNetWeight)
+                        let frozen_trx = record.frozen_amount as i64 / TRX_PRECISION as i64;
+                        frozen_trx.saturating_mul(total_net_limit) / total_net_weight
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            };
 
-            // Track bandwidth usage (returns path, before_aext, after_aext)
-            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
-                &transaction.from,
-                bandwidth_used as i64,
-                now_slot,
-                &current_aext,
+            // Java uses headSlot = (latestBlockTimestamp - genesisTimestamp) / 3000
+            let genesis_ts = execution_config.remote.genesis_block_timestamp;
+            let now_slot = (context.block_timestamp as i64 - genesis_ts) / 3000;
+
+            let creates_new_account = recipient_opt.is_none();
+
+            let bw_params = BandwidthParams {
+                bytes_used: bandwidth_used as i64,
+                now: now_slot,
+                current_aext,
+                account_net_limit,
                 free_net_limit,
-            )
-            .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+                public_net_limit,
+                public_net_usage,
+                public_net_time,
+                creates_new_account,
+                create_account_bandwidth_rate,
+                transaction_fee,
+            };
+
+            let bw_result = ResourceTracker::track_bandwidth_v2(&bw_params)
+                .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
             // Persist after AEXT to storage
             storage_adapter
-                .set_account_aext(&transaction.from, &after_aext)
+                .set_account_aext(&transaction.from, &bw_result.after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
             storage_adapter
-                .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &bw_result.after_aext)
                 .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
+            // Persist global PUBLIC_NET changes if FREE_NET path was used
+            if let Some(new_pub_usage) = bw_result.new_public_net_usage {
+                storage_adapter
+                    .set_public_net_usage(new_pub_usage)
+                    .map_err(|e| format!("Failed to persist PUBLIC_NET_USAGE: {}", e))?;
+            }
+            if let Some(new_pub_time) = bw_result.new_public_net_time {
+                storage_adapter
+                    .set_public_net_time(new_pub_time)
+                    .map_err(|e| format!("Failed to persist PUBLIC_NET_TIME: {}", e))?;
+            }
+
             // Add to aext_map
-            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
+            aext_map.insert(transaction.from, (bw_result.before_aext.clone(), bw_result.after_aext.clone()));
 
             debug!(
                 "AEXT tracked for transfer: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
                 transaction.from,
-                path,
-                before_aext.net_usage,
-                after_aext.net_usage,
-                before_aext.free_net_usage,
-                after_aext.free_net_usage
+                bw_result.path,
+                bw_result.before_aext.net_usage,
+                bw_result.after_aext.net_usage,
+                bw_result.before_aext.free_net_usage,
+                bw_result.after_aext.free_net_usage
             );
         }
 
@@ -2569,6 +2630,7 @@ impl BackendService {
 
             bandwidth_path_used = match path {
                 BandwidthPath::AccountNet => "ACCOUNT_NET",
+                BandwidthPath::CreateAccount => "CREATE_ACCOUNT",
                 BandwidthPath::FreeNet => "FREE_NET",
                 BandwidthPath::Fee => "FEE",
             };

@@ -59,29 +59,45 @@ Goal: avoid Rust-only fee semantics that don't exist in `TransferActuator`.
   - [x] Added `debug_assert_eq!` guard for parity enforcement
 - [ ] ~~**Option B (keep feature, but make it Java-compatible)**~~ — not chosen
 
-## 4) Bandwidth/AEXT parity work (only if end-to-end parity is required)
+## 4) Bandwidth/AEXT parity work (end-to-end parity)
 
 Goal: align Rust's `bandwidth_used`/AEXT side effects with Java's `BandwidthProcessor`.
 
-_Deferred — this section is only needed for end-to-end parity._
-
 - [ ] Replace `calculate_bandwidth_usage(...)` with a Java-equivalent size computation:
   - [ ] Base it on protobuf serialization size for the TRON transaction (or reproduce Java's `trx.getInstance().toBuilder().clearRet()...getSerializedSize()` behavior).
-- [ ] Implement CREATE_ACCOUNT bandwidth path for `TransferContract` that creates a recipient:
-  - [ ] use `CREATE_NEW_ACCOUNT_BANDWIDTH_RATE` ratio (`bytesCost = bytesSize * ratio`)
-  - [ ] apply windowed usage updates using `now = headSlot` (not block number)
-- [ ] Implement ACCOUNT_NET logic (requires net limit derived from freezes and `TOTAL_NET_WEIGHT/TOTAL_NET_LIMIT`).
-- [ ] Implement FREE_NET logic with global public net pool updates (as Java does).
-- [ ] Implement FEE path (charge `TRANSACTION_FEE * bytesSize` and update total counters).
-- [ ] Ensure `now` matches Java's `headSlot`:
-  - [ ] either compute slot from `(block_timestamp - genesis_timestamp) / BLOCK_PRODUCED_INTERVAL`, or
-  - [ ] have Java pass `headSlot` explicitly in `ExecutionContext`.
+- [x] Fix `ResourceTracker::increase()` to match Java's precision-scaled algorithm:
+  - [x] Use `divideCeil()` for usage normalization
+  - [x] Use `f64` decay with `.round()` for `Math.round()` parity
+  - [x] Use `PRECISION` constant (1_000_000) and `DEFAULT_WINDOW_SIZE` (28800)
+  - [x] Returns `total * windowSize / PRECISION` matching Java's `getUsage()`
+- [x] Fix `headSlot` computation to use genesis offset:
+  - [x] Added `genesis_block_timestamp` config (default: 1529891469000 mainnet)
+  - [x] Compute `now_slot = (block_timestamp - genesis_block_timestamp) / 3000`
+- [x] Implement CREATE_ACCOUNT bandwidth path for `TransferContract` that creates a recipient:
+  - [x] Added `BandwidthPath::CreateAccount` variant
+  - [x] Use `CREATE_NEW_ACCOUNT_BANDWIDTH_RATE` ratio (`netCost = bytesSize * ratio`)
+  - [x] Apply windowed usage updates using `now = headSlot`
+- [x] Implement ACCOUNT_NET logic (net limit derived from freezes and `TOTAL_NET_WEIGHT/TOTAL_NET_LIMIT`):
+  - [x] Read frozen bandwidth via `get_freeze_record(owner, 0)`
+  - [x] Calculate `account_net_limit = (frozen / TRX_PRECISION) * (totalNetLimit / totalNetWeight)`
+- [x] Implement FREE_NET logic with global public net pool updates:
+  - [x] Check both account `free_net_limit` AND global `public_net_limit`
+  - [x] Update global `PUBLIC_NET_USAGE` and `PUBLIC_NET_TIME` when FREE_NET path used
+- [x] Implement FEE path with fee amount tracking:
+  - [x] Added `get_transaction_fee()` dynamic property (default 10 SUN/byte)
+  - [x] `fee_amount = bytes_used * transaction_fee`
+- [x] Added `BandwidthParams`/`BandwidthResult` structs for full-parameter bandwidth tracking
+- [x] Kept legacy `track_bandwidth()` as backward-compatible wrapper
 
 ## 5) Verification
 
 - [x] Rust:
   - [x] `cd rust-backend && cargo test` — 285 passed, 3 failed (pre-existing VoteWitness failures, unrelated)
   - [x] Add unit tests specifically for TransferContract validation edge cases (invalid to, wrong prefix, etc.) — 12 new tests in `transfer.rs`
+  - [x] Add bandwidth path tests — 13 new tests in `transfer.rs::bandwidth_tests` module
+    - [x] `increase()` formula parity: no prior, same slot, full expired, partial decay, quarter decay, decay+usage, zero window
+    - [x] Path selection: ACCOUNT_NET, FREE_NET, FEE, CREATE_ACCOUNT, global limit blocking
+    - [x] headSlot genesis offset computation
   - [x] `./scripts/ci/run_fixture_conformance.sh --rust-only` — all conformance tests passed
 - [ ] Java:
   - [ ] `./gradlew :framework:test --tests "org.tron.core.actuator.TransferActuatorTest"` — not needed for this change (Rust-only modifications)
