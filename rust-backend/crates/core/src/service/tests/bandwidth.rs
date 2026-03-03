@@ -4,8 +4,8 @@ use tron_backend_storage::StorageEngine;
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 
 #[test]
-fn test_calculate_bandwidth_usage() {
-    // Test basic transaction
+fn test_calculate_bandwidth_usage_fallback() {
+    // Test basic transaction with no Java-computed size (fallback path)
     let tx = TronTransaction {
         from: Address::ZERO,
         to: Some(Address::ZERO),
@@ -17,6 +17,7 @@ fn test_calculate_bandwidth_usage() {
         metadata: TxMetadata {
             contract_type: None,
             asset_id: None,
+            transaction_bytes_size: None,
             ..Default::default()
         },
     };
@@ -24,7 +25,7 @@ fn test_calculate_bandwidth_usage() {
     let bandwidth = BackendService::calculate_bandwidth_usage(&tx);
     assert_eq!(bandwidth, 60 + 0 + 65); // base_size + data_size + signature_size
 
-    // Test transaction with data
+    // Test transaction with data (fallback path)
     let tx_with_data = TronTransaction {
         from: Address::ZERO,
         to: Some(Address::ZERO),
@@ -36,12 +37,56 @@ fn test_calculate_bandwidth_usage() {
         metadata: TxMetadata {
             contract_type: None,
             asset_id: None,
+            transaction_bytes_size: None,
             ..Default::default()
         },
     };
 
     let bandwidth_with_data = BackendService::calculate_bandwidth_usage(&tx_with_data);
     assert_eq!(bandwidth_with_data, 60 + 4 + 65); // base_size + data_size + signature_size
+}
+
+#[test]
+fn test_calculate_bandwidth_usage_java_computed() {
+    // When Java provides transaction_bytes_size, use it directly
+    let tx = TronTransaction {
+        from: Address::ZERO,
+        to: Some(Address::ZERO),
+        value: U256::from(100),
+        data: Bytes::new(),
+        gas_limit: 21000,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: None,
+            asset_id: None,
+            transaction_bytes_size: Some(200),
+            ..Default::default()
+        },
+    };
+
+    let bandwidth = BackendService::calculate_bandwidth_usage(&tx);
+    assert_eq!(bandwidth, 200); // Uses Java-computed value directly
+
+    // Zero value should fall back to approximation
+    let tx_zero = TronTransaction {
+        from: Address::ZERO,
+        to: Some(Address::ZERO),
+        value: U256::from(100),
+        data: Bytes::from(vec![0x01, 0x02]),
+        gas_limit: 21000,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: None,
+            asset_id: None,
+            transaction_bytes_size: Some(0),
+            ..Default::default()
+        },
+    };
+
+    let bandwidth_zero = BackendService::calculate_bandwidth_usage(&tx_zero);
+    assert_eq!(bandwidth_zero, 60 + 2 + 65); // Falls back to approximation
 }
 
 #[test]

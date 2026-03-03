@@ -974,7 +974,7 @@ impl crate::backend::backend_server::Backend for BackendService {
             .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
         
         // Convert protobuf types to execution types
-        let (transaction, tx_kind) = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+        let (transaction, tx_kind) = match self.convert_protobuf_transaction(req.transaction.as_ref(), req.transaction_bytes_size) {
             Ok((tx, kind)) => {
                 debug!("Converted transaction - gas_limit: {}, gas_price: {}, data_len: {}, kind: {:?}", 
                        tx.gas_limit, tx.gas_price, tx.data.len(), kind);
@@ -1411,7 +1411,7 @@ impl crate::backend::backend_server::Backend for BackendService {
             .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
 
         // Convert protobuf types to execution types
-        let _transaction = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+        let _transaction = match self.convert_protobuf_transaction(req.transaction.as_ref(), 0) {
             Ok(tx) => tx,
             Err(e) => {
                 error!("Failed to convert transaction: {}", e);
@@ -1443,7 +1443,7 @@ impl crate::backend::backend_server::Backend for BackendService {
 
         // Estimate energy using the database-specific storage adapter
         // Convert protobuf types to execution types (for estimate_energy, we don't need tx_kind)
-        let (transaction_only, _) = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+        let (transaction_only, _) = match self.convert_protobuf_transaction(req.transaction.as_ref(), 0) {
             Ok((tx, _kind)) => (tx, _kind),
             Err(e) => {
                 error!("Failed to convert transaction: {}", e);

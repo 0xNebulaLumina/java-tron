@@ -63,8 +63,9 @@ Goal: avoid Rust-only fee semantics that don't exist in `TransferActuator`.
 
 Goal: align Rust's `bandwidth_used`/AEXT side effects with Java's `BandwidthProcessor`.
 
-- [ ] Replace `calculate_bandwidth_usage(...)` with a Java-equivalent size computation:
-  - [ ] Base it on protobuf serialization size for the TRON transaction (or reproduce Java's `trx.getInstance().toBuilder().clearRet()...getSerializedSize()` behavior).
+- [x] Replace `calculate_bandwidth_usage(...)` with a Java-equivalent size computation:
+  - [x] Java computes `bytesSize` in `RemoteExecutionSPI.buildExecuteTransactionRequest()` using `clearRet().getSerializedSize() + contracts * MAX_RESULT_SIZE_IN_TX` and passes it via `ExecuteTransactionRequest.transaction_bytes_size`.
+  - [x] Rust `calculate_bandwidth_usage()` returns the Java-computed value when present, falls back to hardcoded approximation for backward compatibility.
 - [x] Fix `ResourceTracker::increase()` to match Java's precision-scaled algorithm:
   - [x] Use `divideCeil()` for usage normalization
   - [x] Use `f64` decay with `.round()` for `Math.round()` parity

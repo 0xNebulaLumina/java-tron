@@ -11,7 +11,7 @@ use super::address::{strip_tron_address_prefix, add_tron_address_prefix};
 
 impl BackendService {
     // Helper functions for converting between protobuf and execution types
-    pub(super) fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>) -> Result<(TronTransaction, crate::backend::TxKind), String> {
+    pub(super) fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>, transaction_bytes_size: i64) -> Result<(TronTransaction, crate::backend::TxKind), String> {
         let tx = tx.ok_or("Transaction is required")?;
 
         // Log the raw transaction data from Java
@@ -187,6 +187,11 @@ impl BackendService {
             from_raw: Some(tx.from.clone()),
             to_raw,
             contract_parameter,
+            transaction_bytes_size: if transaction_bytes_size > 0 {
+                Some(transaction_bytes_size)
+            } else {
+                None
+            },
         };
 
         let transaction = TronTransaction {
@@ -635,7 +640,7 @@ mod tests {
         proto_tx.contract_type = ContractType::WitnessCreateContract as i32;
 
         let (transaction, tx_kind) = backend_service
-            .convert_protobuf_transaction(Some(&proto_tx))
+            .convert_protobuf_transaction(Some(&proto_tx), 0)
             .unwrap();
 
         assert_eq!(tx_kind, TxKind::NonVm);
@@ -661,7 +666,7 @@ mod tests {
         proto_tx.contract_type = ContractType::WitnessUpdateContract as i32;
 
         let (transaction, tx_kind) = backend_service
-            .convert_protobuf_transaction(Some(&proto_tx))
+            .convert_protobuf_transaction(Some(&proto_tx), 0)
             .unwrap();
 
         assert_eq!(tx_kind, TxKind::NonVm);

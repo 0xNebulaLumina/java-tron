@@ -449,6 +449,10 @@ pub struct TxMetadata {
     /// Raw `google.protobuf.Any` from Protocol.Transaction.Contract.parameter, when provided by Java.
     /// Carries both `type_url` and `value` so Rust can mirror java-tron `any.is(...)` behavior.
     pub contract_parameter: Option<TronContractParameter>,
+    /// Java-computed protobuf serialized size for bandwidth calculation.
+    /// When present, `calculate_bandwidth_usage()` returns this value directly instead of
+    /// using the hardcoded approximation, achieving parity with BandwidthProcessor.consume().
+    pub transaction_bytes_size: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -465,6 +469,7 @@ impl Default for TxMetadata {
             from_raw: None,
             to_raw: None,
             contract_parameter: None,
+            transaction_bytes_size: None,
         }
     }
 }

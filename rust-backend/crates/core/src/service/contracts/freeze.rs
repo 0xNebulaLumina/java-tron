@@ -2761,11 +2761,19 @@ impl BackendService {
         })
     }
 
-    /// Calculate bandwidth usage for a transaction based on its serialized size
+    /// Calculate bandwidth usage for a transaction based on its serialized size.
+    ///
+    /// Prefers the Java-computed `transaction_bytes_size` when available (set via gRPC from
+    /// `BandwidthProcessor.consume()`'s formula: `clearRet().getSerializedSize() + contracts * 64`).
+    /// Falls back to a hardcoded approximation for backward compatibility.
     pub(crate) fn calculate_bandwidth_usage(transaction: &TronTransaction) -> u64 {
-        // Approximate bandwidth calculation based on transaction fields
-        // This is a simplified version - full implementation would consider exact protobuf serialization
-
+        // Prefer Java-computed protobuf serialized size when available
+        if let Some(bytes_size) = transaction.metadata.transaction_bytes_size {
+            if bytes_size > 0 {
+                return bytes_size as u64;
+            }
+        }
+        // Fallback: approximation for backward compatibility
         let base_size = 60; // Base transaction overhead (addresses, nonce, etc.)
         let data_size = transaction.data.len() as u64;
         let signature_size = 65; // ECDSA signature size
