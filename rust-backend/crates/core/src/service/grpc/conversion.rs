@@ -77,14 +77,15 @@ impl BackendService {
             Err(e) => return Err(e),
         };
 
-        // Some NON_VM system contracts (e.g. TransferContract) validate `to` raw bytes themselves
-        // using Java's `DecodeUtil.addressValid` semantics (21 bytes + prefix match). If the gRPC
-        // conversion fails for these contract types, we must not fail early — instead we store the
-        // raw bytes in `to_raw` and let contract-level validation produce the correct Java error
-        // messages and ordering.
+        // Some NON_VM system contracts validate `to` raw bytes themselves using Java's
+        // `DecodeUtil.addressValid` semantics (21 bytes + prefix match). If the gRPC conversion
+        // fails for these contract types, we must not fail early — instead we store the raw bytes
+        // in `to_raw` and let contract-level validation produce the correct Java error messages
+        // and ordering.
         let allow_malformed_to = matches!(
             contract_type,
             Some(tron_backend_execution::TronContractType::TransferContract)
+                | Some(tron_backend_execution::TronContractType::TransferAssetContract)
         );
 
         // Phase 0.5: Fix CreateSmartContract toAddress semantics
