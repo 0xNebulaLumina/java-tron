@@ -483,6 +483,11 @@ impl ConformanceRunner {
                     type_url: any.type_url.clone(),
                     value: any.value.clone(),
                 }),
+                transaction_bytes_size: if request.transaction_bytes_size > 0 {
+                    Some(request.transaction_bytes_size)
+                } else {
+                    None
+                },
             },
         })
     }

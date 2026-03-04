@@ -174,6 +174,11 @@ rust_persist_enabled = true
 # Set to true for conformance testing or strict Java parity
 strict_dynamic_properties = true
 
+# Genesis block timestamp (milliseconds) for headSlot computation
+# Used in bandwidth resource tracking: headSlot = (block_timestamp - genesis_block_timestamp) / 3000
+# Default: 1529891469000 (TRON mainnet genesis block timestamp)
+genesis_block_timestamp = 1529891469000
+
 market_strict_index_parity = true
 
 # Genesis Account Initialization

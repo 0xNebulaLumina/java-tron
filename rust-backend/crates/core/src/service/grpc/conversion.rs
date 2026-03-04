@@ -11,7 +11,7 @@ use super::address::{strip_tron_address_prefix, add_tron_address_prefix};
 
 impl BackendService {
     // Helper functions for converting between protobuf and execution types
-    pub(super) fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>) -> Result<(TronTransaction, crate::backend::TxKind), String> {
+    pub(super) fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>, transaction_bytes_size: i64) -> Result<(TronTransaction, crate::backend::TxKind), String> {
         let tx = tx.ok_or("Transaction is required")?;
 
         // Log the raw transaction data from Java
@@ -77,6 +77,17 @@ impl BackendService {
             Err(e) => return Err(e),
         };
 
+        // Some NON_VM system contracts validate `to` raw bytes themselves using Java's
+        // `DecodeUtil.addressValid` semantics (21 bytes + prefix match). If the gRPC conversion
+        // fails for these contract types, we must not fail early — instead we store the raw bytes
+        // in `to_raw` and let contract-level validation produce the correct Java error messages
+        // and ordering.
+        let allow_malformed_to = matches!(
+            contract_type,
+            Some(tron_backend_execution::TronContractType::TransferContract)
+                | Some(tron_backend_execution::TronContractType::TransferAssetContract)
+        );
+
         // Phase 0.5: Fix CreateSmartContract toAddress semantics
         // When tx_kind=VM and contract_type=CREATE_SMART_CONTRACT (30), Java sends a 20-byte
         // zero array for toAddress. Rust must treat this as None (contract creation), not
@@ -84,19 +95,28 @@ impl BackendService {
         let to = if tx.to.is_empty() {
             None // Contract creation (empty to field)
         } else {
-            let to_bytes = strip_tron_address_prefix(&tx.to)?;
-            let to_address = revm_primitives::Address::from_slice(to_bytes);
+            match strip_tron_address_prefix(&tx.to) {
+                Ok(to_bytes) => {
+                    let to_address = revm_primitives::Address::from_slice(to_bytes);
 
-            // For VM contract creation, treat all-zero address as None
-            // This is needed because Java sends new byte[20] (all zeros) for CreateSmartContract
-            let is_vm_create =
-                tx_kind == crate::backend::TxKind::Vm && tx.contract_type == 30; // CREATE_SMART_CONTRACT = 30
+                    // For VM contract creation, treat all-zero address as None
+                    // This is needed because Java sends new byte[20] (all zeros) for CreateSmartContract
+                    let is_vm_create =
+                        tx_kind == crate::backend::TxKind::Vm && tx.contract_type == 30; // CREATE_SMART_CONTRACT = 30
 
-            if is_vm_create && to_address == revm_primitives::Address::ZERO {
-                debug!("CreateSmartContract detected: treating zero address as contract creation (to=None)");
-                None
-            } else {
-                Some(to_address)
+                    if is_vm_create && to_address == revm_primitives::Address::ZERO {
+                        debug!("CreateSmartContract detected: treating zero address as contract creation (to=None)");
+                        None
+                    } else {
+                        Some(to_address)
+                    }
+                }
+                Err(e) if allow_malformed_to => {
+                    debug!("Allowing malformed to address for {:?}: {}", contract_type, e);
+                    // Contract-level validation will check to_raw and return "Invalid toAddress!"
+                    None
+                }
+                Err(e) => return Err(e),
             }
         };
 
@@ -167,6 +187,11 @@ impl BackendService {
             from_raw: Some(tx.from.clone()),
             to_raw,
             contract_parameter,
+            transaction_bytes_size: if transaction_bytes_size > 0 {
+                Some(transaction_bytes_size)
+            } else {
+                None
+            },
         };
 
         let transaction = TronTransaction {
@@ -615,7 +640,7 @@ mod tests {
         proto_tx.contract_type = ContractType::WitnessCreateContract as i32;
 
         let (transaction, tx_kind) = backend_service
-            .convert_protobuf_transaction(Some(&proto_tx))
+            .convert_protobuf_transaction(Some(&proto_tx), 0)
             .unwrap();
 
         assert_eq!(tx_kind, TxKind::NonVm);
@@ -641,7 +666,7 @@ mod tests {
         proto_tx.contract_type = ContractType::WitnessUpdateContract as i32;
 
         let (transaction, tx_kind) = backend_service
-            .convert_protobuf_transaction(Some(&proto_tx))
+            .convert_protobuf_transaction(Some(&proto_tx), 0)
             .unwrap();
 
         assert_eq!(tx_kind, TxKind::NonVm);

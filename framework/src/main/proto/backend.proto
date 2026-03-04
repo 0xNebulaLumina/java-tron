@@ -485,6 +485,9 @@ message ExecuteTransactionRequest {
   // Pre-execution AEXT snapshots for hybrid mode
   // Java provides these to ensure AccountInfo serialization matches embedded behavior
   repeated AccountAextSnapshot pre_execution_aext = 3;
+  // Java-computed protobuf serialized size for bandwidth calculation parity.
+  // Matches BandwidthProcessor.consume(): clearRet().getSerializedSize() + contracts * MAX_RESULT_SIZE_IN_TX.
+  int64 transaction_bytes_size = 4;
 }
 
 // Write mode for Phase B conformance alignment.

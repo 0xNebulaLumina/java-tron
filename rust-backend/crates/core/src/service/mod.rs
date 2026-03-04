@@ -803,7 +803,6 @@ impl BackendService {
         }
 
         let execution_config = self.get_execution_config()?;
-        let fee_config = &execution_config.fees;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         // TransferContract amount is a signed long; fixtures encode it into the low 8 bytes of
@@ -817,6 +816,9 @@ impl BackendService {
         };
 
         // Validation parity with java-tron TransferActuator.validate()
+        // Java checks: DecodeUtil.addressValid(ownerAddress) then DecodeUtil.addressValid(toAddress)
+        // addressValid requires: non-null, exactly 21 bytes, prefix == configured prefix byte.
+        // Error ordering: ownerAddress validation MUST happen before toAddress validation.
         let prefix = storage_adapter.address_prefix();
         if let Some(owner_raw) = transaction.metadata.from_raw.as_deref() {
             if owner_raw.len() != 21 || owner_raw[0] != prefix {
@@ -824,10 +826,15 @@ impl BackendService {
             }
         }
 
-        // For TRANSFER_CONTRACT specifically, we need the 'to' address.
-        let to_address = match transaction.to {
-            Some(addr) => addr,
-            None => {
+        // Validate to_raw using the same rules as Java's DecodeUtil.addressValid(toAddress).
+        // We derive the 20-byte EVM address directly from validated to_raw bytes rather than
+        // relying on the pre-converted transaction.to (which may be None for malformed addresses
+        // that failed during gRPC conversion).
+        let to_address = match transaction.metadata.to_raw.as_deref() {
+            Some(raw) if raw.len() == 21 && raw[0] == prefix => {
+                revm_primitives::Address::from_slice(&raw[1..])
+            }
+            _ => {
                 return Err("Invalid toAddress!".to_string());
             }
         };
@@ -876,19 +883,10 @@ impl BackendService {
             0
         };
 
-        // Phase 3 Fix: Only calculate fee if explicitly configured for non-VM transactions
-        let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
-            Some(flat_fee) => {
-                debug!("Using configured flat fee for non-VM: {} SUN", flat_fee);
-                flat_fee
-            },
-            None => {
-                // Phase 3 Fix: Default to no forced TRX fee for non-VM transactions
-                // TRON uses free bandwidth first; only charge TRX when free bandwidth is insufficient
-                debug!("No flat fee configured for non-VM, using 0 (TRON free bandwidth semantics)");
-                0
-            }
-        };
+        // Strict actuator parity: Java's TransferActuator.calcFee() returns TRANSFER_FEE = 0.
+        // The only fee for TransferContract is the create-account-fee when recipient is new.
+        // No additional flat fee is applied at the actuator level.
+        let fee_amount: u64 = 0;
 
         // Contract-type restrictions (java: ForbidTransferToContract, AllowTvmCompatibleEvm).
         // Apply after fee adjustment for existence, but before balance checks.
@@ -935,10 +933,9 @@ impl BackendService {
         }
 
         // Validate sender has enough balance for amount + fees (java: addExact(amount, fee)).
+        // fee = create_account_fee (TRANSFER_FEE is always 0 in Java's TransferActuator).
         let fee_i64 = i64::try_from(create_account_fee)
-            .map_err(|_| "long overflow".to_string())?
-            .checked_add(i64::try_from(fee_amount).map_err(|_| "long overflow".to_string())?)
-            .ok_or_else(|| "long overflow".to_string())?;
+            .map_err(|_| "long overflow".to_string())?;
         let total_cost_i64 = amount_i64
             .checked_add(fee_i64)
             .ok_or_else(|| "long overflow".to_string())?;
@@ -961,7 +958,7 @@ impl BackendService {
         // Track AEXT for bandwidth if in tracked mode (after validation to ensure validate_fail has 0 writes)
         let mut aext_map = std::collections::HashMap::new();
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::{AccountAext, ResourceTracker, BandwidthParams};
 
             // Get current AEXT for sender (or initialize with defaults)
             let current_aext = storage_adapter
@@ -969,43 +966,104 @@ impl BackendService {
                 .map_err(|e| format!("Failed to get account AEXT: {}", e))?
                 .unwrap_or_else(AccountAext::with_defaults);
 
-            // Get FREE_NET_LIMIT from dynamic properties
+            // Get dynamic properties for bandwidth tracking
             let free_net_limit = storage_adapter
                 .get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+            let public_net_limit = storage_adapter
+                .get_public_net_limit()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_LIMIT: {}", e))?;
+            let public_net_usage = storage_adapter
+                .get_public_net_usage()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_USAGE: {}", e))?;
+            let public_net_time = storage_adapter
+                .get_public_net_time()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_TIME: {}", e))?;
+            let transaction_fee = storage_adapter
+                .get_transaction_fee()
+                .map_err(|e| format!("Failed to get TRANSACTION_FEE: {}", e))?;
+            let create_account_bandwidth_rate = storage_adapter
+                .get_create_new_account_bandwidth_rate()
+                .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?;
 
-            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
-            let now_slot = (context.block_timestamp / 3000) as i64;
+            // Compute account_net_limit from frozen bandwidth
+            let account_net_limit = {
+                let freeze_record = storage_adapter
+                    .get_freeze_record(&transaction.from, 0) // 0 = BANDWIDTH
+                    .map_err(|e| format!("Failed to get freeze record: {}", e))?;
+                let total_net_weight = storage_adapter
+                    .get_total_net_weight()
+                    .map_err(|e| format!("Failed to get TOTAL_NET_WEIGHT: {}", e))?;
+                let total_net_limit = storage_adapter
+                    .get_total_net_limit()
+                    .map_err(|e| format!("Failed to get TOTAL_NET_LIMIT: {}", e))?;
+                if let Some(record) = freeze_record {
+                    if total_net_weight > 0 {
+                        // Java: calculateGlobalNetLimit = (frozenBalance / TRX_PRECISION) * (totalNetLimit / totalNetWeight)
+                        let frozen_trx = record.frozen_amount as i64 / TRX_PRECISION as i64;
+                        frozen_trx.saturating_mul(total_net_limit) / total_net_weight
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            };
 
-            // Track bandwidth usage (returns path, before_aext, after_aext)
-            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
-                &transaction.from,
-                bandwidth_used as i64,
-                now_slot,
-                &current_aext,
+            // Java uses headSlot = (latestBlockTimestamp - genesisTimestamp) / 3000
+            let genesis_ts = execution_config.remote.genesis_block_timestamp;
+            let now_slot = (context.block_timestamp as i64 - genesis_ts) / 3000;
+
+            let creates_new_account = recipient_opt.is_none();
+
+            let bw_params = BandwidthParams {
+                bytes_used: bandwidth_used as i64,
+                now: now_slot,
+                current_aext,
+                account_net_limit,
                 free_net_limit,
-            )
-            .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+                public_net_limit,
+                public_net_usage,
+                public_net_time,
+                creates_new_account,
+                create_account_bandwidth_rate,
+                transaction_fee,
+            };
+
+            let bw_result = ResourceTracker::track_bandwidth_v2(&bw_params)
+                .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
             // Persist after AEXT to storage
             storage_adapter
-                .set_account_aext(&transaction.from, &after_aext)
+                .set_account_aext(&transaction.from, &bw_result.after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
             storage_adapter
-                .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &bw_result.after_aext)
                 .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
+            // Persist global PUBLIC_NET changes if FREE_NET path was used
+            if let Some(new_pub_usage) = bw_result.new_public_net_usage {
+                storage_adapter
+                    .set_public_net_usage(new_pub_usage)
+                    .map_err(|e| format!("Failed to persist PUBLIC_NET_USAGE: {}", e))?;
+            }
+            if let Some(new_pub_time) = bw_result.new_public_net_time {
+                storage_adapter
+                    .set_public_net_time(new_pub_time)
+                    .map_err(|e| format!("Failed to persist PUBLIC_NET_TIME: {}", e))?;
+            }
+
             // Add to aext_map
-            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
+            aext_map.insert(transaction.from, (bw_result.before_aext.clone(), bw_result.after_aext.clone()));
 
             debug!(
                 "AEXT tracked for transfer: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
                 transaction.from,
-                path,
-                before_aext.net_usage,
-                after_aext.net_usage,
-                before_aext.free_net_usage,
-                after_aext.free_net_usage
+                bw_result.path,
+                bw_result.before_aext.net_usage,
+                bw_result.after_aext.net_usage,
+                bw_result.before_aext.free_net_usage,
+                bw_result.after_aext.free_net_usage
             );
         }
 
@@ -1162,67 +1220,9 @@ impl BackendService {
             }
         }
 
-        // Handle fee based on configuration (only if fee_amount > 0)
-        if fee_amount > 0 {
-            match fee_config.mode.as_str() {
-                "burn" => {
-                    debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
-                    // No additional state change - fee is burned (supply reduction)
-                },
-                "blackhole" => {
-                    if !fee_config.blackhole_address_base58.is_empty() {
-                        // Parse blackhole address and credit it
-                        match tron_backend_common::from_tron_address(&fee_config.blackhole_address_base58) {
-                            Ok(blackhole_bytes) => {
-                                let blackhole_address = revm_primitives::Address::from_slice(&blackhole_bytes);
-                                
-                                // Load blackhole account (track existence)
-                                let blackhole_opt = storage_adapter.get_account(&blackhole_address)
-                                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?;
-                                let blackhole_account = blackhole_opt.clone().unwrap_or_default();
-                                
-                                // Credit blackhole account with fee
-                                let new_blackhole_balance = blackhole_account.balance + revm_primitives::U256::from(fee_amount);
-                                let new_blackhole_account = revm_primitives::AccountInfo {
-                                    balance: new_blackhole_balance,
-                                    nonce: blackhole_account.nonce,
-                                    code_hash: blackhole_account.code_hash,
-                                    code: blackhole_account.code.clone(),
-                                };
-                                
-                                // Add blackhole account change
-                                let old_blackhole_account = if blackhole_opt.is_none() {
-                                    None // Account creation if needed
-                                } else {
-                                    Some(blackhole_account)
-                                };
-                                
-                                state_changes.push(TronStateChange::AccountChange {
-                                    address: blackhole_address,
-                                    old_account: old_blackhole_account,
-                                    new_account: Some(new_blackhole_account.clone()),
-                                });
-                                // Persist blackhole account update
-                                storage_adapter
-                                    .set_account(blackhole_address, new_blackhole_account.clone())
-                                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
-                                
-                                debug!("Credited fee {} SUN to blackhole address {}", fee_amount, fee_config.blackhole_address_base58);
-                            },
-                            Err(e) => {
-                                warn!("Invalid blackhole address '{}': {}, falling back to burn mode", 
-                                      fee_config.blackhole_address_base58, e);
-                            }
-                        }
-                    }
-                },
-                _ => {
-                    debug!("Unknown fee mode '{}', defaulting to burn", fee_config.mode);
-                }
-            }
-        } else {
-            debug!("No fee to process (fee_amount = 0), skipping fee handling");
-        }
+        // fee_amount is always 0 for TransferContract (strict actuator parity).
+        // Only create-account-fee is charged (handled above).
+        debug_assert_eq!(fee_amount, 0, "TransferContract fee_amount must be 0 for actuator parity");
         
         // Sort state changes deterministically for digest parity
         state_changes.sort_by(|a, b| {
@@ -1247,8 +1247,8 @@ impl BackendService {
             }
         });
         
-        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, fee: {} SUN, state_changes: {}",
-               bandwidth_used, fee_amount, state_changes.len());
+        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, create_account_fee: {}, state_changes: {}",
+               bandwidth_used, create_account_fee, state_changes.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -2630,6 +2630,7 @@ impl BackendService {
 
             bandwidth_path_used = match path {
                 BandwidthPath::AccountNet => "ACCOUNT_NET",
+                BandwidthPath::CreateAccount => "CREATE_ACCOUNT",
                 BandwidthPath::FreeNet => "FREE_NET",
                 BandwidthPath::Fee => "FEE",
             };

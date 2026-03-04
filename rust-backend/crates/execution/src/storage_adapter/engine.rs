@@ -1804,6 +1804,21 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
+    /// Get TRANSACTION_FEE dynamic property (fee per byte for bandwidth FEE path)
+    /// Default: 10 SUN/byte
+    pub fn get_transaction_fee(&self) -> Result<i64> {
+        let key = b"TRANSACTION_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => {
+                Ok(i64::from_be_bytes([
+                    data[0], data[1], data[2], data[3],
+                    data[4], data[5], data[6], data[7],
+                ]))
+            }
+            _ => Ok(10) // Default: 10 SUN per byte
+        }
+    }
+
     /// Get TOTAL_NET_WEIGHT dynamic property (total frozen for bandwidth)
     /// Default: 0
     pub fn get_total_net_weight(&self) -> Result<i64> {

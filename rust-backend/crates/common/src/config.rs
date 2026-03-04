@@ -458,6 +458,17 @@ pub struct RemoteExecutionConfig {
     /// Default: false for backward compatibility (uses safe defaults)
     /// Set to true for conformance testing or strict Java parity
     pub strict_dynamic_properties: bool,
+
+    /// Genesis block timestamp in milliseconds since epoch.
+    /// Used to compute headSlot for bandwidth resource windows:
+    ///   headSlot = (block_timestamp_ms - genesis_block_timestamp) / 3000
+    /// Default: 1529891469000 (TRON mainnet genesis block timestamp)
+    #[serde(default = "default_genesis_block_timestamp")]
+    pub genesis_block_timestamp: i64,
+}
+
+fn default_genesis_block_timestamp() -> i64 {
+    1529891469000 // TRON mainnet genesis block timestamp (ms)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -633,6 +644,9 @@ impl Config {
         builder = builder.set_default("execution.remote.market_sell_asset_enabled", false)?;
         builder = builder.set_default("execution.remote.market_cancel_order_enabled", false)?;
 
+        // Genesis block timestamp for headSlot computation
+        builder = builder.set_default("execution.remote.genesis_block_timestamp", 1529891469000i64)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -694,6 +708,8 @@ impl Default for RemoteExecutionConfig {
             market_strict_index_parity: false, // Default false for backward compatibility (defensive recovery)
             // Task 5: Dynamic property strictness
             strict_dynamic_properties: false, // Default false for backward compatibility
+            // Genesis block timestamp for headSlot computation
+            genesis_block_timestamp: default_genesis_block_timestamp(),
         }
     }
 } 

@@ -16,5 +16,6 @@ mod participate_asset_issue;
 mod proposal_approve;
 mod proposal_delete;
 mod set_account_id;
+mod transfer;
 mod trc10_transfer;
 mod witness_update;

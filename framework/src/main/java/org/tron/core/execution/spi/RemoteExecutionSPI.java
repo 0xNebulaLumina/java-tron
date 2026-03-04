@@ -1100,10 +1100,24 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       // Collect pre-execution AEXT snapshots for hybrid mode
       List<AccountAextSnapshot> preExecAextList = collectPreExecutionAext(context, fromAddress, toAddress, contract.getType());
 
+      // Compute bandwidth bytes size (same formula as BandwidthProcessor.consume)
+      long txBytesSize;
+      if (context.getStoreFactory() != null
+          && context.getStoreFactory().getChainBaseManager() != null
+          && context.getStoreFactory().getChainBaseManager()
+              .getDynamicPropertiesStore().supportVM()) {
+        txBytesSize = trxCap.getInstance().toBuilder().clearRet().build().getSerializedSize();
+        int numContracts = trxCap.getInstance().getRawData().getContractCount();
+        txBytesSize += (long) numContracts * Constant.MAX_RESULT_SIZE_IN_TX;
+      } else {
+        txBytesSize = trxCap.getSerializedSize();
+      }
+
       return ExecuteTransactionRequest.newBuilder()
           .setTransaction(txBuilder.build())
           .setContext(contextBuilder.build())
           .addAllPreExecutionAext(preExecAextList)
+          .setTransactionBytesSize(txBytesSize)
           .build();
 
     } catch (UnsupportedOperationException | IllegalArgumentException e) {

@@ -45,5 +45,5 @@ pub use engine::EngineBackedEvmStateStore;
 pub use database::EvmStateDatabase;
 #[allow(unused_imports)]
 pub use database::SnapshotHook;
-pub use resource::{ResourceTracker, BandwidthPath};
+pub use resource::{ResourceTracker, BandwidthPath, BandwidthParams, BandwidthResult};
 pub use write_buffer::{ExecutionWriteBuffer, WriteBufferBuilder, WriteOp, TouchedKey};
