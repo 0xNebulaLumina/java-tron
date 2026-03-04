@@ -1,5 +1,5 @@
 Find the first undone item in yolo/input.md, and its line number, let's say it's at line 23 (1-based) and it's `TRANSFER_CONTRACT`,
-then checkout to a new branch `Theseus_compare_review_again_<LINE_NUM>_<CONTRACT_NAME>` (`Theseus_compare_review_again_23_TRANSFER_CONTRACT>` in this example).
+then checkout the current branch to a new branch `Theseus_compare_review_again_<LINE_NUM>_<CONTRACT_NAME>` (`Theseus_compare_review_again_23_TRANSFER_CONTRACT>` in this example).
 
 Then:
 
