@@ -305,6 +305,30 @@ impl ExecutionModule {
         Ok(())
     }
 
+    /// Decode `TriggerSmartContract` from the best available source:
+    ///   1. `metadata.contract_parameter.value` when the type_url indicates TriggerSmartContract
+    ///      (production RemoteExecutionSPI format — `tx.data` is EVM calldata).
+    ///   2. `tx.data` as a fallback (conformance fixture format — `tx.data` is the full proto).
+    pub(crate) fn decode_trigger_smart_contract(
+        tx: &TronTransaction,
+    ) -> Result<crate::protocol::TriggerSmartContract> {
+        // Prefer contract_parameter (production RemoteExecutionSPI path).
+        if let Some(ref param) = tx.metadata.contract_parameter {
+            if param.type_url.ends_with("TriggerSmartContract") {
+                return crate::protocol::TriggerSmartContract::decode(param.value.as_slice())
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to decode TriggerSmartContract from contract_parameter: {}",
+                            e
+                        )
+                    });
+            }
+        }
+        // Fallback: decode from tx.data (conformance fixture path).
+        crate::protocol::TriggerSmartContract::decode(tx.data.as_ref())
+            .map_err(|e| anyhow::anyhow!("Failed to decode TriggerSmartContract: {}", e))
+    }
+
     fn validate_trigger_smart_contract<S: EvmStateStore>(
         storage: &S,
         tx: &TronTransaction,
@@ -317,6 +341,16 @@ impl ExecutionModule {
             Ok(storage.tron_dynamic_property_i64(key)?.unwrap_or(default))
         };
 
+        // 0) Java parity: validate contract_parameter type_url matches expected type.
+        if let Some(ref param) = tx.metadata.contract_parameter {
+            if !param.type_url.ends_with("TriggerSmartContract") {
+                return Err(anyhow::anyhow!(
+                    "contract type error,expected type [TriggerSmartContract],real type[{}]",
+                    param.type_url
+                ));
+            }
+        }
+
         // 1) VM enabled (java: DynamicPropertiesStore.supportVM()).
         if dynamic_i64(b"ALLOW_CREATION_OF_CONTRACTS", 1)? != 1 {
             return Err(anyhow::anyhow!(
@@ -324,9 +358,8 @@ impl ExecutionModule {
             ));
         }
 
-        // 2) Decode TriggerSmartContract.
-        let trigger = crate::protocol::TriggerSmartContract::decode(tx.data.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to decode TriggerSmartContract: {}", e))?;
+        // 2) Decode TriggerSmartContract from contract_parameter or tx.data.
+        let trigger = Self::decode_trigger_smart_contract(tx)?;
 
         let parse_tron_address = |bytes: &[u8]| -> Option<Address> {
             if bytes.len() == 21 && (bytes[0] == 0x41 || bytes[0] == 0xa0) {
@@ -370,7 +403,16 @@ impl ExecutionModule {
             ));
         }
 
-        // 6) callValue checks.
+        // 6) Energy limit hardfork validations (java: StorageUtils.getEnergyLimitHardFork()).
+        // Java gates `callValue >= 0` and `tokenValue >= 0` behind the fork:
+        //   checkForEnergyLimit() = latestBlockHeaderNumber >= BLOCK_NUM_FOR_ENERGY_LIMIT (4727890)
+        let block_num = dynamic_i64(b"LATEST_BLOCK_HEADER_NUMBER", 0)?;
+        let energy_limit_hard_fork = block_num >= 4727890;
+        if energy_limit_hard_fork && trigger.call_value < 0 {
+            return Err(anyhow::anyhow!("callValue must be >= 0"));
+        }
+
+        // 6b) callValue balance sufficiency.
         if trigger.call_value > 0 {
             let call_value = U256::from(trigger.call_value as u64);
             if owner_account.balance < call_value {
@@ -394,6 +436,11 @@ impl ExecutionModule {
         } else {
             0
         };
+
+        // Energy limit hardfork: tokenValue must be non-negative.
+        if energy_limit_hard_fork && token_value < 0 {
+            return Err(anyhow::anyhow!("tokenValue must be >= 0"));
+        }
 
         if allow_tvm_transfer_trc10 && allow_multi_sign {
             if token_id <= MIN_TOKEN_ID && token_id != 0 {
@@ -744,6 +791,182 @@ mod tests {
             ..ExecutionFeeConfig::default()
         };
         assert_eq!(none_config.mode, "none");
+    }
+}
+
+#[cfg(test)]
+mod trigger_smart_contract_tests {
+    use super::*;
+    use prost::Message;
+    use revm_primitives::{Address, U256, Bytes};
+
+    /// Helper: build a TriggerSmartContract proto and serialize it.
+    fn make_trigger_proto(
+        owner: &[u8],
+        contract_addr: &[u8],
+        call_value: i64,
+        calldata: &[u8],
+    ) -> Vec<u8> {
+        let trigger = crate::protocol::TriggerSmartContract {
+            owner_address: owner.to_vec(),
+            contract_address: contract_addr.to_vec(),
+            call_value,
+            data: calldata.to_vec(),
+            call_token_value: 0,
+            token_id: 0,
+        };
+        let mut buf = Vec::new();
+        trigger.encode(&mut buf).unwrap();
+        buf
+    }
+
+    /// Test decode_trigger_smart_contract: fixture-style request
+    /// where tx.data contains the full serialized TriggerSmartContract proto.
+    #[test]
+    fn test_decode_from_tx_data_fixture_style() {
+        let owner = vec![0x41; 21]; // 21-byte TRON address
+        let contract_addr = vec![0x41; 21];
+        let calldata = vec![0x70, 0xa0, 0x82, 0x31]; // balanceOf selector
+
+        let proto_bytes = make_trigger_proto(&owner, &contract_addr, 100, &calldata);
+
+        let tx = TronTransaction {
+            from: Address::from_slice(&[0x01; 20]),
+            to: Some(Address::from_slice(&[0x02; 20])),
+            value: U256::from(100u64),
+            data: Bytes::from(proto_bytes),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata::default(),
+        };
+
+        let trigger = ExecutionModule::decode_trigger_smart_contract(&tx).unwrap();
+        assert_eq!(trigger.owner_address, owner);
+        assert_eq!(trigger.contract_address, contract_addr);
+        assert_eq!(trigger.call_value, 100);
+        assert_eq!(trigger.data, calldata);
+    }
+
+    /// Test decode_trigger_smart_contract: production RemoteExecutionSPI-style request
+    /// where tx.data is the EVM calldata and contract_parameter carries the proto.
+    #[test]
+    fn test_decode_from_contract_parameter_production_style() {
+        let owner = vec![0x41; 21];
+        let contract_addr = vec![0x41; 21];
+        let calldata = vec![0x70, 0xa0, 0x82, 0x31]; // balanceOf selector
+
+        let proto_bytes = make_trigger_proto(&owner, &contract_addr, 200, &calldata);
+
+        let tx = TronTransaction {
+            from: Address::from_slice(&[0x01; 20]),
+            to: Some(Address::from_slice(&[0x02; 20])),
+            value: U256::from(200u64),
+            data: Bytes::from(calldata.clone()), // calldata only (production format)
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(TronContractType::TriggerSmartContract),
+                contract_parameter: Some(TronContractParameter {
+                    type_url: "type.googleapis.com/protocol.TriggerSmartContract".to_string(),
+                    value: proto_bytes,
+                }),
+                ..TxMetadata::default()
+            },
+        };
+
+        let trigger = ExecutionModule::decode_trigger_smart_contract(&tx).unwrap();
+        assert_eq!(trigger.owner_address, owner);
+        assert_eq!(trigger.contract_address, contract_addr);
+        assert_eq!(trigger.call_value, 200);
+        assert_eq!(trigger.data, calldata);
+    }
+
+    /// Test that contract_parameter takes precedence over tx.data when both are present.
+    #[test]
+    fn test_contract_parameter_takes_precedence() {
+        let owner = vec![0x41; 21];
+        let contract_addr = vec![0x41; 21];
+        let calldata = vec![0x70, 0xa0, 0x82, 0x31];
+
+        // Proto with call_value=300 in contract_parameter
+        let cp_proto = make_trigger_proto(&owner, &contract_addr, 300, &calldata);
+        // Proto with call_value=999 in tx.data
+        let data_proto = make_trigger_proto(&owner, &contract_addr, 999, &calldata);
+
+        let tx = TronTransaction {
+            from: Address::from_slice(&[0x01; 20]),
+            to: Some(Address::from_slice(&[0x02; 20])),
+            value: U256::from(300u64),
+            data: Bytes::from(data_proto),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(TronContractType::TriggerSmartContract),
+                contract_parameter: Some(TronContractParameter {
+                    type_url: "type.googleapis.com/protocol.TriggerSmartContract".to_string(),
+                    value: cp_proto,
+                }),
+                ..TxMetadata::default()
+            },
+        };
+
+        let trigger = ExecutionModule::decode_trigger_smart_contract(&tx).unwrap();
+        // contract_parameter's call_value=300 should win over tx.data's call_value=999
+        assert_eq!(trigger.call_value, 300);
+    }
+
+    /// Test that when contract_parameter has a non-TriggerSmartContract type_url,
+    /// it falls back to decoding from tx.data.
+    #[test]
+    fn test_wrong_type_url_falls_back_to_tx_data() {
+        let owner = vec![0x41; 21];
+        let contract_addr = vec![0x41; 21];
+        let calldata = vec![0x70, 0xa0, 0x82, 0x31];
+
+        let data_proto = make_trigger_proto(&owner, &contract_addr, 500, &calldata);
+
+        let tx = TronTransaction {
+            from: Address::from_slice(&[0x01; 20]),
+            to: Some(Address::from_slice(&[0x02; 20])),
+            value: U256::from(500u64),
+            data: Bytes::from(data_proto),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(TronContractType::TriggerSmartContract),
+                contract_parameter: Some(TronContractParameter {
+                    type_url: "type.googleapis.com/protocol.SomethingElse".to_string(),
+                    value: vec![0x00], // garbage, but shouldn't be used
+                }),
+                ..TxMetadata::default()
+            },
+        };
+
+        let trigger = ExecutionModule::decode_trigger_smart_contract(&tx).unwrap();
+        // Should decode from tx.data fallback
+        assert_eq!(trigger.call_value, 500);
+    }
+
+    /// Test that decode fails cleanly when both sources contain garbage.
+    #[test]
+    fn test_decode_fails_when_both_sources_invalid() {
+        let tx = TronTransaction {
+            from: Address::from_slice(&[0x01; 20]),
+            to: Some(Address::from_slice(&[0x02; 20])),
+            value: U256::ZERO,
+            data: Bytes::from(vec![0xFF, 0xFF, 0xFF]), // not valid protobuf
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata::default(),
+        };
+
+        let result = ExecutionModule::decode_trigger_smart_contract(&tx);
+        assert!(result.is_err());
     }
 }
 
