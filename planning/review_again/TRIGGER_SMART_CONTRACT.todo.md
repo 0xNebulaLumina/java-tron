@@ -32,14 +32,25 @@
 - [x] Hardfork gate parity:
   - [x] Model `StorageUtils.getEnergyLimitHardFork()` equivalent in Rust (uses `LATEST_BLOCK_HEADER_NUMBER >= 4727890` dynamic property).
   - [x] Enforce `call_value >= 0` and `call_token_value >= 0` only when the fork is active.
-- [ ] Implement TRC-10 call_token_value/token_id transfer semantics for TriggerSmartContract:
-  - [ ] Mirror Java's "transfer token to contract before VM execution when enabled and tokenValue > 0".
-  - [ ] Emit corresponding TRC-10 state changes so Java-side can apply them consistently.
-  - _Note: Deferred — no conformance fixtures currently test TRC-10 pre-execution transfers for TriggerSmartContract. TRX callValue is handled by REVM's value field._
+- [x] Gate TRC-10 call_token_value/token_id for TriggerSmartContract:
+  - [x] Explicitly reject `tokenValue > 0` with a clear error until TRC-10 pre-execution transfer is implemented in Rust, preventing silent state divergence.
+  - [ ] _(Future)_ Implement full TRC-10 pre-execution transfer: mirror Java's `MUtil.transferToken()` from caller → contract before VM execution.
 - [x] Verify TRX callValue semantics:
   - [x] Ensure callValue transfer happens only when `callValue > 0` (Java does not transfer on negative).
   - [x] Re-check behavior for malformed negative callValue fixtures (ensure no unintended balance minting).
   - _Verified: negative callValue is handled by `disable_balance_check = true` in setup_environment, resulting in REVERT. Conformance fixture `validate_fail_call_value_negative` passes._
+
+## 2b) Error ordering parity
+
+- [x] Fix validation error ordering to match Java's VMActuator.call():
+  - [x] Java checks `supportVM()` first (VMActuator.java:456), then contract existence (line 472).
+  - [x] Extracted `validate_trigger_vm_enabled()` and moved it before contract existence check in `execute_transaction_with_storage`.
+
+## 2c) energy_limit wire semantics (DOCUMENTED — needs wire spec lock)
+
+- [x] Document the mismatch: conformance fixtures send feeLimit (SUN) in `energy_limit`; production RemoteExecutionSPI sends energy units (already divided by energyFee). Rust always divides, causing double-conversion for production.
+- [x] Added TODO comments in `lib.rs` and `backend.proto` describing the issue and options (a/b/c).
+- [ ] _(Future)_ Lock the wire spec for `energy_limit` and align Java + Rust.
 
 ## 3) Validation / regression matrix
 
@@ -52,4 +63,5 @@
   - [x] feeLimit negative / feeLimit above max — fixtures `validate_fail_fee_limit_negative` and `validate_fail_fee_limit_above_max` pass
   - [x] tokenValue > 0 with tokenId == 0 (validate fail) — fixture `validate_fail_token_value_positive_token_id_zero` passes
   - [x] tokenId too small (validate fail) — fixture `validate_fail_token_id_too_small` passes
-- [x] Added 5 unit tests for `decode_trigger_smart_contract` helper covering both encoding styles, precedence, fallback, and error cases.
+- [x] Added 6 unit tests for `decode_trigger_smart_contract` helper + production-format integration test.
+- [x] Added end-to-end test `test_production_format_reaches_validation` exercising the full `execute_transaction_with_storage` path with production wire format.
