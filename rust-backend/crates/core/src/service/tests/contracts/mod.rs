@@ -18,4 +18,5 @@ mod proposal_delete;
 mod set_account_id;
 mod transfer;
 mod trc10_transfer;
+mod undelegate_resource;
 mod witness_update;
