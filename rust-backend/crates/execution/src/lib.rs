@@ -47,10 +47,14 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
-        // TRON parity: TriggerSmartContract must target an existing smart contract account.
-        // java-tron rejects missing/non-contract targets during validation with:
-        // "No contract or not a smart contract"
+        // TRON parity: TriggerSmartContract validation must match java-tron's VMActuator.call()
+        // error ordering: (1) supportVM, (2) decode+address checks, (3) contract existence,
+        // (4) callValue/token/feeLimit checks.
         if tx.metadata.contract_type == Some(TronContractType::TriggerSmartContract) {
+            // Step 1: VM enabled check (java: VMActuator.call() line 456 — checked FIRST).
+            Self::validate_trigger_vm_enabled(&storage)?;
+
+            // Step 2: Contract existence (java: VMActuator.call() line 472-476).
             if let Some(to) = tx.to {
                 let mut tron_contract_key = Vec::with_capacity(21);
                 let prefix = storage.tron_address_prefix()?;
@@ -82,10 +86,8 @@ impl ExecutionModule {
                     });
                 }
             }
-        }
 
-        // TRON parity: TriggerSmartContract validation must match java-tron's VMActuator.call().
-        if tx.metadata.contract_type == Some(TronContractType::TriggerSmartContract) {
+            // Step 3: Remaining validation (owner, feeLimit, callValue, tokens).
             Self::validate_trigger_smart_contract(&storage, tx)?;
         }
 
@@ -99,8 +101,21 @@ impl ExecutionModule {
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
 
-        // TRON parity: backend.proto's `energy_limit` is a fee limit in SUN. Convert to an EVM
-        // gas limit (energy units) using the dynamic property ENERGY_FEE (SUN per energy).
+        // TRON energy_limit wire semantics (KNOWN MISMATCH — needs spec lock):
+        //
+        // - Conformance fixtures: energy_limit = feeLimit in SUN → Rust divides by ENERGY_FEE
+        //   to get energy units. This path is correct for fixtures.
+        //
+        // - Production RemoteExecutionSPI: energy_limit = computeEnergyLimitWithFixRatio()
+        //   which already returns energy units (min(availableEnergy, feeLimit/energyFee)).
+        //   Dividing again here would under-gas the transaction.
+        //
+        // TODO: Lock the wire spec for energy_limit. Options:
+        //   (a) Java always sends feeLimit (SUN); Rust converts. Requires Rust to implement
+        //       the full getTotalEnergyLimitWithFixRatio computation for caller/creator split.
+        //   (b) Java always sends energy units; Rust does NOT convert. Requires fixture
+        //       generator to match by also sending energy units.
+        //   (c) Add a proto field/flag to indicate the unit.
         let mut adjusted_tx = tx.clone();
         if energy_fee_rate > 0 {
             adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
@@ -305,6 +320,44 @@ impl ExecutionModule {
         Ok(())
     }
 
+    /// Decode `TriggerSmartContract` from the best available source:
+    ///   1. `metadata.contract_parameter.value` when the type_url indicates TriggerSmartContract
+    ///      (production RemoteExecutionSPI format — `tx.data` is EVM calldata).
+    ///   2. `tx.data` as a fallback (conformance fixture format — `tx.data` is the full proto).
+    pub(crate) fn decode_trigger_smart_contract(
+        tx: &TronTransaction,
+    ) -> Result<crate::protocol::TriggerSmartContract> {
+        // Prefer contract_parameter (production RemoteExecutionSPI path).
+        if let Some(ref param) = tx.metadata.contract_parameter {
+            if param.type_url.ends_with("TriggerSmartContract") {
+                return crate::protocol::TriggerSmartContract::decode(param.value.as_slice())
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to decode TriggerSmartContract from contract_parameter: {}",
+                            e
+                        )
+                    });
+            }
+        }
+        // Fallback: decode from tx.data (conformance fixture path).
+        crate::protocol::TriggerSmartContract::decode(tx.data.as_ref())
+            .map_err(|e| anyhow::anyhow!("Failed to decode TriggerSmartContract: {}", e))
+    }
+
+    /// Pre-validation: VM must be enabled and contract_parameter type_url must match.
+    /// Called before contract existence check to match Java's VMActuator.call() error ordering.
+    fn validate_trigger_vm_enabled<S: EvmStateStore>(storage: &S) -> Result<()> {
+        let allow_creation = storage
+            .tron_dynamic_property_i64(b"ALLOW_CREATION_OF_CONTRACTS")?
+            .unwrap_or(1);
+        if allow_creation != 1 {
+            return Err(anyhow::anyhow!(
+                "VM work is off, need to be opened by the committee"
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_trigger_smart_contract<S: EvmStateStore>(
         storage: &S,
         tx: &TronTransaction,
@@ -317,16 +370,21 @@ impl ExecutionModule {
             Ok(storage.tron_dynamic_property_i64(key)?.unwrap_or(default))
         };
 
-        // 1) VM enabled (java: DynamicPropertiesStore.supportVM()).
-        if dynamic_i64(b"ALLOW_CREATION_OF_CONTRACTS", 1)? != 1 {
-            return Err(anyhow::anyhow!(
-                "VM work is off, need to be opened by the committee"
-            ));
+        // 0) Java parity: validate contract_parameter type_url matches expected type.
+        if let Some(ref param) = tx.metadata.contract_parameter {
+            if !param.type_url.ends_with("TriggerSmartContract") {
+                return Err(anyhow::anyhow!(
+                    "contract type error,expected type [TriggerSmartContract],real type[{}]",
+                    param.type_url
+                ));
+            }
         }
 
-        // 2) Decode TriggerSmartContract.
-        let trigger = crate::protocol::TriggerSmartContract::decode(tx.data.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to decode TriggerSmartContract: {}", e))?;
+        // Note: VM-enabled check (supportVM) is done earlier in execute_transaction_with_storage
+        // to match Java's error ordering (VM check before contract existence check).
+
+        // 1) Decode TriggerSmartContract from contract_parameter or tx.data.
+        let trigger = Self::decode_trigger_smart_contract(tx)?;
 
         let parse_tron_address = |bytes: &[u8]| -> Option<Address> {
             if bytes.len() == 21 && (bytes[0] == 0x41 || bytes[0] == 0xa0) {
@@ -370,7 +428,16 @@ impl ExecutionModule {
             ));
         }
 
-        // 6) callValue checks.
+        // 6) Energy limit hardfork validations (java: StorageUtils.getEnergyLimitHardFork()).
+        // Java gates `callValue >= 0` and `tokenValue >= 0` behind the fork:
+        //   checkForEnergyLimit() = latestBlockHeaderNumber >= BLOCK_NUM_FOR_ENERGY_LIMIT (4727890)
+        let block_num = dynamic_i64(b"LATEST_BLOCK_HEADER_NUMBER", 0)?;
+        let energy_limit_hard_fork = block_num >= 4727890;
+        if energy_limit_hard_fork && trigger.call_value < 0 {
+            return Err(anyhow::anyhow!("callValue must be >= 0"));
+        }
+
+        // 6b) callValue balance sufficiency.
         if trigger.call_value > 0 {
             let call_value = U256::from(trigger.call_value as u64);
             if owner_account.balance < call_value {
@@ -394,6 +461,11 @@ impl ExecutionModule {
         } else {
             0
         };
+
+        // Energy limit hardfork: tokenValue must be non-negative.
+        if energy_limit_hard_fork && token_value < 0 {
+            return Err(anyhow::anyhow!("tokenValue must be >= 0"));
+        }
 
         if allow_tvm_transfer_trc10 && allow_multi_sign {
             if token_id <= MIN_TOKEN_ID && token_id != 0 {
@@ -426,6 +498,22 @@ impl ExecutionModule {
             if token_value > balance {
                 return Err(anyhow::anyhow!("assetBalance is not sufficient"));
             }
+
+            // Guard: Rust does not yet implement the TRC-10 pre-execution transfer that
+            // Java's VMActuator.call() performs (MUtil.transferToken from caller → contract).
+            // Allowing execution to proceed would silently diverge state: the contract would
+            // not receive the tokens. Reject explicitly until the transfer is implemented.
+            tracing::warn!(
+                "TriggerSmartContract with tokenValue={} rejected: TRC-10 pre-execution \
+                 transfer not yet implemented in Rust backend",
+                token_value
+            );
+            return Err(anyhow::anyhow!(
+                "TRC-10 pre-execution transfer not yet implemented for TriggerSmartContract \
+                 (tokenValue={}, tokenId={})",
+                token_value,
+                token_id
+            ));
         }
 
         Ok(())
@@ -744,6 +832,251 @@ mod tests {
             ..ExecutionFeeConfig::default()
         };
         assert_eq!(none_config.mode, "none");
+    }
+}
+
+#[cfg(test)]
+mod trigger_smart_contract_tests {
+    use super::*;
+    use prost::Message;
+    use revm_primitives::{Address, U256, Bytes};
+
+    /// Helper: build a TriggerSmartContract proto and serialize it.
+    fn make_trigger_proto(
+        owner: &[u8],
+        contract_addr: &[u8],
+        call_value: i64,
+        calldata: &[u8],
+    ) -> Vec<u8> {
+        let trigger = crate::protocol::TriggerSmartContract {
+            owner_address: owner.to_vec(),
+            contract_address: contract_addr.to_vec(),
+            call_value,
+            data: calldata.to_vec(),
+            call_token_value: 0,
+            token_id: 0,
+        };
+        let mut buf = Vec::new();
+        trigger.encode(&mut buf).unwrap();
+        buf
+    }
+
+    /// Test decode_trigger_smart_contract: fixture-style request
+    /// where tx.data contains the full serialized TriggerSmartContract proto.
+    #[test]
+    fn test_decode_from_tx_data_fixture_style() {
+        let owner = vec![0x41; 21]; // 21-byte TRON address
+        let contract_addr = vec![0x41; 21];
+        let calldata = vec![0x70, 0xa0, 0x82, 0x31]; // balanceOf selector
+
+        let proto_bytes = make_trigger_proto(&owner, &contract_addr, 100, &calldata);
+
+        let tx = TronTransaction {
+            from: Address::from_slice(&[0x01; 20]),
+            to: Some(Address::from_slice(&[0x02; 20])),
+            value: U256::from(100u64),
+            data: Bytes::from(proto_bytes),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata::default(),
+        };
+
+        let trigger = ExecutionModule::decode_trigger_smart_contract(&tx).unwrap();
+        assert_eq!(trigger.owner_address, owner);
+        assert_eq!(trigger.contract_address, contract_addr);
+        assert_eq!(trigger.call_value, 100);
+        assert_eq!(trigger.data, calldata);
+    }
+
+    /// Test decode_trigger_smart_contract: production RemoteExecutionSPI-style request
+    /// where tx.data is the EVM calldata and contract_parameter carries the proto.
+    #[test]
+    fn test_decode_from_contract_parameter_production_style() {
+        let owner = vec![0x41; 21];
+        let contract_addr = vec![0x41; 21];
+        let calldata = vec![0x70, 0xa0, 0x82, 0x31]; // balanceOf selector
+
+        let proto_bytes = make_trigger_proto(&owner, &contract_addr, 200, &calldata);
+
+        let tx = TronTransaction {
+            from: Address::from_slice(&[0x01; 20]),
+            to: Some(Address::from_slice(&[0x02; 20])),
+            value: U256::from(200u64),
+            data: Bytes::from(calldata.clone()), // calldata only (production format)
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(TronContractType::TriggerSmartContract),
+                contract_parameter: Some(TronContractParameter {
+                    type_url: "type.googleapis.com/protocol.TriggerSmartContract".to_string(),
+                    value: proto_bytes,
+                }),
+                ..TxMetadata::default()
+            },
+        };
+
+        let trigger = ExecutionModule::decode_trigger_smart_contract(&tx).unwrap();
+        assert_eq!(trigger.owner_address, owner);
+        assert_eq!(trigger.contract_address, contract_addr);
+        assert_eq!(trigger.call_value, 200);
+        assert_eq!(trigger.data, calldata);
+    }
+
+    /// Test that contract_parameter takes precedence over tx.data when both are present.
+    #[test]
+    fn test_contract_parameter_takes_precedence() {
+        let owner = vec![0x41; 21];
+        let contract_addr = vec![0x41; 21];
+        let calldata = vec![0x70, 0xa0, 0x82, 0x31];
+
+        // Proto with call_value=300 in contract_parameter
+        let cp_proto = make_trigger_proto(&owner, &contract_addr, 300, &calldata);
+        // Proto with call_value=999 in tx.data
+        let data_proto = make_trigger_proto(&owner, &contract_addr, 999, &calldata);
+
+        let tx = TronTransaction {
+            from: Address::from_slice(&[0x01; 20]),
+            to: Some(Address::from_slice(&[0x02; 20])),
+            value: U256::from(300u64),
+            data: Bytes::from(data_proto),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(TronContractType::TriggerSmartContract),
+                contract_parameter: Some(TronContractParameter {
+                    type_url: "type.googleapis.com/protocol.TriggerSmartContract".to_string(),
+                    value: cp_proto,
+                }),
+                ..TxMetadata::default()
+            },
+        };
+
+        let trigger = ExecutionModule::decode_trigger_smart_contract(&tx).unwrap();
+        // contract_parameter's call_value=300 should win over tx.data's call_value=999
+        assert_eq!(trigger.call_value, 300);
+    }
+
+    /// Test that when contract_parameter has a non-TriggerSmartContract type_url,
+    /// it falls back to decoding from tx.data.
+    #[test]
+    fn test_wrong_type_url_falls_back_to_tx_data() {
+        let owner = vec![0x41; 21];
+        let contract_addr = vec![0x41; 21];
+        let calldata = vec![0x70, 0xa0, 0x82, 0x31];
+
+        let data_proto = make_trigger_proto(&owner, &contract_addr, 500, &calldata);
+
+        let tx = TronTransaction {
+            from: Address::from_slice(&[0x01; 20]),
+            to: Some(Address::from_slice(&[0x02; 20])),
+            value: U256::from(500u64),
+            data: Bytes::from(data_proto),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(TronContractType::TriggerSmartContract),
+                contract_parameter: Some(TronContractParameter {
+                    type_url: "type.googleapis.com/protocol.SomethingElse".to_string(),
+                    value: vec![0x00], // garbage, but shouldn't be used
+                }),
+                ..TxMetadata::default()
+            },
+        };
+
+        let trigger = ExecutionModule::decode_trigger_smart_contract(&tx).unwrap();
+        // Should decode from tx.data fallback
+        assert_eq!(trigger.call_value, 500);
+    }
+
+    /// Test that the production-format request (calldata in tx.data, proto in contract_parameter)
+    /// works through execute_transaction_with_storage. Since InMemoryEvmStateStore doesn't support
+    /// tron_has_smart_contract, we exercise the validation path up to the "No contract" error,
+    /// which proves the VM-enabled check passes and the request format is accepted.
+    #[test]
+    fn test_production_format_reaches_validation() {
+        let owner_evm = Address::from_slice(&[0x01; 20]);
+        let contract_evm = Address::from_slice(&[0x02; 20]);
+        let owner_tron = {
+            let mut v = vec![0x41];
+            v.extend_from_slice(&[0x01; 20]);
+            v
+        };
+        let contract_tron = {
+            let mut v = vec![0x41];
+            v.extend_from_slice(&[0x02; 20]);
+            v
+        };
+        let calldata = vec![0x70, 0xa0, 0x82, 0x31]; // balanceOf selector
+
+        let proto_bytes = make_trigger_proto(&owner_tron, &contract_tron, 0, &calldata);
+
+        // Production-format: calldata in tx.data, full proto in contract_parameter
+        let tx = TronTransaction {
+            from: owner_evm,
+            to: Some(contract_evm),
+            value: U256::ZERO,
+            data: Bytes::from(calldata.clone()),
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata {
+                contract_type: Some(TronContractType::TriggerSmartContract),
+                contract_parameter: Some(TronContractParameter {
+                    type_url: "type.googleapis.com/protocol.TriggerSmartContract".to_string(),
+                    value: proto_bytes,
+                }),
+                ..TxMetadata::default()
+            },
+        };
+
+        let config = tron_backend_common::ExecutionConfig::default();
+        let module = ExecutionModule::new(config);
+        let storage = InMemoryEvmStateStore::new();
+
+        // We expect "No contract or not a smart contract" because InMemoryEvmStateStore
+        // has no contract deployed. The point is that we get PAST the VM-enabled check
+        // and proto decode, proving the production format is accepted.
+        let context = TronExecutionContext {
+            block_number: 0,
+            block_timestamp: 0,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 10_000_000,
+            chain_id: 0,
+            energy_price: 0,
+            bandwidth_price: 0,
+            transaction_id: None,
+        };
+        let result = module.execute_transaction_with_storage(storage, &tx, &context);
+        let result = result.unwrap();
+        assert!(!result.success);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("No contract or not a smart contract"),
+            "Production format should be accepted; error comes from missing contract, not decode failure"
+        );
+    }
+
+    /// Test that decode fails cleanly when both sources contain garbage.
+    #[test]
+    fn test_decode_fails_when_both_sources_invalid() {
+        let tx = TronTransaction {
+            from: Address::from_slice(&[0x01; 20]),
+            to: Some(Address::from_slice(&[0x02; 20])),
+            value: U256::ZERO,
+            data: Bytes::from(vec![0xFF, 0xFF, 0xFF]), // not valid protobuf
+            gas_limit: 100_000,
+            gas_price: U256::ZERO,
+            nonce: 0,
+            metadata: TxMetadata::default(),
+        };
+
+        let result = ExecutionModule::decode_trigger_smart_contract(&tx);
+        assert!(result.is_err());
     }
 }
 

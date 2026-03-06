@@ -590,7 +590,18 @@ message TronTransaction {
   bytes from = 1;
   bytes to = 2;
   bytes value = 3;
+  // For VM contracts (TriggerSmartContract, CreateSmartContract):
+  //   - Production (RemoteExecutionSPI): ABI-encoded EVM calldata; the full proto is
+  //     carried in `contract_parameter` (field 17).
+  //   - Conformance fixtures: full serialized proto (e.g., TriggerSmartContract.toByteArray()).
+  // For system contracts: raw contract-specific bytes.
+  // Rust accepts both encodings: it prefers `contract_parameter.value` when present and
+  // the type_url matches, falling back to decoding from `data`.
   bytes data = 4;
+  // KNOWN MISMATCH: Conformance fixtures send feeLimit in SUN; production
+  // RemoteExecutionSPI sends energy units (min(availableEnergy, feeLimit/energyFee)).
+  // Rust currently assumes SUN and divides by ENERGY_FEE, which double-converts
+  // the production value. Needs wire spec lock — see lib.rs energy_limit comment.
   int64 energy_limit = 5;
   int64 energy_price = 6;
   int64 nonce = 7;

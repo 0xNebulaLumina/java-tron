@@ -831,10 +831,11 @@ where
             }
         }
 
-        // TRON TriggerSmartContract: Java sends TriggerSmartContract proto bytes in tx.data.
-        // Extract the call data payload for EVM execution.
+        // TRON TriggerSmartContract: extract the call data payload for EVM execution.
+        // Supports both production format (calldata in tx.data, proto in contract_parameter)
+        // and conformance fixture format (full proto in tx.data).
         if tx.metadata.contract_type == Some(TronContractType::TriggerSmartContract) {
-            match crate::protocol::TriggerSmartContract::decode(tx.data.as_ref()) {
+            match crate::ExecutionModule::decode_trigger_smart_contract(tx) {
                 Ok(trigger_contract) => {
                     self.evm.context.evm.inner.env.tx.data =
                         revm::primitives::Bytes::from(trigger_contract.data);
