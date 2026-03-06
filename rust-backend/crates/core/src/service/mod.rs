@@ -6835,54 +6835,152 @@ impl BackendService {
             readable_owner_address, readable_receiver_address, undelegate_info.balance, undelegate_info.resource
         );
 
-        // 10. Get receiver account (might not exist if contract was destroyed)
+        // 10. Load dynamic properties needed for usage transfer computation
+        let head_slot = (now as i64) / 3000; // Java: chainBaseManager.getHeadSlot()
+        let support_cancel_all_unfreeze_v2 = storage_adapter.support_allow_cancel_all_unfreeze_v2()
+            .map_err(|e| format!("Failed to check supportAllowCancelAllUnfreezeV2: {}", e))?;
+
+        // 11. Get receiver account (might not exist if contract was destroyed)
         let receiver_account_opt = storage_adapter.get_account_proto(&receiver_address)
             .map_err(|e| format!("Failed to get receiver account: {}", e))?;
 
-        // 11. Update receiver if exists (reduce acquired balance)
+        // 12. Modify receiver account: recover usage, compute transferUsage, adjust balances
+        // Java oracle: UnDelegateResourceActuator.execute() receiver section
+        let mut transfer_usage: i64 = 0;
         let mut updated_receiver_opt = None;
         if let Some(receiver_account) = receiver_account_opt.as_ref() {
             let mut updated_receiver = receiver_account.clone();
-            // Java uses `chainBaseManager.getHeadSlot()` (slot = latest_block_header_timestamp / 3000)
-            // for resource usage timestamps.
-            let head_slot = (now as i64) / 3000;
             match undelegate_info.resource {
                 0 => { // BANDWIDTH
-                    // Java: BandwidthProcessor.updateUsageForDelegated(receiverCapsule)
-                    // Minimal parity for fixtures: set window fields and consume time.
-                    if updated_receiver.net_window_size == 0 {
-                        updated_receiver.net_window_size = 28_800_000; // 28800s * 1000ms
-                    }
-                    updated_receiver.net_window_optimized = true;
-                    updated_receiver.latest_consume_time = head_slot;
+                    // Step A: BandwidthProcessor.updateUsageForDelegated(receiverCapsule)
+                    // = increase(ac, BANDWIDTH, oldNetUsage, 0, latestConsumeTime, now)
+                    let (recovered_net_usage, new_window_raw, new_window_optimized) =
+                        Self::resource_increase_with_window(
+                            updated_receiver.net_usage,
+                            0,
+                            updated_receiver.latest_consume_time,
+                            head_slot,
+                            updated_receiver.net_window_size,
+                            updated_receiver.net_window_optimized,
+                            support_cancel_all_unfreeze_v2,
+                        );
+                    // Apply window updates from increase()
+                    updated_receiver.net_usage = recovered_net_usage;
+                    updated_receiver.net_window_size = new_window_raw;
+                    updated_receiver.net_window_optimized = new_window_optimized;
 
-                    let current = Self::get_acquired_delegated_frozen_v2_balance_for_bandwidth(&updated_receiver);
-                    if current < undelegate_info.balance {
-                        // Edge case: contract suicide/re-create
+                    // Step B: Check acquired delegated balance and compute transferUsage
+                    let current_acquired = Self::get_acquired_delegated_frozen_v2_balance_for_bandwidth(&updated_receiver);
+                    if current_acquired < undelegate_info.balance {
+                        // Edge case: TVM contract suicide/re-create
                         Self::set_acquired_delegated_frozen_v2_balance_for_bandwidth(&mut updated_receiver, 0);
+                        // transferUsage stays 0
                     } else {
+                        // Compute transferUsage: proportional usage transfer
+                        let total_net_limit = storage_adapter.get_total_net_limit()
+                            .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+                        let total_net_weight = storage_adapter.get_total_net_weight()
+                            .map_err(|e| format!("Failed to get total net weight: {}", e))?;
+
+                        // Java: (long) ((double) unDelegateBalance / TRX_PRECISION
+                        //              * ((double) totalNetLimit / totalNetWeight))
+                        let un_delegate_max_usage = if total_net_weight == 0 {
+                            0
+                        } else {
+                            (undelegate_info.balance as f64 / TRX_PRECISION as f64
+                                * (total_net_limit as f64 / total_net_weight as f64)) as i64
+                        };
+
+                        // Java: (long) (receiverCapsule.getNetUsage()
+                        //              * ((double) unDelegateBalance / receiverCapsule.getAllFrozenBalanceForBandwidth()))
+                        let all_frozen_bw = Self::get_all_frozen_balance_for_bandwidth(&updated_receiver);
+                        transfer_usage = if all_frozen_bw == 0 {
+                            0
+                        } else {
+                            (recovered_net_usage as f64
+                                * (undelegate_info.balance as f64 / all_frozen_bw as f64)) as i64
+                        };
+                        transfer_usage = std::cmp::min(un_delegate_max_usage, transfer_usage);
+
                         Self::add_acquired_delegated_frozen_v2_balance_for_bandwidth(&mut updated_receiver, -undelegate_info.balance);
                     }
+
+                    // Step C: Reduce receiver usage and set latest consume time
+                    let new_net_usage = updated_receiver.net_usage - transfer_usage;
+                    updated_receiver.net_usage = new_net_usage;
+                    updated_receiver.latest_consume_time = head_slot;
                 }
                 1 => { // ENERGY
-                    // Java: EnergyProcessor.updateUsage(receiverCapsule)
-                    // Minimal parity for fixtures: set window fields and consume time.
+                    // Ensure account_resource exists
                     if updated_receiver.account_resource.is_none() {
                         updated_receiver.account_resource = Some(tron_backend_execution::protocol::account::AccountResource::default());
                     }
+
+                    let (old_energy_usage, old_energy_time, old_energy_window, old_energy_optimized) = {
+                        let ar = updated_receiver.account_resource.as_ref().unwrap();
+                        (ar.energy_usage, ar.latest_consume_time_for_energy, ar.energy_window_size, ar.energy_window_optimized)
+                    };
+
+                    // Step A: EnergyProcessor.updateUsage(receiverCapsule)
+                    // = increase(ac, ENERGY, oldEnergyUsage, 0, latestConsumeTimeForEnergy, now)
+                    let (recovered_energy_usage, new_window_raw, new_window_optimized) =
+                        Self::resource_increase_with_window(
+                            old_energy_usage,
+                            0,
+                            old_energy_time,
+                            head_slot,
+                            old_energy_window,
+                            old_energy_optimized,
+                            support_cancel_all_unfreeze_v2,
+                        );
+                    // Apply window updates from increase()
                     if let Some(ar) = updated_receiver.account_resource.as_mut() {
-                        if ar.energy_window_size == 0 {
-                            ar.energy_window_size = 28_800_000; // 28800s * 1000ms
-                        }
-                        ar.energy_window_optimized = true;
-                        ar.latest_consume_time_for_energy = head_slot;
+                        ar.energy_usage = recovered_energy_usage;
+                        ar.energy_window_size = new_window_raw;
+                        ar.energy_window_optimized = new_window_optimized;
                     }
 
-                    let current = Self::get_acquired_delegated_frozen_v2_balance_for_energy(&updated_receiver);
-                    if current < undelegate_info.balance {
+                    // Step B: Check acquired delegated balance and compute transferUsage
+                    let current_acquired = Self::get_acquired_delegated_frozen_v2_balance_for_energy(&updated_receiver);
+                    if current_acquired < undelegate_info.balance {
+                        // Edge case: TVM contract suicide/re-create
                         Self::set_acquired_delegated_frozen_v2_balance_for_energy(&mut updated_receiver, 0);
+                        // transferUsage stays 0
                     } else {
+                        // Compute transferUsage: proportional usage transfer
+                        let total_energy_limit = storage_adapter.get_total_energy_limit()
+                            .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
+                        let total_energy_weight = storage_adapter.get_total_energy_weight()
+                            .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
+
+                        // Java: (long) ((double) unDelegateBalance / TRX_PRECISION
+                        //              * ((double) totalEnergyCurrentLimit / totalEnergyWeight))
+                        let un_delegate_max_usage = if total_energy_weight == 0 {
+                            0
+                        } else {
+                            (undelegate_info.balance as f64 / TRX_PRECISION as f64
+                                * (total_energy_limit as f64 / total_energy_weight as f64)) as i64
+                        };
+
+                        // Java: (long) (receiverCapsule.getEnergyUsage()
+                        //              * ((double) unDelegateBalance / receiverCapsule.getAllFrozenBalanceForEnergy()))
+                        let all_frozen_energy = Self::get_all_frozen_balance_for_energy(&updated_receiver);
+                        transfer_usage = if all_frozen_energy == 0 {
+                            0
+                        } else {
+                            (recovered_energy_usage as f64
+                                * (undelegate_info.balance as f64 / all_frozen_energy as f64)) as i64
+                        };
+                        transfer_usage = std::cmp::min(un_delegate_max_usage, transfer_usage);
+
                         Self::add_acquired_delegated_frozen_v2_balance_for_energy(&mut updated_receiver, -undelegate_info.balance);
+                    }
+
+                    // Step C: Reduce receiver usage and set latest consume time
+                    if let Some(ar) = updated_receiver.account_resource.as_mut() {
+                        let new_energy_usage = ar.energy_usage - transfer_usage;
+                        ar.energy_usage = new_energy_usage;
+                        ar.latest_consume_time_for_energy = head_slot;
                     }
                 }
                 _ => {}
@@ -6890,7 +6988,13 @@ impl BackendService {
             updated_receiver_opt = Some(updated_receiver);
         }
 
-        // 12. Update DelegatedResourceStore
+        // 13. Persist receiver before reading it for unDelegateIncrease window data
+        if let Some(updated_receiver) = updated_receiver_opt.as_ref() {
+            storage_adapter.put_account_proto(&receiver_address, updated_receiver)
+                .map_err(|e| format!("Failed to persist receiver account: {}", e))?;
+        }
+
+        // 14. Update DelegatedResourceStore (transfer lock delegate to unlock)
         storage_adapter.undelegate_resource(
             &owner,
             &receiver_address,
@@ -6899,7 +7003,7 @@ impl BackendService {
             now as i64,
         ).map_err(|e| format!("Failed to update DelegatedResource: {}", e))?;
 
-        // 13. If both lock/unlock records are gone, remove DelegatedResourceAccountIndex entries.
+        // 15. If both lock/unlock records are gone, remove DelegatedResourceAccountIndex entries.
         let unlock_after = storage_adapter
             .get_delegated_resource(&owner, &receiver_address, false)
             .map_err(|e| format!("Failed to load DelegatedResource: {}", e))?;
@@ -6912,30 +7016,81 @@ impl BackendService {
                 .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex: {}", e))?;
         }
 
-        // 14. Update owner account (add back to frozen, reduce delegated)
+        // 16. Update owner account: frozen balance + unDelegateIncrease (usage/window transfer)
         let mut updated_owner = owner_account.clone();
         match undelegate_info.resource {
             0 => { // BANDWIDTH
                 Self::add_delegated_frozen_v2_balance_for_bandwidth(&mut updated_owner, -undelegate_info.balance);
                 Self::add_frozen_v2_bandwidth(&mut updated_owner, undelegate_info.balance);
+
+                // Java: if (Objects.nonNull(receiverCapsule) && transferUsage > 0)
+                //         processor.unDelegateIncrease(ownerCapsule, receiverCapsule, transferUsage, BANDWIDTH, now)
+                if updated_receiver_opt.is_some() && transfer_usage > 0 {
+                    let receiver_ref = updated_receiver_opt.as_ref().unwrap();
+                    let (new_usage, new_window, new_optimized, new_time) = Self::un_delegate_increase(
+                        updated_owner.net_usage,
+                        updated_owner.latest_consume_time,
+                        updated_owner.net_window_size,
+                        updated_owner.net_window_optimized,
+                        receiver_ref.net_window_size,
+                        receiver_ref.net_window_optimized,
+                        transfer_usage,
+                        head_slot,
+                        support_cancel_all_unfreeze_v2,
+                    );
+                    updated_owner.net_usage = new_usage;
+                    updated_owner.net_window_size = new_window;
+                    updated_owner.net_window_optimized = new_optimized;
+                    updated_owner.latest_consume_time = new_time;
+                }
             }
             1 => { // ENERGY
                 Self::add_delegated_frozen_v2_balance_for_energy(&mut updated_owner, -undelegate_info.balance);
                 Self::add_frozen_v2_energy(&mut updated_owner, undelegate_info.balance);
+
+                // Java: if (Objects.nonNull(receiverCapsule) && transferUsage > 0)
+                //         processor.unDelegateIncrease(ownerCapsule, receiverCapsule, transferUsage, ENERGY, now)
+                if updated_receiver_opt.is_some() && transfer_usage > 0 {
+                    let receiver_ref = updated_receiver_opt.as_ref().unwrap();
+                    let (recv_window, recv_optimized) = receiver_ref.account_resource.as_ref()
+                        .map(|ar| (ar.energy_window_size, ar.energy_window_optimized))
+                        .unwrap_or((0, false));
+                    let (owner_energy_usage, owner_energy_time, owner_energy_window, owner_energy_optimized) =
+                        updated_owner.account_resource.as_ref()
+                            .map(|ar| (ar.energy_usage, ar.latest_consume_time_for_energy, ar.energy_window_size, ar.energy_window_optimized))
+                            .unwrap_or((0, 0, 0, false));
+
+                    let (new_usage, new_window, new_optimized, new_time) = Self::un_delegate_increase(
+                        owner_energy_usage,
+                        owner_energy_time,
+                        owner_energy_window,
+                        owner_energy_optimized,
+                        recv_window,
+                        recv_optimized,
+                        transfer_usage,
+                        head_slot,
+                        support_cancel_all_unfreeze_v2,
+                    );
+
+                    if updated_owner.account_resource.is_none() {
+                        updated_owner.account_resource = Some(tron_backend_execution::protocol::account::AccountResource::default());
+                    }
+                    if let Some(ar) = updated_owner.account_resource.as_mut() {
+                        ar.energy_usage = new_usage;
+                        ar.energy_window_size = new_window;
+                        ar.energy_window_optimized = new_optimized;
+                        ar.latest_consume_time_for_energy = new_time;
+                    }
+                }
             }
             _ => {}
         }
 
-        // 15. Persist accounts
+        // 17. Persist owner account
         storage_adapter.put_account_proto(&owner, &updated_owner)
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
-        if let Some(updated_receiver) = updated_receiver_opt.as_ref() {
-            storage_adapter.put_account_proto(&receiver_address, updated_receiver)
-                .map_err(|e| format!("Failed to persist receiver account: {}", e))?;
-        }
-
-        // 16. Build state changes
+        // 18. Build state changes
         let mut state_changes = vec![
             TronStateChange::AccountChange {
                 address: owner,
@@ -6974,9 +7129,9 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("UnDelegateResource: undelegated {} SUN of resource {} from {} back to {}",
+        debug!("UnDelegateResource: undelegated {} SUN of resource {} from {} back to {}, transferUsage={}",
                undelegate_info.balance, undelegate_info.resource,
-               readable_receiver_address, readable_owner_address);
+               readable_receiver_address, readable_owner_address, transfer_usage);
 
         Ok(TronExecutionResult {
             success: true,
@@ -7473,6 +7628,261 @@ impl BackendService {
             .saturating_sub(acquired_delegated_v2);
 
         std::cmp::max(0, v2_energy_usage)
+    }
+
+    // ========================================================================
+    // Helper methods for UNDELEGATE_RESOURCE_CONTRACT usage transfer parity
+    // Java oracle: UnDelegateResourceActuator.java, ResourceProcessor.java
+    // ========================================================================
+
+    /// Java parity: AccountCapsule.getAllFrozenBalanceForBandwidth()
+    /// = getFrozenBalance() + getAcquiredDelegatedFrozenBalanceForBandwidth()
+    ///   + getFrozenV2BalanceForBandwidth() + getAcquiredDelegatedFrozenV2BalanceForBandwidth()
+    fn get_all_frozen_balance_for_bandwidth(account: &tron_backend_execution::protocol::Account) -> i64 {
+        let frozen_v1 = Self::get_frozen_v1_balance_for_bandwidth(account);
+        let acquired_v1 = account.acquired_delegated_frozen_balance_for_bandwidth;
+        let frozen_v2 = Self::get_frozen_v2_balance_for_bandwidth(account);
+        let acquired_v2 = Self::get_acquired_delegated_frozen_v2_balance_for_bandwidth(account);
+        frozen_v1 + acquired_v1 + frozen_v2 + acquired_v2
+    }
+
+    /// Java parity: AccountCapsule.getAllFrozenBalanceForEnergy()
+    /// = getEnergyFrozenBalance() + getAcquiredDelegatedFrozenBalanceForEnergy()
+    ///   + getFrozenV2BalanceForEnergy() + getAcquiredDelegatedFrozenV2BalanceForEnergy()
+    fn get_all_frozen_balance_for_energy(account: &tron_backend_execution::protocol::Account) -> i64 {
+        let frozen_v1 = Self::get_frozen_v1_balance_for_energy(account);
+        let acquired_v1 = Self::get_acquired_delegated_frozen_v1_balance_for_energy(account);
+        let frozen_v2 = Self::get_frozen_v2_balance_for_energy(account);
+        let acquired_v2 = Self::get_acquired_delegated_frozen_v2_balance_for_energy(account);
+        frozen_v1 + acquired_v1 + frozen_v2 + acquired_v2
+    }
+
+    /// Java parity: AccountCapsule.getWindowSizeV2(resourceCode)
+    /// Returns raw precision-scaled window size (slots * WINDOW_SIZE_PRECISION).
+    /// - raw == 0 => 28800 * 1000 = 28_800_000
+    /// - optimized => raw (already in precision units)
+    /// - not optimized => raw * 1000
+    fn normalize_window_size_v2_raw(raw: i64, optimized: bool) -> i64 {
+        if raw == 0 {
+            return Self::WINDOW_SIZE_SLOTS * Self::WINDOW_SIZE_PRECISION;
+        }
+        if optimized {
+            raw
+        } else {
+            raw * Self::WINDOW_SIZE_PRECISION
+        }
+    }
+
+    /// Java parity: ResourceProcessor.divideCeil(numerator, denominator)
+    fn divide_ceil_resource(numerator: i64, denominator: i64) -> i64 {
+        if denominator == 0 {
+            return 0;
+        }
+        numerator / denominator + if numerator % denominator > 0 { 1 } else { 0 }
+    }
+
+    /// Java parity: ResourceProcessor.increase(AccountCapsule, ResourceCode, lastUsage, usage, lastTime, now)
+    /// V1 path (supportAllowCancelAllUnfreezeV2 == false, supportUnfreezeDelay == true).
+    /// Returns (new_usage, new_window_raw, new_window_optimized).
+    fn resource_increase_v1(
+        last_usage: i64,
+        usage: i64,
+        last_time: i64,
+        now: i64,
+        current_window_raw: i64,
+        current_window_optimized: bool,
+    ) -> (i64, i64, bool) {
+        let old_window_size = Self::normalize_window_size_slots(current_window_raw, current_window_optimized);
+        let default_window = Self::WINDOW_SIZE_SLOTS; // 28800
+        let precision = Self::PRECISION;
+
+        let mut avg_last = Self::divide_ceil_resource(last_usage.saturating_mul(precision), old_window_size);
+        let avg_new = Self::divide_ceil_resource(usage.saturating_mul(precision), default_window);
+
+        if last_time != now {
+            if last_time + old_window_size > now {
+                let delta = now - last_time;
+                let decay = (old_window_size - delta) as f64 / old_window_size as f64;
+                avg_last = (avg_last as f64 * decay).round() as i64;
+            } else {
+                avg_last = 0;
+            }
+        }
+
+        // getUsage(averageLastUsage, oldWindowSize, averageUsage, this.windowSize)
+        let new_usage = (avg_last * old_window_size + avg_new * default_window) / precision;
+
+        // supportUnfreezeDelay is always true for UNDELEGATE context
+        let remain_usage = avg_last * old_window_size / precision;
+        if remain_usage == 0 {
+            return (new_usage, default_window, current_window_optimized);
+        }
+        let remain_window_size = old_window_size - (now - last_time);
+        // getNewWindowSize(remainUsage, remainWindowSize, usage, windowSize, newUsage)
+        let new_window_size = (remain_usage * remain_window_size + usage * default_window) / new_usage;
+
+        (new_usage, new_window_size, current_window_optimized)
+    }
+
+    /// Java parity: ResourceProcessor.increaseV2(AccountCapsule, ResourceCode, lastUsage, usage, lastTime, now)
+    /// Returns (new_usage, new_window_raw, true).
+    fn resource_increase_v2_fn(
+        last_usage: i64,
+        usage: i64,
+        last_time: i64,
+        now: i64,
+        current_window_raw: i64,
+        current_window_optimized: bool,
+    ) -> (i64, i64, bool) {
+        let old_window_size_v2 = Self::normalize_window_size_v2_raw(current_window_raw, current_window_optimized);
+        let old_window_size = Self::normalize_window_size_slots(current_window_raw, current_window_optimized);
+        let default_window = Self::WINDOW_SIZE_SLOTS; // 28800
+        let precision = Self::PRECISION;
+        let wsp = Self::WINDOW_SIZE_PRECISION; // 1000
+
+        let mut avg_last = Self::divide_ceil_resource(last_usage.saturating_mul(precision), old_window_size);
+        let avg_new = Self::divide_ceil_resource(usage.saturating_mul(precision), default_window);
+
+        if last_time != now {
+            if last_time + old_window_size > now {
+                let delta = now - last_time;
+                let decay = (old_window_size - delta) as f64 / old_window_size as f64;
+                avg_last = (avg_last as f64 * decay).round() as i64;
+            } else {
+                avg_last = 0;
+            }
+        }
+
+        let new_usage = (avg_last * old_window_size + avg_new * default_window) / precision;
+        let remain_usage = avg_last * old_window_size / precision;
+
+        if remain_usage == 0 {
+            return (new_usage, default_window * wsp, true);
+        }
+
+        let remain_window_size = old_window_size_v2 - (now - last_time) * wsp;
+        let mut new_window_size = Self::divide_ceil_resource(
+            remain_usage * remain_window_size + usage * default_window * wsp,
+            new_usage,
+        );
+        new_window_size = std::cmp::min(new_window_size, default_window * wsp);
+
+        (new_usage, new_window_size, true)
+    }
+
+    /// Dispatch to increase v1 or v2 based on supportAllowCancelAllUnfreezeV2 flag.
+    /// Returns (new_usage, new_window_raw, new_window_optimized).
+    fn resource_increase_with_window(
+        last_usage: i64,
+        usage: i64,
+        last_time: i64,
+        now: i64,
+        current_window_raw: i64,
+        current_window_optimized: bool,
+        support_cancel_all_unfreeze_v2: bool,
+    ) -> (i64, i64, bool) {
+        if support_cancel_all_unfreeze_v2 {
+            Self::resource_increase_v2_fn(last_usage, usage, last_time, now, current_window_raw, current_window_optimized)
+        } else {
+            Self::resource_increase_v1(last_usage, usage, last_time, now, current_window_raw, current_window_optimized)
+        }
+    }
+
+    /// Java parity: ResourceProcessor.unDelegateIncrease (v1 path, supportAllowCancelAllUnfreezeV2 == false).
+    /// Returns (new_owner_usage, new_owner_window_raw, new_owner_window_optimized, new_owner_latest_time).
+    fn un_delegate_increase_v1(
+        owner_usage: i64,
+        owner_latest_time: i64,
+        owner_window_raw: i64,
+        owner_window_optimized: bool,
+        receiver_window_raw: i64,
+        receiver_window_optimized: bool,
+        transfer_usage: i64,
+        now: i64,
+    ) -> (i64, i64, bool, i64) {
+        // Step 1: Update owner usage to "now" (recovery via increase v1)
+        let (decayed_owner_usage, new_owner_window_raw, new_owner_optimized) =
+            Self::resource_increase_v1(owner_usage, 0, owner_latest_time, now, owner_window_raw, owner_window_optimized);
+
+        // Step 2: Read updated window sizes (after increase modified them)
+        let remain_owner_window = std::cmp::max(0, Self::normalize_window_size_slots(new_owner_window_raw, new_owner_optimized));
+        let remain_receiver_window = std::cmp::max(0, Self::normalize_window_size_slots(receiver_window_raw, receiver_window_optimized));
+
+        let new_owner_usage = decayed_owner_usage + transfer_usage;
+
+        if new_owner_usage == 0 {
+            return (0, Self::WINDOW_SIZE_SLOTS, new_owner_optimized, now);
+        }
+
+        // getNewWindowSize(ownerUsage, remainOwnerWindowSize, transferUsage, remainReceiverWindowSize, newOwnerUsage)
+        let new_window = (decayed_owner_usage * remain_owner_window + transfer_usage * remain_receiver_window) / new_owner_usage;
+
+        (new_owner_usage, new_window, new_owner_optimized, now)
+    }
+
+    /// Java parity: ResourceProcessor.unDelegateIncreaseV2.
+    /// Returns (new_owner_usage, new_owner_window_raw, true, new_owner_latest_time).
+    fn un_delegate_increase_v2_fn(
+        owner_usage: i64,
+        owner_latest_time: i64,
+        owner_window_raw: i64,
+        owner_window_optimized: bool,
+        receiver_window_raw: i64,
+        receiver_window_optimized: bool,
+        transfer_usage: i64,
+        now: i64,
+    ) -> (i64, i64, bool, i64) {
+        let wsp = Self::WINDOW_SIZE_PRECISION;
+        let default_window = Self::WINDOW_SIZE_SLOTS;
+
+        // Step 1: Update owner usage to "now" (recovery via increaseV2)
+        let (decayed_owner_usage, new_owner_window_raw, _) =
+            Self::resource_increase_v2_fn(owner_usage, 0, owner_latest_time, now, owner_window_raw, owner_window_optimized);
+
+        let new_owner_usage = decayed_owner_usage + transfer_usage;
+
+        if new_owner_usage == 0 {
+            return (0, default_window * wsp, true, now);
+        }
+
+        // Read updated V2 window sizes (increaseV2 always sets optimized=true)
+        let remain_owner_window_v2 = std::cmp::max(0, Self::normalize_window_size_v2_raw(new_owner_window_raw, true));
+        let remain_receiver_window_v2 = std::cmp::max(0, Self::normalize_window_size_v2_raw(receiver_window_raw, receiver_window_optimized));
+
+        // divideCeil(ownerUsage * remainOwnerWindowSizeV2 + transferUsage * remainReceiverWindowSizeV2, newOwnerUsage)
+        let mut new_window = Self::divide_ceil_resource(
+            decayed_owner_usage * remain_owner_window_v2 + transfer_usage * remain_receiver_window_v2,
+            new_owner_usage,
+        );
+        new_window = std::cmp::min(new_window, default_window * wsp);
+
+        (new_owner_usage, new_window, true, now)
+    }
+
+    /// Dispatch unDelegateIncrease to v1 or v2 based on supportAllowCancelAllUnfreezeV2 flag.
+    /// Returns (new_owner_usage, new_owner_window_raw, new_owner_window_optimized, new_owner_latest_time).
+    fn un_delegate_increase(
+        owner_usage: i64,
+        owner_latest_time: i64,
+        owner_window_raw: i64,
+        owner_window_optimized: bool,
+        receiver_window_raw: i64,
+        receiver_window_optimized: bool,
+        transfer_usage: i64,
+        now: i64,
+        support_cancel_all_unfreeze_v2: bool,
+    ) -> (i64, i64, bool, i64) {
+        if support_cancel_all_unfreeze_v2 {
+            Self::un_delegate_increase_v2_fn(
+                owner_usage, owner_latest_time, owner_window_raw, owner_window_optimized,
+                receiver_window_raw, receiver_window_optimized, transfer_usage, now,
+            )
+        } else {
+            Self::un_delegate_increase_v1(
+                owner_usage, owner_latest_time, owner_window_raw, owner_window_optimized,
+                receiver_window_raw, receiver_window_optimized, transfer_usage, now,
+            )
+        }
     }
 
     /// Compute available FreezeV2 balance for bandwidth delegation.
