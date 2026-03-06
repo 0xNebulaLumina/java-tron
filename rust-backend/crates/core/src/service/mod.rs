@@ -8247,13 +8247,36 @@ impl BackendService {
     /// Unfreezes frozen TRC-10 supply and returns it to the asset issuer's balance
     ///
     /// Java oracle: UnfreezeAssetActuator.java
+    ///
+    /// Validation order (matches Java):
+    ///   1. Any.is(UnfreezeAssetContract.class) type_url check
+    ///   2. DecodeUtil.addressValid(ownerAddress)
+    ///   3. Account exists
+    ///   4. frozenSupplyCount > 0
+    ///   5. assetIssuedName / assetIssuedID non-empty
+    ///   6. allowedUnfreezeCount > 0 (time gate)
+    ///
+    /// Note on overflow: Java uses unchecked `+=` for unfreezeAsset summation.
+    /// Rust intentionally uses checked_add for safety; divergence is documented
+    /// but irrelevant on valid chains (sum of frozen balances fits in i64).
     fn execute_unfreeze_asset_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        // Validation parity: DecodeUtil.addressValid(ownerAddress)
+        // 1. Validate contract parameter type (Any.is) when raw Any is available
+        //    Java: any.is(UnfreezeAssetContract.class)
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.UnfreezeAssetContract") {
+                return Err(
+                    "contract type error, expected type [UnfreezeAssetContract], real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        // 2. Validation parity: DecodeUtil.addressValid(ownerAddress)
         let expected_prefix = storage_adapter.address_prefix();
         let owner_raw = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
         if owner_raw.len() != 21 || owner_raw[0] != expected_prefix {
@@ -8264,18 +8287,18 @@ impl BackendService {
 
         debug!("UnfreezeAsset: owner={}", readable_owner_address);
 
-        // 1. Validate owner account exists
+        // 3. Validate owner account exists
         let account = storage_adapter
             .get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .ok_or_else(|| format!("Account[{}] does not exist", readable_owner_address))?;
 
-        // 2. Validate account has frozen supply
+        // 4. Validate account has frozen supply
         if account.frozen_supply.is_empty() {
             return Err("no frozen supply balance".to_string());
         }
 
-        // 3. Get asset issued info
+        // 5. Get asset issued info (name or id must be non-empty)
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
 
@@ -8290,24 +8313,11 @@ impl BackendService {
             }
             account.asset_issued_id.clone()
         };
-        let asset_issue = storage_adapter
-            .get_asset_issue(&asset_key, allow_same_token_name)
-            .map_err(|e| format!("Failed to get asset issue: {}", e))?
-            .ok_or("No asset!".to_string())?;
-        let token_id_str = if !asset_issue.id.is_empty() {
-            asset_issue.id
-        } else {
-            String::from_utf8_lossy(&asset_key).to_string()
-        };
-        if token_id_str.is_empty() {
-            return Err("token_id cannot be empty".to_string());
-        }
 
-        // 4. Get current timestamp
+        // 6. Time gate: at least one frozen entry must have expired
         let now = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get timestamp: {}", e))?;
 
-        // 5. Calculate how many entries have expired
         let expired_count = account.frozen_supply.iter()
             .filter(|frozen| frozen.expire_time <= now as i64)
             .count();
@@ -8315,13 +8325,33 @@ impl BackendService {
             return Err("It's not time to unfreeze asset supply".to_string());
         }
 
-        // 6. Process frozen supply - separate expired from non-expired
+        // --- Execution phase (matches UnfreezeAssetActuator.execute) ---
+
+        // Resolve token_id_str for addAssetAmountV2:
+        //   - allowSameTokenName == 0: need AssetIssue lookup to map name → tokenId
+        //   - allowSameTokenName == 1: key IS the tokenId, no lookup needed (Java parity)
+        let token_id_str = if allow_same_token_name == 0 {
+            let asset_issue = storage_adapter
+                .get_asset_issue(&asset_key, allow_same_token_name)
+                .map_err(|e| format!("Failed to get asset issue: {}", e))?
+                .ok_or("No asset!".to_string())?;
+            if !asset_issue.id.is_empty() {
+                asset_issue.id
+            } else {
+                String::from_utf8_lossy(&asset_key).to_string()
+            }
+        } else {
+            // allowSameTokenName == 1: key is already the tokenId string
+            String::from_utf8_lossy(&asset_key).to_string()
+        };
+
+        // Process frozen supply - separate expired from non-expired
         let mut unfreeze_asset: i64 = 0;
         let mut remaining_frozen = Vec::new();
 
         for frozen in account.frozen_supply.iter() {
             if frozen.expire_time <= now as i64 {
-                // Expired - add to unfreeze amount
+                // Expired - add to unfreeze amount (checked_add for safety)
                 unfreeze_asset = unfreeze_asset.checked_add(frozen.frozen_balance)
                     .ok_or("Overflow calculating unfreeze amount")?;
             } else {
@@ -8330,7 +8360,7 @@ impl BackendService {
             }
         }
 
-        // 7. Update account
+        // Update account
         let mut updated_account = account.clone();
         updated_account.frozen_supply = remaining_frozen;
 
@@ -8343,11 +8373,11 @@ impl BackendService {
             allow_same_token_name,
         )?;
 
-        // 8. Persist updated account
+        // Persist updated account
         storage_adapter.put_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to persist account: {}", e))?;
 
-        // 9. Build state change for CSV parity (balance unchanged, but for consistency)
+        // Build state change for CSV parity (balance unchanged, but for consistency)
         let old_account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(account.balance as u64),
             nonce: 0,
