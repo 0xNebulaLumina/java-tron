@@ -26,14 +26,19 @@ Goal: match Java's early failure behavior (`any.is(UnfreezeAssetContract.class)`
   - [x] wrong `type_url` → contract-type error (and ensure it happens before address/account errors)
   - [x] correct `type_url` with googleapis prefix passes type check
 
-## 2) Align owner-address source with Java (or explicitly validate consistency)
+## 2) Parse owner_address from contract bytes (Java parity with `any.unpack()`)
 
-Goal: remove the "owner address comes from different place" risk.
+Goal: match Java's behavior of extracting `ownerAddress` from the unpacked protobuf.
 
-- [x] Decide:
-  - [x] **Option C (status quo)**: document the assumption that `from_raw` is always derived from `owner_address`.
-  - Decision: Consistent with all other contract implementations in the codebase (TransferContract, WitnessCreateContract, etc.) which all use `from_raw`.
-- [x] No regression tests needed — status quo matches existing codebase pattern.
+- [x] Parse `UnfreezeAssetContract` bytes from `contract_parameter.value` (falling back to `transaction.data`)
+- [x] Extract `owner_address` (field 1) via `parse_unfreeze_asset_owner_address()`
+- [x] Use parsed owner_address for validation; fall back to `from_raw` only if proto field is empty
+- [x] Add unit tests:
+  - [x] `test_parse_unfreeze_asset_owner_address` — verifies proto parsing
+  - [x] `test_parse_unfreeze_asset_owner_address_empty` — empty data returns empty vec
+  - [x] `test_unfreeze_asset_owner_from_proto_preferred_over_from_raw` — proto address takes precedence
+  - [x] `test_unfreeze_asset_invalid_address_wrong_length_in_proto` — proto address validated
+  - [x] `test_unfreeze_asset_invalid_address_wrong_prefix_in_proto` — proto prefix validated
 
 ## 3) Match Java's `AssetIssueStore` dependency and error ordering
 
@@ -49,37 +54,35 @@ Goal: avoid stricter-than-Java failures and align error precedence.
 - [x] Restrict asset-issue lookup to where Java actually requires it:
   - [x] If `ALLOW_SAME_TOKEN_NAME == 0`: lookup is required to map name → tokenId (parity with `addAssetAmountV2`)
   - [x] If `ALLOW_SAME_TOKEN_NAME == 1`: avoid mandatory lookup; use `assetIssuedID` bytes directly as tokenId string
+- [x] In legacy mode, use `asset_issue.id` directly (no fallback to asset_key) — matches Java's `assetIssueCapsule.getId()`
 - [x] Add tests for missing asset-issue entry:
   - [x] `test_unfreeze_asset_no_asset_issue_lookup_when_allow_same_token_name_1` — succeeds without AssetIssue record
 
-## 4) Decide overflow parity for `unfreezeAsset` summation
+## 4) Match overflow parity for `unfreezeAsset` summation
 
-Goal: either match Java's unchecked `long` sum or document Rust as stricter.
+Goal: match Java's exact overflow semantics.
 
-- [x] Decide policy:
-  - [x] **Strict safety**: keep `checked_add` and document divergence
-  - Decision: Rust uses `checked_add` for safety. Java uses unchecked `+=`.
-    Divergence is irrelevant on valid chains (sum of frozen balances fits in `i64`).
-    Documented in code comments.
-- [x] Overflow behavior is documented via code comment in the function header.
+- [x] Use `wrapping_add` for frozen-balance summation (matches Java's unchecked `+=`)
+- [x] Overflow is caught later in `add_asset_amount_v2` via `checked_add` (matches Java's `addExact` → `ArithmeticException`)
+- [x] Add test: `test_unfreeze_asset_wrapping_add_for_summation` — verifies wrapping behavior
 
-## 5) Make UnfreezeAsset state changes applyable in Java compute-only mode
+## 5) Implement `importAsset` behavior for ALLOW_ASSET_OPTIMIZATION
+
+Goal: match Java's `AccountCapsule.importAsset(key)` called inside `addAssetAmountV2`.
+
+- [x] Call `import_asset_if_optimized()` before `add_asset_amount_v2` to load asset balances from `AccountAssetStore` when `ALLOW_ASSET_OPTIMIZATION == 1 && ALLOW_SAME_TOKEN_NAME == 1`
+- [x] Follows the same pattern as ExchangeCreate, ExchangeInject, and other contracts that already call this
+
+## 6) Make UnfreezeAsset state changes applyable in Java compute-only mode
 
 Goal: prevent Java DB drift when remote execution is enabled with `WriteMode.COMPUTE_ONLY`.
 
-- [x] Decide how Java should learn about:
-  - [x] `Account.frozenSupply` list mutation
-  - [x] issuer TRC-10 balance credit
-- [x] Options:
-  - [x] **Option C**: require `WriteMode.PERSISTED` + `touched_keys` for this contract and gate it otherwise
-  - Decision: UnfreezeAsset changes are persisted in Rust's account proto. Java mirrors via
-    touched_keys synchronization in PERSISTED mode, consistent with all other system contracts
-    in the current codebase. No new TRC-10 change type needed at this time.
+- [x] Decision: `WriteMode.PERSISTED` + `touched_keys` for this contract, consistent with all other system contracts. No new TRC-10 change type needed at this time.
 
-## 6) Verification checklist
+## 7) Verification checklist
 
 - [x] Rust:
-  - [x] `cd rust-backend && cargo test --workspace` — 16 unfreeze_asset tests pass; 334 total pass (3 pre-existing vote_witness failures)
+  - [x] `cd rust-backend && cargo test --workspace` — 20 unfreeze_asset tests pass; 338 total pass (3 pre-existing vote_witness failures)
   - [x] `./scripts/ci/run_fixture_conformance.sh --rust-only` — all conformance tests pass
 - [ ] Java:
   - [ ] `./gradlew :framework:test --tests "org.tron.core.actuator.UnfreezeAssetActuatorTest"` (if such a test exists)

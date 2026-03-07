@@ -8250,15 +8250,16 @@ impl BackendService {
     ///
     /// Validation order (matches Java):
     ///   1. Any.is(UnfreezeAssetContract.class) type_url check
-    ///   2. DecodeUtil.addressValid(ownerAddress)
+    ///   2. DecodeUtil.addressValid(ownerAddress)  — address parsed from contract bytes
     ///   3. Account exists
     ///   4. frozenSupplyCount > 0
     ///   5. assetIssuedName / assetIssuedID non-empty
     ///   6. allowedUnfreezeCount > 0 (time gate)
     ///
-    /// Note on overflow: Java uses unchecked `+=` for unfreezeAsset summation.
-    /// Rust intentionally uses checked_add for safety; divergence is documented
-    /// but irrelevant on valid chains (sum of frozen balances fits in i64).
+    /// Overflow parity: Java uses unchecked `+=` for the frozen-balance summation,
+    /// then `addExact()` (throws ArithmeticException) inside `addAssetAmountV2`.
+    /// Rust matches this: `wrapping_add` for the summation, `checked_add` in
+    /// `add_asset_amount_v2` (→ "long overflow").
     fn execute_unfreeze_asset_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
@@ -8276,14 +8277,31 @@ impl BackendService {
             }
         }
 
-        // 2. Validation parity: DecodeUtil.addressValid(ownerAddress)
+        // 2. Parse owner_address from contract bytes (Java: any.unpack(UnfreezeAssetContract.class))
+        //    UnfreezeAssetContract proto: bytes owner_address = 1;
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+
+        let owner_tron = Self::parse_unfreeze_asset_owner_address(contract_bytes)?;
+
+        // Use parsed owner_address for validation; fall back to from_raw only if proto is empty
+        let owner_address_bytes = if !owner_tron.is_empty() {
+            owner_tron.as_slice()
+        } else {
+            transaction.metadata.from_raw.as_deref().unwrap_or(&[])
+        };
+
+        // Validation parity: DecodeUtil.addressValid(ownerAddress)
         let expected_prefix = storage_adapter.address_prefix();
-        let owner_raw = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if owner_raw.len() != 21 || owner_raw[0] != expected_prefix {
+        if owner_address_bytes.len() != 21 || owner_address_bytes[0] != expected_prefix {
             return Err("Invalid address".to_string());
         }
-        let owner = revm_primitives::Address::from_slice(&owner_raw[1..]);
-        let readable_owner_address = hex::encode(owner_raw);
+        let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
+        let readable_owner_address = hex::encode(owner_address_bytes);
 
         debug!("UnfreezeAsset: owner={}", readable_owner_address);
 
@@ -8319,7 +8337,7 @@ impl BackendService {
             .map_err(|e| format!("Failed to get timestamp: {}", e))?;
 
         let expired_count = account.frozen_supply.iter()
-            .filter(|frozen| frozen.expire_time <= now as i64)
+            .filter(|frozen| frozen.expire_time <= now)
             .count();
         if expired_count == 0 {
             return Err("It's not time to unfreeze asset supply".to_string());
@@ -8329,33 +8347,32 @@ impl BackendService {
 
         // Resolve token_id_str for addAssetAmountV2:
         //   - allowSameTokenName == 0: need AssetIssue lookup to map name → tokenId
+        //     Java: AssetIssueCapsule.getId() used directly (no fallback)
         //   - allowSameTokenName == 1: key IS the tokenId, no lookup needed (Java parity)
         let token_id_str = if allow_same_token_name == 0 {
             let asset_issue = storage_adapter
                 .get_asset_issue(&asset_key, allow_same_token_name)
                 .map_err(|e| format!("Failed to get asset issue: {}", e))?
                 .ok_or("No asset!".to_string())?;
-            if !asset_issue.id.is_empty() {
-                asset_issue.id
-            } else {
-                String::from_utf8_lossy(&asset_key).to_string()
-            }
+            // Java: String tokenID = assetIssueCapsule.getId(); — used as-is
+            asset_issue.id.clone()
         } else {
             // allowSameTokenName == 1: key is already the tokenId string
             String::from_utf8_lossy(&asset_key).to_string()
         };
 
-        // Process frozen supply - separate expired from non-expired
+        // Process frozen supply — separate expired from non-expired.
+        // Java: unfreezeAsset += frozenBalance  (unchecked long +=, wrapping on overflow)
+        // Overflow is caught later by addExact() in addAssetAmountV2.
         let mut unfreeze_asset: i64 = 0;
         let mut remaining_frozen = Vec::new();
 
         for frozen in account.frozen_supply.iter() {
-            if frozen.expire_time <= now as i64 {
-                // Expired - add to unfreeze amount (checked_add for safety)
-                unfreeze_asset = unfreeze_asset.checked_add(frozen.frozen_balance)
-                    .ok_or("Overflow calculating unfreeze amount")?;
+            if frozen.expire_time <= now {
+                // Expired — wrapping_add matches Java's unchecked `+=`
+                unfreeze_asset = unfreeze_asset.wrapping_add(frozen.frozen_balance);
             } else {
-                // Not expired - keep in frozen list
+                // Not expired — keep in frozen list
                 remaining_frozen.push(frozen.clone());
             }
         }
@@ -8364,7 +8381,17 @@ impl BackendService {
         let mut updated_account = account.clone();
         updated_account.frozen_supply = remaining_frozen;
 
+        // Import asset from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+        // (mirrors Java's AccountCapsule.importAsset(key) called inside addAssetAmountV2)
+        Self::import_asset_if_optimized(
+            storage_adapter,
+            &mut updated_account,
+            &asset_key,
+            &owner,
+        )?;
+
         // Add unfrozen assets back to balance
+        // (Java: addAssetAmountV2 uses addExact → ArithmeticException on overflow)
         Self::add_asset_amount_v2(
             &mut updated_account,
             &asset_key,
@@ -8418,6 +8445,57 @@ impl BackendService {
             tron_transaction_result: None,
             contract_address: None,
         })
+    }
+
+    /// Parse `owner_address` (field 1, length-delimited) from a serialized
+    /// `UnfreezeAssetContract` protobuf message.
+    ///
+    /// Proto definition (asset_issue_contract.proto):
+    ///   bytes owner_address = 1;
+    fn parse_unfreeze_asset_owner_address(data: &[u8]) -> Result<Vec<u8>, String> {
+        let mut owner_address: Vec<u8> = Vec::new();
+        let mut pos = 0;
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x07;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // bytes owner_address = 1;
+                    let (length, len_bytes) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += len_bytes;
+                    let length = length as usize;
+                    if pos + length > data.len() {
+                        return Err("owner_address extends beyond data".to_string());
+                    }
+                    owner_address = data[pos..pos + length].to_vec();
+                    pos += length;
+                }
+                (_, 0) => {
+                    // varint — skip
+                    let (_, vlen) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to skip varint: {}", e))?;
+                    pos += vlen;
+                }
+                (_, 2) => {
+                    // length-delimited — skip
+                    let (length, len_bytes) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to skip length-delimited: {}", e))?;
+                    pos += len_bytes + length as usize;
+                }
+                (_, 1) => { pos += 8; } // 64-bit — skip
+                (_, 5) => { pos += 4; } // 32-bit — skip
+                _ => {
+                    return Err(format!("Unknown wire type {} at field {}", wire_type, field_number));
+                }
+            }
+        }
+        Ok(owner_address)
     }
 
     /// Execute UPDATE_ASSET_CONTRACT (type 15)
