@@ -257,6 +257,7 @@ impl ConformanceRunner {
                 withdraw_balance_enabled: true,
                 account_create_enabled: true,
                 trc10_enabled: true,
+                delegation_reward_enabled: true,
                 ..Default::default()
             },
             ..Default::default()
@@ -1039,6 +1040,8 @@ impl ConformanceRunner {
                             m.expected.len(),
                             m.actual.len()
                         );
+                        println!("      expected: {}", hex::encode(&m.expected));
+                        println!("      actual:   {}", hex::encode(&m.actual));
                     }
                 }
             }

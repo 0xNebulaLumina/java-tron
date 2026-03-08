@@ -468,6 +468,16 @@ impl EngineBackedEvmStateStore {
         })
     }
 
+    /// Get the raw Account protobuf bytes for an address.
+    ///
+    /// Returns the raw serialized bytes without decoding, useful when
+    /// the caller needs to store the exact bytes elsewhere (e.g.,
+    /// delegation store's accountVote snapshot).
+    pub fn get_account_raw_bytes(&self, address: &Address) -> Result<Option<Vec<u8>>> {
+        let key = self.account_key(address);
+        self.buffered_get(self.account_database(), &key)
+    }
+
     /// Get the full Account proto for an address.
     ///
     /// This returns the complete ProtoAccount with all fields, useful for
@@ -3147,6 +3157,29 @@ impl EngineBackedEvmStateStore {
             address, cycle, snapshot.votes.len()
         );
         self.buffered_put(self.delegation_database(), key, data)?;
+        Ok(())
+    }
+
+    /// Set account vote snapshot using raw Account protobuf bytes.
+    ///
+    /// Java's DelegationStore.setAccountVote() stores accountCapsule.getData(),
+    /// which is the complete Account protobuf. This method stores raw bytes
+    /// directly to match that behavior exactly.
+    pub fn set_delegation_account_vote_raw(
+        &self,
+        cycle: i64,
+        address: &Address,
+        raw_account_bytes: Vec<u8>,
+    ) -> Result<()> {
+        use crate::delegation::delegation_account_vote_key;
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_account_vote_key(cycle, &tron_addr);
+
+        tracing::debug!(
+            "Setting delegation account_vote (raw) for {:?} cycle {}: {} bytes",
+            address, cycle, raw_account_bytes.len()
+        );
+        self.buffered_put(self.delegation_database(), key, raw_account_bytes)?;
         Ok(())
     }
 

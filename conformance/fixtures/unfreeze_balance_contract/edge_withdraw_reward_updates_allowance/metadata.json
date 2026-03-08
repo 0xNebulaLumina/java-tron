@@ -1,0 +1,30 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "edge_withdraw_reward_updates_allowance",
+  "caseCategory": "edge",
+  "description": "Unfreeze with CHANGE_DELEGATION=1 triggers withdrawReward, adding delegation reward to account.allowance",
+  "generatedAt": "2026-03-08T14:03:51.300Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties",
+    "delegation"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76315f77725f6f6b000000",
+  "dynamicProperties": {
+    "ALLOW_NEW_REWARD": 1,
+    "CHANGE_DELEGATION": 1,
+    "begin_cycle": 5,
+    "current_cycle": 10,
+    "end_cycle": 6,
+    "owner_vote_count": 100,
+    "witness_reward_cycle_5": 1000000000,
+    "witness_vote_count_cycle_5": 1000
+  },
+  "notes": []
+}

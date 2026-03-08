@@ -17,6 +17,7 @@ import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.DelegatedResourceAccountIndexCapsule;
 import org.tron.core.capsule.DelegatedResourceCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.store.DelegationStore;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.core.config.args.Args;
 import org.tron.protos.Protocol;
@@ -2077,6 +2078,260 @@ public class FreezeV1FixtureGeneratorTest extends BaseTest {
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("UnfreezeV1 del not expired: validationError={}", result.getValidationError());
 
+    disableDelegationMode();
+  }
+
+  // ==========================================================================
+  // Phase 5: UnfreezeBalanceContract (12) - Parity Feature Fixtures
+  //          (withdrawReward, weight clamping, delegate optimization)
+  // ==========================================================================
+
+  /**
+   * Fixture: unfreeze with CHANGE_DELEGATION=1 triggers withdrawReward(),
+   * which should add delegation reward to account.allowance.
+   *
+   * <p>Setup: owner has votes for a witness, delegation store has reward data
+   * for the owner's voting cycle, so withdrawReward produces a non-zero reward.
+   */
+  @Test
+  public void generateUnfreezeBalanceV1_edgeWithdrawRewardUpdatesAllowance() throws Exception {
+    // Enable delegation for withdrawReward path
+    enableDelegationMode();
+    dbManager.getDynamicPropertiesStore().saveAllowNewReward(1);
+
+    String unfreezeOwner = generateAddress("unfreeze_v1_wr_ok");
+    String witnessAddr = WITNESS_ADDRESS;
+
+    // Create owner account with expired frozen balance AND votes
+    AccountCapsule ownerAccount = putAccount(dbManager, unfreezeOwner, INITIAL_BALANCE,
+        "unfreeze_wr_owner");
+    long now = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    Protocol.Account.Builder builder = ownerAccount.getInstance().toBuilder();
+    builder.addFrozen(Frozen.newBuilder()
+        .setFrozenBalance(100 * ONE_TRX)
+        .setExpireTime(now - 1000) // Expired
+        .build());
+    // Add a vote for the witness
+    builder.addVotes(Protocol.Vote.newBuilder()
+        .setVoteAddress(ByteString.copyFrom(ByteArray.fromHexString(witnessAddr)))
+        .setVoteCount(100)
+        .build());
+    ownerAccount = new AccountCapsule(builder.build());
+    dbManager.getAccountStore().put(ownerAccount.getAddress().toByteArray(), ownerAccount);
+
+    // Set up delegation store: cycles and rewards
+    byte[] ownerBytes = ByteArray.fromHexString(unfreezeOwner);
+    byte[] witnessBytes = ByteArray.fromHexString(witnessAddr);
+    DelegationStore delegationStore = dbManager.getDelegationStore();
+
+    // Current cycle = 10, begin = 5, end = 6
+    dbManager.getDynamicPropertiesStore().saveCurrentCycleNumber(10);
+    delegationStore.setBeginCycle(ownerBytes, 5);
+    delegationStore.setEndCycle(ownerBytes, 6);
+
+    // Seed accountVote snapshot at cycle 5 (the "latest cycle" path in withdrawReward)
+    delegationStore.setAccountVote(5, ownerBytes, ownerAccount);
+
+    // Seed reward and vote count for cycle 5 so computeReward returns non-zero
+    long witnessReward = 1000 * ONE_TRX; // Total reward for the witness in cycle 5
+    long witnessVoteCount = 1000; // Total votes for the witness in cycle 5
+    delegationStore.addReward(5, witnessBytes, witnessReward);
+    delegationStore.setWitnessVote(5, witnessBytes, witnessVoteCount);
+
+    // Set NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE to Long.MAX_VALUE (use old algorithm)
+    // to use the simple per-cycle reward calculation
+    dbManager.getDynamicPropertiesStore().put(
+        "NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE".getBytes(),
+        new org.tron.core.capsule.BytesCapsule(ByteArray.fromLong(Long.MAX_VALUE)));
+
+    // Also set total net weight > 0 for weight delta
+    dbManager.getDynamicPropertiesStore().saveTotalNetWeight(100);
+
+    UnfreezeBalanceContract contract = UnfreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerBytes))
+        .setResource(ResourceCode.BANDWIDTH)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeBalanceContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_BALANCE_CONTRACT", 12)
+        .caseName("edge_withdraw_reward_updates_allowance")
+        .caseCategory("edge")
+        .description("Unfreeze with CHANGE_DELEGATION=1 triggers withdrawReward, "
+            + "adding delegation reward to account.allowance")
+        .database("account")
+        .database("votes")
+        .database("dynamic-properties")
+        .database("delegation")
+        .ownerAddress(unfreezeOwner)
+        .dynamicProperty("CHANGE_DELEGATION", 1)
+        .dynamicProperty("ALLOW_NEW_REWARD", 1)
+        .dynamicProperty("current_cycle", 10)
+        .dynamicProperty("begin_cycle", 5)
+        .dynamicProperty("end_cycle", 6)
+        .dynamicProperty("witness_reward_cycle_5", witnessReward)
+        .dynamicProperty("witness_vote_count_cycle_5", witnessVoteCount)
+        .dynamicProperty("owner_vote_count", 100)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeV1 withdrawReward: success={}", result.isSuccess());
+
+    // Restore
+    dbManager.getDynamicPropertiesStore().saveAllowNewReward(0);
+    disableDelegationMode();
+  }
+
+  /**
+   * Fixture: unfreeze with ALLOW_NEW_REWARD=1 exercises weight clamping.
+   *
+   * <p>When total weight would go negative after subtracting the unfrozen amount,
+   * Java clamps to max(0, newValue). This fixture sets totalNetWeight to a small
+   * value so that the unfreeze amount exceeds it.
+   */
+  @Test
+  public void generateUnfreezeBalanceV1_edgeWeightClampingWithAllowNewReward() throws Exception {
+    dbManager.getDynamicPropertiesStore().saveAllowNewReward(1);
+
+    String unfreezeOwner = generateAddress("unfreeze_v1_wclamp");
+
+    // Create account with expired frozen balance larger than total net weight
+    AccountCapsule ownerAccount = putAccount(dbManager, unfreezeOwner, INITIAL_BALANCE,
+        "unfreeze_wclamp_owner");
+    long now = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    long freezeAmount = 200 * ONE_TRX;
+
+    Protocol.Account.Builder builder = ownerAccount.getInstance().toBuilder();
+    builder.addFrozen(Frozen.newBuilder()
+        .setFrozenBalance(freezeAmount)
+        .setExpireTime(now - 1000) // Expired
+        .build());
+    ownerAccount = new AccountCapsule(builder.build());
+    dbManager.getAccountStore().put(ownerAccount.getAddress().toByteArray(), ownerAccount);
+
+    // Set totalNetWeight to a small value (less than freezeAmount / ONE_TRX)
+    // so after subtracting the unfreeze weight delta, it would go negative
+    // and should be clamped to 0
+    dbManager.getDynamicPropertiesStore().saveTotalNetWeight(50); // 50 < 200
+
+    UnfreezeBalanceContract contract = UnfreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(unfreezeOwner)))
+        .setResource(ResourceCode.BANDWIDTH)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeBalanceContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_BALANCE_CONTRACT", 12)
+        .caseName("edge_weight_clamping_with_allow_new_reward")
+        .caseCategory("edge")
+        .description("Unfreeze with ALLOW_NEW_REWARD=1 clamps totalNetWeight to max(0, newValue) "
+            + "when unfreeze amount exceeds current weight")
+        .database("account")
+        .database("votes")
+        .database("dynamic-properties")
+        .ownerAddress(unfreezeOwner)
+        .dynamicProperty("ALLOW_NEW_REWARD", 1)
+        .dynamicProperty("total_net_weight_before", 50)
+        .dynamicProperty("freeze_amount", freezeAmount)
+        .dynamicProperty("expected_total_net_weight_after", 0) // clamped to 0
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeV1 weight clamping: success={}", result.isSuccess());
+
+    // Restore
+    dbManager.getDynamicPropertiesStore().saveAllowNewReward(0);
+    dbManager.getDynamicPropertiesStore().saveTotalNetWeight(0);
+  }
+
+  /**
+   * Fixture: delegated unfreeze with ALLOW_DELEGATE_OPTIMIZATION=1.
+   *
+   * <p>When this flag is enabled, Java calls convert(owner) + convert(receiver)
+   * to migrate legacy blob-style DelegatedResourceAccountIndex entries to
+   * prefixed keys, then calls unDelegate(owner, receiver) to delete the
+   * prefixed key entries.
+   */
+  @Test
+  public void generateUnfreezeBalanceV1_edgeDelegatedUnfreezeWithOptimization() throws Exception {
+    enableDelegationMode();
+    dbManager.getDynamicPropertiesStore().saveAllowDelegateOptimization(1);
+
+    String unfreezeOwner = generateAddress("unfreeze_del_opt_own");
+    String receiverAddr = generateAddress("unfreeze_del_opt_rcv");
+
+    // Create accounts
+    AccountCapsule ownerAccount = putAccount(dbManager, unfreezeOwner, INITIAL_BALANCE,
+        "unfreeze_opt_owner");
+    AccountCapsule receiverAccount = putAccount(dbManager, receiverAddr, INITIAL_BALANCE,
+        "unfreeze_opt_receiver");
+
+    long now = dbManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+    long delegatedAmount = 100 * ONE_TRX;
+
+    // Set up owner's delegated frozen balance for bandwidth
+    Protocol.Account.Builder ownerBuilder = ownerAccount.getInstance().toBuilder();
+    ownerBuilder.setDelegatedFrozenBalanceForBandwidth(delegatedAmount);
+    ownerAccount = new AccountCapsule(ownerBuilder.build());
+    dbManager.getAccountStore().put(ownerAccount.getAddress().toByteArray(), ownerAccount);
+
+    // Set up receiver's acquired delegated frozen balance
+    Protocol.Account.Builder receiverBuilder = receiverAccount.getInstance().toBuilder();
+    receiverBuilder.setAcquiredDelegatedFrozenBalanceForBandwidth(delegatedAmount);
+    receiverAccount = new AccountCapsule(receiverBuilder.build());
+    dbManager.getAccountStore().put(receiverAccount.getAddress().toByteArray(), receiverAccount);
+
+    // Seed the delegated resource (expired) - legacy V1 format
+    seedDelegatedResource(unfreezeOwner, receiverAddr,
+        delegatedAmount, now - 1000, // BANDWIDTH expired
+        0, 0); // No ENERGY
+
+    // Set total net weight so unfreeze doesn't go negative
+    dbManager.getDynamicPropertiesStore().saveTotalNetWeight(delegatedAmount / ONE_TRX);
+
+    UnfreezeBalanceContract contract = UnfreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(unfreezeOwner)))
+        .setReceiverAddress(ByteString.copyFrom(ByteArray.fromHexString(receiverAddr)))
+        .setResource(ResourceCode.BANDWIDTH)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.UnfreezeBalanceContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("UNFREEZE_BALANCE_CONTRACT", 12)
+        .caseName("edge_delegated_unfreeze_with_optimization")
+        .caseCategory("edge")
+        .description("Delegated unfreeze with ALLOW_DELEGATE_OPTIMIZATION=1 converts legacy "
+            + "index to prefixed keys, then deletes them via unDelegate")
+        .database("account")
+        .database("votes")
+        .database("dynamic-properties")
+        .database("DelegatedResource")
+        .database("DelegatedResourceAccountIndex")
+        .ownerAddress(unfreezeOwner)
+        .dynamicProperty("ALLOW_DELEGATE_RESOURCE", 1)
+        .dynamicProperty("ALLOW_DELEGATE_OPTIMIZATION", 1)
+        .dynamicProperty("delegated_amount", delegatedAmount)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("UnfreezeV1 delegate optimization: success={}", result.isSuccess());
+
+    // Restore
+    dbManager.getDynamicPropertiesStore().saveAllowDelegateOptimization(0);
     disableDelegationMode();
   }
 }

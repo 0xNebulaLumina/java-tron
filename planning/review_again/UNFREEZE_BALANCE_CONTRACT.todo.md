@@ -84,8 +84,12 @@ Primary Java oracles to match:
 
 - [x] `cargo test` under `rust-backend/` with new regression tests
   - 342 passed (4 new tests added), 3 pre-existing failures (vote_witness tests, unrelated), 3 ignored.
-- [ ] Run the existing conformance fixtures for `unfreeze_balance_contract/*` with Rust enabled:
-  - No conformance fixtures exist yet for this contract type.
+- [x] Run the existing conformance fixtures for `unfreeze_balance_contract/*` with Rust enabled:
+  - 3 new conformance fixtures added and all pass:
+    - `edge_withdraw_reward_updates_allowance` — verifies withdrawReward + allowance parity
+    - `edge_weight_clamping_with_allow_new_reward` — verifies weight clamping to 0 with ALLOW_NEW_REWARD=1
+    - `edge_delegated_unfreeze_with_optimization` — verifies delegated resource cleanup with ALLOW_DELEGATE_OPTIMIZATION=1
+  - Fix: `AccountVoteSnapshot::deserialize` updated to handle full Account protobuf format (Java's `DelegationStore.setAccountVote()` stores `accountCapsule.getData()`)
 - [ ] Run a small remote-vs-embedded parity slice including a case where `withdrawReward` is non-zero
 - [x] Keep `execution.remote.unfreeze_balance_enabled` gated until parity is confirmed
   - Default is `false` in config.rs.
