@@ -1860,9 +1860,16 @@ impl EngineBackedEvmStateStore {
     /// Add to TOTAL_NET_WEIGHT dynamic property
     /// Used when canceling unfreezeV2 to re-freeze bandwidth
     pub fn add_total_net_weight(&self, delta: i64) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
         let current = self.get_total_net_weight()?;
-        let new_value = current.checked_add(delta)
+        let mut new_value = current.checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_net_weight"))?;
+        // Java parity: DynamicPropertiesStore.addTotalNetWeight() clamps to max(0, ...) when allowNewReward()
+        if self.allow_new_reward().unwrap_or(false) {
+            new_value = new_value.max(0);
+        }
         let key = b"TOTAL_NET_WEIGHT";
         let data = new_value.to_be_bytes();
         self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
@@ -1891,9 +1898,16 @@ impl EngineBackedEvmStateStore {
     /// Add to TOTAL_ENERGY_WEIGHT dynamic property
     /// Used when canceling unfreezeV2 to re-freeze energy
     pub fn add_total_energy_weight(&self, delta: i64) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
         let current = self.get_total_energy_weight()?;
-        let new_value = current.checked_add(delta)
+        let mut new_value = current.checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_energy_weight"))?;
+        // Java parity: DynamicPropertiesStore.addTotalEnergyWeight() clamps to max(0, ...) when allowNewReward()
+        if self.allow_new_reward().unwrap_or(false) {
+            new_value = new_value.max(0);
+        }
         let key = b"TOTAL_ENERGY_WEIGHT";
         let data = new_value.to_be_bytes();
         self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
@@ -1922,9 +1936,16 @@ impl EngineBackedEvmStateStore {
     /// Add to TOTAL_TRON_POWER_WEIGHT dynamic property
     /// Used when canceling unfreezeV2 to re-freeze tron power
     pub fn add_total_tron_power_weight(&self, delta: i64) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
         let current = self.get_total_tron_power_weight()?;
-        let new_value = current.checked_add(delta)
+        let mut new_value = current.checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_tron_power_weight"))?;
+        // Java parity: DynamicPropertiesStore.addTotalTronPowerWeight() clamps to max(0, ...) when allowNewReward()
+        if self.allow_new_reward().unwrap_or(false) {
+            new_value = new_value.max(0);
+        }
         let key = b"TOTAL_TRON_POWER_WEIGHT";
         let data = new_value.to_be_bytes();
         self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;

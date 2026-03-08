@@ -754,6 +754,20 @@ impl BackendService {
             .support_allow_delegate_optimization()
             .unwrap_or(false);
 
+        // Java parity: call mortgageService.withdrawReward(ownerAddress) BEFORE loading account.
+        // This computes delegation rewards and updates delegation-store cycle state.
+        // The returned reward must be added to Account.allowance (via adjustAllowance).
+        // Java reference: UnfreezeBalanceActuator.execute() line 75.
+        let delegation_reward = self
+            .compute_delegation_reward_if_enabled(storage_adapter, &transaction.from)?;
+
+        if delegation_reward > 0 {
+            info!(
+                "UnfreezeBalance: delegation reward for {}: {} SUN",
+                readable_owner_address, delegation_reward
+            );
+        }
+
         // Load owner proto (we must update frozen fields for fixture parity).
         let owner_proto = storage_adapter
             .get_account_proto(&transaction.from)
@@ -766,6 +780,15 @@ impl BackendService {
             .unwrap_or_default();
 
         let mut new_owner_proto = owner_proto.clone();
+
+        // Java parity: adjustAllowance(ownerAddress, reward) — add delegation reward to allowance.
+        // Java reference: MortgageService.adjustAllowance() — skips if amount <= 0.
+        if delegation_reward > 0 {
+            new_owner_proto.allowance = new_owner_proto
+                .allowance
+                .checked_add(delegation_reward)
+                .ok_or("Allowance overflow when adding delegation reward")?;
+        }
 
         // Java: initialize oldTronPower when the new resource model is enabled and oldTronPower==0.
         if allow_new_resource_model && new_owner_proto.old_tron_power == 0 {
@@ -1034,6 +1057,25 @@ impl BackendService {
                 // Update delegation account index: use optimized layout when enabled.
                 // Java reference: UnfreezeBalanceActuator checks supportAllowDelegateOptimization()
                 if support_delegate_optimization {
+                    // Java parity: convert() migrates legacy blob-style index entries to
+                    // prefixed key layout before deletion. Must be called on both addresses.
+                    // Java reference: UnfreezeBalanceActuator.execute() lines 174-176.
+                    storage_adapter
+                        .convert_delegated_resource_account_index_v1(&transaction.from)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to convert DelegatedResourceAccountIndex for owner: {}",
+                                e
+                            )
+                        })?;
+                    storage_adapter
+                        .convert_delegated_resource_account_index_v1(&receiver)
+                        .map_err(|e| {
+                            format!(
+                                "Failed to convert DelegatedResourceAccountIndex for receiver: {}",
+                                e
+                            )
+                        })?;
                     storage_adapter
                         .undelegate_v1_optimized(&transaction.from, &receiver)
                         .map_err(|e| {
