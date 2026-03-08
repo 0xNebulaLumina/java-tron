@@ -38,7 +38,9 @@ Primary Java oracles to match:
     - [x] Ensure delegation-store begin/end cycle state + `accountVote` snapshots are persisted exactly once (the withdraw_reward port already writes these).
   - [x] Tests / verification
     - [x] Gated by `delegation_reward_enabled` config flag — no behavior change when flag is false.
-    - [x] `cargo test --workspace` passes (338 passed, 3 pre-existing failures unrelated).
+    - [x] `cargo test --workspace` passes (342 passed, 3 pre-existing failures unrelated).
+    - [x] Regression test `test_unfreeze_balance_withdraw_reward_updates_allowance`: verifies allowance += delegation_reward and delegation store cycle state updates.
+    - [x] Regression test `test_unfreeze_balance_no_reward_when_delegation_disabled`: verifies no behavior change when CHANGE_DELEGATION=0.
 
 - [x] Align "new reward" gating with Java's `ALLOW_NEW_REWARD` (potentially major)
   - [x] Java uses `dynamicStore.allowNewReward()` which is `ALLOW_NEW_REWARD == 1`
@@ -49,6 +51,7 @@ Primary Java oracles to match:
   - [x] Additional fix: Added weight clamping to `add_total_net_weight`, `add_total_energy_weight`, `add_total_tron_power_weight` in engine.rs.
     - [x] Java clamps `max(0, new_value)` when `allowNewReward()` is true — Rust now matches.
     - [x] Also added Java's `if (amount == 0) return` skip optimization.
+  - [x] Regression test `test_unfreeze_balance_weight_clamping_with_allow_new_reward`: verifies clamping to 0 with ALLOW_NEW_REWARD=1 and negative total with ALLOW_NEW_REWARD=0.
 
 - [x] Implement `ALLOW_DELEGATE_OPTIMIZATION` branch for V1 delegated unfreeze cleanup (major when enabled)
   - [x] Add dynamic property getter:
@@ -64,6 +67,7 @@ Primary Java oracles to match:
       - [x] Helpers already existed: `convert_delegated_resource_account_index_v1()` (line 4266), `undelegate_v1_optimized()` (line 4372).
     - [x] `rust-backend/crates/core/src/service/contracts/freeze.rs`
       - [x] Added `convert()` calls before `undelegate_v1_optimized()` to match Java's `convert(owner) + convert(receiver) + unDelegate(owner, receiver)` pattern.
+  - [x] Regression test `test_unfreeze_delegated_optimized_deletes_prefixed_keys`: verifies prefixed keys are deleted and no stale legacy records remain after delegated unfreeze with ALLOW_DELEGATE_OPTIMIZATION=1.
 
 - [x] Preserve Java behavior for unknown `resource` values (edge-case parity)
   - [x] Already implemented: Unknown resource values handled via `FreezeResource::Unknown` variant.
@@ -79,7 +83,7 @@ Primary Java oracles to match:
 ## Verification / rollout checklist
 
 - [x] `cargo test` under `rust-backend/` with new regression tests
-  - 338 passed, 3 pre-existing failures (vote_witness tests, unrelated), 3 ignored.
+  - 342 passed (4 new tests added), 3 pre-existing failures (vote_witness tests, unrelated), 3 ignored.
 - [ ] Run the existing conformance fixtures for `unfreeze_balance_contract/*` with Rust enabled:
   - No conformance fixtures exist yet for this contract type.
 - [ ] Run a small remote-vs-embedded parity slice including a case where `withdrawReward` is non-zero
