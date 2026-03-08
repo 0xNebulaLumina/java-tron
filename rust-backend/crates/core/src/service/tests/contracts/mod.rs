@@ -19,4 +19,5 @@ mod set_account_id;
 mod transfer;
 mod trc10_transfer;
 mod undelegate_resource;
+mod unfreeze_asset;
 mod witness_update;
