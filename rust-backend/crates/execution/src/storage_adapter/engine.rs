@@ -5576,7 +5576,7 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get OneDayNetLimit dynamic property
-    /// Default: 8640000000 bytes per day
+    /// Default: 57_600_000_000 (matches Java DynamicPropertiesStore initialization)
     pub fn get_one_day_net_limit(&self) -> Result<i64> {
         let key = b"ONE_DAY_NET_LIMIT";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
@@ -5588,10 +5588,10 @@ impl EngineBackedEvmStateStore {
                     ]);
                     Ok(val)
                 } else {
-                    Ok(8_640_000_000) // Default value
+                    Ok(57_600_000_000) // Java DynamicPropertiesStore default
                 }
             },
-            None => Ok(8_640_000_000) // Default value
+            None => Ok(57_600_000_000) // Java DynamicPropertiesStore default
         }
     }
 

@@ -20,4 +20,5 @@ mod transfer;
 mod trc10_transfer;
 mod undelegate_resource;
 mod unfreeze_asset;
+mod update_asset;
 mod witness_update;
