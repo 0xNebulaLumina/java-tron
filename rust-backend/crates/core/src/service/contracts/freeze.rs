@@ -2095,6 +2095,21 @@ impl BackendService {
         }
 
         // Validation succeeded; apply state changes.
+
+        // Java parity: call mortgageService.withdrawReward(ownerAddress) BEFORE modifying account.
+        // This computes delegation rewards and updates delegation-store cycle state.
+        // The returned reward must be added to Account.allowance (via adjustAllowance).
+        // Java reference: UnfreezeBalanceV2Actuator.execute() line 72.
+        let delegation_reward = self
+            .compute_delegation_reward_if_enabled(storage_adapter, &transaction.from)?;
+
+        if delegation_reward > 0 {
+            info!(
+                "UnfreezeBalanceV2: delegation reward for {}: {} SUN",
+                readable_owner_address, delegation_reward
+            );
+        }
+
         let unfreeze_delay_days = storage_adapter
             .get_unfreeze_delay_days()
             .map_err(|e| format!("Failed to read UNFREEZE_DELAY_DAYS: {}", e))?;
@@ -2106,6 +2121,15 @@ impl BackendService {
             .ok_or("Overflow computing unfreeze expire time")?;
 
         let mut new_owner_proto = owner_proto.clone();
+
+        // Java parity: adjustAllowance(ownerAddress, reward) — add delegation reward to allowance.
+        // Java reference: MortgageService.adjustAllowance() — skips if amount <= 0.
+        if delegation_reward > 0 {
+            new_owner_proto.allowance = new_owner_proto
+                .allowance
+                .checked_add(delegation_reward)
+                .ok_or("Allowance overflow when adding delegation reward")?;
+        }
 
         // Java: initialize oldTronPower when the new resource model is enabled and oldTronPower==0.
         if allow_new_resource_model && new_owner_proto.old_tron_power == 0 {
@@ -2201,13 +2225,16 @@ impl BackendService {
         }
 
         // === Update votes (java-tron: UnfreezeBalanceV2Actuator#updateVote) ===
+        let mut skip_vote_rescale = false;
         if !new_owner_proto.votes.is_empty() {
             // java-tron: if supportAllowNewResourceModel, handle migration clearing.
             if allow_new_resource_model {
                 if new_owner_proto.old_tron_power == -1 {
                     match resource {
                         FreezeResource::Bandwidth | FreezeResource::Energy => {
-                            // there is no need to change votes
+                            // Java parity: return early, no need to change votes.
+                            // Do NOT fall through to rescale block.
+                            skip_vote_rescale = true;
                         }
                         FreezeResource::TronPower | FreezeResource::Unknown => {
                             // continue to possible rescaling below
@@ -2254,7 +2281,9 @@ impl BackendService {
             }
 
             // If votes are still present after the migration logic, consider rescaling.
-            if !new_owner_proto.votes.is_empty() {
+            // Java parity: skip rescaling when new resource model && oldTronPower==-1
+            // && resource is BANDWIDTH/ENERGY (early return in Java's updateVote).
+            if !skip_vote_rescale && !new_owner_proto.votes.is_empty() {
                 let total_vote: i64 = new_owner_proto
                     .votes
                     .iter()
@@ -2414,15 +2443,11 @@ impl BackendService {
             .map_err(|e| format!("Failed to persist owner account proto: {}", e))?;
 
         // Keep the Rust-side freeze ledger updated (not part of Java DB layout).
+        // Java parity: V2 freeze has no expiration concept, always use 0.
         let freeze_resource = resource as u8;
         if remaining_frozen > 0 {
-            let existing_expiration = storage_adapter
-                .get_freeze_record(&transaction.from, freeze_resource)
-                .map_err(|e| format!("Failed to read freeze record: {}", e))?
-                .map(|r| r.expiration_timestamp)
-                .unwrap_or(0);
             let record =
-                tron_backend_execution::FreezeRecord::new(remaining_frozen as u64, existing_expiration);
+                tron_backend_execution::FreezeRecord::new(remaining_frozen as u64, 0);
             storage_adapter
                 .set_freeze_record(transaction.from, freeze_resource, &record)
                 .map_err(|e| format!("Failed to persist freeze record: {}", e))?;
