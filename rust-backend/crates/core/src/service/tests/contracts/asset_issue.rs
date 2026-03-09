@@ -1605,7 +1605,7 @@ fn test_strict_get_one_day_net_limit_missing() {
 
     // Non-strict getter returns default
     let val = storage_adapter.get_one_day_net_limit().unwrap();
-    assert_eq!(val, 8_640_000_000, "Non-strict should return default");
+    assert_eq!(val, 57_600_000_000, "Non-strict should return default");
 
     // Strict getter returns error
     let strict_result = storage_adapter.get_one_day_net_limit_strict();

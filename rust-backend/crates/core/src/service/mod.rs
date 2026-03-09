@@ -8502,6 +8502,15 @@ impl BackendService {
     /// Updates TRC-10 asset metadata: url, description, free_asset_net_limit, public_free_asset_net_limit
     ///
     /// Java oracle: UpdateAssetActuator.java
+    /// Validation order matches Java exactly:
+    ///   1) Any.is(UpdateAssetContract.class)
+    ///   2) Parse contract → owner_address, newLimit, newPublicLimit, url, description
+    ///   3) DecodeUtil.addressValid(ownerAddress) — 21 bytes, prefix 0x41
+    ///   4) Account exists
+    ///   5) Asset issued name/ID + store existence
+    ///   6) URL valid
+    ///   7) Description valid
+    ///   8) Limit bounds
     fn execute_update_asset_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
@@ -8509,9 +8518,8 @@ impl BackendService {
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         let owner = transaction.from;
-        let owner_tron = add_tron_address_prefix(&owner);
 
-        // Validate contract parameter type (Any.is) when raw Any is available
+        // 1. Validate contract parameter type (Any.is) when raw Any is available
         if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
             if !Self::any_type_url_matches(&any.type_url, "protocol.UpdateAssetContract") {
                 return Err(
@@ -8521,7 +8529,7 @@ impl BackendService {
             }
         }
 
-        // Parse contract data
+        // 2. Parse contract data (including owner_address for Java parity)
         let contract_bytes = transaction
             .metadata
             .contract_parameter
@@ -8531,53 +8539,57 @@ impl BackendService {
         let update_info = self.parse_update_asset_contract(contract_bytes)?;
 
         debug!("UpdateAsset: owner={}, new_limit={}, new_public_limit={}",
-               hex::encode(&owner_tron), update_info.new_limit, update_info.new_public_limit);
+               hex::encode(&update_info.owner_address), update_info.new_limit, update_info.new_public_limit);
 
-        // Validation parity: DecodeUtil.addressValid(ownerAddress)
-        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
-            let owner_address_valid = match from_raw.len() {
-                21 => from_raw[0] == 0x41 || from_raw[0] == 0xa0,
-                20 => true,
-                _ => false,
-            };
-            if !owner_address_valid {
-                return Err("Invalid ownerAddress".to_string());
-            }
+        // 3. Validate owner address (Java parity: DecodeUtil.addressValid)
+        // Java requires exactly 21 bytes with correct prefix (0x41 mainnet).
+        // Use owner_address from the parsed contract bytes (same as Java's any.unpack()).
+        let owner_address = &update_info.owner_address;
+        let owner_address_valid = owner_address.len() == 21
+            && (owner_address[0] == 0x41 || owner_address[0] == 0xa0);
+        if !owner_address_valid {
+            return Err("Invalid ownerAddress".to_string());
         }
 
-        // 1. Validate owner account exists
+        // 4. Validate owner account exists
         let account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .ok_or("Account does not exist")?;
 
-        // 2. Get asset info and validate ownership
+        // 5. Get asset info and validate ownership + store existence
+        // Java checks store existence BEFORE url/description/limits.
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
 
-        // Get asset key based on allowSameTokenName flag
-        let asset_key = if allow_same_token_name == 0 {
+        if allow_same_token_name == 0 {
             if account.asset_issued_name.is_empty() {
                 return Err("Account has not issued any asset".to_string());
             }
-            account.asset_issued_name.clone()
+            // Check legacy store existence (Java: assetIssueStore.get(account.getAssetIssuedName().toByteArray()) == null)
+            let _legacy_asset = storage_adapter.get_asset_issue(&account.asset_issued_name, 0)
+                .map_err(|e| format!("Failed to get asset issue: {}", e))?
+                .ok_or("Asset is not existed in AssetIssueStore")?;
         } else {
             if account.asset_issued_id.is_empty() {
                 return Err("Account has not issued any asset".to_string());
             }
-            account.asset_issued_id.clone()
-        };
+            // Check V2 store existence (Java: assetIssueV2Store.get(account.getAssetIssuedID().toByteArray()) == null)
+            let _v2_asset = storage_adapter.get_asset_issue(&account.asset_issued_id, 1)
+                .map_err(|e| format!("Failed to get asset issue: {}", e))?
+                .ok_or("Asset is not existed in AssetIssueV2Store")?;
+        }
 
-        // 3. Validate URL
+        // 6. Validate URL
         if !Self::valid_url(&update_info.url) {
             return Err("Invalid url".to_string());
         }
 
-        // 4. Validate description
+        // 7. Validate description
         if !Self::valid_asset_description(&update_info.description) {
             return Err("Invalid description".to_string());
         }
 
-        // 5. Validate limits
+        // 8. Validate limits
         let one_day_net_limit = storage_adapter.get_one_day_net_limit()
             .map_err(|e| format!("Failed to get oneDayNetLimit: {}", e))?;
 
@@ -8589,36 +8601,45 @@ impl BackendService {
             return Err("Invalid PublicFreeAssetNetLimit".to_string());
         }
 
-        // 6. Get and update asset issue
-        let asset_issue = storage_adapter.get_asset_issue(&asset_key, allow_same_token_name)
-            .map_err(|e| format!("Failed to get asset issue: {}", e))?
-            .ok_or_else(|| format!("Asset is not existed in AssetIssue{}Store",
-                                   if allow_same_token_name == 0 { "" } else { "V2" }))?;
+        // === Execution (Java: UpdateAssetActuator.execute) ===
+        // Java always loads V2 entry by account.assetIssuedID first, then updates it.
+        // If allowSameTokenName == 0, also loads legacy entry by name and updates it separately.
+        // Each store entry is updated in-place (only 4 fields), preserving all other fields.
 
-        let mut updated_asset = asset_issue.clone();
-        updated_asset.free_asset_net_limit = update_info.new_limit;
-        updated_asset.public_free_asset_net_limit = update_info.new_public_limit;
-        updated_asset.url = update_info.url.clone();
-        updated_asset.description = update_info.description.clone();
+        // Load V2 entry (Java always loads this in execute, regardless of allowSameTokenName)
+        let mut asset_issue_v2 = storage_adapter.get_asset_issue(&account.asset_issued_id, 1)
+            .map_err(|e| format!("Failed to get asset issue V2: {}", e))?
+            .ok_or("Asset is not existed in AssetIssueV2Store")?;
 
-        // 7. Persist updated asset issue
-        // If allowSameTokenName == 0, update both stores
+        // Update only the four fields on V2 entry
+        asset_issue_v2.free_asset_net_limit = update_info.new_limit;
+        asset_issue_v2.public_free_asset_net_limit = update_info.new_public_limit;
+        asset_issue_v2.url = update_info.url.clone();
+        asset_issue_v2.description = update_info.description.clone();
+
         if allow_same_token_name == 0 {
-            // Update AssetIssueStore (by name)
-            storage_adapter.put_asset_issue(&account.asset_issued_name, &updated_asset, false)
+            // Load legacy entry separately and update only 4 fields (preserving per-store fields)
+            let mut asset_issue_legacy = storage_adapter.get_asset_issue(&account.asset_issued_name, 0)
+                .map_err(|e| format!("Failed to get asset issue: {}", e))?
+                .ok_or("Asset is not existed in AssetIssueStore")?;
+
+            asset_issue_legacy.free_asset_net_limit = update_info.new_limit;
+            asset_issue_legacy.public_free_asset_net_limit = update_info.new_public_limit;
+            asset_issue_legacy.url = update_info.url.clone();
+            asset_issue_legacy.description = update_info.description.clone();
+
+            // Persist both stores (Java: assetIssueStore.put + assetIssueStoreV2.put)
+            storage_adapter.put_asset_issue(&account.asset_issued_name, &asset_issue_legacy, false)
                 .map_err(|e| format!("Failed to persist asset issue: {}", e))?;
-            // Update AssetIssueV2Store (by id) if account has issued ID
-            if !account.asset_issued_id.is_empty() {
-                storage_adapter.put_asset_issue(&account.asset_issued_id, &updated_asset, true)
-                    .map_err(|e| format!("Failed to persist asset issue V2: {}", e))?;
-            }
+            storage_adapter.put_asset_issue(&account.asset_issued_id, &asset_issue_v2, true)
+                .map_err(|e| format!("Failed to persist asset issue V2: {}", e))?;
         } else {
-            // Only update AssetIssueV2Store
-            storage_adapter.put_asset_issue(&account.asset_issued_id, &updated_asset, true)
+            // Only update AssetIssueV2Store (Java: assetIssueV2Store.put)
+            storage_adapter.put_asset_issue(&account.asset_issued_id, &asset_issue_v2, true)
                 .map_err(|e| format!("Failed to persist asset issue V2: {}", e))?;
         }
 
-        // 8. Build minimal state change (no TRX balance change)
+        // Build minimal state change (no TRX balance change, fee == 0)
         let account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(account.balance as u64),
             nonce: 0,
@@ -8634,7 +8655,7 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("UpdateAsset: updated asset {}", String::from_utf8_lossy(&asset_key));
+        debug!("UpdateAsset: updated asset id={}", String::from_utf8_lossy(&account.asset_issued_id));
 
         Ok(TronExecutionResult {
             success: true,
@@ -8744,10 +8765,13 @@ impl BackendService {
         })
     }
 
-    /// Parse UpdateAssetContract protobuf bytes
+    /// Parse UpdateAssetContract protobuf bytes.
+    /// Parses all fields including owner_address for Java-parity validation.
+    /// Java oracle: UpdateAssetActuator validates owner_address via DecodeUtil.addressValid
     fn parse_update_asset_contract(&self, data: &[u8]) -> Result<UpdateAssetInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut description = Vec::new();
         let mut url = Vec::new();
         let mut new_limit: i64 = 0;
@@ -8763,13 +8787,18 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip, we use transaction.from)
+                // owner_address = 1 (parsed for Java-parity validation)
                 1 => {
                     if wire_type != 2 {
                         return Err("Invalid wire type for owner_address".to_string());
                     }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Data truncated reading owner_address".to_string());
+                    }
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // description = 2
                 2 => {
@@ -8827,6 +8856,7 @@ impl BackendService {
         }
 
         Ok(UpdateAssetInfo {
+            owner_address,
             description,
             url,
             new_limit,
@@ -11969,6 +11999,7 @@ struct ParticipateAssetIssueInfo {
 /// Parsed UpdateAssetContract information
 #[derive(Debug, Clone)]
 struct UpdateAssetInfo {
+    owner_address: Vec<u8>,
     description: Vec<u8>,
     url: Vec<u8>,
     new_limit: i64,
