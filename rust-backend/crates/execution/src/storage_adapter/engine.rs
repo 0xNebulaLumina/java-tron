@@ -468,6 +468,16 @@ impl EngineBackedEvmStateStore {
         })
     }
 
+    /// Get the raw Account protobuf bytes for an address.
+    ///
+    /// Returns the raw serialized bytes without decoding, useful when
+    /// the caller needs to store the exact bytes elsewhere (e.g.,
+    /// delegation store's accountVote snapshot).
+    pub fn get_account_raw_bytes(&self, address: &Address) -> Result<Option<Vec<u8>>> {
+        let key = self.account_key(address);
+        self.buffered_get(self.account_database(), &key)
+    }
+
     /// Get the full Account proto for an address.
     ///
     /// This returns the complete ProtoAccount with all fields, useful for
@@ -1860,9 +1870,16 @@ impl EngineBackedEvmStateStore {
     /// Add to TOTAL_NET_WEIGHT dynamic property
     /// Used when canceling unfreezeV2 to re-freeze bandwidth
     pub fn add_total_net_weight(&self, delta: i64) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
         let current = self.get_total_net_weight()?;
-        let new_value = current.checked_add(delta)
+        let mut new_value = current.checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_net_weight"))?;
+        // Java parity: DynamicPropertiesStore.addTotalNetWeight() clamps to max(0, ...) when allowNewReward()
+        if self.allow_new_reward().unwrap_or(false) {
+            new_value = new_value.max(0);
+        }
         let key = b"TOTAL_NET_WEIGHT";
         let data = new_value.to_be_bytes();
         self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
@@ -1891,9 +1908,16 @@ impl EngineBackedEvmStateStore {
     /// Add to TOTAL_ENERGY_WEIGHT dynamic property
     /// Used when canceling unfreezeV2 to re-freeze energy
     pub fn add_total_energy_weight(&self, delta: i64) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
         let current = self.get_total_energy_weight()?;
-        let new_value = current.checked_add(delta)
+        let mut new_value = current.checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_energy_weight"))?;
+        // Java parity: DynamicPropertiesStore.addTotalEnergyWeight() clamps to max(0, ...) when allowNewReward()
+        if self.allow_new_reward().unwrap_or(false) {
+            new_value = new_value.max(0);
+        }
         let key = b"TOTAL_ENERGY_WEIGHT";
         let data = new_value.to_be_bytes();
         self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
@@ -1922,9 +1946,16 @@ impl EngineBackedEvmStateStore {
     /// Add to TOTAL_TRON_POWER_WEIGHT dynamic property
     /// Used when canceling unfreezeV2 to re-freeze tron power
     pub fn add_total_tron_power_weight(&self, delta: i64) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
         let current = self.get_total_tron_power_weight()?;
-        let new_value = current.checked_add(delta)
+        let mut new_value = current.checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_tron_power_weight"))?;
+        // Java parity: DynamicPropertiesStore.addTotalTronPowerWeight() clamps to max(0, ...) when allowNewReward()
+        if self.allow_new_reward().unwrap_or(false) {
+            new_value = new_value.max(0);
+        }
         let key = b"TOTAL_TRON_POWER_WEIGHT";
         let data = new_value.to_be_bytes();
         self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
@@ -3126,6 +3157,29 @@ impl EngineBackedEvmStateStore {
             address, cycle, snapshot.votes.len()
         );
         self.buffered_put(self.delegation_database(), key, data)?;
+        Ok(())
+    }
+
+    /// Set account vote snapshot using raw Account protobuf bytes.
+    ///
+    /// Java's DelegationStore.setAccountVote() stores accountCapsule.getData(),
+    /// which is the complete Account protobuf. This method stores raw bytes
+    /// directly to match that behavior exactly.
+    pub fn set_delegation_account_vote_raw(
+        &self,
+        cycle: i64,
+        address: &Address,
+        raw_account_bytes: Vec<u8>,
+    ) -> Result<()> {
+        use crate::delegation::delegation_account_vote_key;
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_account_vote_key(cycle, &tron_addr);
+
+        tracing::debug!(
+            "Setting delegation account_vote (raw) for {:?} cycle {}: {} bytes",
+            address, cycle, raw_account_bytes.len()
+        );
+        self.buffered_put(self.delegation_database(), key, raw_account_bytes)?;
         Ok(())
     }
 

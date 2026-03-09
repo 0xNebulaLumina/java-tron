@@ -426,7 +426,7 @@ impl BackendService {
     ///
     /// # Returns
     /// * `Ok(reward)` - Delegation reward in SUN (0 if disabled)
-    fn compute_delegation_reward_if_enabled(
+    pub(crate) fn compute_delegation_reward_if_enabled(
         &self,
         storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore,
         address: &revm_primitives::Address,

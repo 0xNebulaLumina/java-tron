@@ -1,0 +1,26 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "edge_delegated_unfreeze_with_optimization",
+  "caseCategory": "edge",
+  "description": "Delegated unfreeze with ALLOW_DELEGATE_OPTIMIZATION=1 converts legacy index to prefixed keys, then deletes them via unDelegate",
+  "generatedAt": "2026-03-08T14:03:51.379Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties",
+    "DelegatedResource",
+    "DelegatedResourceAccountIndex"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f64656c5f6f70745f6f776e",
+  "dynamicProperties": {
+    "ALLOW_DELEGATE_OPTIMIZATION": 1,
+    "ALLOW_DELEGATE_RESOURCE": 1,
+    "delegated_amount": 100000000
+  },
+  "notes": []
+}

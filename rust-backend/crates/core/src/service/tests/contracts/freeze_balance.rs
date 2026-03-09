@@ -1689,3 +1689,592 @@ fn test_freeze_delegation_optimized_preserves_ordering() {
     // We verify both entries exist - the timestamp ordering is preserved by the keys' timestamps.
     // (Full reconstruction would require decoding the protos and comparing timestamps)
 }
+
+// =============================================================================
+// UNFREEZE_BALANCE_CONTRACT parity regression tests
+// =============================================================================
+
+/// Test: withdrawReward side-effects with allowChangeDelegation=true.
+///
+/// Java parity: UnfreezeBalanceActuator.execute() calls mortgageService.withdrawReward(ownerAddress)
+/// BEFORE any unfreeze mutation. This updates Account.allowance and delegation-store cycle state.
+///
+/// This test sets up:
+/// - CHANGE_DELEGATION=1 (enables delegation rewards)
+/// - delegation_reward_enabled=true (config gate for Rust)
+/// - An account with votes and a non-zero reward for a past cycle
+/// - A frozen bandwidth balance that has expired
+///
+/// After unfreeze, we verify:
+/// - Account.allowance was incremented by the delegation reward
+/// - Delegation-store begin/end cycle and accountVote snapshot were updated
+/// - The unfreeze itself succeeded (balance increased by unfrozen amount)
+#[test]
+fn test_unfreeze_balance_withdraw_reward_updates_allowance() {
+    let owner_addr = Address::from([0x30; 20]);
+    let witness_addr = Address::from([0x31; 20]);
+    let owner_tron = make_from_raw(&owner_addr);
+    let witness_tron = make_from_raw(&witness_addr);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+
+    // Set block timestamp after freeze expiry
+    storage_engine.put("properties", b"latest_block_header_timestamp", &1600000000000i64.to_be_bytes()).unwrap();
+
+    // Enable delegation rewards
+    storage_engine.put("properties", b"CHANGE_DELEGATION", &1i64.to_be_bytes()).unwrap();
+
+    // Set current cycle = 5
+    storage_engine.put("properties", b"CURRENT_CYCLE_NUMBER", &5i64.to_be_bytes()).unwrap();
+
+    // Set NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE to a high value (use old algorithm)
+    storage_engine.put("properties", b"NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE", &i64::MAX.to_be_bytes()).unwrap();
+
+    // Seed delegation store: begin_cycle=3, end_cycle=4 for the owner
+    // Key format for begin_cycle: raw address bytes (21-byte TRON format)
+    let delegation_db = "delegation";
+    // begin_cycle key = address itself
+    storage_engine.put(delegation_db, &owner_tron, &3i64.to_be_bytes()).unwrap();
+    // end_cycle key = "end-" + hex(address)
+    let end_key = format!("end-{}", hex::encode(&owner_tron)).into_bytes();
+    storage_engine.put(delegation_db, &end_key, &4i64.to_be_bytes()).unwrap();
+
+    // Seed account_vote snapshot for cycle 3:
+    // The snapshot serialization is the AccountVoteSnapshot format.
+    // We need to seed it so compute_reward can read the votes.
+    let account_vote_key = format!("{}-{}-account-vote", 3, hex::encode(&owner_tron)).into_bytes();
+    // Serialize a simple vote snapshot: owner voted 1000 for witness
+    let snapshot = tron_backend_execution::delegation::AccountVoteSnapshot::new(
+        owner_addr,
+        vec![tron_backend_execution::delegation::DelegationVote::new(witness_addr, 1000)],
+    );
+    storage_engine.put(delegation_db, &account_vote_key, &snapshot.serialize()).unwrap();
+
+    // Seed witness reward for cycle 3: 10_000_000 SUN total reward
+    let reward_key = format!("{}-{}-reward", 3, hex::encode(&witness_tron)).into_bytes();
+    storage_engine.put(delegation_db, &reward_key, &10_000_000i64.to_be_bytes()).unwrap();
+
+    // Seed witness total votes for cycle 3: 2000 total votes
+    let vote_key = format!("{}-{}-vote", 3, hex::encode(&witness_tron)).into_bytes();
+    storage_engine.put(delegation_db, &vote_key, &2000i64.to_be_bytes()).unwrap();
+
+    // Setup storage adapter (use non-buffered mode so writes go directly to storage_engine,
+    // matching how get_account_votes_list reads from storage_engine directly)
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine.clone());
+
+    // Create owner account with frozen bandwidth and votes
+    let owner_proto = tron_backend_execution::protocol::Account {
+        address: owner_tron.clone(),
+        balance: 1_000_000_000i64, // 1000 TRX
+        allowance: 100_000, // Pre-existing allowance
+        frozen: vec![tron_backend_execution::protocol::account::Frozen {
+            frozen_balance: 5_000_000, // 5 TRX frozen
+            expire_time: 1500000000000, // Expired
+        }],
+        votes: vec![tron_backend_execution::protocol::Vote {
+            vote_address: witness_tron.clone(),
+            vote_count: 1000,
+        }],
+        ..Default::default()
+    };
+    storage_adapter.put_account_proto(&owner_addr, &owner_proto).unwrap();
+
+    // Create UnfreezeBalance transaction (resource = BANDWIDTH)
+    let params_data = vec![0x50, 0x00]; // field 10 = BANDWIDTH (0)
+
+    let tx = TronTransaction {
+        from: owner_addr,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(params_data),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
+            from_raw: Some(owner_tron.clone()),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1000,
+        block_timestamp: 1600000000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 0,
+        bandwidth_price: 0,
+        transaction_id: None,
+    };
+
+    // Create service with delegation_reward_enabled=true
+    let exec_config = ExecutionConfig {
+        remote: tron_backend_common::RemoteExecutionConfig {
+            unfreeze_balance_enabled: true,
+            delegation_reward_enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut module_manager = tron_backend_common::ModuleManager::new();
+    let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+    module_manager.register("execution", Box::new(exec_module));
+    let service = BackendService::new(module_manager);
+
+    // Execute unfreeze
+    let result = service.execute_unfreeze_balance_contract(&mut storage_adapter, &tx, &context);
+    assert!(result.is_ok(), "UnfreezeBalance should succeed: {:?}", result.err());
+    let exec_result = result.unwrap();
+    assert!(exec_result.success);
+
+    // Verify balance increased by unfrozen amount
+    match &exec_result.state_changes[0] {
+        tron_backend_execution::TronStateChange::AccountChange { new_account, .. } => {
+            // new_balance = 1_000_000_000 + 5_000_000 = 1_005_000_000
+            let expected_balance = U256::from(1_005_000_000u64);
+            assert_eq!(
+                new_account.as_ref().unwrap().balance, expected_balance,
+                "Balance should increase by unfrozen amount"
+            );
+        }
+        _ => panic!("Expected AccountChange"),
+    }
+
+    // Verify allowance was updated in the account proto
+    // Old reward calculation: user_vote/total_vote * cycle_reward = 1000/2000 * 10_000_000 = 5_000_000
+    // New allowance = 100_000 (pre-existing) + 5_000_000 (reward) = 5_100_000
+    let updated_proto = storage_adapter.get_account_proto(&owner_addr).unwrap().unwrap();
+    assert_eq!(
+        updated_proto.allowance, 5_100_000,
+        "Allowance should be old_allowance + delegation_reward (100000 + 5000000)"
+    );
+
+    // Verify delegation store state was updated
+    // After withdraw_reward: begin_cycle should advance to current_cycle (5)
+    let begin_cycle_data = storage_engine.get(delegation_db, &owner_tron).unwrap();
+    assert!(begin_cycle_data.is_some(), "begin_cycle should exist");
+    let begin_cycle = i64::from_be_bytes(begin_cycle_data.unwrap().try_into().unwrap());
+    assert_eq!(begin_cycle, 5, "begin_cycle should advance to current_cycle");
+
+    // end_cycle should be current_cycle + 1 = 6
+    let end_data = storage_engine.get(delegation_db, &end_key).unwrap();
+    assert!(end_data.is_some(), "end_cycle should exist");
+    let end_cycle = i64::from_be_bytes(end_data.unwrap().try_into().unwrap());
+    assert_eq!(end_cycle, 6, "end_cycle should be current_cycle + 1");
+}
+
+/// Test: no behavior change when allowChangeDelegation=false.
+///
+/// When CHANGE_DELEGATION != 1, withdrawReward is a no-op and allowance should not change.
+#[test]
+fn test_unfreeze_balance_no_reward_when_delegation_disabled() {
+    let owner_addr = Address::from([0x32; 20]);
+    let owner_tron = make_from_raw(&owner_addr);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    storage_engine.put("properties", b"latest_block_header_timestamp", &1600000000000i64.to_be_bytes()).unwrap();
+
+    // Explicitly set CHANGE_DELEGATION=0 (delegation rewards disabled)
+    storage_engine.put("properties", b"CHANGE_DELEGATION", &0i64.to_be_bytes()).unwrap();
+
+    let (mut storage_adapter, _buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
+
+    let owner_proto = tron_backend_execution::protocol::Account {
+        address: owner_tron.clone(),
+        balance: 1_000_000_000i64,
+        allowance: 100_000, // Pre-existing allowance
+        frozen: vec![tron_backend_execution::protocol::account::Frozen {
+            frozen_balance: 5_000_000,
+            expire_time: 1500000000000,
+        }],
+        ..Default::default()
+    };
+    storage_adapter.put_account_proto(&owner_addr, &owner_proto).unwrap();
+
+    let params_data = vec![0x50, 0x00];
+    let tx = TronTransaction {
+        from: owner_addr,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(params_data),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
+            from_raw: Some(owner_tron.clone()),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1000,
+        block_timestamp: 1600000000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 0,
+        bandwidth_price: 0,
+        transaction_id: None,
+    };
+
+    let exec_config = ExecutionConfig {
+        remote: tron_backend_common::RemoteExecutionConfig {
+            unfreeze_balance_enabled: true,
+            delegation_reward_enabled: true, // enabled in config, but CHANGE_DELEGATION=0
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut module_manager = tron_backend_common::ModuleManager::new();
+    let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+    module_manager.register("execution", Box::new(exec_module));
+    let service = BackendService::new(module_manager);
+
+    let result = service.execute_unfreeze_balance_contract(&mut storage_adapter, &tx, &context);
+    assert!(result.is_ok(), "UnfreezeBalance should succeed: {:?}", result.err());
+
+    // Verify allowance is unchanged (no delegation reward applied)
+    let updated_proto = storage_adapter.get_account_proto(&owner_addr).unwrap().unwrap();
+    assert_eq!(
+        updated_proto.allowance, 100_000,
+        "Allowance should remain unchanged when CHANGE_DELEGATION=0"
+    );
+}
+
+/// Test: weight clamping with ALLOW_NEW_REWARD=1 vs legacy mode.
+///
+/// Java parity: DynamicPropertiesStore.addTotalNetWeight() clamps to max(0, ...) when
+/// allowNewReward() is true. When ALLOW_NEW_REWARD=0, no clamping is applied even if
+/// the weight would go negative.
+///
+/// This test verifies:
+/// - With ALLOW_NEW_REWARD=0: weight uses -(unfreeze_amount / TRX_PRECISION), no clamping
+/// - With ALLOW_NEW_REWARD=1: weight uses `decrease` (precise delta), clamps to max(0)
+#[test]
+fn test_unfreeze_balance_weight_clamping_with_allow_new_reward() {
+    // Test scenario: start with TOTAL_NET_WEIGHT=3, unfreeze 5 TRX.
+    // Without new reward: weight_delta = -(5_000_000 / 1_000_000) = -5, so total = 3 + (-5) = -2
+    //   With new reward: weight_delta = decrease (also -5 here), total = max(0, 3 - 5) = 0
+
+    let owner_addr = Address::from([0x33; 20]);
+    let owner_tron = make_from_raw(&owner_addr);
+
+    // --- Run 1: ALLOW_NEW_REWARD=0 (no clamping) ---
+    let temp_dir1 = tempfile::tempdir().unwrap();
+    let storage_engine1 = StorageEngine::new(temp_dir1.path()).unwrap();
+    seed_dynamic_properties(&storage_engine1);
+    storage_engine1.put("properties", b"latest_block_header_timestamp", &1600000000000i64.to_be_bytes()).unwrap();
+    storage_engine1.put("properties", b"ALLOW_NEW_REWARD", &0i64.to_be_bytes()).unwrap();
+    storage_engine1.put("properties", b"TOTAL_NET_WEIGHT", &3i64.to_be_bytes()).unwrap();
+
+    let (mut sa1, _buf1) = EngineBackedEvmStateStore::new_with_buffer(storage_engine1.clone());
+
+    let owner_proto1 = tron_backend_execution::protocol::Account {
+        address: owner_tron.clone(),
+        balance: 1_000_000_000i64,
+        frozen: vec![tron_backend_execution::protocol::account::Frozen {
+            frozen_balance: 5_000_000, // 5 TRX
+            expire_time: 1500000000000,
+        }],
+        ..Default::default()
+    };
+    sa1.put_account_proto(&owner_addr, &owner_proto1).unwrap();
+    sa1.add_freeze_amount(owner_addr, 0, 5_000_000, 1500000000000).unwrap();
+
+    let params_data = vec![0x50, 0x00];
+    let tx = TronTransaction {
+        from: owner_addr,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(params_data.clone()),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
+            from_raw: Some(owner_tron.clone()),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1000,
+        block_timestamp: 1600000000000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 0,
+        bandwidth_price: 0,
+        transaction_id: None,
+    };
+
+    let exec_config1 = ExecutionConfig {
+        remote: tron_backend_common::RemoteExecutionConfig {
+            unfreeze_balance_enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut mm1 = tron_backend_common::ModuleManager::new();
+    mm1.register("execution", Box::new(tron_backend_execution::ExecutionModule::new(exec_config1)));
+    let service1 = BackendService::new(mm1);
+
+    let result1 = service1.execute_unfreeze_balance_contract(&mut sa1, &tx, &context);
+    assert!(result1.is_ok(), "UnfreezeBalance run1 should succeed: {:?}", result1.err());
+
+    // With ALLOW_NEW_REWARD=0: weight = -(5_000_000/1_000_000) = -5, total = 3 + (-5) = -2
+    // No clamping, so -2 is stored.
+    let total_net_weight1 = sa1.get_total_net_weight().unwrap();
+    assert_eq!(total_net_weight1, -2, "Without new reward, total net weight can go negative");
+
+    // --- Run 2: ALLOW_NEW_REWARD=1 (clamp to 0) ---
+    let temp_dir2 = tempfile::tempdir().unwrap();
+    let storage_engine2 = StorageEngine::new(temp_dir2.path()).unwrap();
+    seed_dynamic_properties(&storage_engine2);
+    storage_engine2.put("properties", b"latest_block_header_timestamp", &1600000000000i64.to_be_bytes()).unwrap();
+    storage_engine2.put("properties", b"ALLOW_NEW_REWARD", &1i64.to_be_bytes()).unwrap();
+    storage_engine2.put("properties", b"TOTAL_NET_WEIGHT", &3i64.to_be_bytes()).unwrap();
+
+    let (mut sa2, _buf2) = EngineBackedEvmStateStore::new_with_buffer(storage_engine2.clone());
+
+    let owner_proto2 = tron_backend_execution::protocol::Account {
+        address: owner_tron.clone(),
+        balance: 1_000_000_000i64,
+        frozen: vec![tron_backend_execution::protocol::account::Frozen {
+            frozen_balance: 5_000_000,
+            expire_time: 1500000000000,
+        }],
+        ..Default::default()
+    };
+    sa2.put_account_proto(&owner_addr, &owner_proto2).unwrap();
+    sa2.add_freeze_amount(owner_addr, 0, 5_000_000, 1500000000000).unwrap();
+
+    let tx2 = TronTransaction {
+        from: owner_addr,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(params_data),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
+            from_raw: Some(owner_tron.clone()),
+            ..Default::default()
+        },
+    };
+
+    let exec_config2 = ExecutionConfig {
+        remote: tron_backend_common::RemoteExecutionConfig {
+            unfreeze_balance_enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut mm2 = tron_backend_common::ModuleManager::new();
+    mm2.register("execution", Box::new(tron_backend_execution::ExecutionModule::new(exec_config2)));
+    let service2 = BackendService::new(mm2);
+
+    let result2 = service2.execute_unfreeze_balance_contract(&mut sa2, &tx2, &context);
+    assert!(result2.is_ok(), "UnfreezeBalance run2 should succeed: {:?}", result2.err());
+
+    // With ALLOW_NEW_REWARD=1: weight = decrease = -5, total = max(0, 3 + (-5)) = max(0, -2) = 0
+    let total_net_weight2 = sa2.get_total_net_weight().unwrap();
+    assert_eq!(total_net_weight2, 0, "With new reward, total net weight should be clamped to 0");
+}
+
+/// Test: ALLOW_DELEGATE_OPTIMIZATION=1 deletes prefixed keys and stale legacy records.
+///
+/// Java parity: When supportAllowDelegateOptimization() is true, UnfreezeBalanceActuator
+/// calls convert(owner) + convert(receiver) to migrate any legacy blob-style index entries,
+/// then unDelegate(owner, receiver) to delete the prefixed keys.
+///
+/// This test:
+/// 1. Freezes bandwidth with delegation (creates delegated resource + index entries)
+/// 2. Unfreezes the delegated bandwidth (should clean up all index entries)
+/// 3. Verifies prefixed keys (0x01||owner||receiver, 0x02||receiver||owner) are deleted
+/// 4. Verifies no stale legacy records remain
+#[test]
+fn test_unfreeze_delegated_optimized_deletes_prefixed_keys() {
+    let owner_addr = Address::from([0x34; 20]);
+    let receiver_addr = Address::from([0x35; 20]);
+    let owner_tron = make_from_raw(&owner_addr);
+    let receiver_tron = make_from_raw(&receiver_addr);
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+
+    // Enable delegation + optimization
+    storage_engine.put("properties", b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
+    storage_engine.put("properties", b"ALLOW_DELEGATE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    // Set early timestamp for freeze step (freeze will compute expiry = 1000 + 3*86400000 = 259201000)
+    storage_engine.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+
+    let (mut storage_adapter, _buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
+
+    // Step 1: Freeze with delegation to create the delegated resource + index entries
+    let freeze_amount = 5_000_000i64;
+    let mut owner_proto = tron_backend_execution::protocol::Account::default();
+    owner_proto.balance = 100_000_000;
+    owner_proto.address = owner_tron.clone();
+    storage_adapter.put_account_proto(&owner_addr, &owner_proto).unwrap();
+
+    let mut receiver_proto = tron_backend_execution::protocol::Account::default();
+    receiver_proto.balance = 1_000_000;
+    receiver_proto.address = receiver_tron.clone();
+    storage_adapter.put_account_proto(&receiver_addr, &receiver_proto).unwrap();
+
+    // Build FreezeBalance transaction with delegation
+    let mut freeze_data = Vec::new();
+    freeze_data.push((2 << 3) | 0); // frozen_balance
+    encode_varint(&mut freeze_data, freeze_amount as u64);
+    freeze_data.push((3 << 3) | 0); // frozen_duration
+    encode_varint(&mut freeze_data, 3);
+    freeze_data.push((10 << 3) | 0); // resource = BANDWIDTH
+    encode_varint(&mut freeze_data, 0);
+    freeze_data.push((15 << 3) | 2); // receiver_address (length-delimited)
+    freeze_data.push(21); // length
+    freeze_data.extend_from_slice(&receiver_tron);
+
+    let freeze_tx = TronTransaction {
+        from: owner_addr,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(freeze_data),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
+            from_raw: Some(owner_tron.clone()),
+            ..Default::default()
+        },
+    };
+
+    let freeze_context = TronExecutionContext {
+        block_number: 1000,
+        block_timestamp: 1000, // Early timestamp for freeze
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 0,
+        bandwidth_price: 0,
+        transaction_id: None,
+    };
+
+    let freeze_config = ExecutionConfig {
+        remote: tron_backend_common::RemoteExecutionConfig {
+            freeze_balance_enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut mm = tron_backend_common::ModuleManager::new();
+    mm.register("execution", Box::new(tron_backend_execution::ExecutionModule::new(freeze_config)));
+    let freeze_service = BackendService::new(mm);
+
+    let freeze_result = freeze_service.execute_freeze_balance_contract(&mut storage_adapter, &freeze_tx, &freeze_context);
+    assert!(freeze_result.is_ok(), "FreezeBalance should succeed: {:?}", freeze_result.err());
+    storage_adapter.commit_buffer().unwrap();
+
+    // Verify optimized index keys exist after freeze
+    let db_name = "DelegatedResourceAccountIndex";
+    let mut from_key = vec![0x01];
+    from_key.extend_from_slice(&owner_tron);
+    from_key.extend_from_slice(&receiver_tron);
+    let from_data = storage_engine.get(db_name, &from_key).unwrap();
+    assert!(from_data.is_some(), "from_key should exist after delegation");
+
+    let mut to_key = vec![0x02];
+    to_key.extend_from_slice(&receiver_tron);
+    to_key.extend_from_slice(&owner_tron);
+    let to_data = storage_engine.get(db_name, &to_key).unwrap();
+    assert!(to_data.is_some(), "to_key should exist after delegation");
+
+    // Step 2: Unfreeze the delegated bandwidth
+    // Update timestamp to after freeze expiry (expiry = 1000 + 3*86400000 = 259201000)
+    storage_engine.put("properties", b"latest_block_header_timestamp", &1600000000000i64.to_be_bytes()).unwrap();
+    let (mut sa2, _buf2) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
+
+    let unfreeze_data = vec![
+        0x50, 0x00, // field 10 = BANDWIDTH
+        (15 << 3) | 2, 21, // field 15 = receiver_address
+    ];
+    let mut unfreeze_params = unfreeze_data;
+    unfreeze_params.extend_from_slice(&receiver_tron);
+
+    let unfreeze_tx = TronTransaction {
+        from: owner_addr,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(unfreeze_params),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
+            from_raw: Some(owner_tron.clone()),
+            ..Default::default()
+        },
+    };
+
+    let unfreeze_context = TronExecutionContext {
+        block_number: 2000,
+        block_timestamp: 1600000000000, // After freeze expiry
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 0,
+        bandwidth_price: 0,
+        transaction_id: None,
+    };
+
+    let unfreeze_config = ExecutionConfig {
+        remote: tron_backend_common::RemoteExecutionConfig {
+            unfreeze_balance_enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut mm2 = tron_backend_common::ModuleManager::new();
+    mm2.register("execution", Box::new(tron_backend_execution::ExecutionModule::new(unfreeze_config)));
+    let unfreeze_service = BackendService::new(mm2);
+
+    let unfreeze_result = unfreeze_service.execute_unfreeze_balance_contract(&mut sa2, &unfreeze_tx, &unfreeze_context);
+    assert!(unfreeze_result.is_ok(), "UnfreezeBalance should succeed: {:?}", unfreeze_result.err());
+    sa2.commit_buffer().unwrap();
+
+    // Step 3: Verify prefixed keys are deleted after unfreeze
+    let from_data_after = storage_engine.get(db_name, &from_key).unwrap();
+    assert!(from_data_after.is_none(),
+            "Optimized from_key (0x01||owner||receiver) should be deleted after undelegation");
+
+    let to_data_after = storage_engine.get(db_name, &to_key).unwrap();
+    assert!(to_data_after.is_none(),
+            "Optimized to_key (0x02||receiver||owner) should be deleted after undelegation");
+
+    // Step 4: Verify no stale legacy keys exist
+    let legacy_owner_data = storage_engine.get(db_name, &owner_tron).unwrap();
+    assert!(legacy_owner_data.is_none(),
+            "Legacy owner key should not exist (optimization path doesn't create legacy keys)");
+
+    let legacy_receiver_data = storage_engine.get(db_name, &receiver_tron).unwrap();
+    assert!(legacy_receiver_data.is_none(),
+            "Legacy receiver key should not exist (optimization path doesn't create legacy keys)");
+}

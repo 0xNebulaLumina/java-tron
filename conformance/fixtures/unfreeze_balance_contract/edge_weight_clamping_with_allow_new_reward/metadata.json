@@ -1,0 +1,25 @@
+{
+  "contractType": "UNFREEZE_BALANCE_CONTRACT",
+  "contractTypeNum": 12,
+  "caseName": "edge_weight_clamping_with_allow_new_reward",
+  "caseCategory": "edge",
+  "description": "Unfreeze with ALLOW_NEW_REWARD=1 clamps totalNetWeight to max(0, newValue) when unfreeze amount exceeds current weight",
+  "generatedAt": "2026-03-08T14:03:51.363Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "votes",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0756e667265657a655f76315f77636c616d700000",
+  "dynamicProperties": {
+    "ALLOW_NEW_REWARD": 1,
+    "expected_total_net_weight_after": 0,
+    "freeze_amount": 200000000,
+    "total_net_weight_before": 50
+  },
+  "notes": []
+}

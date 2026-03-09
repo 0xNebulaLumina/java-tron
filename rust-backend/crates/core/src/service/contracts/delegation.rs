@@ -50,18 +50,20 @@ pub fn withdraw_reward(
     }
 
     // Step 2: Get account - return 0 if account doesn't exist
-    let account_exists = storage_adapter
-        .get_account(address)
-        .map_err(|e| format!("Failed to get account: {}", e))?
-        .is_some();
+    // Also capture the raw bytes — Java's withdrawReward stores accountCapsule.getData()
+    // (the full Account proto read at the start) in setAccountVote at the end.
+    let account_raw_bytes = storage_adapter
+        .get_account_raw_bytes(address)
+        .map_err(|e| format!("Failed to get account raw bytes: {}", e))?;
 
-    if !account_exists {
+    if account_raw_bytes.is_none() {
         debug!(
             "Account {} not found, skipping reward computation",
             address_tron
         );
         return Ok(0);
     }
+    let account_raw_bytes = account_raw_bytes.unwrap();
 
     // Step 3: Get cycle information
     let mut begin_cycle = storage_adapter
@@ -172,9 +174,10 @@ pub fn withdraw_reward(
         .set_delegation_end_cycle(address, end_cycle + 1)
         .map_err(|e| format!("Failed to set end_cycle: {}", e))?;
 
-    let account_snapshot = AccountVoteSnapshot::new(*address, votes);
+    // Java stores accountCapsule.getData() (the full Account proto read at the start
+    // of withdrawReward, before any adjustAllowance calls). Use raw bytes for parity.
     storage_adapter
-        .set_delegation_account_vote(end_cycle, address, &account_snapshot)
+        .set_delegation_account_vote_raw(end_cycle, address, account_raw_bytes)
         .map_err(|e| format!("Failed to set account_vote: {}", e))?;
 
     info!(
