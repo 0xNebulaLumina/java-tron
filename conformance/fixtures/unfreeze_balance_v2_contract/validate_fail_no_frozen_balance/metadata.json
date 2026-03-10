@@ -4,7 +4,7 @@
   "caseName": "validate_fail_no_frozen_balance",
   "caseCategory": "validate_fail",
   "description": "Fail when there is no frozenV2 balance for the resource",
-  "generatedAt": "2026-02-22T09:20:03.496Z",
+  "generatedAt": "2026-03-10T11:52:26.022Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

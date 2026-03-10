@@ -22,4 +22,5 @@ mod undelegate_resource;
 mod unfreeze_asset;
 mod update_asset;
 mod update_energy_limit;
+mod update_setting;
 mod witness_update;

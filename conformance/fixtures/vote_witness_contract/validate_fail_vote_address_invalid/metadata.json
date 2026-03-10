@@ -4,7 +4,7 @@
   "caseName": "validate_fail_vote_address_invalid",
   "caseCategory": "validate_fail",
   "description": "Fail when vote address is invalid (wrong length bytes)",
-  "generatedAt": "2026-01-25T09:16:07.562Z",
+  "generatedAt": "2026-03-10T11:53:04.893Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

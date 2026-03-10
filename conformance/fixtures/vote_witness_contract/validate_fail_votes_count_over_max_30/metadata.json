@@ -4,7 +4,7 @@
   "caseName": "validate_fail_votes_count_over_max_30",
   "caseCategory": "validate_fail",
   "description": "Fail when votes count exceeds MAX_VOTE_NUMBER (30)",
-  "generatedAt": "2026-01-25T09:16:07.580Z",
+  "generatedAt": "2026-03-10T11:53:04.913Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "edge_delegated_unfreeze_with_optimization",
   "caseCategory": "edge",
   "description": "Delegated unfreeze with ALLOW_DELEGATE_OPTIMIZATION=1 converts legacy index to prefixed keys, then deletes them via unDelegate",
-  "generatedAt": "2026-03-08T14:03:51.379Z",
+  "generatedAt": "2026-03-10T11:52:25.070Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "happy_path_strict_math_precision_edge",
   "caseCategory": "happy",
   "description": "Execute swap with strict math using non-round values (stresses floating-point precision)",
-  "generatedAt": "2026-02-13T03:48:02.890Z",
+  "generatedAt": "2026-03-10T11:52:23.865Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

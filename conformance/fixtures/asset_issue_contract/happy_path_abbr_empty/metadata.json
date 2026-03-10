@@ -4,7 +4,7 @@
   "caseName": "happy_path_abbr_empty",
   "caseCategory": "happy",
   "description": "Success when abbreviation is empty (abbr is optional)",
-  "generatedAt": "2026-01-25T09:15:19.748Z",
+  "generatedAt": "2026-03-10T11:52:19.355Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

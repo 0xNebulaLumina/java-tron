@@ -4,7 +4,7 @@
   "caseName": "validate_fail_allow_new_reward_already_active",
   "caseCategory": "validate_fail",
   "description": "Fail when ALLOW_NEW_REWARD is already active",
-  "generatedAt": "2026-03-01T15:03:09.889Z",
+  "generatedAt": "2026-03-10T11:52:28.030Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

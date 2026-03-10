@@ -4,7 +4,7 @@
   "caseName": "validate_fail_locked_expire_time_equals_now",
   "caseCategory": "validate_fail",
   "description": "Fail when locked delegation has expireTime == now (still locked, unlock requires < now)",
-  "generatedAt": "2026-01-25T09:15:30.193Z",
+  "generatedAt": "2026-03-10T11:52:29.127Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

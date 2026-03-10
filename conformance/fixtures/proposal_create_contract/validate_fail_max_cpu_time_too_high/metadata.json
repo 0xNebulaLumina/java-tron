@@ -4,7 +4,7 @@
   "caseName": "validate_fail_max_cpu_time_too_high",
   "caseCategory": "validate_fail",
   "description": "Fail when MAX_CPU_TIME_OF_ONE_TX exceeds limit (100 when higher limit not enabled)",
-  "generatedAt": "2026-03-01T15:03:09.896Z",
+  "generatedAt": "2026-03-10T11:52:28.034Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

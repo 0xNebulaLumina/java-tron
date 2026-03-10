@@ -4,7 +4,7 @@
   "caseName": "validate_fail_free_asset_net_limit_equal_one_day_net_limit",
   "caseCategory": "validate_fail",
   "description": "Fail when free_asset_net_limit equals oneDayNetLimit",
-  "generatedAt": "2026-01-25T09:15:19.707Z",
+  "generatedAt": "2026-03-10T11:52:19.303Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

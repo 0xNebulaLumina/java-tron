@@ -4,7 +4,7 @@
   "caseName": "validate_fail_asset_name_empty",
   "caseCategory": "validate_fail",
   "description": "Fail when asset name is empty",
-  "generatedAt": "2026-01-25T09:15:19.695Z",
+  "generatedAt": "2026-03-10T11:52:19.294Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

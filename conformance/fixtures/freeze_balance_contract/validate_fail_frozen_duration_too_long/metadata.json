@@ -4,7 +4,7 @@
   "caseName": "validate_fail_frozen_duration_too_long",
   "caseCategory": "validate_fail",
   "description": "Fail when frozenDuration exceeds maxFrozenTime",
-  "generatedAt": "2026-01-25T09:15:25.576Z",
+  "generatedAt": "2026-03-10T11:52:24.999Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

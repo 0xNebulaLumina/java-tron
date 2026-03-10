@@ -4,7 +4,7 @@
   "caseName": "edge_happy_blackhole_optimization_burns_fee",
   "caseCategory": "edge",
   "description": "Success with ALLOW_BLACKHOLE_OPTIMIZATION=1, fee is burned (BURN_TRX_AMOUNT incremented)",
-  "generatedAt": "2026-01-25T09:15:23.211Z",
+  "generatedAt": "2026-03-10T11:52:22.725Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

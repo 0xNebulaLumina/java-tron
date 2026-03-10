@@ -4,7 +4,7 @@
   "caseName": "validate_fail_vm_disabled",
   "caseCategory": "validate_fail",
   "description": "Fail when VM/contract creation is disabled",
-  "generatedAt": "2026-01-25T09:15:33.369Z",
+  "generatedAt": "2026-03-10T11:52:32.155Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

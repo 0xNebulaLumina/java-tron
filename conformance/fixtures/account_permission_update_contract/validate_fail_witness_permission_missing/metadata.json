@@ -4,7 +4,7 @@
   "caseName": "validate_fail_witness_permission_missing",
   "caseCategory": "validate_fail",
   "description": "Fail when witness account lacks witness permission",
-  "generatedAt": "2026-01-25T09:15:17.885Z",
+  "generatedAt": "2026-03-10T11:52:18.008Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

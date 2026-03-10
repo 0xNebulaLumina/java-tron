@@ -4,7 +4,7 @@
   "caseName": "happy_path_multiple",
   "caseCategory": "happy",
   "description": "Withdraw multiple expired unfrozen balances (BANDWIDTH + ENERGY)",
-  "generatedAt": "2026-01-25T09:15:30.179Z",
+  "generatedAt": "2026-03-10T11:52:29.114Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

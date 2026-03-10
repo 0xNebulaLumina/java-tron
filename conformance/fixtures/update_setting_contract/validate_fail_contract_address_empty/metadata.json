@@ -4,7 +4,7 @@
   "caseName": "validate_fail_contract_address_empty",
   "caseCategory": "validate_fail",
   "description": "Fail when contractAddress is empty (falls through to contract not exist)",
-  "generatedAt": "2026-01-25T09:15:22.030Z",
+  "generatedAt": "2026-03-10T11:52:21.624Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

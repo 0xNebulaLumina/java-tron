@@ -4,7 +4,7 @@
   "caseName": "happy_path_unfreeze_energy_v1",
   "caseCategory": "happy",
   "description": "V1 unfreeze expired ENERGY frozen balance",
-  "generatedAt": "2026-01-25T09:15:25.564Z",
+  "generatedAt": "2026-03-10T11:52:24.957Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

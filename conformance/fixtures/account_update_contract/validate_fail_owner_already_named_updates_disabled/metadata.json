@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_already_named_updates_disabled",
   "caseCategory": "validate_fail",
   "description": "Fail when owner already has a name and ALLOW_UPDATE_ACCOUNT_NAME=0",
-  "generatedAt": "2026-01-25T09:15:23.205Z",
+  "generatedAt": "2026-03-10T11:52:22.719Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

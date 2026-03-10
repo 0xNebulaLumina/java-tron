@@ -4,7 +4,7 @@
   "caseName": "happy_path_100",
   "caseCategory": "happy",
   "description": "Set consume_user_resource_percent to 100 (user pays all)",
-  "generatedAt": "2026-01-25T09:15:22.087Z",
+  "generatedAt": "2026-03-10T11:52:21.680Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

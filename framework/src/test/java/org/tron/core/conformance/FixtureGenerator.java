@@ -19,6 +19,7 @@ import org.tron.common.utils.FileUtil;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.actuator.Actuator;
 import org.tron.core.actuator.ActuatorFactory;
+import org.tron.core.Constant;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
@@ -563,12 +564,24 @@ public class FixtureGenerator {
         .setTransactionId(trxCap.getTransactionId().toString())
         .build();
 
+    // Compute transaction_bytes_size matching BandwidthProcessor.consume() / RemoteExecutionSPI.
+    // Formula (VM-enabled): clearRet().getSerializedSize() + numContracts * MAX_RESULT_SIZE_IN_TX
+    long txBytesSize;
+    if (chainBaseManager.getDynamicPropertiesStore().supportVM()) {
+      txBytesSize = trxCap.getInstance().toBuilder().clearRet().build().getSerializedSize();
+      int numContracts = trxCap.getInstance().getRawData().getContractCount();
+      txBytesSize += (long) numContracts * Constant.MAX_RESULT_SIZE_IN_TX;
+    } else {
+      txBytesSize = trxCap.getSerializedSize();
+    }
+
     List<AccountAextSnapshot> preExecAext =
         collectPreExecutionAext(contract.getType(), fromAddress, toAddress);
     return ExecuteTransactionRequest.newBuilder()
         .setTransaction(tronTx)
         .setContext(context)
         .addAllPreExecutionAext(preExecAext)
+        .setTransactionBytesSize(txBytesSize)
         .build();
   }
 

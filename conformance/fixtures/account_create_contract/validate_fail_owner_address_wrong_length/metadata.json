@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_address_wrong_length",
   "caseCategory": "validate_fail",
   "description": "Fail when owner address is not 21 bytes (20 bytes)",
-  "generatedAt": "2026-01-25T09:15:23.201Z",
+  "generatedAt": "2026-03-10T11:52:22.714Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

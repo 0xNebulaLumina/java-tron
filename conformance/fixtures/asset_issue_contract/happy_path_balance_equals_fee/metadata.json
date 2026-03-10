@@ -4,7 +4,7 @@
   "caseName": "happy_path_balance_equals_fee",
   "caseCategory": "happy",
   "description": "Success when owner balance exactly equals ASSET_ISSUE_FEE",
-  "generatedAt": "2026-01-25T09:15:19.774Z",
+  "generatedAt": "2026-03-10T11:52:19.378Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_lock_period_negative",
   "caseCategory": "validate_fail",
   "description": "Fail when lock period is negative",
-  "generatedAt": "2026-01-25T09:15:30.172Z",
+  "generatedAt": "2026-03-10T11:52:29.111Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,
