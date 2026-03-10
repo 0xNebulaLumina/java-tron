@@ -49,8 +49,13 @@ Goal: make Rust parse failures match Java's `InvalidProtocolBufferException` mes
     - `test_disabled_config_falls_back` — feature gate rejects when disabled
     - `test_parse_empty_data` — empty protobuf bytes → "Invalid address"
 
-### 4) Bandwidth accounting strictness (optional)
+### 4) Bandwidth accounting strictness
 - [x] If required, compute `bandwidth_used` based on the exact serialized transaction size Java uses for net usage, not a simplified estimator.
-  - **Decision**: Not required. No conformance fixtures assert exact bandwidth/net usage for UPDATE_SETTING_CONTRACT. The simplified estimator (`calculate_bandwidth_usage`) is used consistently across all contract handlers. Bandwidth exactness will be addressed holistically when/if Java's fixture generator starts emitting net usage assertions.
+  - **Implemented**: `calculate_bandwidth_usage` already prefers `transaction_bytes_size` (sent by Java via gRPC field 4 of `ExecuteTransactionRequest`) when available. Java computes the exact value: `clearRet().getSerializedSize() + numContracts * MAX_RESULT_SIZE_IN_TX` (where MAX_RESULT_SIZE_IN_TX = 64). This makes the production path byte-exact. The fallback approximation (base 60 + data_len + 65) is only used when the field is missing (e.g., conformance fixtures that predate the field).
+  - **Tests added**: 3 dedicated bandwidth tests in `update_setting.rs`:
+    - `test_bandwidth_uses_java_computed_bytes_size` — verifies exact Java value (280) is returned
+    - `test_bandwidth_fallback_without_bytes_size` — verifies fallback formula when field is absent
+    - `test_bandwidth_zero_bytes_size_uses_fallback` — verifies 0 triggers fallback (not literal 0)
+  - Happy-path test `test_happy_path_update_percent` also asserts `bandwidth_used == transaction_bytes_size`.
 - [x] Add/extend fixtures to assert net usage if/when Java's fixture generator starts emitting it for this contract type.
-  - **Deferred**: No action needed now. Current fixtures do not include bandwidth assertions. This is a future enhancement when fixture generator adds bandwidth data.
+  - **Status**: Current conformance fixtures do not include `transaction_bytes_size` (proto3 default = 0). Rust unit tests cover both the exact path and fallback path. When the Java fixture generator adds `transaction_bytes_size`, conformance will automatically use the exact value.

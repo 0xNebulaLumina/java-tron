@@ -69,6 +69,21 @@ fn make_transaction(
     owner_tron: Vec<u8>,
     contract_bytes: Vec<u8>,
 ) -> TronTransaction {
+    make_transaction_with_bytes_size(owner, owner_tron, contract_bytes, None)
+}
+
+/// Build a transaction with an explicit `transaction_bytes_size`.
+/// When set, this simulates the Java-computed protobuf serialized size
+/// that `RemoteExecutionSPI` sends via gRPC (field 4 of ExecuteTransactionRequest).
+///
+/// Java formula (VM-enabled): `clearRet().getSerializedSize() + numContracts * MAX_RESULT_SIZE_IN_TX`
+/// where MAX_RESULT_SIZE_IN_TX = 64.
+fn make_transaction_with_bytes_size(
+    owner: Address,
+    owner_tron: Vec<u8>,
+    contract_bytes: Vec<u8>,
+    transaction_bytes_size: Option<i64>,
+) -> TronTransaction {
     TronTransaction {
         from: owner,
         to: None,
@@ -86,6 +101,7 @@ fn make_transaction(
                 value: contract_bytes,
             }),
             from_raw: Some(owner_tron),
+            transaction_bytes_size,
             ..Default::default()
         },
     }
@@ -404,7 +420,9 @@ fn test_happy_path_update_percent() {
     let (mut adapter, _) = EngineBackedEvmStateStore::new_with_buffer(storage_engine);
 
     let owner_addr = Address::from_slice(&owner[1..]);
-    let tx = make_transaction(owner_addr, owner.clone(), data);
+    // Simulate production: Java sends exact bytes size via gRPC
+    let java_bytes_size: i64 = 250;
+    let tx = make_transaction_with_bytes_size(owner_addr, owner.clone(), data, Some(java_bytes_size));
     let ctx = new_test_context();
     let result = service.execute_non_vm_contract(&mut adapter, &tx, &ctx);
     assert!(result.is_ok(), "Expected success, got: {:?}", result.err());
@@ -413,6 +431,10 @@ fn test_happy_path_update_percent() {
     assert!(exec_result.success);
     assert_eq!(exec_result.energy_used, 0);
     assert!(exec_result.state_changes.is_empty());
+    assert_eq!(
+        exec_result.bandwidth_used, java_bytes_size as u64,
+        "bandwidth_used must match Java-computed transaction_bytes_size"
+    );
 
     // Commit the write buffer to storage so we can verify the update
     adapter.commit_buffer().expect("commit should succeed");
@@ -524,6 +546,110 @@ fn test_disabled_config_falls_back() {
     assert!(result
         .unwrap_err()
         .contains("UPDATE_SETTING_CONTRACT execution is disabled"));
+}
+
+// ---------------------------------------------------------------------------
+// Bandwidth accounting tests
+// ---------------------------------------------------------------------------
+
+/// Java sends `transaction_bytes_size` via gRPC. Rust must use it exactly.
+///
+/// Java formula (VM-enabled chains):
+///   clearRet().getSerializedSize() + numContracts * MAX_RESULT_SIZE_IN_TX
+/// where MAX_RESULT_SIZE_IN_TX = 64 and numContracts = 1 for UpdateSettingContract.
+#[test]
+fn test_bandwidth_uses_java_computed_bytes_size() {
+    let owner = make_from_raw(&Address::from([0xabu8; 20]));
+    let contract_addr = make_from_raw(&Address::from([0x11u8; 20]));
+    let data = build_update_setting_data(&owner, &contract_addr, 75);
+
+    let service = new_test_service_with_update_setting_enabled();
+    let tmp = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(tmp.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    seed_account(&storage_engine, &owner, 100_000_000);
+    seed_smart_contract(&storage_engine, &owner, &contract_addr, 25);
+
+    let (mut adapter, _) = EngineBackedEvmStateStore::new_with_buffer(storage_engine);
+
+    let owner_addr = Address::from_slice(&owner[1..]);
+    // Simulate Java-computed bytes size: 216 (clearRet serialized) + 64 (MAX_RESULT_SIZE_IN_TX) = 280
+    let java_bytes_size: i64 = 280;
+    let tx = make_transaction_with_bytes_size(owner_addr, owner.clone(), data, Some(java_bytes_size));
+    let ctx = new_test_context();
+    let result = service.execute_non_vm_contract(&mut adapter, &tx, &ctx);
+    assert!(result.is_ok(), "Expected success, got: {:?}", result.err());
+
+    let exec_result = result.unwrap();
+    assert_eq!(
+        exec_result.bandwidth_used, java_bytes_size as u64,
+        "bandwidth_used must equal Java-computed transaction_bytes_size"
+    );
+}
+
+/// When `transaction_bytes_size` is not set (e.g., conformance fixtures),
+/// the fallback approximation is used: base(60) + data_len + signature(65).
+#[test]
+fn test_bandwidth_fallback_without_bytes_size() {
+    let owner = make_from_raw(&Address::from([0xabu8; 20]));
+    let contract_addr = make_from_raw(&Address::from([0x11u8; 20]));
+    let data = build_update_setting_data(&owner, &contract_addr, 75);
+    let data_len = data.len() as u64;
+
+    let service = new_test_service_with_update_setting_enabled();
+    let tmp = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(tmp.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    seed_account(&storage_engine, &owner, 100_000_000);
+    seed_smart_contract(&storage_engine, &owner, &contract_addr, 25);
+
+    let (mut adapter, _) = EngineBackedEvmStateStore::new_with_buffer(storage_engine);
+
+    let owner_addr = Address::from_slice(&owner[1..]);
+    // No transaction_bytes_size → fallback
+    let tx = make_transaction(owner_addr, owner.clone(), data);
+    let ctx = new_test_context();
+    let result = service.execute_non_vm_contract(&mut adapter, &tx, &ctx);
+    assert!(result.is_ok(), "Expected success, got: {:?}", result.err());
+
+    let exec_result = result.unwrap();
+    let expected_fallback = 60 + data_len + 65; // base + data + signature
+    assert_eq!(
+        exec_result.bandwidth_used, expected_fallback,
+        "Without transaction_bytes_size, fallback approximation should be used"
+    );
+}
+
+/// `transaction_bytes_size = 0` should fall back to approximation (Java sends 0
+/// when the value is not meaningful, e.g., pre-VM chains).
+#[test]
+fn test_bandwidth_zero_bytes_size_uses_fallback() {
+    let owner = make_from_raw(&Address::from([0xabu8; 20]));
+    let contract_addr = make_from_raw(&Address::from([0x11u8; 20]));
+    let data = build_update_setting_data(&owner, &contract_addr, 50);
+    let data_len = data.len() as u64;
+
+    let service = new_test_service_with_update_setting_enabled();
+    let tmp = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(tmp.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    seed_account(&storage_engine, &owner, 100_000_000);
+    seed_smart_contract(&storage_engine, &owner, &contract_addr, 25);
+
+    let (mut adapter, _) = EngineBackedEvmStateStore::new_with_buffer(storage_engine);
+
+    let owner_addr = Address::from_slice(&owner[1..]);
+    let tx = make_transaction_with_bytes_size(owner_addr, owner.clone(), data, Some(0));
+    let ctx = new_test_context();
+    let result = service.execute_non_vm_contract(&mut adapter, &tx, &ctx);
+    assert!(result.is_ok(), "Expected success, got: {:?}", result.err());
+
+    let exec_result = result.unwrap();
+    let expected_fallback = 60 + data_len + 65;
+    assert_eq!(
+        exec_result.bandwidth_used, expected_fallback,
+        "transaction_bytes_size=0 should fall back to approximation"
+    );
 }
 
 // ---------------------------------------------------------------------------
