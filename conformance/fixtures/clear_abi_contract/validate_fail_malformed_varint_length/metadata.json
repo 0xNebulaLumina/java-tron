@@ -4,7 +4,7 @@
   "caseName": "validate_fail_malformed_varint_length",
   "caseCategory": "validate_fail",
   "description": "Fail when protobuf contains malformed varint (too long)",
-  "generatedAt": "2026-01-31T15:22:01.994Z",
+  "generatedAt": "2026-03-10T11:52:21.666Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

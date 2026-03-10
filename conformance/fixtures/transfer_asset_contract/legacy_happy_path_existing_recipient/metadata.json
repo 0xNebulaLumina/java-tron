@@ -4,7 +4,7 @@
   "caseName": "legacy_happy_path_existing_recipient",
   "caseCategory": "happy",
   "description": "Legacy mode (V1): Transfer TRC-10 asset by name to existing account",
-  "generatedAt": "2026-03-02T08:21:28.708Z",
+  "generatedAt": "2026-03-10T11:52:30.138Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

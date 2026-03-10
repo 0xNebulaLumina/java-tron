@@ -4,7 +4,7 @@
   "caseName": "validate_fail_negative_fee_like_param",
   "caseCategory": "validate_fail",
   "description": "Fail when fee-like parameter has negative value",
-  "generatedAt": "2026-03-01T15:03:09.991Z",
+  "generatedAt": "2026-03-10T11:52:28.114Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

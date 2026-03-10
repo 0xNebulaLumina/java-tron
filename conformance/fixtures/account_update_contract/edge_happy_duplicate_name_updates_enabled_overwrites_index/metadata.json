@@ -4,7 +4,7 @@
   "caseName": "edge_happy_duplicate_name_updates_enabled_overwrites_index",
   "caseCategory": "edge",
   "description": "Success with duplicate name when ALLOW_UPDATE_ACCOUNT_NAME=1, account-index points to last writer",
-  "generatedAt": "2026-01-25T09:15:23.167Z",
+  "generatedAt": "2026-03-10T11:52:22.690Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "legacy_mode_happy_path_transaction",
   "caseCategory": "happy",
   "description": "Execute exchange transaction with ALLOW_SAME_TOKEN_NAME=0 (legacy mode using token names)",
-  "generatedAt": "2026-02-12T04:07:56.241Z",
+  "generatedAt": "2026-03-10T11:52:23.810Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

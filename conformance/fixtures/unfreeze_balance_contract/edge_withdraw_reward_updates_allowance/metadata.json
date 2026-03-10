@@ -4,7 +4,7 @@
   "caseName": "edge_withdraw_reward_updates_allowance",
   "caseCategory": "edge",
   "description": "Unfreeze with CHANGE_DELEGATION=1 triggers withdrawReward, adding delegation reward to account.allowance",
-  "generatedAt": "2026-03-08T14:03:51.300Z",
+  "generatedAt": "2026-03-10T11:52:24.933Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

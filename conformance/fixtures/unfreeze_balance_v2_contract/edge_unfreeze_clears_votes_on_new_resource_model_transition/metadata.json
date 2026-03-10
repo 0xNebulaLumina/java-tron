@@ -4,7 +4,7 @@
   "caseName": "edge_unfreeze_clears_votes_on_new_resource_model_transition",
   "caseCategory": "edge",
   "description": "Unfreeze clears votes when transitioning to new resource model",
-  "generatedAt": "2026-02-22T09:20:03.535Z",
+  "generatedAt": "2026-03-10T11:52:26.032Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

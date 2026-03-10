@@ -4,7 +4,7 @@
   "caseName": "validate_fail_candidate_not_witness",
   "caseCategory": "validate_fail",
   "description": "Fail when vote target is not a witness",
-  "generatedAt": "2026-01-25T09:16:07.582Z",
+  "generatedAt": "2026-03-10T11:53:04.914Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

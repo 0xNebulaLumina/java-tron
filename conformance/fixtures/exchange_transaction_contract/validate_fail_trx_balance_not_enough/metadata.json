@@ -4,7 +4,7 @@
   "caseName": "validate_fail_trx_balance_not_enough",
   "caseCategory": "validate_fail",
   "description": "Fail when TRX balance is not enough for trade",
-  "generatedAt": "2026-01-25T09:15:24.469Z",
+  "generatedAt": "2026-03-10T11:52:23.783Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_asset_name_reserved_trx_uppercase",
   "caseCategory": "validate_fail",
   "description": "Fail when asset name is 'TRX' (case-insensitive reserved check)",
-  "generatedAt": "2026-01-25T09:15:19.626Z",
+  "generatedAt": "2026-03-10T11:52:19.265Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

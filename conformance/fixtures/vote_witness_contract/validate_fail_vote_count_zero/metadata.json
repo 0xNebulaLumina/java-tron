@@ -4,7 +4,7 @@
   "caseName": "validate_fail_vote_count_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when vote count is zero",
-  "generatedAt": "2026-01-25T09:16:07.566Z",
+  "generatedAt": "2026-03-10T11:53:04.896Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,
