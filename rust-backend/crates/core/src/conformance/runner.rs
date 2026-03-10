@@ -671,6 +671,16 @@ impl ConformanceRunner {
                 // Create storage adapter with a write buffer for atomic commit/rollback
                 let (mut storage_adapter, _write_buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
 
+                // Configure fork thresholds for conformance testing.
+                // Default: set block_num_for_energy_limit = 0 so the fork gate passes
+                // (fixtures use low block numbers like 11).
+                // For the "fork_not_enabled" case, read the threshold from metadata.dynamicProperties.
+                let energy_limit_fork_threshold = metadata.dynamic_properties
+                    .get("blockNumForEnergyLimit")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                storage_adapter.set_block_num_for_energy_limit(energy_limit_fork_threshold);
+
                 let result = backend_service.execute_non_vm_contract(&mut storage_adapter, &transaction, &context);
 
                 // Commit only on success; on failure drop buffer (rollback).

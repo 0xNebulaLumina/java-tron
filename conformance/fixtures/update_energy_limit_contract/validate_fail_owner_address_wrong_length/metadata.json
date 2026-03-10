@@ -4,7 +4,7 @@
   "caseName": "validate_fail_owner_address_wrong_length",
   "caseCategory": "validate_fail",
   "description": "Fail when ownerAddress has wrong length (not 21 bytes)",
-  "generatedAt": "2026-01-25T09:15:22.049Z",
+  "generatedAt": "2026-03-10T04:10:47.642Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
@@ -14,7 +14,7 @@
     "dynamic-properties"
   ],
   "expectedStatus": "VALIDATION_FAILED",
-  "expectedErrorMessage": "contract type error, unexpected type [UpdateEnergyLimitContract]",
+  "expectedErrorMessage": "Invalid address",
   "dynamicProperties": {},
   "notes": []
 }

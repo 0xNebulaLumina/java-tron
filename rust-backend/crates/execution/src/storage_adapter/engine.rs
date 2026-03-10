@@ -48,6 +48,10 @@ pub struct EngineBackedEvmStateStore {
     /// When set, all writes go to the buffer instead of directly to storage.
     /// Use `commit_buffer()` to flush the buffer to storage on success.
     write_buffer: Option<Arc<Mutex<ExecutionWriteBuffer>>>,
+    /// Configurable fork threshold for energy limit feature.
+    /// Java: CommonParameter.getInstance().getBlockNumForEnergyLimit()
+    /// Default: 4727890 (mainnet value). Set to 0 for conformance testing.
+    block_num_for_energy_limit: i64,
 }
 
 impl EngineBackedEvmStateStore {
@@ -62,6 +66,7 @@ impl EngineBackedEvmStateStore {
             storage_engine,
             address_prefix,
             write_buffer: None,
+            block_num_for_energy_limit: 4727890,
         }
     }
 
@@ -77,6 +82,7 @@ impl EngineBackedEvmStateStore {
             storage_engine,
             address_prefix,
             write_buffer: Some(buffer.clone()),
+            block_num_for_energy_limit: 4727890,
         };
         (store, buffer)
     }
@@ -4809,15 +4815,18 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Set the BLOCK_NUM_FOR_ENERGY_LIMIT threshold.
+    /// Java: CommonParameter.getInstance().setBlockNumForEnergyLimit(value)
+    /// Use 0 for conformance testing (always enabled), or 4727890 for mainnet default.
+    pub fn set_block_num_for_energy_limit(&mut self, threshold: i64) {
+        self.block_num_for_energy_limit = threshold;
+    }
+
     /// Get BLOCK_NUM_FOR_ENERGY_LIMIT configuration
-    /// This is typically a configuration constant, not a dynamic property
-    /// For checkForEnergyLimit(): block_num >= BLOCK_NUM_FOR_ENERGY_LIMIT
+    /// Java: CommonParameter.getInstance().getBlockNumForEnergyLimit()
     /// Default: 4727890 (mainnet value from CommonParameter)
     pub fn get_block_num_for_energy_limit(&self) -> i64 {
-        // This is a constant from CommonParameter, not stored in DB
-        // Mainnet value: 4727890
-        // Testnet value might differ
-        4727890
+        self.block_num_for_energy_limit
     }
 
     /// Check if energy limit feature is enabled based on current block number
