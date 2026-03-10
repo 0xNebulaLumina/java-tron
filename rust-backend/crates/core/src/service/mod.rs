@@ -5238,6 +5238,13 @@ impl BackendService {
         }
 
         // 2. Parse the contract data
+        // NOTE: RemoteExecutionSPI always sets contract_parameter for UpdateSettingContract.
+        // The Any-less fallback (using transaction.data) is kept for backward compatibility
+        // with older clients / synthetic tests, but is not expected in production.
+        if transaction.metadata.contract_parameter.is_none() {
+            warn!("UpdateSettingContract: contract_parameter is missing; using transaction.data as fallback. \
+                   This path is not used by RemoteExecutionSPI and may not achieve full Java parity.");
+        }
         let contract_bytes = transaction
             .metadata
             .contract_parameter
