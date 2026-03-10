@@ -109,6 +109,11 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
     // Enable TVM Constantinople
     dbManager.getDynamicPropertiesStore().saveAllowTvmConstantinople(1);
 
+    // Enable energy limit fork gate for conformance testing.
+    // Set threshold to 0 so that blockNum (10/11) >= 0 passes the fork gate.
+    // The forkNotEnabled test case overrides this to a high value.
+    CommonParameter.getInstance().setBlockNumForEnergyLimit(0);
+
     // Set block properties
     dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(1000000);
     dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(10);
@@ -645,6 +650,7 @@ public class ContractMetadataFixtureGeneratorTest extends BaseTest {
           .database("dynamic-properties")
           .ownerAddress(OWNER_ADDRESS)
           .expectedError("contract type error, unexpected type [UpdateEnergyLimitContract]")
+          .dynamicProperty("blockNumForEnergyLimit", 100)
           .build();
 
       FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
