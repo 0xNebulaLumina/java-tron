@@ -1929,8 +1929,37 @@ impl BackendService {
                               sum_sun, tron_power_sun));
         }
 
-        // 5. Phase 1: Skip withdrawReward (log only)
-        info!("Skipping withdrawReward for {} (Phase 1 - delegation not yet ported)", owner_tron);
+        // 5. Withdraw delegation rewards (Java: mortgageService.withdrawReward at start of countVoteAccount)
+        // Must be called BEFORE mutating votes, since reward computation uses the old vote set.
+        let reward = contracts::delegation::withdraw_reward(storage_adapter, &owner)
+            .map_err(|e| format!("Failed to withdraw reward: {}", e))?;
+        if reward > 0 {
+            info!("VoteWitness withdrawReward: owner={} reward={} SUN", owner_tron, reward);
+        }
+
+        // 5.5 Load owner account proto (after withdrawReward, matching Java ordering)
+        // Java: accountCapsule = accountStore.get(ownerAddress) after withdrawReward
+        let mut owner_account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| format!("Account[{}] not exists", readable_owner_address))?;
+
+        // 5.6 Apply reward to allowance (Java: MortgageService.adjustAllowance)
+        // Java skips if amount <= 0
+        if reward > 0 {
+            owner_account.allowance = owner_account.allowance.checked_add(reward)
+                .ok_or_else(|| "Allowance overflow".to_string())?;
+            info!("VoteWitness adjustAllowance: owner={} new_allowance={}", owner_tron, owner_account.allowance);
+        }
+
+        // 5.7 Initialize oldTronPower (Java: accountCapsule.initializeOldTronPower)
+        // Java: if (supportAllowNewResourceModel() && oldTronPowerIsNotInitialized())
+        //   initializeOldTronPower() → value = getTronPower(); if (value == 0) value = -1
+        if new_model && owner_account.old_tron_power == 0 {
+            let tron_power = storage_adapter.compute_tron_power_in_sun(&owner, false)
+                .map_err(|e| format!("Failed to compute tron power for oldTronPower: {}", e))?;
+            owner_account.old_tron_power = if tron_power == 0 { -1 } else { tron_power as i64 };
+            info!("VoteWitness: initialized oldTronPower to {} for {}", owner_account.old_tron_power, owner_tron);
+        }
 
         // 6. Load or create VotesRecord
         // java-tron semantics:
@@ -1997,10 +2026,7 @@ impl BackendService {
 
         // 8.5 Update Account.votes list to match embedded semantics.
         // java-tron clears the existing votes and appends the new ones on every vote.
-        let mut owner_account = storage_adapter.get_account_proto(&owner)
-            .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or_else(|| format!("Account[{}] not exists", readable_owner_address))?;
-
+        // Reuse owner_account loaded at step 5.5 (already has allowance + oldTronPower updates).
         owner_account.votes.clear();
         for (vote_address, vote_count) in &votes {
             let vote_count_i64: i64 = (*vote_count).try_into()
@@ -2012,8 +2038,9 @@ impl BackendService {
             });
         }
 
+        // Persist all account changes: allowance (from withdrawReward), oldTronPower, and votes
         storage_adapter.put_account_proto(&owner, &owner_account)
-            .map_err(|e| format!("Failed to persist owner account votes: {}", e))?;
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
         // 9. Build result with CSV parity
         // Get owner account for state change
