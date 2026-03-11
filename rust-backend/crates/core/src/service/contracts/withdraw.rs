@@ -218,14 +218,18 @@ fn decode_guard_reps_from_config(base58_list: &[String]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// TRX precision constant: 1 TRX = 1,000,000 SUN
+const TRX_PRECISION: u64 = 1_000_000;
+
 impl BackendService {
     /// Execute a WITHDRAW_BALANCE_CONTRACT
     ///
-    /// Matches java-tron's WithdrawBalanceActuator.validate() + execute():
-    /// 1. Validates address, account existence, guard rep restriction, cooldown, reward, overflow
+    /// Matches java-tron's WithdrawBalanceActuator.validate() + execute() end-to-end:
+    /// 1. Validates contract type_url, address, account, guard rep, cooldown, reward, overflow
     /// 2. Computes delegation rewards via withdraw_reward() (self-gated on allowChangeDelegation)
     /// 3. Updates balance by adding (base_allowance + delegation_reward)
-    /// 4. Emits WithdrawChange sidecar for Java to set allowance=0 and latestWithdrawTime
+    /// 4. Tracks bandwidth resource usage for AEXT parity (when aext_mode = "tracked")
+    /// 5. Emits WithdrawChange sidecar for Java to set allowance=0 and latestWithdrawTime
     pub(crate) fn execute_withdraw_balance_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
@@ -233,6 +237,17 @@ impl BackendService {
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         let owner_address = transaction.from;
+
+        // 0) Validate contract type_url in Any wrapper (java-tron: any.is(WithdrawBalanceContract.class))
+        //    If contract_parameter is provided, validate it matches the expected type.
+        if let Some(ref param) = transaction.metadata.contract_parameter {
+            if !param.type_url.ends_with("WithdrawBalanceContract") {
+                return Err(format!(
+                    "contract type error, expected type [WithdrawBalanceContract], real type[{}]",
+                    param.type_url
+                ));
+            }
+        }
 
         // 1) Validate owner address (java-tron: DecodeUtil.addressValid)
         let prefix = storage_adapter.address_prefix();
@@ -416,7 +431,125 @@ impl BackendService {
         );
 
         // 12) Calculate bandwidth usage
+        //     Prefers Java-computed transaction_bytes_size (sent via gRPC) for exact parity
+        //     with Java's BandwidthProcessor.consume() tx size calculation.
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // 13) Track AEXT for bandwidth if in "tracked" mode
+        //     Matches Java's BandwidthProcessor resource window accounting:
+        //     - Tries account bandwidth first (from frozen balance)
+        //     - Falls back to free bandwidth (FREE_NET_LIMIT)
+        //     - Falls back to fee-based consumption (TRANSACTION_FEE)
+        //     In "hybrid" mode, Java passes pre-execution AEXT via gRPC and the conversion
+        //     layer echoes them back (handled outside this handler).
+        let aext_mode = &config.remote.accountinfo_aext_mode;
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker, BandwidthParams};
+
+            // Get current AEXT for owner (or initialize with defaults)
+            let current_aext = storage_adapter
+                .get_account_aext(&owner_address)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(AccountAext::with_defaults);
+
+            // Read dynamic properties for bandwidth tracking
+            let free_net_limit = storage_adapter
+                .get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+            let public_net_limit = storage_adapter
+                .get_public_net_limit()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_LIMIT: {}", e))?;
+            let public_net_usage = storage_adapter
+                .get_public_net_usage()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_USAGE: {}", e))?;
+            let public_net_time = storage_adapter
+                .get_public_net_time()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_TIME: {}", e))?;
+            let transaction_fee = storage_adapter
+                .get_transaction_fee()
+                .map_err(|e| format!("Failed to get TRANSACTION_FEE: {}", e))?;
+            let create_account_bandwidth_rate = storage_adapter
+                .get_create_new_account_bandwidth_rate()
+                .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?;
+
+            // Compute account_net_limit from frozen bandwidth
+            let account_net_limit = {
+                let freeze_record = storage_adapter
+                    .get_freeze_record(&owner_address, 0) // 0 = BANDWIDTH
+                    .map_err(|e| format!("Failed to get freeze record: {}", e))?;
+                let total_net_weight = storage_adapter
+                    .get_total_net_weight()
+                    .map_err(|e| format!("Failed to get TOTAL_NET_WEIGHT: {}", e))?;
+                let total_net_limit = storage_adapter
+                    .get_total_net_limit()
+                    .map_err(|e| format!("Failed to get TOTAL_NET_LIMIT: {}", e))?;
+                if let Some(record) = freeze_record {
+                    if total_net_weight > 0 {
+                        let frozen_trx = record.frozen_amount as i64 / TRX_PRECISION as i64;
+                        frozen_trx.saturating_mul(total_net_limit) / total_net_weight
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            };
+
+            // Java: headSlot = (latestBlockTimestamp - genesisTimestamp) / 3000
+            let genesis_ts = config.remote.genesis_block_timestamp;
+            let now_slot = (context.block_timestamp as i64 - genesis_ts) / 3000;
+
+            let bw_params = BandwidthParams {
+                bytes_used: bandwidth_used as i64,
+                now: now_slot,
+                current_aext,
+                account_net_limit,
+                free_net_limit,
+                public_net_limit,
+                public_net_usage,
+                public_net_time,
+                creates_new_account: false, // WithdrawBalance never creates accounts
+                create_account_bandwidth_rate,
+                transaction_fee,
+            };
+
+            let bw_result = ResourceTracker::track_bandwidth_v2(&bw_params)
+                .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter
+                .set_account_aext(&owner_address, &bw_result.after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner_address, &bw_result.after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
+
+            // Persist global PUBLIC_NET changes if FREE_NET path was used
+            if let Some(new_pub_usage) = bw_result.new_public_net_usage {
+                storage_adapter
+                    .set_public_net_usage(new_pub_usage)
+                    .map_err(|e| format!("Failed to persist PUBLIC_NET_USAGE: {}", e))?;
+            }
+            if let Some(new_pub_time) = bw_result.new_public_net_time {
+                storage_adapter
+                    .set_public_net_time(new_pub_time)
+                    .map_err(|e| format!("Failed to persist PUBLIC_NET_TIME: {}", e))?;
+            }
+
+            // Add to aext_map for result conversion
+            aext_map.insert(owner_address, (bw_result.before_aext.clone(), bw_result.after_aext.clone()));
+
+            debug!(
+                "AEXT tracked for withdraw: owner={}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                readable_owner_address,
+                bw_result.path,
+                bw_result.before_aext.net_usage,
+                bw_result.after_aext.net_usage,
+                bw_result.before_aext.free_net_usage,
+                bw_result.after_aext.free_net_usage
+            );
+        }
 
         // Build Transaction.Result with withdraw_amount for receipt passthrough
         let tron_transaction_result = TransactionResultBuilder::new()
@@ -434,7 +567,7 @@ impl BackendService {
             state_changes,
             logs: vec![],
             error: None,
-            aext_map: std::collections::HashMap::new(),
+            aext_map,
             freeze_changes: vec![], // Not applicable
             global_resource_changes: vec![], // Not applicable
             trc10_changes: vec![], // Not applicable

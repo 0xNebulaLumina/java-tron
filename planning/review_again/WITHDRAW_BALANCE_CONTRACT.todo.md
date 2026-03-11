@@ -6,7 +6,7 @@ This checklist assumes we want to resolve the parity risks identified in `planni
 
 - [x] Confirm desired scope:
   - [x] **Actuator-only parity** (match `WithdrawBalanceActuator.validate + execute`)
-  - [ ] **End-to-end parity** (also match MortgageService delegation-store mutations + BandwidthProcessor outcomes in remote mode)
+  - [x] **End-to-end parity** (also match MortgageService delegation-store mutations + BandwidthProcessor outcomes in remote mode)
 - [x] Confirm which deployment profiles matter:
   - [x] mainnet/testnet only (prefix `0x41`/`0xa0`)
   - [x] custom/private nets (custom genesis witnesses, possibly custom prefixes) — supported via config override
@@ -84,23 +84,54 @@ Tests:
   - `test_no_reward_predicate_negative_allowance_positive_reward_net_positive` — net positive → allow
   - `test_no_reward_predicate_old_behavior_would_be_wrong` — proves old predicate was incorrect
 
-## 4) Add Any/type_url validation parity (optional but improves robustness)
+## 4) Add Any/type_url validation parity
 
 Goal: match Java's `"contract type error ..."` behavior when the request payload is malformed/mismatched.
 
-- [ ] Out of scope for actuator-only parity. Java constructs the gRPC request, so type_url validation is redundant in the Rust handler. The Java RPC layer already validates the contract type before sending to Rust.
+- [x] In `execute_withdraw_balance_contract()`:
+  - [x] Validate `transaction.metadata.contract_parameter` is present (optional field — only checked if provided).
+  - [x] Validate `type_url` ends with `"WithdrawBalanceContract"`.
+  - [x] If mismatched, return error: `"contract type error, expected type [WithdrawBalanceContract], real type[<type_url>]"`
+  - [x] Follows the established pattern from freeze.rs (FreezeBalanceContract, UnfreezeBalanceContract, etc.)
 
-## 5) Decide whether to pursue bandwidth parity (end-to-end parity only)
+## 5) Bandwidth parity (end-to-end)
 
 Goal: match Java's `BandwidthProcessor` resource accounting.
 
-- [ ] Out of scope for actuator-only parity. Bandwidth processing happens outside the actuator in Java.
+### 5a) Bandwidth size calculation
+
+- [x] `calculate_bandwidth_usage()` already uses Java-computed `transaction_bytes_size` from gRPC request
+  - Java computes: `trxCap.getInstance().toBuilder().clearRet().build().getSerializedSize() + numContracts * MAX_RESULT_SIZE_IN_TX`
+  - Sends via: `ExecuteTransactionRequest.setTransactionBytesSize(txBytesSize)`
+  - Rust receives and uses directly — no approximation needed for normal requests
+  - Fallback approximation (60 + data_len + 65) only for edge cases without Java-provided size
+
+### 5b) AEXT bandwidth resource tracking ("tracked" mode)
+
+- [x] Added full bandwidth resource tracking for `aext_mode == "tracked"`:
+  - [x] Reads current AEXT for owner (or defaults)
+  - [x] Reads dynamic properties: FREE_NET_LIMIT, PUBLIC_NET_LIMIT, PUBLIC_NET_USAGE, PUBLIC_NET_TIME, TRANSACTION_FEE, CREATE_NEW_ACCOUNT_BANDWIDTH_RATE
+  - [x] Computes `account_net_limit` from frozen bandwidth record and total_net_weight/total_net_limit
+  - [x] Computes `headSlot = (block_timestamp - genesis_block_timestamp) / 3000`
+  - [x] Calls `ResourceTracker::track_bandwidth_v2()` with full BandwidthParams
+  - [x] Persists after-AEXT to storage and account proto
+  - [x] Persists global PUBLIC_NET changes if free-net path was used
+  - [x] Populates `aext_map` in result for conversion layer to use
+  - [x] `creates_new_account = false` (WithdrawBalance never creates accounts)
+- [x] Follows the exact same pattern as TransferContract's AEXT tracking in mod.rs
+
+### 5c) Hybrid AEXT mode (existing)
+
+- [x] Hybrid mode (`accountinfo_aext_mode = "hybrid"`) works without handler changes:
+  - Java sends pre-execution AEXT values via `pre_execution_aext` in gRPC request
+  - Conversion layer (`conversion.rs`) echoes these values in both old and new AccountInfo
+  - Handler returns empty `aext_map`, conversion layer uses pre-exec data instead
 
 ## 6) Verification checklist
 
 - [x] Rust:
-  - [x] `cd rust-backend && cargo test --workspace` — all 390+ tests pass (3 pre-existing vote_witness failures unrelated)
-  - [x] 14 new unit tests added: 8 guard rep tests + 6 no-reward predicate tests
+  - [x] `cd rust-backend && cargo test --workspace` — all 420 tests pass (3 pre-existing vote_witness failures unrelated)
+  - [x] 14 unit tests: 8 guard rep tests + 6 no-reward predicate tests
   - [x] All 8 WITHDRAW_BALANCE_CONTRACT conformance fixtures pass
   - [x] All conformance fixtures pass (`./scripts/ci/run_fixture_conformance.sh --rust-only`)
 - [ ] Java: (not in scope for Rust-side changes)
