@@ -65,6 +65,13 @@ impl BackendService {
                 | Some(tron_backend_execution::TronContractType::WitnessCreateContract)
                 | Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
                 | Some(tron_backend_execution::TronContractType::WithdrawBalanceContract)
+                | Some(tron_backend_execution::TronContractType::FreezeBalanceContract)
+                | Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract)
+                | Some(tron_backend_execution::TronContractType::FreezeBalanceV2Contract)
+                | Some(tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract)
+                | Some(tron_backend_execution::TronContractType::WithdrawExpireUnfreezeContract)
+                | Some(tron_backend_execution::TronContractType::DelegateResourceContract)
+                | Some(tron_backend_execution::TronContractType::UndelegateResourceContract)
                 | Some(tron_backend_execution::TronContractType::MarketSellAssetContract)
                 | Some(tron_backend_execution::TronContractType::MarketCancelOrderContract)
         );
@@ -676,5 +683,74 @@ mod tests {
             Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
         );
         assert_eq!(transaction.metadata.from_raw, Some(vec![]));
+    }
+
+    #[test]
+    fn test_convert_protobuf_transaction_allows_empty_from_for_withdraw_expire_unfreeze() {
+        let config = ExecutionConfig::default();
+        let mut module_manager = ModuleManager::new();
+        module_manager.register("execution", Box::new(ExecutionModule::new(config)));
+
+        let backend_service = BackendService::new(module_manager);
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![];
+        proto_tx.tx_kind = TxKind::NonVm as i32;
+        proto_tx.contract_type = ContractType::WithdrawExpireUnfreezeContract as i32;
+        proto_tx.contract_parameter = Some(prost_types::Any {
+            type_url: "type.googleapis.com/protocol.WithdrawExpireUnfreezeContract".to_string(),
+            value: vec![],
+        });
+
+        let (transaction, tx_kind) = backend_service
+            .convert_protobuf_transaction(Some(&proto_tx), 0)
+            .unwrap();
+
+        assert_eq!(tx_kind, TxKind::NonVm);
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WithdrawExpireUnfreezeContract)
+        );
+        assert_eq!(transaction.metadata.from_raw, Some(vec![]));
+        // Verify contract_parameter is preserved for contract-level validation
+        assert!(transaction.metadata.contract_parameter.is_some());
+        let param = transaction.metadata.contract_parameter.unwrap();
+        assert!(param.type_url.ends_with("WithdrawExpireUnfreezeContract"));
+    }
+
+    #[test]
+    fn test_convert_protobuf_transaction_allows_empty_from_for_freeze_v2_family() {
+        // Test that all freeze-v2 related contracts allow malformed from addresses
+        let contract_types = vec![
+            (ContractType::FreezeBalanceV2Contract, tron_backend_execution::TronContractType::FreezeBalanceV2Contract),
+            (ContractType::UnfreezeBalanceV2Contract, tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract),
+            (ContractType::DelegateResourceContract, tron_backend_execution::TronContractType::DelegateResourceContract),
+            (ContractType::UndelegateResourceContract, tron_backend_execution::TronContractType::UndelegateResourceContract),
+            (ContractType::FreezeBalanceContract, tron_backend_execution::TronContractType::FreezeBalanceContract),
+            (ContractType::UnfreezeBalanceContract, tron_backend_execution::TronContractType::UnfreezeBalanceContract),
+        ];
+
+        for (proto_ct, expected_ct) in contract_types {
+            let config = ExecutionConfig::default();
+            let mut module_manager = ModuleManager::new();
+            module_manager.register("execution", Box::new(ExecutionModule::new(config)));
+            let backend_service = BackendService::new(module_manager);
+
+            let mut proto_tx = ProtoTx::default();
+            proto_tx.from = vec![];
+            proto_tx.tx_kind = TxKind::NonVm as i32;
+            proto_tx.contract_type = proto_ct as i32;
+
+            let result = backend_service.convert_protobuf_transaction(Some(&proto_tx), 0);
+            assert!(
+                result.is_ok(),
+                "Contract type {:?} should allow empty from, but got error: {:?}",
+                expected_ct, result.err()
+            );
+            let (transaction, _) = result.unwrap();
+            assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+            assert_eq!(transaction.metadata.contract_type, Some(expected_ct));
+        }
     }
 }
