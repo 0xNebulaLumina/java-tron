@@ -24,4 +24,5 @@ mod update_asset;
 mod update_energy_limit;
 mod update_setting;
 mod vote_witness;
+mod witness_create;
 mod witness_update;
