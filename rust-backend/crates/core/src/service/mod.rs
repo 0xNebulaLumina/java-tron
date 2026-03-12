@@ -1361,10 +1361,69 @@ impl BackendService {
         debug!("Created witness entry for address {:?}", transaction.from);
 
         // 9. Mark owner account as witness (Account.is_witness = true)
+        //    and set default witness permissions if ALLOW_MULTI_SIGN == 1
+        //    (Java: AccountCapsule.setDefaultWitnessPermission)
         let mut owner_account_proto = storage_adapter.get_account_proto(&transaction.from)
             .map_err(|e| format!("Failed to load owner account proto: {}", e))?
             .ok_or_else(|| format!("account[{}] not exists", readable_owner))?;
         owner_account_proto.is_witness = true;
+
+        if allow_multi_sign {
+            use tron_backend_execution::protocol::{Key, Permission, permission::PermissionType};
+
+            // Java: setDefaultWitnessPermission(dynamicStore)
+            // Always set witness_permission (id=1, type=Witness)
+            owner_account_proto.witness_permission = Some(Permission {
+                r#type: PermissionType::Witness as i32,
+                id: 1,
+                permission_name: "witness".to_string(),
+                threshold: 1,
+                parent_id: 0,
+                operations: vec![],
+                keys: vec![Key {
+                    address: owner_from_field.to_vec(),
+                    weight: 1,
+                }],
+            });
+
+            // If owner_permission is not set, initialize default (id=0, type=Owner)
+            if owner_account_proto.owner_permission.is_none() {
+                owner_account_proto.owner_permission = Some(Permission {
+                    r#type: PermissionType::Owner as i32,
+                    id: 0,
+                    permission_name: "owner".to_string(),
+                    threshold: 1,
+                    parent_id: 0,
+                    operations: vec![],
+                    keys: vec![Key {
+                        address: owner_from_field.to_vec(),
+                        weight: 1,
+                    }],
+                });
+            }
+
+            // If active_permission is empty, add default (id=2, type=Active)
+            if owner_account_proto.active_permission.is_empty() {
+                let active_ops = storage_adapter.get_active_default_operations()
+                    .map_err(|e| format!("Failed to get ACTIVE_DEFAULT_OPERATIONS: {}", e))?;
+
+                owner_account_proto.active_permission.push(Permission {
+                    r#type: PermissionType::Active as i32,
+                    id: 2,
+                    permission_name: "active".to_string(),
+                    threshold: 1,
+                    parent_id: 0,
+                    operations: active_ops,
+                    keys: vec![Key {
+                        address: owner_from_field.to_vec(),
+                        weight: 1,
+                    }],
+                });
+            }
+
+            debug!("Set default witness permissions for account {}", readable_owner);
+        }
+
         storage_adapter.put_account_proto(&transaction.from, &owner_account_proto)
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
