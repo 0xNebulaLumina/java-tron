@@ -434,9 +434,20 @@ impl BackendService {
         // Java sends `Transaction.Contract.parameter` bytes, which are encoded as
         // `google.protobuf.Any { type_url, value }`. Most parsers below expect the inner
         // contract protobuf bytes, so unwrap once here.
+        //
+        // Payload-style contracts where `tx.data` is NOT the contract proto but a raw
+        // payload (e.g. URL bytes) must be excluded to avoid accidentally unwrapping a
+        // crafted payload that looks like a valid `Any` wrapper.
         let mut tx = transaction.clone();
-        if let Ok(inner) = Self::unwrap_any_value_if_present(tx.data.as_ref()) {
-            tx.data = revm_primitives::Bytes::from(inner);
+        let is_payload_style = matches!(
+            tx.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WitnessCreateContract)
+                | Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
+        );
+        if !is_payload_style {
+            if let Ok(inner) = Self::unwrap_any_value_if_present(tx.data.as_ref()) {
+                tx.data = revm_primitives::Bytes::from(inner);
+            }
         }
         let transaction = &tx;
 
@@ -1591,7 +1602,17 @@ impl BackendService {
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        use tron_backend_execution::{TronExecutionResult, TronStateChange, WitnessInfo};
+        use tron_backend_execution::{TronExecutionResult, TronStateChange};
+
+        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.WitnessUpdateContract") {
+                return Err(
+                    "contract type error, expected type [WitnessUpdateContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
 
         // 1. Validate owner address (java-tron: DecodeUtil.addressValid)
         let prefix = storage_adapter.address_prefix();
@@ -1630,38 +1651,24 @@ impl BackendService {
 
         debug!("WitnessUpdate: new URL = {}", new_url);
 
-        // 4. Load existing witness (required)
-        let existing_witness = storage_adapter.get_witness(&owner)
+        // 4. Load existing witness (required) — validates witness existence
+        let _existing_witness = storage_adapter.get_witness(&owner)
             .map_err(|e| format!("Failed to load witness: {}", e))?
             .ok_or_else(|| {
                 warn!("WITNESS_UPDATE_CONTRACT: Witness does not exist for {}", owner_tron);
                 "Witness does not exist".to_string()
             })?;
 
-        let old_url = existing_witness.url.clone();
-
-        // 5. Create updated witness entry with new URL, preserving address and vote_count
-        let updated_witness = WitnessInfo::new(
-            existing_witness.address,
-            new_url.clone(),
-            existing_witness.vote_count,
+        // 5. Update only the URL field, preserving all other protocol.Witness fields
+        //    (pub_key, total_produced, total_missed, latest_block_num, latest_slot_num, is_jobs).
+        //    Java always calls witnessStore.put(...) even when URL is unchanged, so we do the same.
+        storage_adapter
+            .update_witness_url(&owner, &new_url)
+            .map_err(|e| format!("Failed to update witness: {}", e))?;
+        info!(
+            "Updated witness URL: owner={}, new_url='{}'",
+            owner_tron, new_url
         );
-
-        // 6. Persist updated witness only if URL actually changes to avoid no-op writes
-        if new_url != old_url {
-            storage_adapter
-                .put_witness(&updated_witness)
-                .map_err(|e| format!("Failed to update witness: {}", e))?;
-            info!(
-                "Updated witness URL: owner={}, old_url='{}', new_url='{}'",
-                owner_tron, old_url, new_url
-            );
-        } else {
-            info!(
-                "Witness update is a no-op (URL unchanged): owner={}, url='{}'",
-                owner_tron, new_url
-            );
-        }
 
         // 7. Do not emit state changes for WitnessUpdateContract to match embedded semantics
         // (Java embedded CSV logs 0 state changes and empty digest for witness updates)
