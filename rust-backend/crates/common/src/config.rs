@@ -153,11 +153,20 @@ pub struct RemoteExecutionConfig {
     /// Creates new accounts with proper fee charging and blackhole handling
     /// Default: false for safe rollout - falls back to Java embedded execution when disabled
     pub account_create_enabled: bool,
-    /// Enable full delegation reward computation in WithdrawBalance
-    /// When true: Computes delegation rewards from DelegationStore (MortgageService.withdrawReward)
-    /// When false: Uses only Account.allowance (Phase 1 behavior)
-    /// Default: false for safe rollout
+    /// DEPRECATED: Delegation reward is now always computed when CHANGE_DELEGATION is enabled,
+    /// matching Java's MortgageService.withdrawReward() which self-gates on allowChangeDelegation().
+    /// This field is kept for backward config compatibility but has no effect.
+    #[serde(default)]
     pub delegation_reward_enabled: bool,
+
+    /// Genesis guard representative addresses (Base58-encoded TRON addresses).
+    /// These addresses are blocked from WithdrawBalance operations, matching Java's
+    /// `CommonParameter.getInstance().getGenesisBlock().getWitnesses()` check.
+    ///
+    /// When empty (default), falls back to hardcoded mainnet/testnet genesis witness lists.
+    /// Set this for custom/private networks with different genesis witnesses.
+    #[serde(default)]
+    pub genesis_guard_representatives_base58: Vec<String>,
 
     // === Phase 0.3: Write Consistency Model ===
     //
@@ -671,7 +680,8 @@ impl Default for RemoteExecutionConfig {
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
             vote_witness_seed_old_from_account: true, // Default true to match embedded semantics
             account_create_enabled: false, // Default false for safe rollout
-            delegation_reward_enabled: false, // Default false for safe rollout
+            delegation_reward_enabled: false, // Deprecated: delegation reward is always computed
+            genesis_guard_representatives_base58: Vec::new(), // Empty = use hardcoded fallback
             // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
             rust_persist_enabled: false,
             // Phase 2.A: Proposal contracts (16/17/18)

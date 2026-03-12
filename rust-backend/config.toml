@@ -141,12 +141,17 @@ vote_witness_seed_old_from_account = true
 # Default: false for safe rollout - falls back to Java embedded execution when disabled
 account_create_enabled = true
 
-# Delegation reward computation for WithdrawBalanceContract (Phase 2)
-# When true: Computes delegation rewards from DelegationStore (MortgageService.withdrawReward)
-#            This includes reading cycle data, computing old/new algorithm rewards, and updating delegation state
-# When false: Uses only Account.allowance (Phase 1 behavior)
-# Default: false for safe rollout - set true to enable full delegation reward computation
+# DEPRECATED: Delegation reward is now always computed when CHANGE_DELEGATION dynamic property
+# is enabled, matching Java's MortgageService.withdrawReward() which self-gates on
+# allowChangeDelegation(). This field is kept for backward config compatibility but has no effect.
 delegation_reward_enabled = true
+
+# Genesis guard representative addresses (Base58-encoded TRON addresses)
+# These witnesses from the genesis block are not allowed to withdraw balance, matching Java's
+# CommonParameter.getInstance().getGenesisBlock().getWitnesses() check.
+# When empty (default), falls back to built-in mainnet/testnet genesis witness lists.
+# Set this for custom/private networks with different genesis witnesses.
+# genesis_guard_representatives_base58 = ["T...", "T..."]
 
 # === Phase 0.3: Write Consistency Model ===
 # This flag controls whether Rust persists state changes directly to storage during commit.
