@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_sell_fee_insufficient",
   "caseCategory": "validate_fail",
   "description": "Fail when selling token but TRX balance insufficient for fee",
-  "generatedAt": "2026-01-14T06:56:49.670Z",
+  "generatedAt": "2026-03-10T11:52:27.073Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

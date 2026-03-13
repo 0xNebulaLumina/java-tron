@@ -1,0 +1,22 @@
+{
+  "contractType": "PROPOSAL_CREATE_CONTRACT",
+  "contractTypeNum": 16,
+  "caseName": "validate_fail_allow_new_reward_already_active",
+  "caseCategory": "validate_fail",
+  "description": "Fail when ALLOW_NEW_REWARD is already active",
+  "generatedAt": "2026-03-10T11:52:28.030Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "proposal",
+    "dynamic-properties",
+    "witness"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Bad chain parameter id [ALLOW_NEW_REWARD]",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {},
+  "notes": []
+}

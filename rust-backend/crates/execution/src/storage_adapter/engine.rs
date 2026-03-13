@@ -48,6 +48,10 @@ pub struct EngineBackedEvmStateStore {
     /// When set, all writes go to the buffer instead of directly to storage.
     /// Use `commit_buffer()` to flush the buffer to storage on success.
     write_buffer: Option<Arc<Mutex<ExecutionWriteBuffer>>>,
+    /// Configurable fork threshold for energy limit feature.
+    /// Java: CommonParameter.getInstance().getBlockNumForEnergyLimit()
+    /// Default: 4727890 (mainnet value). Set to 0 for conformance testing.
+    block_num_for_energy_limit: i64,
 }
 
 impl EngineBackedEvmStateStore {
@@ -62,6 +66,7 @@ impl EngineBackedEvmStateStore {
             storage_engine,
             address_prefix,
             write_buffer: None,
+            block_num_for_energy_limit: 4727890,
         }
     }
 
@@ -77,6 +82,7 @@ impl EngineBackedEvmStateStore {
             storage_engine,
             address_prefix,
             write_buffer: Some(buffer.clone()),
+            block_num_for_energy_limit: 4727890,
         };
         (store, buffer)
     }
@@ -150,6 +156,13 @@ impl EngineBackedEvmStateStore {
             }
         }
         self.storage_engine.get(db, key)
+    }
+
+    /// Public read helper — delegates to `buffered_get` (consults write buffer
+    /// first, then falls through to the storage engine).  Useful for tests that
+    /// need to read raw bytes from an arbitrary database by key.
+    pub fn raw_get(&self, db: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.buffered_get(db, key)
     }
 
     /// Helper method to prefix-query from storage with buffer overlay.
@@ -466,6 +479,16 @@ impl EngineBackedEvmStateStore {
             code_hash,
             code: None, // Code is stored separately in "code" database
         })
+    }
+
+    /// Get the raw Account protobuf bytes for an address.
+    ///
+    /// Returns the raw serialized bytes without decoding, useful when
+    /// the caller needs to store the exact bytes elsewhere (e.g.,
+    /// delegation store's accountVote snapshot).
+    pub fn get_account_raw_bytes(&self, address: &Address) -> Result<Option<Vec<u8>>> {
+        let key = self.account_key(address);
+        self.buffered_get(self.account_database(), &key)
     }
 
     /// Get the full Account proto for an address.
@@ -972,28 +995,116 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Get CreateNewAccountBandwidthRate dynamic property
+    /// This is the multiplier applied to bytes for create-account bandwidth cost.
+    /// Java reference: DynamicPropertiesStore.getCreateNewAccountBandwidthRate()
+    /// Default value: 1 (no multiplier)
+    pub fn get_create_new_account_bandwidth_rate(&self) -> Result<i64> {
+        let key = b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => {
+                let rate = i64::from_be_bytes([
+                    data[0], data[1], data[2], data[3],
+                    data[4], data[5], data[6], data[7],
+                ]);
+                tracing::debug!("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE from DB: {}", rate);
+                Ok(rate)
+            }
+            _ => {
+                tracing::debug!("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE not found, using default 1");
+                Ok(1) // Default: no multiplier
+            }
+        }
+    }
+
+    /// Get CreateAccountFee dynamic property
+    /// Fee charged as fallback when bandwidth is insufficient for account creation.
+    /// Java reference: DynamicPropertiesStore.getCreateAccountFee()
+    /// Default value: 100_000 SUN (0.1 TRX)
+    pub fn get_create_account_fee(&self) -> Result<u64> {
+        let key = b"CREATE_ACCOUNT_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => {
+                let fee = u64::from_be_bytes([
+                    data[0], data[1], data[2], data[3],
+                    data[4], data[5], data[6], data[7],
+                ]);
+                tracing::debug!("CREATE_ACCOUNT_FEE from DB: {} SUN", fee);
+                Ok(fee)
+            }
+            _ => {
+                tracing::debug!("CREATE_ACCOUNT_FEE not found, using default 100000 SUN");
+                Ok(100_000) // 0.1 TRX in SUN (default from TRON)
+            }
+        }
+    }
+
+    /// Get TOTAL_CREATE_ACCOUNT_COST dynamic property.
+    /// Accumulated cost of all create-account transactions via fee path.
+    /// Java reference: DynamicPropertiesStore.getTotalCreateAccountCost()
+    /// Default: 0 if not present.
+    pub fn get_total_create_account_cost(&self) -> Result<i64> {
+        let key = b"TOTAL_CREATE_ACCOUNT_COST";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3],
+                data[4], data[5], data[6], data[7],
+            ])),
+            _ => Ok(0),
+        }
+    }
+
+    /// Add to TOTAL_CREATE_ACCOUNT_COST dynamic property (java: addTotalCreateAccountCost()).
+    /// Called when bandwidth is insufficient and fee fallback is used for account creation.
+    pub fn add_total_create_account_cost(&self, fee: u64) -> Result<()> {
+        if fee == 0 {
+            return Ok(());
+        }
+
+        let delta: i64 = fee
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("fee exceeds i64::MAX"))?;
+        let current = self.get_total_create_account_cost()?;
+        let new_value = current
+            .checked_add(delta)
+            .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_create_account_cost"))?;
+
+        let key = b"TOTAL_CREATE_ACCOUNT_COST";
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            new_value.to_be_bytes().to_vec(),
+        )?;
+        tracing::debug!("TOTAL_CREATE_ACCOUNT_COST updated: {} -> {}", current, new_value);
+        Ok(())
+    }
+
     /// Get AllowMultiSign dynamic property
-    /// Default value: 1 (enabled)
+    /// Java-tron uses strict `== 1` check (not just `!= 0`) for parity.
+    /// Java throws `IllegalArgumentException("not found ALLOW_MULTI_SIGN")` if missing.
     pub fn get_allow_multi_sign(&self) -> Result<bool> {
         let key = b"ALLOW_MULTI_SIGN";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                // Java stores dynamic properties as big-endian i64/u64.
-                // For small values (e.g. 1), the first byte is 0; so interpret as 8-byte integer.
+                // Java stores dynamic properties as big-endian i64.
+                // Java: getAllowMultiSign() != 1 is "not allowed", so we need strict == 1 check.
                 if data.len() >= 8 {
-                    let val = u64::from_be_bytes([
+                    let val = i64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7],
                     ]);
-                    Ok(val != 0)
+                    Ok(val == 1)
                 } else if !data.is_empty() {
-                    Ok(data[0] != 0)
+                    // Fallback for short data (edge case)
+                    Ok(data[data.len() - 1] == 1)
                 } else {
-                    Ok(true) // Default enabled
+                    // Empty data treated as missing for strict parity
+                    Err(anyhow::anyhow!("not found ALLOW_MULTI_SIGN"))
                 }
             },
             None => {
-                Ok(true) // Default enabled
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found ALLOW_MULTI_SIGN"))
             }
         }
     }
@@ -1065,24 +1176,26 @@ impl EngineBackedEvmStateStore {
 
     /// Get Black Hole Optimization dynamic property (parity with Java)
     /// Java stores this as a long under key "ALLOW_BLACKHOLE_OPTIMIZATION".
+    /// Java uses strict `== 1` check (not just `!= 0`) for parity.
     /// When this flag is 1, the node BURNS fees (optimization enabled).
-    /// When 0, the node CREDITS the blackhole account.
+    /// When 0 or any other value, the node CREDITS the blackhole account.
     /// Default: false (credit blackhole) to match early-chain behavior when key is absent.
     pub fn support_black_hole_optimization(&self) -> Result<bool> {
         // Parity key with java-tron DynamicPropertiesStore
         let key = b"ALLOW_BLACKHOLE_OPTIMIZATION";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                // Java writes a long; interpret big-endian u64 when length >= 8.
+                // Java writes a long; interpret big-endian i64 when length >= 8.
+                // Java: supportBlackHoleOptimization() checks value == 1 (strict).
                 if data.len() >= 8 {
-                    let val = u64::from_be_bytes([
+                    let val = i64::from_be_bytes([
                         data[0], data[1], data[2], data[3],
                         data[4], data[5], data[6], data[7]
                     ]);
-                    Ok(val != 0)
+                    Ok(val == 1)
                 } else if !data.is_empty() {
-                    // Fallback: treat first byte as boolean
-                    Ok(data[0] != 0)
+                    // Fallback: treat last byte as the value (edge case)
+                    Ok(data[data.len() - 1] == 1)
                 } else {
                     // Empty value → treat as disabled (credit blackhole)
                     Ok(false)
@@ -1714,6 +1827,21 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
+    /// Get TRANSACTION_FEE dynamic property (fee per byte for bandwidth FEE path)
+    /// Default: 10 SUN/byte
+    pub fn get_transaction_fee(&self) -> Result<i64> {
+        let key = b"TRANSACTION_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => {
+                Ok(i64::from_be_bytes([
+                    data[0], data[1], data[2], data[3],
+                    data[4], data[5], data[6], data[7],
+                ]))
+            }
+            _ => Ok(10) // Default: 10 SUN per byte
+        }
+    }
+
     /// Get TOTAL_NET_WEIGHT dynamic property (total frozen for bandwidth)
     /// Default: 0
     pub fn get_total_net_weight(&self) -> Result<i64> {
@@ -1755,9 +1883,16 @@ impl EngineBackedEvmStateStore {
     /// Add to TOTAL_NET_WEIGHT dynamic property
     /// Used when canceling unfreezeV2 to re-freeze bandwidth
     pub fn add_total_net_weight(&self, delta: i64) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
         let current = self.get_total_net_weight()?;
-        let new_value = current.checked_add(delta)
+        let mut new_value = current.checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_net_weight"))?;
+        // Java parity: DynamicPropertiesStore.addTotalNetWeight() clamps to max(0, ...) when allowNewReward()
+        if self.allow_new_reward().unwrap_or(false) {
+            new_value = new_value.max(0);
+        }
         let key = b"TOTAL_NET_WEIGHT";
         let data = new_value.to_be_bytes();
         self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
@@ -1786,9 +1921,16 @@ impl EngineBackedEvmStateStore {
     /// Add to TOTAL_ENERGY_WEIGHT dynamic property
     /// Used when canceling unfreezeV2 to re-freeze energy
     pub fn add_total_energy_weight(&self, delta: i64) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
         let current = self.get_total_energy_weight()?;
-        let new_value = current.checked_add(delta)
+        let mut new_value = current.checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_energy_weight"))?;
+        // Java parity: DynamicPropertiesStore.addTotalEnergyWeight() clamps to max(0, ...) when allowNewReward()
+        if self.allow_new_reward().unwrap_or(false) {
+            new_value = new_value.max(0);
+        }
         let key = b"TOTAL_ENERGY_WEIGHT";
         let data = new_value.to_be_bytes();
         self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
@@ -1817,9 +1959,16 @@ impl EngineBackedEvmStateStore {
     /// Add to TOTAL_TRON_POWER_WEIGHT dynamic property
     /// Used when canceling unfreezeV2 to re-freeze tron power
     pub fn add_total_tron_power_weight(&self, delta: i64) -> Result<()> {
+        if delta == 0 {
+            return Ok(());
+        }
         let current = self.get_total_tron_power_weight()?;
-        let new_value = current.checked_add(delta)
+        let mut new_value = current.checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_tron_power_weight"))?;
+        // Java parity: DynamicPropertiesStore.addTotalTronPowerWeight() clamps to max(0, ...) when allowNewReward()
+        if self.allow_new_reward().unwrap_or(false) {
+            new_value = new_value.max(0);
+        }
         let key = b"TOTAL_TRON_POWER_WEIGHT";
         let data = new_value.to_be_bytes();
         self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
@@ -1998,6 +2147,44 @@ impl EngineBackedEvmStateStore {
                        witness.address, hex::encode(&key), witness.url, witness.vote_count);
 
         self.buffered_put(self.witness_database(), key, data)?;
+        Ok(())
+    }
+
+    /// Update only the URL field of an existing witness, preserving all other
+    /// `protocol.Witness` fields (pub_key, total_produced, total_missed,
+    /// latest_block_num, latest_slot_num, is_jobs).
+    ///
+    /// This matches Java `WitnessUpdateActuator.updateWitness()` which calls
+    /// `witnessCapsule.setUrl(...)` and re-persists the capsule, leaving every
+    /// other field intact.
+    pub fn update_witness_url(&self, address: &Address, new_url: &str) -> Result<()> {
+        use prost::Message;
+        use crate::protocol::Witness;
+
+        let key = self.witness_key(address);
+
+        // 1. Load raw bytes from witness DB (respects write buffer for read-your-writes)
+        let raw = self
+            .buffered_get(self.witness_database(), &key)?
+            .ok_or_else(|| anyhow::anyhow!("Witness not found for address {:?}", address))?;
+
+        // 2. Decode as protocol.Witness protobuf
+        let mut witness = Witness::decode(raw.as_slice())
+            .map_err(|e| anyhow::anyhow!("Failed to decode Witness protobuf: {}", e))?;
+
+        // 3. Update only the URL
+        witness.url = new_url.to_string();
+
+        // 4. Re-encode and write back
+        let data = witness.encode_to_vec();
+        self.buffered_put(self.witness_database(), key, data)?;
+
+        tracing::debug!(
+            "update_witness_url: address={:?}, new_url='{}'",
+            address,
+            new_url
+        );
+
         Ok(())
     }
 
@@ -2553,6 +2740,48 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Apply bandwidth-related AEXT fields to the Account proto stored in the `account` DB.
+    ///
+    /// This keeps `protocol::Account` as a usable source-of-truth for:
+    /// - `net_usage`, `free_net_usage`
+    /// - `latest_consume_time`, `latest_consume_free_time`
+    /// - `net_window_size`, `net_window_optimized`
+    ///
+    /// NOTE: This intentionally does **not** touch energy-related fields since the current
+    /// ResourceTracker only updates bandwidth usage.
+    ///
+    /// Java reference:
+    /// - `AccountCapsule.getWindowSize(ResourceCode)` / `getWindowSizeV2(ResourceCode)`
+    /// - `WINDOW_SIZE_PRECISION = 1000`
+    pub fn apply_bandwidth_aext_to_account_proto(
+        &self,
+        address: &Address,
+        aext: &AccountAext,
+    ) -> Result<()> {
+        const WINDOW_SIZE_PRECISION: i64 = 1000;
+
+        let Some(mut account) = self.get_account_proto(address)? else {
+            return Ok(());
+        };
+
+        account.net_usage = aext.net_usage;
+        account.free_net_usage = aext.free_net_usage;
+        account.latest_consume_time = aext.latest_consume_time;
+        account.latest_consume_free_time = aext.latest_consume_free_time;
+
+        account.net_window_optimized = aext.net_window_optimized;
+        account.net_window_size = if aext.net_window_size == 0 {
+            0
+        } else if aext.net_window_optimized {
+            aext.net_window_size.saturating_mul(WINDOW_SIZE_PRECISION)
+        } else {
+            aext.net_window_size
+        };
+
+        self.put_account_proto(address, &account)?;
+        Ok(())
+    }
+
     // Phase C: Method alias shims (preferred names going forward)
     // See planning/storage_adapter_namings.planning.md for rationale
 
@@ -2662,6 +2891,68 @@ impl EngineBackedEvmStateStore {
                 Ok(i64::MAX)
             }
         }
+    }
+
+    /// Get ALLOW_NEW_REWARD dynamic property value.
+    /// Java reference: DynamicPropertiesStore.getAllowNewReward()
+    /// Returns the raw value (0 or 1 typically). Defaults to 0 if not found.
+    pub fn get_allow_new_reward(&self) -> Result<i64> {
+        let key = b"ALLOW_NEW_REWARD";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    tracing::warn!("ALLOW_NEW_REWARD has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("ALLOW_NEW_REWARD not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Check if new reward algorithm is allowed.
+    /// Java reference: DynamicPropertiesStore.allowNewReward()
+    /// Returns true if ALLOW_NEW_REWARD == 1
+    pub fn allow_new_reward(&self) -> Result<bool> {
+        Ok(self.get_allow_new_reward()? == 1)
+    }
+
+    /// Get ALLOW_DELEGATE_OPTIMIZATION dynamic property value.
+    /// Java reference: DynamicPropertiesStore.getAllowDelegateOptimization()
+    /// Returns the raw value (0 or 1 typically). Defaults to 0 if not found.
+    pub fn get_allow_delegate_optimization(&self) -> Result<i64> {
+        let key = b"ALLOW_DELEGATE_OPTIMIZATION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    tracing::warn!("ALLOW_DELEGATE_OPTIMIZATION has invalid length: {}", data.len());
+                    Ok(0)
+                }
+            }
+            None => {
+                tracing::debug!("ALLOW_DELEGATE_OPTIMIZATION not found, returning 0");
+                Ok(0)
+            }
+        }
+    }
+
+    /// Check if delegate optimization is supported.
+    /// Java reference: DynamicPropertiesStore.supportAllowDelegateOptimization()
+    /// Returns true if ALLOW_DELEGATE_OPTIMIZATION == 1
+    pub fn support_allow_delegate_optimization(&self) -> Result<bool> {
+        Ok(self.get_allow_delegate_optimization()? == 1)
     }
 
     // --- Delegation Store Read Methods ---
@@ -2920,6 +3211,29 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
+    /// Set account vote snapshot using raw Account protobuf bytes.
+    ///
+    /// Java's DelegationStore.setAccountVote() stores accountCapsule.getData(),
+    /// which is the complete Account protobuf. This method stores raw bytes
+    /// directly to match that behavior exactly.
+    pub fn set_delegation_account_vote_raw(
+        &self,
+        cycle: i64,
+        address: &Address,
+        raw_account_bytes: Vec<u8>,
+    ) -> Result<()> {
+        use crate::delegation::delegation_account_vote_key;
+        let tron_addr = self.delegation_address_key(address);
+        let key = delegation_account_vote_key(cycle, &tron_addr);
+
+        tracing::debug!(
+            "Setting delegation account_vote (raw) for {:?} cycle {}: {} bytes",
+            address, cycle, raw_account_bytes.len()
+        );
+        self.buffered_put(self.delegation_database(), key, raw_account_bytes)?;
+        Ok(())
+    }
+
     /// Get votes list from account for delegation purposes.
     /// Converts Account.votes to DelegationVote format.
     /// Java reference: AccountCapsule.getVotesList()
@@ -2982,7 +3296,7 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get proposal by ID
-    /// Returns the raw Proposal protobuf bytes
+    /// Returns the decoded Proposal
     pub fn get_proposal(&self, proposal_id: i64) -> Result<Option<crate::protocol::Proposal>> {
         use crate::protocol::Proposal;
         let key = self.proposal_key(proposal_id);
@@ -3013,6 +3327,254 @@ impl EngineBackedEvmStateStore {
                 Ok(None)
             }
         }
+    }
+
+    /// Get proposal by ID with raw bytes
+    /// Returns both the decoded Proposal and the raw bytes (for surgical updates that preserve unknown fields)
+    pub fn get_proposal_with_raw(&self, proposal_id: i64) -> Result<Option<(crate::protocol::Proposal, Vec<u8>)>> {
+        use crate::protocol::Proposal;
+        let key = self.proposal_key(proposal_id);
+        tracing::debug!("Getting proposal with raw {}, key: {}", proposal_id, hex::encode(&key));
+
+        match self.storage_engine.get(self.proposal_database(), &key)? {
+            Some(data) => {
+                tracing::debug!("Found proposal data, length: {}", data.len());
+                match Proposal::decode(data.as_slice()) {
+                    Ok(proposal) => {
+                        tracing::debug!(
+                            "Decoded proposal {} - proposer: {}, state: {:?}, approvals: {}",
+                            proposal.proposal_id,
+                            hex::encode(&proposal.proposer_address),
+                            proposal.state,
+                            proposal.approvals.len()
+                        );
+                        Ok(Some((proposal, data)))
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to decode proposal {}: {}", proposal_id, e);
+                        Err(anyhow::anyhow!("Failed to decode proposal: {}", e))
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("Proposal {} not found", proposal_id);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Store proposal raw bytes directly (preserves unknown fields)
+    pub fn put_proposal_raw(&self, proposal_id: i64, data: Vec<u8>) -> Result<()> {
+        let key = self.proposal_key(proposal_id);
+        tracing::debug!(
+            "Storing proposal {} raw bytes, length: {}, key: {}",
+            proposal_id,
+            data.len(),
+            hex::encode(&key)
+        );
+        self.buffered_put(self.proposal_database(), key, data)?;
+        Ok(())
+    }
+
+    /// Surgical update of proposal approvals that preserves unknown protobuf fields.
+    ///
+    /// This function parses the raw bytes, replaces only field 6 (approvals) with new values,
+    /// and keeps all other fields (including unknown fields) byte-for-byte identical.
+    /// This matches Java's behavior where `toBuilder()...build()` preserves unknown fields.
+    pub fn surgical_update_proposal_approvals(
+        &self,
+        raw_bytes: &[u8],
+        new_approvals: &[Vec<u8>],
+    ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        let mut pos = 0;
+
+        // Parse and copy all fields except field 6 (approvals)
+        while pos < raw_bytes.len() {
+            let field_start = pos;
+
+            // Read field header (tag)
+            let (field_header, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                .map_err(|e| anyhow::anyhow!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            // Calculate the end position of this field
+            let field_end = match wire_type {
+                0 => {
+                    // Varint - skip the varint value
+                    let (_, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                        .map_err(|e| anyhow::anyhow!("Failed to read varint: {}", e))?;
+                    pos + bytes_read
+                }
+                1 => {
+                    // 64-bit fixed
+                    pos + 8
+                }
+                2 => {
+                    // Length-delimited
+                    let (length, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                        .map_err(|e| anyhow::anyhow!("Failed to read length: {}", e))?;
+                    pos + bytes_read + length as usize
+                }
+                5 => {
+                    // 32-bit fixed
+                    pos + 4
+                }
+                _ => {
+                    return Err(anyhow::anyhow!("Unknown wire type: {}", wire_type));
+                }
+            };
+
+            // If this is field 6 (approvals), skip it (we'll add new approvals at the end)
+            // Otherwise, copy the field bytes as-is
+            if field_number != 6 {
+                output.extend_from_slice(&raw_bytes[field_start..field_end]);
+            }
+
+            pos = field_end;
+        }
+
+        // Append new approvals as field 6
+        for approval in new_approvals {
+            if approval.is_empty() {
+                continue;
+            }
+            self.write_varint(&mut output, (6 << 3) | 2);
+            self.write_varint(&mut output, approval.len() as u64);
+            output.extend_from_slice(approval);
+        }
+
+        Ok(output)
+    }
+
+    /// Surgical update of proposal state that preserves all other protobuf fields byte-for-byte.
+    ///
+    /// This function parses the raw bytes, replaces only field 7 (state) with the new value,
+    /// and keeps all other fields (including map entry order in `parameters`) identical.
+    /// This matches Java's behavior where `ProposalDeleteActuator.execute()` only changes
+    /// the state field while preserving the original parameter map serialization order.
+    ///
+    /// If field 7 is absent (common for PENDING=0), the new state is appended at the position
+    /// where Java would serialize it (after field 6 / approvals, before any higher-numbered fields).
+    pub fn surgical_update_proposal_state(
+        &self,
+        raw_bytes: &[u8],
+        new_state: i32,
+    ) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        let mut pos = 0;
+        let mut state_replaced = false;
+        // Track the position after the last field <= 7 for insertion
+        let mut insert_pos_after_field6: Option<usize> = None;
+
+        // First pass: copy all fields, replacing field 7 if found
+        while pos < raw_bytes.len() {
+            let field_start = pos;
+
+            // Read field header (tag)
+            let (field_header, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                .map_err(|e| anyhow::anyhow!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            // Calculate the end position of this field
+            let field_end = match wire_type {
+                0 => {
+                    // Varint - skip the varint value
+                    let (_, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                        .map_err(|e| anyhow::anyhow!("Failed to read varint: {}", e))?;
+                    pos + bytes_read
+                }
+                1 => {
+                    // 64-bit fixed
+                    pos + 8
+                }
+                2 => {
+                    // Length-delimited
+                    let (length, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                        .map_err(|e| anyhow::anyhow!("Failed to read length: {}", e))?;
+                    pos + bytes_read + length as usize
+                }
+                5 => {
+                    // 32-bit fixed
+                    pos + 4
+                }
+                _ => {
+                    return Err(anyhow::anyhow!("Unknown wire type: {}", wire_type));
+                }
+            };
+
+            if field_number == 7 && wire_type == 0 {
+                // Replace field 7 (state) with new value
+                if new_state != 0 {
+                    self.write_varint(&mut output, (7 << 3) | 0);
+                    self.write_varint(&mut output, new_state as u64);
+                }
+                // If new_state == 0, omit the field entirely (proto3 default)
+                state_replaced = true;
+            } else {
+                // Copy field bytes as-is
+                output.extend_from_slice(&raw_bytes[field_start..field_end]);
+            }
+
+            // Track insertion point: after the last field with number <= 6
+            if field_number <= 6 {
+                insert_pos_after_field6 = Some(output.len());
+            }
+
+            pos = field_end;
+        }
+
+        // If field 7 was not present and new_state != 0, insert it
+        if !state_replaced && new_state != 0 {
+            if let Some(insert_pos) = insert_pos_after_field6 {
+                // Insert at the tracked position (after field 6, before any field > 7)
+                let mut state_bytes = Vec::new();
+                self.write_varint(&mut state_bytes, (7 << 3) | 0);
+                self.write_varint(&mut state_bytes, new_state as u64);
+
+                let tail = output[insert_pos..].to_vec();
+                output.truncate(insert_pos);
+                output.extend_from_slice(&state_bytes);
+                output.extend_from_slice(&tail);
+            } else {
+                // No fields <= 6 found, append at end
+                self.write_varint(&mut output, (7 << 3) | 0);
+                self.write_varint(&mut output, new_state as u64);
+            }
+        }
+
+        Ok(output)
+    }
+
+    /// Helper to read a varint from a slice (returns value and bytes read)
+    fn read_varint_from_slice(&self, data: &[u8]) -> Result<(u64, usize)> {
+        let mut value: u64 = 0;
+        let mut shift = 0;
+        let mut pos = 0;
+
+        loop {
+            if pos >= data.len() {
+                return Err(anyhow::anyhow!("Unexpected end of data reading varint"));
+            }
+            let byte = data[pos];
+            pos += 1;
+            value |= ((byte & 0x7F) as u64) << shift;
+            if byte & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+            if shift >= 64 {
+                return Err(anyhow::anyhow!("Varint too long"));
+            }
+        }
+
+        Ok((value, pos))
     }
 
     /// Store proposal
@@ -3245,16 +3807,24 @@ impl EngineBackedEvmStateStore {
         db_names::account::ACCOUNT_ID_INDEX
     }
 
-    /// Convert account ID to lowercase key format
-    /// Java: AccountIdIndexStore.getLowerCaseAccountId() converts to lowercase UTF-8
-    fn account_id_key(&self, account_id: &[u8]) -> Vec<u8> {
-        // Convert bytes to UTF-8 string, lowercase, then back to bytes
-        if let Ok(s) = std::str::from_utf8(account_id) {
-            s.to_lowercase().into_bytes()
-        } else {
-            // If not valid UTF-8, just use the raw bytes
-            account_id.to_vec()
-        }
+    /// Convert account ID to lowercase key format using ASCII-only lowercasing.
+    ///
+    /// Java's `AccountIdIndexStore.getLowerCaseAccountId()` uses `String.toLowerCase()`
+    /// which is locale-dependent (e.g., Turkish locale lowercases 'I' → 'ı').
+    /// Since `validAccountId` restricts bytes to printable ASCII (0x21–0x7E),
+    /// ASCII-only lowercasing (A–Z → a–z) is deterministic and matches the
+    /// intended behavior of Java's `toLowerCase()` under the default (English) locale.
+    pub fn account_id_key(&self, account_id: &[u8]) -> Vec<u8> {
+        account_id
+            .iter()
+            .map(|&b| {
+                if b.is_ascii_uppercase() {
+                    b.to_ascii_lowercase()
+                } else {
+                    b
+                }
+            })
+            .collect()
     }
 
     /// Check if an account ID already exists in the index
@@ -3313,33 +3883,51 @@ impl EngineBackedEvmStateStore {
 
     /// Get TOTAL_SIGN_NUM dynamic property
     /// Maximum number of keys allowed in a permission
-    /// Default: 5
+    /// Java throws `IllegalArgumentException("not found TOTAL_SIGN_NUM")` if missing.
+    ///
+    /// Note: Java stores this as 4-byte int (ByteArray.fromInt), not 8-byte long.
+    /// Java's ByteArray.toInt uses BigInteger(1, b).intValue() which:
+    /// - Returns 0 for empty arrays
+    /// - Interprets bytes as unsigned big-endian
+    /// - Truncates to low 32 bits (equivalent to taking last 4 bytes for len >= 4)
     pub fn get_total_sign_num(&self) -> Result<i64> {
         let key = b"TOTAL_SIGN_NUM";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                if data.len() >= 8 {
-                    let value = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
-                    ]);
-                    tracing::debug!("TOTAL_SIGN_NUM: {}", value);
-                    Ok(value)
+                // Match Java's ByteArray.toInt(byte[] b) exactly:
+                // return ArrayUtils.isEmpty(b) ? 0 : new BigInteger(1, b).intValue();
+                let value = if data.is_empty() {
+                    // Java's toInt returns 0 for empty arrays
+                    0i64
+                } else if data.len() >= 4 {
+                    // BigInteger(1, b).intValue() returns low 32 bits of unsigned big-endian.
+                    // For len >= 4, this is equivalent to taking the last 4 bytes.
+                    let start = data.len() - 4;
+                    let last_4 = [data[start], data[start + 1], data[start + 2], data[start + 3]];
+                    // Interpret as unsigned u32, cast to i32 for signed semantics, then to i64
+                    let unsigned_val = u32::from_be_bytes(last_4);
+                    (unsigned_val as i32) as i64
                 } else {
-                    tracing::warn!("TOTAL_SIGN_NUM has invalid length: {}", data.len());
-                    Ok(5) // Default
-                }
+                    // For len < 4, interpret as unsigned big-endian (fits in i32)
+                    let mut val: i64 = 0;
+                    for &byte in &data {
+                        val = (val << 8) | (byte as i64);
+                    }
+                    val
+                };
+                tracing::debug!("TOTAL_SIGN_NUM: {} (from {} bytes)", value, data.len());
+                Ok(value)
             }
             None => {
-                tracing::debug!("TOTAL_SIGN_NUM not found, returning default 5");
-                Ok(5)
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found TOTAL_SIGN_NUM"))
             }
         }
     }
 
     /// Get UPDATE_ACCOUNT_PERMISSION_FEE dynamic property
     /// Fee in SUN for updating account permissions
-    /// Default: 100_000_000 (100 TRX)
+    /// Java throws `IllegalArgumentException("not found UPDATE_ACCOUNT_PERMISSION_FEE")` if missing.
     pub fn get_update_account_permission_fee(&self) -> Result<i64> {
         let key = b"UPDATE_ACCOUNT_PERMISSION_FEE";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
@@ -3352,30 +3940,31 @@ impl EngineBackedEvmStateStore {
                     tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE: {}", value);
                     Ok(value)
                 } else {
+                    // Invalid length treated as missing for strict parity
                     tracing::warn!("UPDATE_ACCOUNT_PERMISSION_FEE has invalid length: {}", data.len());
-                    Ok(100_000_000) // 100 TRX in SUN
+                    Err(anyhow::anyhow!("not found UPDATE_ACCOUNT_PERMISSION_FEE"))
                 }
             }
             None => {
-                tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE not found, returning default 100_000_000");
-                Ok(100_000_000) // 100 TRX in SUN
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found UPDATE_ACCOUNT_PERMISSION_FEE"))
             }
         }
     }
 
     /// Get AVAILABLE_CONTRACT_TYPE dynamic property
     /// Bitmap of allowed contract types (32 bytes)
-    /// Returns None if not found (all contracts allowed)
-    pub fn get_available_contract_type(&self) -> Result<Option<Vec<u8>>> {
+    /// Java throws `IllegalArgumentException("not found AVAILABLE_CONTRACT_TYPE")` if missing.
+    pub fn get_available_contract_type(&self) -> Result<Vec<u8>> {
         let key = b"AVAILABLE_CONTRACT_TYPE";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 tracing::debug!("AVAILABLE_CONTRACT_TYPE: {} bytes", data.len());
-                Ok(Some(data))
+                Ok(data)
             }
             None => {
-                tracing::debug!("AVAILABLE_CONTRACT_TYPE not found");
-                Ok(None)
+                // Java throws IllegalArgumentException when key is missing
+                Err(anyhow::anyhow!("not found AVAILABLE_CONTRACT_TYPE"))
             }
         }
     }
@@ -3768,6 +4357,146 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
+    // --- Optimized Delegation Index Methods (V1 with ALLOW_DELEGATE_OPTIMIZATION) ---
+
+    /// Prefix bytes for V1 optimized delegation index keys
+    const V1_FROM_PREFIX: u8 = 0x01;
+    const V1_TO_PREFIX: u8 = 0x02;
+
+    /// Convert legacy delegation index to optimized layout for an address.
+    ///
+    /// Java oracle: DelegatedResourceAccountIndexStore.convert()
+    /// This migrates old-style lists (key=address, value=proto with lists) to
+    /// new prefix-based keys (0x01||from||to and 0x02||to||from).
+    pub fn convert_delegated_resource_account_index_v1(&self, address: &Address) -> Result<()> {
+        let tron_addr = self.to_tron_address_21(address).to_vec();
+
+        // Check if legacy index exists for this address
+        let index_data = match self.buffered_get(
+            self.delegated_resource_account_index_database(),
+            &tron_addr,
+        )? {
+            Some(data) => data,
+            None => {
+                // No legacy data - either already converted or never had delegation
+                return Ok(());
+            }
+        };
+
+        let index = crate::protocol::DelegatedResourceAccountIndex::decode(&index_data[..])
+            .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?;
+
+        // Convert to_accounts list: for each target, use index+1 as timestamp to preserve order
+        for (i, to_account) in index.to_accounts.iter().enumerate() {
+            let timestamp = (i + 1) as i64;
+            self.delegate_v1_optimized_internal(&tron_addr, to_account, timestamp)?;
+        }
+
+        // Convert from_accounts list: for each source, use index+1 as timestamp
+        for (i, from_account) in index.from_accounts.iter().enumerate() {
+            let timestamp = (i + 1) as i64;
+            self.delegate_v1_optimized_internal(from_account, &tron_addr, timestamp)?;
+        }
+
+        // Delete the legacy key after successful conversion
+        self.buffered_delete(
+            self.delegated_resource_account_index_database(),
+            tron_addr,
+        )?;
+
+        Ok(())
+    }
+
+    /// Write optimized V1 delegation index entries.
+    ///
+    /// Java oracle: DelegatedResourceAccountIndexStore.delegate(from, to, time)
+    /// Writes two prefix keys:
+    /// - 0x01 || from || to → DelegatedResourceAccountIndex(account=to, timestamp=time)
+    /// - 0x02 || to || from → DelegatedResourceAccountIndex(account=from, timestamp=time)
+    pub fn delegate_v1_optimized(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+        timestamp: i64,
+    ) -> Result<()> {
+        let from_tron = self.to_tron_address_21(owner).to_vec();
+        let to_tron = self.to_tron_address_21(receiver).to_vec();
+        self.delegate_v1_optimized_internal(&from_tron, &to_tron, timestamp)
+    }
+
+    /// Internal helper for optimized delegation using raw 21-byte addresses.
+    fn delegate_v1_optimized_internal(
+        &self,
+        from_tron: &[u8],
+        to_tron: &[u8],
+        timestamp: i64,
+    ) -> Result<()> {
+        // Key: 0x01 || from || to
+        let mut from_key = Vec::with_capacity(1 + 21 + 21);
+        from_key.push(Self::V1_FROM_PREFIX);
+        from_key.extend_from_slice(from_tron);
+        from_key.extend_from_slice(to_tron);
+
+        let to_index = crate::protocol::DelegatedResourceAccountIndex {
+            account: to_tron.to_vec(),
+            timestamp,
+            ..Default::default()
+        };
+
+        self.buffered_put(
+            self.delegated_resource_account_index_database(),
+            from_key,
+            to_index.encode_to_vec(),
+        )?;
+
+        // Key: 0x02 || to || from
+        let mut to_key = Vec::with_capacity(1 + 21 + 21);
+        to_key.push(Self::V1_TO_PREFIX);
+        to_key.extend_from_slice(to_tron);
+        to_key.extend_from_slice(from_tron);
+
+        let from_index = crate::protocol::DelegatedResourceAccountIndex {
+            account: from_tron.to_vec(),
+            timestamp,
+            ..Default::default()
+        };
+
+        self.buffered_put(
+            self.delegated_resource_account_index_database(),
+            to_key,
+            from_index.encode_to_vec(),
+        )?;
+
+        Ok(())
+    }
+
+    /// Remove optimized V1 delegation index entries.
+    ///
+    /// Java oracle: DelegatedResourceAccountIndexStore.unDelegate(from, to)
+    /// Deletes both prefix keys.
+    pub fn undelegate_v1_optimized(&self, owner: &Address, receiver: &Address) -> Result<()> {
+        let from_tron = self.to_tron_address_21(owner).to_vec();
+        let to_tron = self.to_tron_address_21(receiver).to_vec();
+
+        // Key: 0x01 || from || to
+        let mut from_key = Vec::with_capacity(1 + 21 + 21);
+        from_key.push(Self::V1_FROM_PREFIX);
+        from_key.extend_from_slice(&from_tron);
+        from_key.extend_from_slice(&to_tron);
+
+        self.buffered_delete(self.delegated_resource_account_index_database(), from_key)?;
+
+        // Key: 0x02 || to || from
+        let mut to_key = Vec::with_capacity(1 + 21 + 21);
+        to_key.push(Self::V1_TO_PREFIX);
+        to_key.extend_from_slice(&to_tron);
+        to_key.extend_from_slice(&from_tron);
+
+        self.buffered_delete(self.delegated_resource_account_index_database(), to_key)?;
+
+        Ok(())
+    }
+
     /// Get a DelegatedResource record (lock/unlock) without mutating state.
     pub fn get_delegated_resource(
         &self,
@@ -4131,15 +4860,18 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Set the BLOCK_NUM_FOR_ENERGY_LIMIT threshold.
+    /// Java: CommonParameter.getInstance().setBlockNumForEnergyLimit(value)
+    /// Use 0 for conformance testing (always enabled), or 4727890 for mainnet default.
+    pub fn set_block_num_for_energy_limit(&mut self, threshold: i64) {
+        self.block_num_for_energy_limit = threshold;
+    }
+
     /// Get BLOCK_NUM_FOR_ENERGY_LIMIT configuration
-    /// This is typically a configuration constant, not a dynamic property
-    /// For checkForEnergyLimit(): block_num >= BLOCK_NUM_FOR_ENERGY_LIMIT
+    /// Java: CommonParameter.getInstance().getBlockNumForEnergyLimit()
     /// Default: 4727890 (mainnet value from CommonParameter)
     pub fn get_block_num_for_energy_limit(&self) -> i64 {
-        // This is a constant from CommonParameter, not stored in DB
-        // Mainnet value: 4727890
-        // Testnet value might differ
-        4727890
+        self.block_num_for_energy_limit
     }
 
     /// Check if energy limit feature is enabled based on current block number
@@ -4151,6 +4883,424 @@ impl EngineBackedEvmStateStore {
         tracing::debug!("checkForEnergyLimit: block_num={}, threshold={}, enabled={}",
                        block_num, threshold, enabled);
         Ok(enabled)
+    }
+
+    // ==========================================================================
+    // PROPOSAL_CREATE_CONTRACT: Dynamic Properties for Proposal Validation
+    // ==========================================================================
+
+    /// Get ALLOW_CREATION_OF_CONTRACTS dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowCreationOfContracts()
+    /// Default: 0 if not found.
+    pub fn get_allow_creation_of_contracts(&self) -> Result<i64> {
+        let key = b"ALLOW_CREATION_OF_CONTRACTS";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_DELEGATE_RESOURCE dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowDelegateResource()
+    /// Default: 0 if not found.
+    pub fn get_allow_delegate_resource(&self) -> Result<i64> {
+        let key = b"ALLOW_DELEGATE_RESOURCE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_TVM_TRANSFER_TRC10 dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowTvmTransferTrc10()
+    /// Default: 0 if not found.
+    pub fn get_allow_tvm_transfer_trc10(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_TRANSFER_TRC10";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get CHANGE_DELEGATION dynamic property.
+    /// Java reference: DynamicPropertiesStore.getChangeDelegation()
+    /// Default: 0 if not found.
+    pub fn get_change_delegation(&self) -> Result<i64> {
+        let key = b"CHANGE_DELEGATION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_MARKET_TRANSACTION dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowMarketTransaction()
+    /// Default: 0 if not found.
+    pub fn get_allow_market_transaction(&self) -> Result<i64> {
+        let key = b"ALLOW_MARKET_TRANSACTION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Check if market transaction is supported.
+    /// Java reference: DynamicPropertiesStore.supportAllowMarketTransaction()
+    /// Returns true if ALLOW_MARKET_TRANSACTION == 1
+    pub fn support_allow_market_transaction(&self) -> Result<bool> {
+        Ok(self.get_allow_market_transaction()? == 1)
+    }
+
+    /// Get ALLOW_TVM_LONDON dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowTvmLondon()
+    /// Default: 0 if not found.
+    pub fn get_allow_tvm_london(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_LONDON";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowHigherLimitForMaxCpuTimeOfOneTx()
+    /// Default: 0 if not found.
+    pub fn get_allow_higher_limit_for_max_cpu_time_of_one_tx(&self) -> Result<i64> {
+        let key = b"ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_OLD_REWARD_OPT dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowOldRewardOpt()
+    /// Default: 0 if not found.
+    pub fn get_allow_old_reward_opt(&self) -> Result<i64> {
+        let key = b"ALLOW_OLD_REWARD_OPT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Check if old reward opt is allowed.
+    /// Java reference: DynamicPropertiesStore.allowOldRewardOpt()
+    /// Returns true if ALLOW_OLD_REWARD_OPT == 1
+    pub fn allow_old_reward_opt(&self) -> Result<bool> {
+        Ok(self.get_allow_old_reward_opt()? == 1)
+    }
+
+    /// Get ALLOW_ENERGY_ADJUSTMENT dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowEnergyAdjustment()
+    /// Default: 0 if not found.
+    pub fn get_allow_energy_adjustment(&self) -> Result<i64> {
+        let key = b"ALLOW_ENERGY_ADJUSTMENT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_STRICT_MATH dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowStrictMath()
+    /// Default: 0 if not found.
+    pub fn get_allow_strict_math(&self) -> Result<i64> {
+        let key = b"ALLOW_STRICT_MATH";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Check if strict math is allowed.
+    /// Java reference: DynamicPropertiesStore.allowStrictMath()
+    /// Returns true if ALLOW_STRICT_MATH == 1
+    pub fn allow_strict_math(&self) -> Result<bool> {
+        Ok(self.get_allow_strict_math()? == 1)
+    }
+
+    /// Get CONSENSUS_LOGIC_OPTIMIZATION dynamic property.
+    /// Java reference: DynamicPropertiesStore.getConsensusLogicOptimization()
+    /// Default: 0 if not found.
+    pub fn get_consensus_logic_optimization(&self) -> Result<i64> {
+        let key = b"CONSENSUS_LOGIC_OPTIMIZATION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_TVM_CANCUN dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowTvmCancun()
+    /// Default: 0 if not found.
+    pub fn get_allow_tvm_cancun(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_CANCUN";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get ALLOW_TVM_BLOB dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowTvmBlob()
+    /// Default: 0 if not found.
+    pub fn get_allow_tvm_blob(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_BLOB";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Check if new reward algorithm is used.
+    /// Java reference: DynamicPropertiesStore.useNewRewardAlgorithm()
+    /// Returns true if either ALLOW_NEW_REWARD == 1 or ALLOW_TVM_VOTE == 1
+    pub fn use_new_reward_algorithm(&self) -> Result<bool> {
+        let allow_new_reward = self.get_allow_new_reward()?;
+        let allow_tvm_vote = self.get_allow_tvm_vote()?;
+        Ok(allow_new_reward == 1 || allow_tvm_vote == 1)
+    }
+
+    /// Get ALLOW_TVM_VOTE dynamic property.
+    /// Java reference: DynamicPropertiesStore.getAllowTvmVote()
+    /// Default: 0 if not found.
+    pub fn get_allow_tvm_vote(&self) -> Result<i64> {
+        let key = b"ALLOW_TVM_VOTE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get LATEST_VERSION dynamic property (fork version).
+    /// Java reference: DynamicPropertiesStore.getLatestVersion()
+    /// Default: 0 if not found.
+    pub fn get_latest_version(&self) -> Result<i64> {
+        let key = b"LATEST_VERSION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    // Handle 4-byte int format
+                    Ok(i32::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                    ]) as i64)
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Get statsByVersion for fork gating.
+    /// Java reference: DynamicPropertiesStore.statsByVersion()
+    /// Returns None if not found.
+    pub fn stats_by_version(&self, version: i32) -> Result<Option<Vec<u8>>> {
+        let key = format!("FORK_CONTROLLER_VERSION_{}", version);
+        self.storage_engine.get(self.dynamic_properties_database(), key.as_bytes())
+    }
+
+    /// Check if a fork version has passed (simplified fork controller).
+    /// This is a simplified version that:
+    /// 1. For version > VERSION_4_0 (16): checks hardForkTime and stats approval
+    /// 2. For version <= VERSION_4_0: checks stats only
+    ///
+    /// Note: This is a best-effort approximation for proposal validation.
+    /// In production remote execution, the Java side may do full fork checks.
+    pub fn fork_controller_pass(&self, version: i32) -> Result<bool> {
+        // For energy limit special case (version == 5)
+        if version == 5 {
+            return self.check_for_energy_limit();
+        }
+
+        // For newer forks (VERSION_4_0+), use time-based + stats check
+        if version > 16 {
+            // VERSION_4_0 = 16
+            return self.fork_controller_pass_new(version);
+        }
+
+        // For older forks, check stats only
+        self.fork_controller_pass_old(version)
+    }
+
+    /// Fork pass check for old versions (<=16)
+    fn fork_controller_pass_old(&self, version: i32) -> Result<bool> {
+        let stats = self.stats_by_version(version)?;
+        match stats {
+            Some(data) if !data.is_empty() => {
+                // All bytes must be 1 (VERSION_UPGRADE)
+                Ok(data.iter().all(|&b| b == 1))
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Fork pass check for new versions (>16)
+    /// Uses hardForkTime and stats approval threshold (80%)
+    fn fork_controller_pass_new(&self, version: i32) -> Result<bool> {
+        // Hard fork times for versions (from Parameter.java)
+        // VERSION_4_0_1 (17) and later all have hardForkTime = 1596780000000 (GMT 2020-08-07 06:00:00)
+        let hard_fork_time: i64 = 1596780000000;
+        let hard_fork_rate: i32 = 80;
+
+        let latest_block_time = self.get_latest_block_header_timestamp()?;
+        let maintenance_time_interval = self.get_maintenance_time_interval()?;
+
+        // Calculate aligned hard fork time
+        let aligned_hard_fork_time = if maintenance_time_interval > 0 {
+            ((hard_fork_time - 1) / maintenance_time_interval + 1) * maintenance_time_interval
+        } else {
+            hard_fork_time
+        };
+
+        if latest_block_time < aligned_hard_fork_time {
+            return Ok(false);
+        }
+
+        let stats = self.stats_by_version(version)?;
+        match stats {
+            Some(data) if !data.is_empty() => {
+                // Count approvals (bytes == 1)
+                let count = data.iter().filter(|&&b| b == 1).count();
+                // Java uses Math.ceil for threshold calculation
+                let threshold_ceil =
+                    ((hard_fork_rate as f64 * data.len() as f64 / 100.0).ceil()) as usize;
+                Ok(count >= threshold_ceil)
+            }
+            _ => Ok(false),
+        }
     }
 }
 
@@ -4480,7 +5630,7 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get OneDayNetLimit dynamic property
-    /// Default: 8640000000 bytes per day
+    /// Default: 57_600_000_000 (matches Java DynamicPropertiesStore initialization)
     pub fn get_one_day_net_limit(&self) -> Result<i64> {
         let key = b"ONE_DAY_NET_LIMIT";
         match self.storage_engine.get(self.dynamic_properties_database(), key)? {
@@ -4492,10 +5642,10 @@ impl EngineBackedEvmStateStore {
                     ]);
                     Ok(val)
                 } else {
-                    Ok(8_640_000_000) // Default value
+                    Ok(57_600_000_000) // Java DynamicPropertiesStore default
                 }
             },
-            None => Ok(8_640_000_000) // Default value
+            None => Ok(57_600_000_000) // Java DynamicPropertiesStore default
         }
     }
 
@@ -4611,6 +5761,266 @@ impl EngineBackedEvmStateStore {
                 }
             }
             None => Ok(1),
+        }
+    }
+
+    // ============================================================================
+    // Strict Dynamic Property Getters (Task 5 - Java Parity)
+    // ============================================================================
+    //
+    // These methods match Java's DynamicPropertiesStore behavior by returning errors
+    // when keys are missing. Use these when strict_dynamic_properties is enabled in config.
+
+    /// Get AssetIssueFee with strict mode (errors when missing).
+    /// Java: "not found ASSET_ISSUE_FEE"
+    pub fn get_asset_issue_fee_strict(&self) -> Result<u64> {
+        let key = b"ASSET_ISSUE_FEE";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let fee = u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(fee)
+                } else {
+                    Err(anyhow::anyhow!("not found ASSET_ISSUE_FEE"))
+                }
+            },
+            None => Err(anyhow::anyhow!("not found ASSET_ISSUE_FEE")),
+        }
+    }
+
+    /// Get AllowSameTokenName with strict mode (errors when missing).
+    /// Java: "not found ALLOW_SAME_TOKEN_NAME"
+    pub fn get_allow_same_token_name_strict(&self) -> Result<i64> {
+        let key = b" ALLOW_SAME_TOKEN_NAME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val)
+                } else {
+                    Err(anyhow::anyhow!("not found ALLOW_SAME_TOKEN_NAME"))
+                }
+            },
+            None => Err(anyhow::anyhow!("not found ALLOW_SAME_TOKEN_NAME")),
+        }
+    }
+
+    /// Get ALLOW_ASSET_OPTIMIZATION dynamic property
+    /// Java: DynamicPropertiesStore.getAllowAssetOptimization()
+    /// Returns 0 (disabled) or 1 (enabled)
+    /// Default: 0 (disabled)
+    pub fn get_allow_asset_optimization(&self) -> Result<i64> {
+        let key = b"ALLOW_ASSET_OPTIMIZATION";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0) // Default disabled
+                }
+            }
+            None => Ok(0), // Default disabled
+        }
+    }
+
+    /// Get the account-asset database name
+    /// Java: AccountAssetStore - dbName = "account-asset"
+    fn account_asset_database(&self) -> &str {
+        db_names::account::ACCOUNT_ASSET
+    }
+
+    /// Get asset balance from AccountAssetStore
+    /// Java: AccountAssetStore.getBalance(account, key)
+    /// Key format: address + tokenId bytes
+    /// Value format: i64 balance as big-endian 8 bytes
+    pub fn get_asset_balance_from_asset_store(&self, address: &Address, token_id: &[u8]) -> Result<i64> {
+        // Build key: address (21 bytes TRON format) + tokenId
+        let mut key = Vec::with_capacity(21 + token_id.len());
+        key.push(0x41u8); // TRON mainnet prefix
+        key.extend_from_slice(address.as_slice());
+        key.extend_from_slice(token_id);
+
+        match self.storage_engine.get(self.account_asset_database(), &key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Ok(0)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    /// Check if account has sufficient TRC-10 asset balance
+    /// Mirrors Java's AccountCapsule.assetBalanceEnoughV2()
+    ///
+    /// This method handles:
+    /// - ALLOW_SAME_TOKEN_NAME == 0: reads from Account.asset map (token name as key)
+    /// - ALLOW_SAME_TOKEN_NAME == 1: reads from Account.asset_v2 map (token ID as key)
+    /// - ALLOW_ASSET_OPTIMIZATION == 1: also checks AccountAssetStore
+    ///
+    /// Returns Ok(true) if amount > 0 && balance >= amount
+    pub fn asset_balance_enough_v2(
+        &self,
+        address: &Address,
+        token_id: &[u8],
+        amount: i64,
+    ) -> Result<bool> {
+        if amount <= 0 {
+            return Ok(false);
+        }
+
+        let allow_same_token_name = self.get_allow_same_token_name()?;
+        let allow_asset_optimization = self.get_allow_asset_optimization()?;
+
+        // Get the account proto
+        let account = match self.get_account_proto(address)? {
+            Some(acc) => acc,
+            None => return Ok(false),
+        };
+
+        let token_key = String::from_utf8_lossy(token_id).to_string();
+
+        // First, determine which map to read from based on ALLOW_SAME_TOKEN_NAME
+        let current_amount = if allow_same_token_name == 0 {
+            // Legacy mode: read from Account.asset map (token name as key)
+            account.asset.get(&token_key).copied()
+        } else {
+            // Modern mode: read from Account.asset_v2 map (token ID as key)
+            account.asset_v2.get(&token_key).copied()
+        };
+
+        // If we have a balance in the account map, use it
+        if let Some(balance) = current_amount {
+            return Ok(balance >= amount);
+        }
+
+        // If ALLOW_ASSET_OPTIMIZATION is enabled, check AccountAssetStore
+        // Java: importAsset() loads from AccountAssetStore when the key is not in assetV2Map
+        if allow_asset_optimization == 1 && allow_same_token_name == 1 {
+            // Check if account has assetOptimized flag set
+            // For simplicity, we always try the asset store lookup when optimization is enabled
+            let balance = self.get_asset_balance_from_asset_store(address, token_id)?;
+            if balance > 0 {
+                return Ok(balance >= amount);
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Get TOKEN_ID_NUM with strict mode (errors when missing).
+    /// Java: "not found TOKEN_ID_NUM"
+    pub fn get_token_id_num_strict(&self) -> Result<i64> {
+        let key = b"TOKEN_ID_NUM";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else {
+                    Err(anyhow::anyhow!("not found TOKEN_ID_NUM"))
+                }
+            }
+            None => Err(anyhow::anyhow!("not found TOKEN_ID_NUM")),
+        }
+    }
+
+    /// Get OneDayNetLimit with strict mode (errors when missing).
+    /// Java: "not found ONE_DAY_NET_LIMIT"
+    pub fn get_one_day_net_limit_strict(&self) -> Result<i64> {
+        let key = b"ONE_DAY_NET_LIMIT";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    let val = i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7]
+                    ]);
+                    Ok(val)
+                } else {
+                    Err(anyhow::anyhow!("not found ONE_DAY_NET_LIMIT"))
+                }
+            },
+            None => Err(anyhow::anyhow!("not found ONE_DAY_NET_LIMIT")),
+        }
+    }
+
+    /// Get MAX_FROZEN_SUPPLY_NUMBER with strict mode (errors when missing).
+    /// Java: "not found MAX_FROZEN_SUPPLY_NUMBER"
+    pub fn get_max_frozen_supply_number_strict(&self) -> Result<i64> {
+        let key = b"MAX_FROZEN_SUPPLY_NUMBER";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Err(anyhow::anyhow!("not found MAX_FROZEN_SUPPLY_NUMBER"))
+                }
+            }
+            None => Err(anyhow::anyhow!("not found MAX_FROZEN_SUPPLY_NUMBER")),
+        }
+    }
+
+    /// Get MAX_FROZEN_SUPPLY_TIME with strict mode (errors when missing).
+    /// Java: "not found MAX_FROZEN_SUPPLY_TIME"
+    pub fn get_max_frozen_supply_time_strict(&self) -> Result<i64> {
+        let key = b"MAX_FROZEN_SUPPLY_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Err(anyhow::anyhow!("not found MAX_FROZEN_SUPPLY_TIME"))
+                }
+            }
+            None => Err(anyhow::anyhow!("not found MAX_FROZEN_SUPPLY_TIME")),
+        }
+    }
+
+    /// Get MIN_FROZEN_SUPPLY_TIME with strict mode (errors when missing).
+    /// Java: "not found MIN_FROZEN_SUPPLY_TIME"
+    pub fn get_min_frozen_supply_time_strict(&self) -> Result<i64> {
+        let key = b"MIN_FROZEN_SUPPLY_TIME";
+        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                        data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.len() >= 4 {
+                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                } else {
+                    Err(anyhow::anyhow!("not found MIN_FROZEN_SUPPLY_TIME"))
+                }
+            }
+            None => Err(anyhow::anyhow!("not found MIN_FROZEN_SUPPLY_TIME")),
         }
     }
 
@@ -4763,6 +6173,71 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
+    /// Store exchange following Java's Commons.putExchangeCapsule() semantics:
+    /// - allowSameTokenName == 0: write to BOTH legacy (v1) and v2 stores
+    ///   - v1 store uses token names as-is
+    ///   - v2 store gets token names transformed to numeric IDs
+    /// - allowSameTokenName == 1: write to v2 store only
+    ///
+    /// Java reference: Commons.putExchangeCapsule() in chainbase/src/main/java/org/tron/common/utils/Commons.java
+    pub fn put_exchange_dual_write(
+        &mut self,
+        exchange: &crate::protocol::Exchange,
+        allow_same_token_name: i64,
+    ) -> Result<()> {
+        if allow_same_token_name == 0 {
+            // Legacy mode: dual-write to both stores
+            // 1. Write original exchange (with token names) to legacy store
+            self.put_exchange_to_store(exchange, false)?;
+
+            // 2. Transform token names to IDs and write to v2 store
+            let mut exchange_v2 = exchange.clone();
+
+            // Transform first_token_id if not TRX ("_")
+            if exchange.first_token_id != b"_" {
+                if let Ok(Some(asset)) = self.get_asset_issue(&exchange.first_token_id, 0) {
+                    if !asset.id.is_empty() {
+                        exchange_v2.first_token_id = asset.id.into_bytes();
+                    }
+                }
+            }
+
+            // Transform second_token_id if not TRX ("_")
+            if exchange.second_token_id != b"_" {
+                if let Ok(Some(asset)) = self.get_asset_issue(&exchange.second_token_id, 0) {
+                    if !asset.id.is_empty() {
+                        exchange_v2.second_token_id = asset.id.into_bytes();
+                    }
+                }
+            }
+
+            self.put_exchange_to_store(&exchange_v2, true)?;
+
+            tracing::debug!(
+                "Dual-wrote exchange {} - legacy tokens: {}/{}, v2 tokens: {}/{}",
+                exchange.exchange_id,
+                String::from_utf8_lossy(&exchange.first_token_id),
+                String::from_utf8_lossy(&exchange.second_token_id),
+                String::from_utf8_lossy(&exchange_v2.first_token_id),
+                String::from_utf8_lossy(&exchange_v2.second_token_id)
+            );
+        } else {
+            // Modern mode: write to v2 store only
+            self.put_exchange_to_store(exchange, true)?;
+        }
+        Ok(())
+    }
+
+    /// Get exchange following Java's Commons.getExchangeStoreFinal() semantics:
+    /// - allowSameTokenName == 0: read from legacy (v1) store (token names)
+    /// - allowSameTokenName == 1: read from v2 store (token ids)
+    ///
+    /// Java reference: Commons.getExchangeStoreFinal() in chainbase/src/main/java/org/tron/common/utils/Commons.java
+    pub fn get_exchange_routed(&self, exchange_id: i64, allow_same_token_name: i64) -> Result<Option<crate::protocol::Exchange>> {
+        let v2_store = allow_same_token_name != 0;
+        self.get_exchange_from_store(exchange_id, v2_store)
+    }
+
     /// Check if exchange exists in V2 store
     pub fn has_exchange(&self, exchange_id: i64) -> Result<bool> {
         self.has_exchange_in_store(exchange_id, true)
@@ -4836,7 +6311,8 @@ impl EngineBackedEvmStateStore {
 
     /// Get EXCHANGE_CREATE_FEE dynamic property
     /// Fee charged to create an exchange (in SUN)
-    /// Default in Java: 1024_000_000_000L (1024 TRX)
+    /// Java default: 1024_000_000L (1024 TRX in SUN)
+    /// See: DynamicPropertiesStore.java initialization
     pub fn get_exchange_create_fee(&self) -> Result<i64> {
         let key = b"EXCHANGE_CREATE_FEE";
         match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
@@ -4847,37 +6323,14 @@ impl EngineBackedEvmStateStore {
                     Ok(fee)
                 } else {
                     tracing::warn!("EXCHANGE_CREATE_FEE has invalid length: {}", data.len());
-                    Ok(1024_000_000_000i64) // Default
+                    // Java default: 1024_000_000L (1024 TRX in SUN)
+                    Ok(1024_000_000i64)
                 }
             },
             None => {
                 tracing::debug!("EXCHANGE_CREATE_FEE not found, returning default");
-                Ok(1024_000_000_000i64) // Default: 1024 TRX
-            }
-        }
-    }
-
-    /// Get ALLOW_STRICT_MATH dynamic property
-    /// Controls whether strict math mode is used in AMM calculations
-    /// When true, uses StrictMath.pow; when false, uses Math.pow
-    /// Default: 0 (false)
-    pub fn allow_strict_math(&self) -> Result<bool> {
-        let key = b"ALLOW_STRICT_MATH";
-        match self.storage_engine.get(db_names::system::PROPERTIES, key)? {
-            Some(data) => {
-                if data.len() == 8 {
-                    let value = i64::from_be_bytes(data.as_slice().try_into()?);
-                    Ok(value != 0)
-                } else if !data.is_empty() {
-                    // Single byte 0 or 1
-                    Ok(data[0] != 0)
-                } else {
-                    Ok(false)
-                }
-            },
-            None => {
-                tracing::debug!("ALLOW_STRICT_MATH not found, returning false");
-                Ok(false)
+                // Java default: 1024_000_000L (1024 TRX in SUN)
+                Ok(1024_000_000i64)
             }
         }
     }
@@ -4895,6 +6348,31 @@ impl EngineBackedEvmStateStore {
             // Look up in assetV2 map
             if let Some(&balance) = account.asset_v2.get(&token_key) {
                 return Ok(balance);
+            }
+        }
+        Ok(0)
+    }
+
+    /// Get asset balance for an account, routing by allowSameTokenName
+    /// Mirrors Java's AccountCapsule.assetBalanceEnoughV2() semantics:
+    /// - allowSameTokenName == 0: reads from account.asset (token names)
+    /// - allowSameTokenName == 1: reads from account.asset_v2 (token ids)
+    ///
+    /// Java reference: AccountCapsule.assetBalanceEnoughV2()
+    pub fn get_asset_balance_routed(&self, address: &Address, asset_key: &[u8], allow_same_token_name: i64) -> Result<i64> {
+        if let Some(account) = self.get_account_proto(address)? {
+            let key_str = String::from_utf8_lossy(asset_key).to_string();
+
+            if allow_same_token_name == 0 {
+                // Legacy mode: read from account.asset (keyed by token name)
+                if let Some(&balance) = account.asset.get(&key_str) {
+                    return Ok(balance);
+                }
+            } else {
+                // Modern mode: read from account.asset_v2 (keyed by token id)
+                if let Some(&balance) = account.asset_v2.get(&key_str) {
+                    return Ok(balance);
+                }
             }
         }
         Ok(0)

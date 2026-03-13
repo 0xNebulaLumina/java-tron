@@ -22,6 +22,26 @@ struct TronExternalContext {
     /// not from (caller, nonce) like Ethereum.
     create_address_override: Option<revm::primitives::Address>,
 
+    // === TRON internal transaction nonce ===
+    //
+    // java-tron uses a global per-root-tx internal-transaction counter for deriving
+    // CREATE addresses inside EVM execution. The address formula is:
+    //   keccak256(root_txid || nonce_be_u64)[12..]
+    //
+    // The nonce increments for internal transactions (CALLs, CREATEs, etc.), not just CREATEs.
+    // java-tron does NOT count the root (tx entry) call, and it does not increment for precompile
+    // calls (see `Program.callToPrecompiledAddress`), so we mirror that behavior in the inspector.
+    root_transaction_id: Option<revm::primitives::B256>,
+    /// Internal transaction counter (starts at 0, increments per internal tx).
+    internal_tx_nonce: u64,
+
+    // === Validation parity flags ===
+    //
+    // Java-tron doesn't check if CREATE-derived addresses collide with precompile addresses.
+    // When this flag is true, we skip the precompile collision check for Java parity.
+    // Default: true (skip the check to match Java behavior).
+    skip_precompile_create_collision_check: bool,
+
     // === Energy accounting (TRON vs Ethereum gas schedule) ===
     //
     // java-tron charges memory expansion/copy costs for these opcodes but does NOT include the
@@ -66,6 +86,36 @@ impl TronExternalContext {
         self.last_create_output = None;
         self.last_create_gas_limit = None;
         self.last_create_gas_remaining = None;
+    }
+
+    /// Derive internal CREATE address using TRON's txid + nonce scheme.
+    ///
+    /// Java reference: `TransactionUtil.generateContractAddress(transactionRootId, nonce)`
+    /// Formula: `keccak256(txid || nonce_be_u64)[12..]`
+    fn derive_internal_create_address(&mut self) -> Option<revm::primitives::Address> {
+        use sha3::{Digest, Keccak256};
+
+        let root_txid = self.root_transaction_id?;
+
+        // Get current nonce and increment for next use
+        let current_nonce = self.internal_tx_nonce;
+        self.internal_tx_nonce = self.internal_tx_nonce.saturating_add(1);
+
+        // Concatenate: txid (32 bytes) || nonce (8 bytes big-endian)
+        let mut combined = [0u8; 40];
+        combined[..32].copy_from_slice(root_txid.as_slice());
+        combined[32..40].copy_from_slice(&current_nonce.to_be_bytes());
+
+        // keccak256 and take last 20 bytes
+        let hash = Keccak256::digest(&combined);
+        let address_bytes: [u8; 20] = hash[12..32].try_into().ok()?;
+
+        Some(revm::primitives::Address::from(address_bytes))
+    }
+
+    /// Increment internal transaction nonce (for CALLs that don't CREATE).
+    fn increment_internal_nonce(&mut self) {
+        self.internal_tx_nonce = self.internal_tx_nonce.saturating_add(1);
     }
 
     fn tron_energy_opcode_adjustment(&self) -> u64 {
@@ -123,6 +173,28 @@ impl<DB: Database> Inspector<DB> for TronExternalContext {
         }
     }
 
+    fn call(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &mut revm::interpreter::CallInputs,
+    ) -> Option<revm::interpreter::CallOutcome> {
+        // java-tron increments the internal transaction nonce for CALL operations too
+        // (see `Program.callToAddress()` -> `increaseNonce()`), which affects subsequent
+        // internal CREATE address derivation (txid + nonce).
+        //
+        // But java-tron does not count:
+        // - the root tx entry call (depth == 0), and
+        // - calls to precompiles (handled by `callToPrecompiledAddress()`; no `increaseNonce()`).
+        //
+        // REVM invokes this hook for the tx entry call, so guard on depth.
+        let is_root_call = context.journaled_state.depth() == 0;
+        let is_precompile_call = context.precompiles.contains(&inputs.bytecode_address);
+        if !is_root_call && !is_precompile_call {
+            self.increment_internal_nonce();
+        }
+        None // Let the call proceed normally
+    }
+
     fn create_end(
         &mut self,
         _context: &mut EvmContext<DB>,
@@ -158,15 +230,27 @@ fn tron_create_with_optional_override<DB: Database>(
         FrameOrResult, CALL_STACK_LIMIT,
     };
 
-    // Only override legacy CREATE, and consume the override exactly once.
-    let created_address_override = if inputs.scheme == CreateScheme::Create {
-        context.external.create_address_override.take()
-    } else {
-        None
-    };
-
-    let Some(created_address) = created_address_override else {
-        return context.evm.make_create_frame(spec_id, &inputs);
+    // TRON address derivation differs from Ethereum:
+    // - Top-level CreateSmartContract: uses pre-computed override (txid + owner_address)
+    // - Internal CREATE opcode: uses txid + internal_tx_nonce
+    // - CREATE2: uses standard salt-based derivation (handled by REVM)
+    let created_address = match inputs.scheme {
+        CreateScheme::Create => {
+            // First check for top-level override (CreateSmartContract)
+            if let Some(override_addr) = context.external.create_address_override.take() {
+                override_addr
+            } else if let Some(nonce_addr) = context.external.derive_internal_create_address() {
+                // Internal CREATE: use TRON's txid + nonce scheme
+                nonce_addr
+            } else {
+                // Fallback to REVM's Ethereum-style derivation (shouldn't happen in normal TRON execution)
+                return context.evm.make_create_frame(spec_id, &inputs);
+            }
+        }
+        CreateScheme::Create2 { .. } => {
+            // CREATE2 uses salt-based derivation - let REVM handle it
+            return context.evm.make_create_frame(spec_id, &inputs);
+        }
     };
 
     let return_error = |e| {
@@ -204,7 +288,12 @@ fn tron_create_with_optional_override<DB: Database>(
     }
 
     // The created address is not allowed to be a precompile.
-    if context.evm.precompiles.contains(&created_address) {
+    // NOTE: Java's VMActuator doesn't have this check. The probability of collision with
+    // precompile addresses (0x01-0x09, etc.) is extremely low, but we gate the check
+    // behind a config flag for strict Java parity.
+    if !context.external.skip_precompile_create_collision_check
+        && context.evm.precompiles.contains(&created_address)
+    {
         return return_error(InstructionResult::CreateCollision);
     }
 
@@ -353,9 +442,17 @@ pub struct TxMetadata {
     /// Some fixtures intentionally include malformed owner addresses; storing the raw bytes allows
     /// contract-level validation to match java-tron error ordering and messages.
     pub from_raw: Option<Vec<u8>>,
+    /// Raw `to` bytes as received over the wire.
+    /// Mirrors `from_raw` for recipient address validation parity with java-tron's
+    /// `DecodeUtil.addressValid(toAddress)` check.
+    pub to_raw: Option<Vec<u8>>,
     /// Raw `google.protobuf.Any` from Protocol.Transaction.Contract.parameter, when provided by Java.
     /// Carries both `type_url` and `value` so Rust can mirror java-tron `any.is(...)` behavior.
     pub contract_parameter: Option<TronContractParameter>,
+    /// Java-computed protobuf serialized size for bandwidth calculation.
+    /// When present, `calculate_bandwidth_usage()` returns this value directly instead of
+    /// using the hardcoded approximation, achieving parity with BandwidthProcessor.consume().
+    pub transaction_bytes_size: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -370,7 +467,9 @@ impl Default for TxMetadata {
             contract_type: None,
             asset_id: None,
             from_raw: None,
+            to_raw: None,
             contract_parameter: None,
+            transaction_bytes_size: None,
         }
     }
 }
@@ -602,8 +701,12 @@ where
 
         // Configure for Tron - access through context
         evm.context.evm.inner.env.cfg.chain_id = 0x2b6653dc; // Tron mainnet chain ID
-        
+
         evm.context.evm.inner.env.cfg.limit_contract_code_size = Some(24576); // 24KB limit
+
+        // Set validation parity flags from config
+        evm.context.external.skip_precompile_create_collision_check =
+            config.skip_precompile_create_collision_check;
 
         let precompiles = TronPrecompiles::new();
         let energy_accounting = EnergyAccounting::new(config.energy_limit);
@@ -648,6 +751,11 @@ where
     fn setup_environment(&mut self, tx: &TronTransaction, context: &TronExecutionContext) {
         // Set transaction environment
         self.evm.context.external.reset_energy_counters();
+
+        // Set root transaction ID for TRON's internal CREATE address derivation.
+        // java-tron derives internal CREATE addresses using: keccak256(txid || nonce)[12..]
+        self.evm.context.external.root_transaction_id = context.transaction_id;
+        self.evm.context.external.internal_tx_nonce = 0;
         // Ensure per-tx config flags don't leak between executions.
         self.evm.context.evm.inner.env.cfg.disable_balance_check = false;
         self.evm.context.evm.inner.env.tx.caller = tx.from;
@@ -723,10 +831,11 @@ where
             }
         }
 
-        // TRON TriggerSmartContract: Java sends TriggerSmartContract proto bytes in tx.data.
-        // Extract the call data payload for EVM execution.
+        // TRON TriggerSmartContract: extract the call data payload for EVM execution.
+        // Supports both production format (calldata in tx.data, proto in contract_parameter)
+        // and conformance fixture format (full proto in tx.data).
         if tx.metadata.contract_type == Some(TronContractType::TriggerSmartContract) {
-            match crate::protocol::TriggerSmartContract::decode(tx.data.as_ref()) {
+            match crate::ExecutionModule::decode_trigger_smart_contract(tx) {
                 Ok(trigger_contract) => {
                     self.evm.context.evm.inner.env.tx.data =
                         revm::primitives::Bytes::from(trigger_contract.data);
@@ -1229,4 +1338,307 @@ impl BandwidthAccounting {
     pub fn remaining(&self) -> u64 {
         self.limit.saturating_sub(self.used)
     }
-} 
+}
+
+#[cfg(test)]
+mod internal_nonce_tests {
+    use super::*;
+    use revm::{
+        db::InMemoryDB,
+        primitives::{AccountInfo, Address, Bytecode, Bytes, B256, U256, KECCAK_EMPTY},
+    };
+
+    fn evm_bytecode_call(target: Address) -> Bytes {
+        // Stack args for CALL: gas, to, value, in_offset, in_size, out_offset, out_size.
+        // Push in reverse order.
+        let mut code: Vec<u8> = Vec::new();
+
+        // out_size, out_offset, in_size, in_offset, value
+        for _ in 0..5 {
+            code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0
+        }
+
+        code.push(0x73); // PUSH20
+        code.extend_from_slice(target.as_slice());
+
+        code.extend_from_slice(&[0x61, 0xFF, 0xFF]); // PUSH2 0xFFFF gas
+        code.push(0xF1); // CALL
+        code.push(0x00); // STOP
+
+        Bytes::from(code)
+    }
+
+    fn basic_context() -> TronExecutionContext {
+        TronExecutionContext {
+            block_number: 1,
+            block_timestamp: 1,
+            block_coinbase: Address::ZERO,
+            block_difficulty: U256::ZERO,
+            block_gas_limit: 1_000_000,
+            chain_id: 0,
+            energy_price: 0,
+            bandwidth_price: 0,
+            transaction_id: Some(B256::from([0x11u8; 32])),
+        }
+    }
+
+    fn setup_db(from: Address, to: Address, bytecode: Bytes) -> InMemoryDB {
+        let mut db = InMemoryDB::default();
+
+        // Caller (EOA)
+        db.insert_account_info(
+            from,
+            AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 1,
+                code_hash: KECCAK_EMPTY,
+                code: None,
+            },
+        );
+
+        // Callee contract
+        db.insert_account_info(
+            to,
+            AccountInfo::new(
+                U256::from(1_000_000_000u64),
+                1,
+                KECCAK_EMPTY,
+                Bytecode::new_legacy(bytecode),
+            ),
+        );
+
+        db
+    }
+
+    #[test]
+    fn internal_nonce_does_not_count_tx_entry_call() {
+        let from = Address::from_slice(&[0x10u8; 20]);
+        let to = Address::from_slice(&[0x20u8; 20]);
+        let internal_call_target = Address::from_slice(&[0x30u8; 20]);
+
+        let db = setup_db(from, to, evm_bytecode_call(internal_call_target));
+        let config = ExecutionConfig::default();
+        let mut evm = TronEvm::new(db, &config).expect("EVM should initialize");
+
+        let tx = TronTransaction {
+            from,
+            to: Some(to),
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas_limit: 200_000,
+            gas_price: U256::ZERO,
+            nonce: 1,
+            metadata: TxMetadata::default(),
+        };
+
+        let ctx = basic_context();
+        let _ = evm.call_contract(&tx, &ctx).expect("tx call should succeed");
+
+        // Exactly one internal CALL from the contract bytecode; root tx call is not counted.
+        assert_eq!(evm.evm.context.external.internal_tx_nonce, 1);
+    }
+
+    #[test]
+    fn internal_nonce_skips_precompile_calls() {
+        let from = Address::from_slice(&[0x10u8; 20]);
+        let to = Address::from_slice(&[0x20u8; 20]);
+
+        // Ethereum identity precompile at address(0x04).
+        let precompile_addr = Address::from_slice(&[
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
+        ]);
+
+        let db = setup_db(from, to, evm_bytecode_call(precompile_addr));
+        let config = ExecutionConfig::default();
+        let mut evm = TronEvm::new(db, &config).expect("EVM should initialize");
+
+        let tx = TronTransaction {
+            from,
+            to: Some(to),
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas_limit: 200_000,
+            gas_price: U256::ZERO,
+            nonce: 1,
+            metadata: TxMetadata::default(),
+        };
+
+        let ctx = basic_context();
+        let _ = evm.call_contract(&tx, &ctx).expect("tx call should succeed");
+
+        // java-tron does not increment the internal nonce for precompile calls.
+        assert_eq!(evm.evm.context.external.internal_tx_nonce, 0);
+    }
+
+    #[test]
+    fn test_derive_internal_create_address_formula() {
+        // Test the internal CREATE address derivation formula:
+        // keccak256(txid || nonce_be_u64)[12..32]
+
+        let txid = B256::from([0x11u8; 32]);
+        let mut ctx = TronExternalContext::default();
+        ctx.root_transaction_id = Some(txid);
+        ctx.internal_tx_nonce = 0;
+
+        // First CREATE uses nonce 0 and increments to 1
+        let addr1 = ctx.derive_internal_create_address().expect("Should derive address");
+        assert_eq!(ctx.internal_tx_nonce, 1, "Nonce should increment after derivation");
+
+        // Second derivation uses nonce 1 and increments to 2
+        let addr2 = ctx.derive_internal_create_address().expect("Should derive address");
+        assert_eq!(ctx.internal_tx_nonce, 2, "Nonce should increment after derivation");
+
+        // Addresses should be different
+        assert_ne!(addr1, addr2, "Different nonces should produce different addresses");
+
+        // Verify the formula by recomputing manually
+        use sha3::{Digest, Keccak256};
+        let mut combined = [0u8; 40];
+        combined[..32].copy_from_slice(txid.as_slice());
+        combined[32..40].copy_from_slice(&0u64.to_be_bytes());
+        let hash = Keccak256::digest(&combined);
+        let expected_addr1 = Address::from_slice(&hash[12..32]);
+        assert_eq!(addr1, expected_addr1, "Address derivation should match manual calculation");
+    }
+
+    #[test]
+    fn test_derive_internal_create_address_returns_none_without_txid() {
+        let mut ctx = TronExternalContext::default();
+        ctx.root_transaction_id = None;
+        ctx.internal_tx_nonce = 0;
+
+        // Without a txid, derivation should return None
+        let result = ctx.derive_internal_create_address();
+        assert!(result.is_none(), "Should return None when txid is not set");
+        // Nonce should not be incremented when derivation fails
+        assert_eq!(ctx.internal_tx_nonce, 0, "Nonce should not change on failed derivation");
+    }
+
+    #[test]
+    fn test_increment_internal_nonce() {
+        let mut ctx = TronExternalContext::default();
+        ctx.internal_tx_nonce = 0;
+
+        ctx.increment_internal_nonce();
+        assert_eq!(ctx.internal_tx_nonce, 1);
+
+        ctx.increment_internal_nonce();
+        assert_eq!(ctx.internal_tx_nonce, 2);
+
+        // Test saturation (shouldn't overflow)
+        ctx.internal_tx_nonce = u64::MAX;
+        ctx.increment_internal_nonce();
+        assert_eq!(ctx.internal_tx_nonce, u64::MAX, "Should saturate at max");
+    }
+
+    #[test]
+    fn test_multiple_calls_increment_nonce() {
+        // Test that multiple internal CALLs increment the nonce, affecting subsequent CREATE addresses
+        let from = Address::from_slice(&[0x10u8; 20]);
+        let to = Address::from_slice(&[0x20u8; 20]);
+        let target1 = Address::from_slice(&[0x30u8; 20]);
+        let target2 = Address::from_slice(&[0x40u8; 20]);
+
+        // Build bytecode that makes two CALLs to different targets
+        let mut code: Vec<u8> = Vec::new();
+
+        // First CALL to target1
+        for _ in 0..5 {
+            code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0
+        }
+        code.push(0x73); // PUSH20
+        code.extend_from_slice(target1.as_slice());
+        code.extend_from_slice(&[0x61, 0xFF, 0xFF]); // PUSH2 0xFFFF gas
+        code.push(0xF1); // CALL
+        code.push(0x50); // POP (discard return value)
+
+        // Second CALL to target2
+        for _ in 0..5 {
+            code.extend_from_slice(&[0x60, 0x00]); // PUSH1 0
+        }
+        code.push(0x73); // PUSH20
+        code.extend_from_slice(target2.as_slice());
+        code.extend_from_slice(&[0x61, 0xFF, 0xFF]); // PUSH2 0xFFFF gas
+        code.push(0xF1); // CALL
+        code.push(0x00); // STOP
+
+        let bytecode = Bytes::from(code);
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            from,
+            AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 1,
+                code_hash: KECCAK_EMPTY,
+                code: None,
+            },
+        );
+        db.insert_account_info(
+            to,
+            AccountInfo::new(
+                U256::from(1_000_000_000u64),
+                1,
+                KECCAK_EMPTY,
+                Bytecode::new_legacy(bytecode),
+            ),
+        );
+
+        let config = ExecutionConfig::default();
+        let mut evm = TronEvm::new(db, &config).expect("EVM should initialize");
+
+        let tx = TronTransaction {
+            from,
+            to: Some(to),
+            value: U256::ZERO,
+            data: Bytes::new(),
+            gas_limit: 300_000,
+            gas_price: U256::ZERO,
+            nonce: 1,
+            metadata: TxMetadata::default(),
+        };
+
+        let ctx = basic_context();
+        let _ = evm.call_contract(&tx, &ctx).expect("tx call should succeed");
+
+        // Two internal CALLs (excluding root tx call) should have incremented nonce twice
+        assert_eq!(evm.evm.context.external.internal_tx_nonce, 2,
+            "Two internal CALLs should increment nonce to 2");
+    }
+
+    #[test]
+    fn test_tron_vs_ethereum_create_address_differs() {
+        // TRON uses keccak256(txid || nonce) for internal CREATE
+        // Ethereum uses keccak256(rlp([sender, nonce]))
+        // They should produce different addresses for the same inputs
+
+        use sha3::{Digest, Keccak256};
+
+        let txid = B256::from([0x11u8; 32]);
+        let sender = Address::from_slice(&[0x22u8; 20]);
+        let nonce: u64 = 0;
+
+        // TRON derivation
+        let mut combined = [0u8; 40];
+        combined[..32].copy_from_slice(txid.as_slice());
+        combined[32..40].copy_from_slice(&nonce.to_be_bytes());
+        let tron_hash = Keccak256::digest(&combined);
+        let tron_addr = Address::from_slice(&tron_hash[12..32]);
+
+        // Ethereum derivation (simplified - RLP encoding)
+        // For nonce 0: keccak256(0xd6 || 0x94 || sender || 0x80)
+        // where 0xd6 = 0xc0 + 22 (list length), 0x94 = 0x80 + 20 (string length), 0x80 = empty byte
+        let mut eth_input = Vec::new();
+        eth_input.push(0xd6);
+        eth_input.push(0x94);
+        eth_input.extend_from_slice(sender.as_slice());
+        eth_input.push(0x80);
+        let eth_hash = Keccak256::digest(&eth_input);
+        let eth_addr = Address::from_slice(&eth_hash[12..32]);
+
+        // The addresses should be different due to different derivation schemes
+        assert_ne!(tron_addr, eth_addr,
+            "TRON and Ethereum CREATE addresses should differ due to different derivation");
+    }
+}

@@ -12,9 +12,11 @@ import org.tron.common.utils.ByteArray;
 import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.AccountCapsule;
+import org.tron.core.capsule.AssetIssueCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.ExchangeCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract;
 import org.tron.core.config.args.Args;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.AccountType;
@@ -2049,5 +2051,649 @@ public class ExchangeFixtureGeneratorTest extends BaseTest {
     log.info("Created exchange {} for testing (owner={}): {} <-> {}", id,
         ownerAddress.substring(ownerAddress.length() - 8),
         new String(firstTokenId), new String(secondTokenId));
+  }
+
+  // ==========================================================================
+  // ALLOW_SAME_TOKEN_NAME=0 (Legacy Mode) Fixtures
+  // ==========================================================================
+  // These tests use token NAMES instead of IDs, and store in ExchangeStore (v1)
+  // Java updates both v1 and v2 stores when allowSameTokenName=0
+
+  // Token NAMES for legacy mode (not numeric IDs)
+  private static final byte[] TOKEN_NAME_A = "TestTokenA".getBytes();
+  private static final byte[] TOKEN_NAME_B = "TestTokenB".getBytes();
+
+  /**
+   * Create exchange in legacy mode (ExchangeStore v1).
+   * When allowSameTokenName=0, exchanges use token NAMES.
+   */
+  private void createExchangeLegacy(long id, byte[] firstTokenName, byte[] secondTokenName,
+                                     long firstBalance, long secondBalance) {
+    createExchangeLegacyWithOwner(id, firstTokenName, secondTokenName, firstBalance, secondBalance, OWNER_ADDRESS);
+  }
+
+  private void createExchangeLegacyWithOwner(long id, byte[] firstTokenName, byte[] secondTokenName,
+                                              long firstBalance, long secondBalance, String ownerAddress) {
+    long createTime = chainBaseManager.getDynamicPropertiesStore().getLatestBlockHeaderTimestamp();
+
+    ExchangeCapsule exchange = new ExchangeCapsule(
+        ByteString.copyFrom(ByteArray.fromHexString(ownerAddress)),
+        id,
+        createTime,
+        firstTokenName,
+        secondTokenName);
+    exchange.setBalance(firstBalance, secondBalance);
+
+    // Store in ExchangeStore (v1) for legacy mode
+    chainBaseManager.getExchangeStore().put(exchange.createDbKey(), exchange);
+    chainBaseManager.getDynamicPropertiesStore().saveLatestExchangeNum(id);
+
+    log.info("Created LEGACY exchange {} for testing (owner={}): {} <-> {}", id,
+        ownerAddress.substring(ownerAddress.length() - 8),
+        new String(firstTokenName), new String(secondTokenName));
+  }
+
+  /**
+   * Initialize test data for legacy mode (ALLOW_SAME_TOKEN_NAME=0).
+   * Uses token NAMES in asset maps.
+   */
+  private void initializeTestDataLegacy() {
+    // Set dynamic properties for legacy mode
+    long blockTimestamp = 1000000;
+    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(blockTimestamp);
+    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderNumber(10);
+    dbManager.getDynamicPropertiesStore().saveLatestExchangeNum(0);
+    dbManager.getDynamicPropertiesStore().saveExchangeCreateFee(EXCHANGE_CREATE_FEE);
+    dbManager.getDynamicPropertiesStore().saveExchangeBalanceLimit(EXCHANGE_BALANCE_LIMIT);
+    // LEGACY MODE: allowSameTokenName=0
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(0);
+
+    // Create AssetIssueCapsules for legacy mode tokens (required for validation)
+    // In legacy mode, assets are looked up by NAME in the asset issue store
+    AssetIssueContract assetA = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setName(ByteString.copyFrom(TOKEN_NAME_A))
+        .setAbbr(ByteString.copyFromUtf8("TKA"))
+        .setTotalSupply(100_000_000_000_000L)
+        .setTrxNum(1)
+        .setNum(1)
+        .setPrecision(6)
+        .setStartTime(blockTimestamp - 86400000)
+        .setEndTime(blockTimestamp + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("Test Token A for legacy exchange tests"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com/tokenA"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId("1000001") // Numeric ID for v2 transformation
+        .build();
+    AssetIssueCapsule assetCapsuleA = new AssetIssueCapsule(assetA);
+    // In legacy mode, store by name key
+    dbManager.getAssetIssueStore().put(assetCapsuleA.createDbKey(), assetCapsuleA);
+
+    AssetIssueContract assetB = AssetIssueContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setName(ByteString.copyFrom(TOKEN_NAME_B))
+        .setAbbr(ByteString.copyFromUtf8("TKB"))
+        .setTotalSupply(100_000_000_000_000L)
+        .setTrxNum(1)
+        .setNum(1)
+        .setPrecision(6)
+        .setStartTime(blockTimestamp - 86400000)
+        .setEndTime(blockTimestamp + 86400000L * 30)
+        .setDescription(ByteString.copyFromUtf8("Test Token B for legacy exchange tests"))
+        .setUrl(ByteString.copyFromUtf8("https://example.com/tokenB"))
+        .setFreeAssetNetLimit(1000)
+        .setPublicFreeAssetNetLimit(1000)
+        .setId("1000002") // Numeric ID for v2 transformation
+        .build();
+    AssetIssueCapsule assetCapsuleB = new AssetIssueCapsule(assetB);
+    dbManager.getAssetIssueStore().put(assetCapsuleB.createDbKey(), assetCapsuleB);
+
+    // Create owner account with high balance
+    AccountCapsule ownerAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("owner"),
+        ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)),
+        AccountType.Normal,
+        INITIAL_BALANCE);
+    // Add TRC-10 asset balances by TOKEN NAME (not ID) for legacy mode
+    // In legacy mode, assets are stored by name in account.asset map
+    ownerAccount.addAssetAmount(TOKEN_NAME_A, 100_000_000_000L, false);
+    ownerAccount.addAssetAmount(TOKEN_NAME_B, 100_000_000_000L, false);
+    dbManager.getAccountStore().put(ownerAccount.getAddress().toByteArray(), ownerAccount);
+
+    // Create another account for permission tests
+    AccountCapsule otherAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("other"),
+        ByteString.copyFrom(ByteArray.fromHexString(OTHER_ADDRESS)),
+        AccountType.Normal,
+        INITIAL_BALANCE);
+    dbManager.getAccountStore().put(otherAccount.getAddress().toByteArray(), otherAccount);
+  }
+
+  @Test
+  public void generateExchangeInject_legacyMode_happyPath() throws Exception {
+    // Reset to legacy mode
+    initializeTestDataLegacy();
+
+    // Create a legacy exchange with token NAMES
+    createExchangeLegacy(1, TOKEN_NAME_A, TOKEN_NAME_B, 10_000_000_000L, 10_000_000_000L);
+
+    // Inject using token NAME (not ID)
+    ExchangeInjectContract contract = ExchangeInjectContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(1)
+        .setTokenId(ByteString.copyFrom(TOKEN_NAME_A))
+        .setQuant(1_000_000_000L) // 1B of TOKEN_NAME_A
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeInjectContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_INJECT_CONTRACT", 42)
+        .caseName("legacy_mode_happy_path_inject")
+        .caseCategory("happy")
+        .description("Inject into exchange with ALLOW_SAME_TOKEN_NAME=0 (legacy mode using token names)")
+        .database("account")
+        .database("exchange")        // v1 store
+        .database("exchange-v2")     // also updated
+        .database("asset-issue")     // required for token lookup in legacy mode
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeInject LEGACY mode happy path: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateExchangeInject_legacyMode_happyPath_trxSide() throws Exception {
+    // Reset to legacy mode
+    initializeTestDataLegacy();
+
+    // Create a legacy exchange: TRX <-> TOKEN_NAME_A
+    createExchangeLegacy(1, TRX_TOKEN, TOKEN_NAME_A, 10_000_000_000L, 10_000_000_000L);
+
+    // Inject TRX side
+    ExchangeInjectContract contract = ExchangeInjectContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(1)
+        .setTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setQuant(1_000_000_000L) // 1000 TRX
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeInjectContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_INJECT_CONTRACT", 42)
+        .caseName("legacy_mode_happy_path_inject_trx_side")
+        .caseCategory("happy")
+        .description("Inject TRX into exchange with ALLOW_SAME_TOKEN_NAME=0 (legacy mode)")
+        .database("account")
+        .database("exchange")
+        .database("exchange-v2")
+        .database("asset-issue")     // required for token lookup in legacy mode
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeInject LEGACY mode TRX side: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateExchangeWithdraw_legacyMode_happyPath() throws Exception {
+    // Reset to legacy mode
+    initializeTestDataLegacy();
+
+    // Create a legacy exchange with token NAMES
+    createExchangeLegacy(1, TOKEN_NAME_A, TOKEN_NAME_B, 10_000_000_000L, 10_000_000_000L);
+
+    // Withdraw using token NAME
+    ExchangeWithdrawContract contract = ExchangeWithdrawContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(1)
+        .setTokenId(ByteString.copyFrom(TOKEN_NAME_A))
+        .setQuant(1_000_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeWithdrawContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_WITHDRAW_CONTRACT", 43)
+        .caseName("legacy_mode_happy_path_withdraw")
+        .caseCategory("happy")
+        .description("Withdraw from exchange with ALLOW_SAME_TOKEN_NAME=0 (legacy mode using token names)")
+        .database("account")
+        .database("exchange")
+        .database("exchange-v2")
+        .database("asset-issue")     // required for token lookup in legacy mode
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeWithdraw LEGACY mode happy path: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateExchangeTransaction_legacyMode_happyPath() throws Exception {
+    // Reset to legacy mode
+    initializeTestDataLegacy();
+
+    // Create a legacy exchange with token NAMES
+    createExchangeLegacy(1, TOKEN_NAME_A, TOKEN_NAME_B, 10_000_000_000L, 10_000_000_000L);
+
+    // Trade using token NAME
+    ExchangeTransactionContract contract = ExchangeTransactionContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(1)
+        .setTokenId(ByteString.copyFrom(TOKEN_NAME_A))
+        .setQuant(100_000_000L)
+        .setExpected(1) // Minimum expected
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeTransactionContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_TRANSACTION_CONTRACT", 44)
+        .caseName("legacy_mode_happy_path_transaction")
+        .caseCategory("happy")
+        .description("Execute exchange transaction with ALLOW_SAME_TOKEN_NAME=0 (legacy mode using token names)")
+        .database("account")
+        .database("exchange")
+        .database("exchange-v2")
+        .database("asset-issue")     // required for token lookup in legacy mode
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeTransaction LEGACY mode happy path: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateExchangeCreate_legacyMode_happyPath() throws Exception {
+    // Reset to legacy mode
+    initializeTestDataLegacy();
+
+    // Create exchange with token NAMES
+    ExchangeCreateContract contract = ExchangeCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setFirstTokenId(ByteString.copyFrom(TOKEN_NAME_A))
+        .setFirstTokenBalance(5_000_000_000L)
+        .setSecondTokenId(ByteString.copyFrom(TOKEN_NAME_B))
+        .setSecondTokenBalance(5_000_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_CREATE_CONTRACT", 41)
+        .caseName("legacy_mode_happy_path_create")
+        .caseCategory("happy")
+        .description("Create exchange with ALLOW_SAME_TOKEN_NAME=0 (legacy mode using token names)")
+        .database("account")
+        .database("exchange")
+        .database("exchange-v2")
+        .database("asset-issue")     // required for token lookup in legacy mode
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
+        .dynamicProperty("EXCHANGE_CREATE_FEE", EXCHANGE_CREATE_FEE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeCreate LEGACY mode happy path: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateExchangeCreate_legacyMode_trxToToken() throws Exception {
+    // Reset to legacy mode
+    initializeTestDataLegacy();
+
+    // Create exchange: TRX <-> TOKEN_NAME_A
+    ExchangeCreateContract contract = ExchangeCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setFirstTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setFirstTokenBalance(10_000_000_000L)
+        .setSecondTokenId(ByteString.copyFrom(TOKEN_NAME_A))
+        .setSecondTokenBalance(10_000_000_000L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_CREATE_CONTRACT", 41)
+        .caseName("legacy_mode_trx_to_token_create")
+        .caseCategory("happy")
+        .description("Create TRX to token exchange with ALLOW_SAME_TOKEN_NAME=0 (legacy mode)")
+        .database("account")
+        .database("exchange")
+        .database("exchange-v2")
+        .database("asset-issue")     // required for token lookup in legacy mode
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
+        .dynamicProperty("EXCHANGE_CREATE_FEE", EXCHANGE_CREATE_FEE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeCreate LEGACY mode TRX-to-token: success={}", result.isSuccess());
+  }
+
+  // ==========================================================================
+  // StrictMath Edge Case Fixtures (ALLOW_STRICT_MATH=1)
+  // ==========================================================================
+  // These tests use values that may cause rounding differences between
+  // StrictMath.pow (fdlibm-based) and Math.pow (platform-native)
+
+  @Test
+  public void generateExchangeTransaction_strictMath_largeImbalance() throws Exception {
+    // Reset with strict math enabled
+    initializeTestData();
+    dbManager.getDynamicPropertiesStore().saveAllowStrictMath(1);
+
+    // Create an exchange with imbalanced liquidity (10:1 ratio)
+    // This stresses the pow(ratio, 0.0005) calculation with meaningful trades
+    createExchange(309, TRX_TOKEN, TOKEN_A, 100_000_000_000L, 10_000_000_000L);
+
+    // Trade that produces measurable output with imbalanced pool
+    ExchangeTransactionContract contract = ExchangeTransactionContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(309)
+        .setTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setQuant(1_000_000_000L) // 1000 TRX
+        .setExpected(1L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeTransactionContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_TRANSACTION_CONTRACT", 44)
+        .caseName("happy_path_strict_math_imbalanced_pool")
+        .caseCategory("happy")
+        .description("Execute swap with strict math and imbalanced liquidity pool (10:1 ratio)")
+        .database("account")
+        .database("exchange-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_STRICT_MATH", 1)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeTransaction strict math imbalanced pool: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateExchangeTransaction_strictMath_precisionEdge() throws Exception {
+    // Reset with strict math enabled
+    initializeTestData();
+    dbManager.getDynamicPropertiesStore().saveAllowStrictMath(1);
+
+    // Create an exchange with balanced liquidity using non-round values
+    // These values stress floating-point precision in pow calculations
+    createExchange(310, TRX_TOKEN, TOKEN_A, 9_876_543_210L, 1_234_567_890L);
+
+    // Trade with an odd amount to stress rounding precision
+    ExchangeTransactionContract contract = ExchangeTransactionContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(310)
+        .setTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setQuant(123_456_789L) // Odd amount
+        .setExpected(1L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeTransactionContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_TRANSACTION_CONTRACT", 44)
+        .caseName("happy_path_strict_math_precision_edge")
+        .caseCategory("happy")
+        .description("Execute swap with strict math using non-round values (stresses floating-point precision)")
+        .database("account")
+        .database("exchange-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_STRICT_MATH", 1)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeTransaction strict math precision edge: success={}", result.isSuccess());
+  }
+
+  @Test
+  public void generateExchangeTransaction_strictMath_largeQuant() throws Exception {
+    // Reset with strict math enabled
+    initializeTestData();
+    dbManager.getDynamicPropertiesStore().saveAllowStrictMath(1);
+
+    // Create an exchange with substantial liquidity
+    createExchange(311, TRX_TOKEN, TOKEN_A, 1_000_000_000_000L, 1_000_000_000_000L);
+
+    // Large trade that creates significant ratio for pow(ratio, 2000) calculation
+    ExchangeTransactionContract contract = ExchangeTransactionContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(311)
+        .setTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setQuant(100_000_000_000L) // 10% of pool
+        .setExpected(1L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeTransactionContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_TRANSACTION_CONTRACT", 44)
+        .caseName("happy_path_strict_math_large_quant")
+        .caseCategory("happy")
+        .description("Execute large swap with strict math (stresses pow(ratio,2000) calculation)")
+        .database("account")
+        .database("exchange-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_STRICT_MATH", 1)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeTransaction strict math large quant: success={}", result.isSuccess());
+  }
+
+  // ==========================================================================
+  // Legacy Mode (ALLOW_SAME_TOKEN_NAME=0) Failure Fixtures
+  // ==========================================================================
+
+  @Test
+  public void generateExchangeTransaction_legacyMode_wrongToken() throws Exception {
+    // Reset to legacy mode
+    initializeTestDataLegacy();
+
+    // Create a legacy exchange: TOKEN_NAME_A <-> TOKEN_NAME_B
+    createExchangeLegacy(2, TOKEN_NAME_A, TOKEN_NAME_B, 10_000_000_000L, 10_000_000_000L);
+
+    // Try to swap with a token name not in this exchange
+    byte[] wrongTokenName = "WrongToken".getBytes();
+    ExchangeTransactionContract contract = ExchangeTransactionContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(2)
+        .setTokenId(ByteString.copyFrom(wrongTokenName)) // Wrong token!
+        .setQuant(100_000_000L)
+        .setExpected(1L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeTransactionContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_TRANSACTION_CONTRACT", 44)
+        .caseName("legacy_mode_validate_fail_wrong_token")
+        .caseCategory("validate_fail")
+        .description("Fail when trying to swap with a token name not in the legacy exchange")
+        .database("account")
+        .database("exchange")
+        .database("exchange-v2")
+        .database("asset-issue")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
+        .expectedError("token")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeTransaction LEGACY mode wrong token: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateExchangeTransaction_legacyMode_insufficientTokenBalance() throws Exception {
+    // Reset to legacy mode
+    initializeTestDataLegacy();
+
+    // Create a legacy exchange: TOKEN_NAME_A <-> TOKEN_NAME_B
+    createExchangeLegacy(3, TOKEN_NAME_A, TOKEN_NAME_B, 10_000_000_000L, 10_000_000_000L);
+
+    // Try to swap more tokens than the account has
+    // Account has 100_000_000_000L of each token (set in initializeTestDataLegacy)
+    ExchangeTransactionContract contract = ExchangeTransactionContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(3)
+        .setTokenId(ByteString.copyFrom(TOKEN_NAME_A))
+        .setQuant(200_000_000_000L) // More than account balance
+        .setExpected(1L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeTransactionContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_TRANSACTION_CONTRACT", 44)
+        .caseName("legacy_mode_validate_fail_insufficient_token_balance")
+        .caseCategory("validate_fail")
+        .description("Fail when account has insufficient token balance in legacy mode")
+        .database("account")
+        .database("exchange")
+        .database("exchange-v2")
+        .database("asset-issue")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
+        .expectedError("balance")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeTransaction LEGACY mode insufficient token balance: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateExchangeTransaction_legacyMode_slippage() throws Exception {
+    // Reset to legacy mode
+    initializeTestDataLegacy();
+
+    // Create a legacy exchange: TOKEN_NAME_A <-> TOKEN_NAME_B
+    createExchangeLegacy(4, TOKEN_NAME_A, TOKEN_NAME_B, 10_000_000_000L, 10_000_000_000L);
+
+    // Try to swap with unrealistic expectations (too much expected output)
+    ExchangeTransactionContract contract = ExchangeTransactionContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(4)
+        .setTokenId(ByteString.copyFrom(TOKEN_NAME_A))
+        .setQuant(100_000_000L)
+        .setExpected(100_000_000_000L) // Expect way more than AMM can provide
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeTransactionContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_TRANSACTION_CONTRACT", 44)
+        .caseName("legacy_mode_validate_fail_slippage")
+        .caseCategory("validate_fail")
+        .description("Fail when expected output exceeds AMM calculation in legacy mode")
+        .database("account")
+        .database("exchange")
+        .database("exchange-v2")
+        .database("asset-issue")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
+        .expectedError("expected")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeTransaction LEGACY mode slippage: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateExchangeTransaction_legacyMode_trxSwap() throws Exception {
+    // Reset to legacy mode
+    initializeTestDataLegacy();
+
+    // Create a legacy exchange: TRX <-> TOKEN_NAME_A
+    createExchangeLegacy(5, TRX_TOKEN, TOKEN_NAME_A, 10_000_000_000L, 10_000_000_000L);
+
+    // Swap TRX for token (tests TRX balance deduction in legacy mode)
+    ExchangeTransactionContract contract = ExchangeTransactionContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setExchangeId(5)
+        .setTokenId(ByteString.copyFrom(TRX_TOKEN))
+        .setQuant(100_000_000L)
+        .setExpected(1L)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.ExchangeTransactionContract, contract);
+
+    BlockCapsule blockCap = createBlockContext();
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("EXCHANGE_TRANSACTION_CONTRACT", 44)
+        .caseName("legacy_mode_happy_path_trx_swap")
+        .caseCategory("happy")
+        .description("Execute TRX swap in legacy mode (ALLOW_SAME_TOKEN_NAME=0)")
+        .database("account")
+        .database("exchange")
+        .database("exchange-v2")
+        .database("asset-issue")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("ALLOW_SAME_TOKEN_NAME", 0)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("ExchangeTransaction LEGACY mode TRX swap: success={}", result.isSuccess());
   }
 }

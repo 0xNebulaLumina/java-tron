@@ -4,7 +4,7 @@
   "caseName": "validate_fail_disabled",
   "caseCategory": "validate_fail",
   "description": "Fail when change delegation feature is not enabled",
-  "generatedAt": "2026-01-14T06:56:43.123Z",
+  "generatedAt": "2026-03-10T11:52:20.536Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_amount_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when transfer amount is zero",
-  "generatedAt": "2026-01-14T06:56:52.937Z",
+  "generatedAt": "2026-03-10T11:52:30.178Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

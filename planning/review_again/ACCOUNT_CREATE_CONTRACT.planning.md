@@ -140,10 +140,12 @@ Impact:
 
 - Java throws if critical dynamic properties are missing from DB (e.g., `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`, `ALLOW_MULTI_SIGN`).
 - Rust generally falls back to defaults when keys are absent.
+- Note: java-tron’s `DynamicPropertiesStore` constructor eagerly seeds many missing keys with defaults at startup (by catching `IllegalArgumentException` and saving), so “missing key throws” typically only shows up with partial/corrupted DBs or fixtures that bypass initialization.
 
 Impact:
 
 - In minimal/partial fixtures, Rust may “succeed” where Java would error out, masking DB initialization issues.
+- Rust’s default fallbacks approximate java-tron’s startup defaults, but do not persist the missing keys.
 
 4) **Resource/bandwidth semantics do not match Java’s create-account bandwidth path**
 
@@ -177,4 +179,3 @@ Impact:
   - address prefix strictness
   - ignoring the contract `type`
 - If the goal is **full embedded parity** (including bandwidth/create-account resource path and receipt bytes), the current implementation is **not** equivalent to Java’s overall behavior.
-

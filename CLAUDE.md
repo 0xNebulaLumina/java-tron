@@ -122,11 +122,23 @@ Format: `<type>(<scope>): <subject>`
 - Subject: Present tense, lowercase, no period, <50 characters
 - Example: `feat(storage): implement dual storage mode`
 
+### Git Workflow
+- When committing changes, always include ALL modified and new files (including planning docs, TODOs, and markdown files) unless explicitly told otherwise. Run `git status` before committing to verify nothing is missed.
+- When outputting PR descriptions, always use markdown format.
+- When pushing to remote, verify SSH key permissions first with a dry-run or `ssh -T git@<host>` before attempting the push.
+
+### Rust Development
+- After editing function signatures, always search for and update ALL call sites before attempting compilation. Run `cargo check` after every round of edits.
+
+#### Java Parity
+- When implementing Java-to-Rust parity: always match Java's exact failure semantics (strict errors, not defensive recovery). Never silently succeed where Java would fail. Ask if unsure about error handling behavior.
+
 ### Testing Strategy
 - **Unit Tests**: Use JUnit 4.13.2, located in src/test/ directories
 - **Integration Tests**: Cross-module testing with real components
 - **Performance Tests**: Storage and execution benchmarks in Makefile
 - **Blockchain Workload Tests**: Comprehensive Tron-specific testing scenarios
+- **Test Fixtures**: When generating test fixtures or conformance data, validate that outputs produce meaningful non-trivial values (e.g., non-zero token amounts, populated database records). If fixtures require precondition data (like AssetIssueCapsule records), include them in setup.
 
 ## Performance and Optimization
 
@@ -237,3 +249,5 @@ Format: `<type>(<scope>): <subject>`
 - **VoteWitness Dual Store Pattern**: When applying vote changes from remote execution, must update BOTH `accountStore` (Account.votes field) AND `votesStore` (VotesCapsule with old_votes and new_votes). The VoteWitnessActuator pattern: (1) Get or create VotesCapsule from votesStore, (2) Clear votes on both accountCapsule and votesCapsule, (3) Add new votes to both, (4) Persist both using `accountStore.put(accountCapsule.createDbKey(), accountCapsule)` and `votesStore.put(ownerAddress, votesCapsule)`. Using only accountStore.put() without votesStore.put() will cause state inconsistency. The revokingDB handles transaction isolation and commit via block sessions.
 - **Genesis Account Initialization for Remote Execution Parity**: When comparing embedded vs remote execution, mismatches can occur if the Rust storage doesn't have pre-existing account state that exists in embedded storage (e.g., the blackhole address `TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy` accumulates fees over time). Solution: Add `[genesis]` configuration section to `config.toml` with `enabled=true` and `[[genesis.accounts]]` entries specifying address (Base58), balance_sun (i64), and optional comment. The Rust backend initializes these accounts at startup before processing transactions. Key implementation: (1) Add `GenesisConfig` and `GenesisAccount` structs to common/src/config.rs, (2) Add initialization code in main.rs after storage module registration, (3) Create Account protobuf with proper field tags (type=field 1, address=field 3, balance=field 4), (4) Use manual protobuf encoding for minimal dependencies. Important: Set `balance_sun` to match the accumulated balance at your test's starting block. For system accounts like blackhole, this may have unusual values (e.g., high bit set) that need to be preserved exactly for state parity.
 - **Receipt Passthrough Implementation Pattern**: When implementing receipt passthrough for system contracts (withdraw_amount, unfreeze_amount, etc.), don't just create infrastructure—actually populate the data. Use `TransactionResultBuilder` in `proto.rs` to serialize `Protocol.Transaction.Result` protobuf: (1) Create builder with `.with_withdraw_amount(amount)` or `.with_unfreeze_amount(amount)`, (2) Call `.build()` to get serialized bytes, (3) Set `tron_transaction_result: Some(bytes)` in `TronExecutionResult`. The Java side (`ExecutionProgramResult.fromExecutionResult`) automatically deserializes and calls `setRet()`. Field numbers from Tron.proto: withdraw_amount=15, unfreeze_amount=16, exchange_id=21, withdraw_expire_amount=27.
+- **Dynamic Properties int vs long Parity**: Java stores some dynamic properties as 4-byte int (using `ByteArray.fromInt`) while others use 8-byte long (`ByteArray.fromLong`). Key 4-byte properties include: `TOTAL_SIGN_NUM`, `BLOCK_FILLED_SLOTS_INDEX`, `MAX_FROZEN_TIME`, `MIN_FROZEN_TIME`, `STATE_FLAG`, `VERSION_NUMBER`. Java's `ByteArray.toInt()` uses `BigInteger(1, b).intValue()` with these semantics: (1) empty array returns 0, (2) interprets bytes as unsigned big-endian, (3) truncates to low 32 bits via `.intValue()`. For Rust parity: empty data → return 0; len >= 4 → use last 4 bytes as `u32::from_be_bytes()` then cast to `i32` then `i64`; len < 4 → interpret as unsigned big-endian. Rust tests should seed with correct byte width (e.g., `5i32.to_be_bytes()`).
+- **DelegateResourceContract "Available FreezeV2" Validation**: Java's `DelegateResourceActuator.validate()` doesn't just check if `frozenV2Balance >= delegateBalance`; it calculates the *available* balance after accounting for current resource usage. The full validation: (1) Decay `net_usage`/`energy_usage` to current time using `ResourceProcessor.increase(usage=0)` algorithm, (2) Scale to SUN units: `netUsage = accountNetUsage * TRX_PRECISION * (totalNetWeight / totalNetLimit)`, (3) Calculate V2-specific usage: `v2Usage = max(0, scaledUsage - frozenV1 - acquiredDelegatedV1 - acquiredDelegatedV2)`, (4) Enforce: `frozenV2Balance - v2Usage >= delegateBalance`. Key constants: `PRECISION=1000000`, `WINDOW_SIZE_SLOTS=28800` (24h / 3s), `head_slot = timestamp_ms / 3000`. The decay formula uses `divideCeil()` and `Math.round()` for Java parity.

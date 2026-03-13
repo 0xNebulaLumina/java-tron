@@ -257,6 +257,7 @@ impl ConformanceRunner {
                 withdraw_balance_enabled: true,
                 account_create_enabled: true,
                 trc10_enabled: true,
+                delegation_reward_enabled: true,
                 ..Default::default()
             },
             ..Default::default()
@@ -419,7 +420,7 @@ impl ConformanceRunner {
             None
         } else {
             let allow_malformed_to =
-                matches!(contract_type, Some(TronContractType::TransferContract) | Some(TronContractType::TriggerSmartContract));
+                matches!(contract_type, Some(TronContractType::TransferContract) | Some(TronContractType::TransferAssetContract) | Some(TronContractType::TriggerSmartContract));
 
             let (to_bytes, to_is_valid) = if tx.to.len() == 21 {
                 if tx.to[0] == 0x41 || tx.to[0] == 0xa0 {
@@ -478,10 +479,16 @@ impl ConformanceRunner {
                 contract_type,
                 asset_id,
                 from_raw: Some(tx.from.clone()),
+                to_raw: if tx.to.is_empty() { None } else { Some(tx.to.clone()) },
                 contract_parameter: tx.contract_parameter.as_ref().map(|any| TronContractParameter {
                     type_url: any.type_url.clone(),
                     value: any.value.clone(),
                 }),
+                transaction_bytes_size: if request.transaction_bytes_size > 0 {
+                    Some(request.transaction_bytes_size)
+                } else {
+                    None
+                },
             },
         })
     }
@@ -544,6 +551,40 @@ impl ConformanceRunner {
                 );
             }
         };
+
+        // Validate fixture structure before execution so missing files are reported clearly.
+        let pre_db_dir = fixture.path.join("pre_db");
+        if !pre_db_dir.exists() {
+            return ConformanceResult::failure(metadata, "pre_db directory not found".to_string());
+        }
+
+        let expected_dir = fixture.path.join("expected");
+        if !expected_dir.exists() {
+            return ConformanceResult::failure(metadata, "expected directory not found".to_string());
+        }
+
+        let post_db_dir = expected_dir.join("post_db");
+        if !post_db_dir.exists() {
+            return ConformanceResult::failure(metadata, "expected/post_db directory not found".to_string());
+        }
+
+        for db_name in metadata.databases_touched.iter() {
+            let pre_kv = pre_db_dir.join(format!("{}.kv", db_name));
+            if !pre_kv.exists() {
+                return ConformanceResult::failure(
+                    metadata.clone(),
+                    format!("Missing pre_db/{}.kv", db_name),
+                );
+            }
+
+            let expected_kv = post_db_dir.join(format!("{}.kv", db_name));
+            if !expected_kv.exists() {
+                return ConformanceResult::failure(
+                    metadata.clone(),
+                    format!("Missing expected/post_db/{}.kv", db_name),
+                );
+            }
+        }
 
         // Load request
         let request = match self.load_request(fixture) {
@@ -624,25 +665,34 @@ impl ConformanceRunner {
 
         // Execute transaction using the same dispatch logic as the real backend.
         // Use buffered writes: accumulate all writes in memory, only commit on success.
-        // This ensures validate_fail fixtures produce zero writes to post_db.
+        // This ensures NON_VM failures do not persist partial writes.
         let execution_result: Result<tron_backend_execution::TronExecutionResult, String> = match tx_kind {
             crate::backend::TxKind::NonVm => {
                 // Create storage adapter with a write buffer for atomic commit/rollback
-                let (mut storage_adapter, write_buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
+                let (mut storage_adapter, _write_buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
+
+                // Configure fork thresholds for conformance testing.
+                // Default: set block_num_for_energy_limit = 0 so the fork gate passes
+                // (fixtures use low block numbers like 11).
+                // For the "fork_not_enabled" case, read the threshold from metadata.dynamicProperties.
+                let energy_limit_fork_threshold = metadata.dynamic_properties
+                    .get("blockNumForEnergyLimit")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                storage_adapter.set_block_num_for_energy_limit(energy_limit_fork_threshold);
 
                 let result = backend_service.execute_non_vm_contract(&mut storage_adapter, &transaction, &context);
 
-                // Conformance fixtures capture java-tron's persisted post_db. Some fixtures expect
-                // state changes even when the transaction result is REVERT, and the current
-                // non-VM dispatch returns `Err(String)` for those failures.
-                //
-                // For fixture parity, always commit buffered writes after execution; the contract
-                // logic itself determines whether it wrote any state.
-                if let Err(e) = storage_adapter.commit_buffer() {
-                    return ConformanceResult::failure(
-                        metadata,
-                        format!("Failed to commit write buffer: {}", e),
-                    );
+                // Commit only on success; on failure drop buffer (rollback).
+                if let Ok(ref r) = result {
+                    if r.success {
+                        if let Err(e) = storage_adapter.commit_buffer() {
+                            return ConformanceResult::failure(
+                                metadata,
+                                format!("Failed to commit write buffer: {}", e),
+                            );
+                        }
+                    }
                 }
 
                 result
@@ -910,6 +960,12 @@ impl ConformanceRunner {
             return ConformanceResult::failure(metadata, "expected directory not found".to_string());
         }
 
+        // Check expected/post_db directory
+        let post_db_dir = expected_dir.join("post_db");
+        if !post_db_dir.exists() {
+            return ConformanceResult::failure(metadata, "expected/post_db directory not found".to_string());
+        }
+
         // Validate all databases are present in pre_db
         for db_name in metadata.databases_touched.iter() {
             let kv_file = pre_db_dir.join(format!("{}.kv", db_name));
@@ -917,6 +973,17 @@ impl ConformanceRunner {
                 return ConformanceResult::failure(
                     metadata.clone(),
                     format!("Missing pre_db/{}.kv", db_name),
+                );
+            }
+        }
+
+        // Validate all databases are present in expected/post_db
+        for db_name in metadata.databases_touched.iter() {
+            let kv_file = post_db_dir.join(format!("{}.kv", db_name));
+            if !kv_file.exists() {
+                return ConformanceResult::failure(
+                    metadata.clone(),
+                    format!("Missing expected/post_db/{}.kv", db_name),
                 );
             }
         }
@@ -983,6 +1050,8 @@ impl ConformanceRunner {
                             m.expected.len(),
                             m.actual.len()
                         );
+                        println!("      expected: {}", hex::encode(&m.expected));
+                        println!("      actual:   {}", hex::encode(&m.actual));
                     }
                 }
             }
@@ -1032,6 +1101,12 @@ mod tests {
         kv_data.insert(vec![0x01], vec![0xAA]);
         crate::conformance::kv_format::write_kv_file(
             &dir.join("pre_db/account.kv"),
+            &kv_data,
+        ).unwrap();
+
+        // Create account.kv in expected/post_db (required since databasesTouched includes "account")
+        crate::conformance::kv_format::write_kv_file(
+            &dir.join("expected/post_db/account.kv"),
             &kv_data,
         ).unwrap();
     }

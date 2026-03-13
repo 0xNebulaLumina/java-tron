@@ -9,11 +9,13 @@ import io.grpc.internal.PickFirstLoadBalancerProvider;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import org.tron.core.db.ByteArrayWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tron.backend.BackendGrpc;
@@ -236,26 +238,77 @@ public class RemoteStorageSPI implements StorageSPI {
         });
   }
 
+  /**
+   * Batch get operation that preserves input key identity in the returned map.
+   *
+   * <p>This implementation ensures that the returned Map uses the exact same byte[] objects
+   * from the input keys list as map keys, allowing callers to use {@code result.get(originalKey)}
+   * directly without wrapper conversion.
+   *
+   * <p><b>Important:</b> If the backend returns {@code success=false}, this method throws
+   * a RuntimeException rather than returning an empty map, preventing callers from
+   * misinterpreting backend failures as "all keys missing".
+   *
+   * @param dbName the database name
+   * @param keys the list of keys to fetch
+   * @return a CompletableFuture of Map where keys are the original input byte[] objects
+   * @throws RuntimeException if backend returns success=false or gRPC fails
+   */
   @Override
   public CompletableFuture<Map<byte[], byte[]>> batchGet(String dbName, List<byte[]> keys) {
     return CompletableFuture.supplyAsync(
         () -> {
           try {
+            if (keys == null || keys.isEmpty()) {
+              return new HashMap<>();
+            }
+
             BatchGetRequest.Builder requestBuilder =
                 BatchGetRequest.newBuilder().setDatabase(dbName);
 
-            for (byte[] key : keys) {
+            // Build content-based index to locate original key objects by their content
+            Map<ByteArrayWrapper, Integer> contentToIndex = new HashMap<>();
+            for (int i = 0; i < keys.size(); i++) {
+              byte[] key = keys.get(i);
               requestBuilder.addKeys(ByteString.copyFrom(key));
+              // Only store first occurrence if duplicates exist
+              contentToIndex.putIfAbsent(new ByteArrayWrapper(key), i);
             }
 
             BatchGetResponse response = blockingStub.batchGet(requestBuilder.build());
 
-            Map<byte[], byte[]> result = new HashMap<>();
+            // Phase 1.1: Check success flag - fail fast if backend reports error
+            if (!response.getSuccess()) {
+              String errorMsg = response.getErrorMessage();
+              logger.error("gRPC batch get failed: db={}, backend returned success=false, error={}",
+                  dbName, errorMsg);
+              throw new RuntimeException(
+                  "Storage batch get failed for db=" + dbName + ": " + errorMsg);
+            }
+
+            // Phase 1.2: Build result map using original input key objects for identity-based lookup
+            // Use LinkedHashMap to preserve insertion order for debugging
+            Map<byte[], byte[]> result = new LinkedHashMap<>();
+
+            // First, initialize all input keys as null (not found) in result
+            for (byte[] key : keys) {
+              result.put(key, null);
+            }
+
+            // Then, populate with actual values from response
             for (KeyValue kv : response.getPairsList()) {
-              if (kv.getFound()) {
-                result.put(kv.getKey().toByteArray(), kv.getValue().toByteArray());
+              ByteArrayWrapper responseKeyWrapper = new ByteArrayWrapper(kv.getKey().toByteArray());
+              Integer index = contentToIndex.get(responseKeyWrapper);
+
+              if (index != null) {
+                // Found matching input key - use the original byte[] object
+                byte[] originalKey = keys.get(index);
+                byte[] value = kv.getFound() ? kv.getValue().toByteArray() : null;
+                result.put(originalKey, value);
               } else {
-                result.put(kv.getKey().toByteArray(), null);
+                // Response contains key not in request - log warning but continue
+                logger.warn("gRPC batch get: db={}, response contains unknown key (length={})",
+                    dbName, kv.getKey().size());
               }
             }
 
@@ -263,7 +316,7 @@ public class RemoteStorageSPI implements StorageSPI {
                 "Batch get operation: db={}, keys.size={}, found={}",
                 dbName,
                 keys.size(),
-                result.size());
+                result.values().stream().filter(v -> v != null).count());
             return result;
           } catch (StatusRuntimeException e) {
             logger.error("gRPC batch get failed: db={}, error={}", dbName, e.getStatus());

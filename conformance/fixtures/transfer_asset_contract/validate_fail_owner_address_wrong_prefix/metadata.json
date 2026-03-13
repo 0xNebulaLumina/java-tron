@@ -1,0 +1,21 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "validate_fail_owner_address_wrong_prefix",
+  "caseCategory": "validate_fail",
+  "description": "Fail when owner address has wrong prefix byte",
+  "generatedAt": "2026-03-10T11:52:30.128Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Invalid ownerAddress",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
+  "dynamicProperties": {},
+  "notes": []
+}

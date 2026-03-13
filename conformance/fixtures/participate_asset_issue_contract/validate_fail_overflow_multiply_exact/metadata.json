@@ -4,7 +4,7 @@
   "caseName": "validate_fail_overflow_multiply_exact",
   "caseCategory": "validate_fail",
   "description": "Fail when multiplyExact(amount, num) overflows",
-  "generatedAt": "2026-01-14T06:56:53.863Z",
+  "generatedAt": "2026-03-10T11:52:31.153Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

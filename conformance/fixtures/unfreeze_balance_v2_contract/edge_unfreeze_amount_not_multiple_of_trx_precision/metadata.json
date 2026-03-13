@@ -4,7 +4,7 @@
   "caseName": "edge_unfreeze_amount_not_multiple_of_trx_precision",
   "caseCategory": "edge",
   "description": "Unfreeze 1 SUN (not multiple of TRX_PRECISION)",
-  "generatedAt": "2026-01-14T06:56:48.481Z",
+  "generatedAt": "2026-03-10T11:52:26.008Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -14,18 +14,26 @@ import org.tron.common.client.ExecutionGrpcClient;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.ChainBaseManager;
+import org.tron.core.Constant;
+import org.tron.core.db.EnergyProcessor;
 import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
+import org.tron.core.store.AccountStore;
+import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
 import org.tron.protos.contract.BalanceContract.CancelAllUnfreezeV2Contract;
 import org.tron.protos.contract.BalanceContract.DelegateResourceContract;
 import org.tron.protos.contract.BalanceContract.FreezeBalanceContract;
+import org.tron.protos.contract.BalanceContract.FreezeBalanceV2Contract;
 import org.tron.protos.contract.BalanceContract.TransferContract;
 import org.tron.protos.contract.BalanceContract.UnDelegateResourceContract;
+import org.tron.protos.contract.BalanceContract.UnfreezeBalanceContract;
+import org.tron.protos.contract.BalanceContract.UnfreezeBalanceV2Contract;
 import org.tron.protos.contract.BalanceContract.WithdrawExpireUnfreezeContract;
 import org.tron.protos.contract.Common.ResourceCode;
 import org.tron.protos.contract.SmartContractOuterClass.CreateSmartContract;
@@ -283,6 +291,90 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     }
   }
 
+  /**
+   * Compute energy limit with fix ratio, matching VMActuator.getAccountEnergyLimitWithFixRatio().
+   *
+   * This implements the same formula as Java's VMActuator for energy limit computation:
+   * - availableEnergy = leftFrozenEnergy + max(balance - callValue, 0) / sunPerEnergy
+   * - energyFromFeeLimit = feeLimit / sunPerEnergy
+   * - energyLimit = min(availableEnergy, energyFromFeeLimit)
+   *
+   * @param context The transaction context containing store factory
+   * @param ownerAddress The owner/caller address
+   * @param feeLimit The fee limit from the transaction
+   * @param callValue The call value for contract creation/call
+   * @return The computed energy limit, or feeLimit if computation fails
+   */
+  private long computeEnergyLimitWithFixRatio(TransactionContext context, byte[] ownerAddress,
+      long feeLimit, long callValue) {
+    try {
+      // Get stores from context
+      if (context.getStoreFactory() == null) {
+        logger.warn("StoreFactory is null, falling back to feeLimit for energy limit");
+        return feeLimit;
+      }
+
+      ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
+      if (chainBaseManager == null) {
+        logger.warn("ChainBaseManager is null, falling back to feeLimit for energy limit");
+        return feeLimit;
+      }
+
+      AccountStore accountStore = chainBaseManager.getAccountStore();
+      DynamicPropertiesStore dynamicPropertiesStore = chainBaseManager.getDynamicPropertiesStore();
+
+      if (accountStore == null || dynamicPropertiesStore == null) {
+        logger.warn("AccountStore or DynamicPropertiesStore is null, falling back to feeLimit");
+        return feeLimit;
+      }
+
+      // Get account
+      AccountCapsule account = accountStore.get(ownerAddress);
+      if (account == null) {
+        logger.warn("Owner account not found, falling back to feeLimit for energy limit");
+        return feeLimit;
+      }
+
+      // Get energy fee (SUN per energy unit)
+      long sunPerEnergy = Constant.SUN_PER_ENERGY; // Default: 100
+      long energyFee = dynamicPropertiesStore.getEnergyFee();
+      if (energyFee > 0) {
+        sunPerEnergy = energyFee;
+      }
+
+      // Create energy processor and compute left frozen energy
+      EnergyProcessor energyProcessor = new EnergyProcessor(dynamicPropertiesStore, accountStore);
+      long leftFrozenEnergy = energyProcessor.getAccountLeftEnergyFromFreeze(account);
+
+      // Compute energy from balance (matching VMActuator formula)
+      long balanceMinusCallValue = Math.max(account.getBalance() - callValue, 0);
+      long energyFromBalance = balanceMinusCallValue / sunPerEnergy;
+
+      // Compute available energy (overflow-safe addition)
+      long availableEnergy;
+      try {
+        availableEnergy = Math.addExact(leftFrozenEnergy, energyFromBalance);
+      } catch (ArithmeticException e) {
+        availableEnergy = Long.MAX_VALUE;
+      }
+
+      // Compute energy from fee limit
+      long energyFromFeeLimit = feeLimit / sunPerEnergy;
+
+      // Return min of available energy and fee limit energy
+      long computedLimit = Math.min(availableEnergy, energyFromFeeLimit);
+
+      logger.debug("Computed energy limit: {} (leftFrozen={}, fromBalance={}, fromFeeLimit={}, sunPerEnergy={})",
+          computedLimit, leftFrozenEnergy, energyFromBalance, energyFromFeeLimit, sunPerEnergy);
+
+      return computedLimit;
+
+    } catch (Exception e) {
+      logger.warn("Failed to compute energy limit, falling back to feeLimit: {}", e.getMessage());
+      return feeLimit;
+    }
+  }
+
   /** Build ExecuteTransactionRequest from TransactionContext. */
   private ExecuteTransactionRequest buildExecuteTransactionRequest(TransactionContext context) {
     try {
@@ -319,7 +411,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Phase 3 Fix: Keep TRC-10 on Java path until Rust storage can handle TRC-10 ledgers
           boolean trc10RemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
           if (!trc10RemoteEnabled) {
-            logger.debug("TRC-10 remote execution disabled, throwing exception to fallback to Java actuators");
+            logger.debug("TRC-10 remote execution disabled, throwing exception");
             throw new UnsupportedOperationException("TRC-10 execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
 
@@ -336,7 +428,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // TRC-10 Asset Issue: Gate behind the same TRC-10 feature flag
           boolean assetIssueRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
           if (!assetIssueRemoteEnabled) {
-            logger.debug("TRC-10 AssetIssue remote execution disabled, throwing exception to fallback to Java actuators");
+            logger.debug("TRC-10 AssetIssue remote execution disabled, throwing exception");
             throw new UnsupportedOperationException("AssetIssue execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
 
@@ -360,7 +452,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Gate behind the same TRC-10 feature flag
           boolean participateAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
           if (!participateAssetRemoteEnabled) {
-            logger.debug("TRC-10 ParticipateAssetIssue remote execution disabled, throwing exception to fallback to Java actuators");
+            logger.debug("TRC-10 ParticipateAssetIssue remote execution disabled, throwing exception");
             throw new UnsupportedOperationException("ParticipateAssetIssue execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
 
@@ -385,7 +477,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Gate behind the same TRC-10 feature flag
           boolean unfreezeAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
           if (!unfreezeAssetRemoteEnabled) {
-            logger.debug("TRC-10 UnfreezeAsset remote execution disabled, throwing exception to fallback to Java actuators");
+            logger.debug("TRC-10 UnfreezeAsset remote execution disabled, throwing exception");
             throw new UnsupportedOperationException("UnfreezeAsset execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
 
@@ -406,7 +498,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Gate behind the same TRC-10 feature flag
           boolean updateAssetRemoteEnabled = Boolean.parseBoolean(System.getProperty("remote.exec.trc10.enabled", "false"));
           if (!updateAssetRemoteEnabled) {
-            logger.debug("TRC-10 UpdateAsset remote execution disabled, throwing exception to fallback to Java actuators");
+            logger.debug("TRC-10 UpdateAsset remote execution disabled, throwing exception");
             throw new UnsupportedOperationException("UpdateAsset execution via remote backend is disabled. Use -Dremote.exec.trc10.enabled=true to enable.");
           }
 
@@ -432,10 +524,19 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             // SmartContract metadata (ABI, name, origin_energy_limit, etc.) after EVM execution
             data = createContract.toByteArray();
             value = createContract.getNewContract().getCallValue();
-            logger.debug("Mapped CreateSmartContract to remote request; owner={}, name={}, origin_energy_limit={}",
+
+            // Phase 4: Compute energy limit with resource capping like VMActuator.getAccountEnergyLimitWithFixRatio()
+            // This ensures parity with Java's energy limit computation which caps based on:
+            // - Available frozen energy
+            // - Balance-based energy: (balance - callValue) / energyFee
+            // - Fee limit energy: feeLimit / energyFee
+            long feeLimit = transaction.getRawData().getFeeLimit();
+            energyLimit = computeEnergyLimitWithFixRatio(context, fromAddress, feeLimit, value);
+            logger.debug("Mapped CreateSmartContract to remote request; owner={}, name={}, origin_energy_limit={}, computed_energy_limit={}",
                 org.tron.common.utils.ByteArray.toHexString(fromAddress),
                 createContract.getNewContract().getName(),
-                createContract.getNewContract().getOriginEnergyLimit());
+                createContract.getNewContract().getOriginEnergyLimit(),
+                energyLimit);
           }
           txKind = TxKind.VM; // Smart contract creation requires VM
           contractType = tron.backend.BackendOuterClass.ContractType.CREATE_SMART_CONTRACT;
@@ -447,6 +548,19 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = triggerContract.getContractAddress().toByteArray();
           data = triggerContract.getData().toByteArray();
           value = triggerContract.getCallValue();
+
+          // Phase 4: Compute energy limit with resource capping like VMActuator.getTotalEnergyLimit()
+          // For TriggerSmartContract, the energy limit is also capped based on caller's resources
+          // Note: Full parity would require getTotalEnergyLimitWithFixRatio which also considers
+          // the contract's origin_energy_limit and consume_user_resource_percent, but the basic
+          // caller-side capping provides the main protection against over-execution.
+          long triggerFeeLimit = transaction.getRawData().getFeeLimit();
+          energyLimit = computeEnergyLimitWithFixRatio(context, fromAddress, triggerFeeLimit, value);
+          logger.debug("Mapped TriggerSmartContract to remote request; owner={}, contract={}, computed_energy_limit={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              org.tron.common.utils.ByteArray.toHexString(toAddress),
+              energyLimit);
+
           txKind = TxKind.VM; // Smart contract invocation requires VM
           contractType = tron.backend.BackendOuterClass.ContractType.TRIGGER_SMART_CONTRACT;
           break;
@@ -463,6 +577,48 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               freezeContract.getFrozenBalance(),
               freezeContract.getFrozenDuration());
+          break;
+
+        case UnfreezeBalanceContract:
+          UnfreezeBalanceContract unfreezeContract =
+              contractParameter.unpack(UnfreezeBalanceContract.class);
+          toAddress = new byte[0];
+          data = unfreezeContract.toByteArray();
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UNFREEZE_BALANCE_CONTRACT;
+          logger.debug(
+              "Mapped UnfreezeBalanceContract to remote request; owner={}, resource={}, receiver={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              unfreezeContract.getResource(),
+              org.tron.common.utils.ByteArray.toHexString(unfreezeContract.getReceiverAddress().toByteArray()));
+          break;
+
+        case FreezeBalanceV2Contract:
+          FreezeBalanceV2Contract freezeBalanceV2Contract =
+              contractParameter.unpack(FreezeBalanceV2Contract.class);
+          toAddress = new byte[0];
+          data = freezeBalanceV2Contract.toByteArray();
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.FREEZE_BALANCE_V2_CONTRACT;
+          logger.debug(
+              "Mapped FreezeBalanceV2Contract to remote request; owner={}, amount={}, resource={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              freezeBalanceV2Contract.getFrozenBalance(),
+              freezeBalanceV2Contract.getResource());
+          break;
+
+        case UnfreezeBalanceV2Contract:
+          UnfreezeBalanceV2Contract unfreezeBalanceV2Contract =
+              contractParameter.unpack(UnfreezeBalanceV2Contract.class);
+          toAddress = new byte[0];
+          data = unfreezeBalanceV2Contract.toByteArray();
+          txKind = TxKind.NON_VM;
+          contractType = tron.backend.BackendOuterClass.ContractType.UNFREEZE_BALANCE_V2_CONTRACT;
+          logger.debug(
+              "Mapped UnfreezeBalanceV2Contract to remote request; owner={}, amount={}, resource={}",
+              org.tron.common.utils.ByteArray.toHexString(fromAddress),
+              unfreezeBalanceV2Contract.getUnfreezeBalance(),
+              unfreezeBalanceV2Contract.getResource());
           break;
 
         case WitnessCreateContract:
@@ -887,9 +1043,12 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           break;
 
         default:
-          // Remove TRANSFER fallback - throw exception to fall back to embedded
-          logger.error("Contract type {} not mapped to remote; falling back to embedded", contract.getType());
-          throw new UnsupportedOperationException(contract.getType() + " not mapped to remote; falling back to embedded");
+          // Unsupported contract type in Remote execution mode.
+          logger.error(
+              "Contract type {} not mapped to remote",
+              contract.getType());
+          throw new UnsupportedOperationException(
+              contract.getType() + " not mapped to remote");
       }
 
       // Log transaction classification
@@ -941,10 +1100,24 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       // Collect pre-execution AEXT snapshots for hybrid mode
       List<AccountAextSnapshot> preExecAextList = collectPreExecutionAext(context, fromAddress, toAddress, contract.getType());
 
+      // Compute bandwidth bytes size (same formula as BandwidthProcessor.consume)
+      long txBytesSize;
+      if (context.getStoreFactory() != null
+          && context.getStoreFactory().getChainBaseManager() != null
+          && context.getStoreFactory().getChainBaseManager()
+              .getDynamicPropertiesStore().supportVM()) {
+        txBytesSize = trxCap.getInstance().toBuilder().clearRet().build().getSerializedSize();
+        int numContracts = trxCap.getInstance().getRawData().getContractCount();
+        txBytesSize += (long) numContracts * Constant.MAX_RESULT_SIZE_IN_TX;
+      } else {
+        txBytesSize = trxCap.getSerializedSize();
+      }
+
       return ExecuteTransactionRequest.newBuilder()
           .setTransaction(txBuilder.build())
           .setContext(contextBuilder.build())
           .addAllPreExecutionAext(preExecAextList)
+          .setTransactionBytesSize(txBytesSize)
           .build();
 
     } catch (UnsupportedOperationException | IllegalArgumentException e) {

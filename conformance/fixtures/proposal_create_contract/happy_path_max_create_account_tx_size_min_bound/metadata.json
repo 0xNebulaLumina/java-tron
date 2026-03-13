@@ -1,0 +1,24 @@
+{
+  "contractType": "PROPOSAL_CREATE_CONTRACT",
+  "contractTypeNum": 16,
+  "caseName": "happy_path_max_create_account_tx_size_min_bound",
+  "caseCategory": "happy",
+  "description": "Create proposal with MAX_CREATE_ACCOUNT_TX_SIZE at minimum boundary (500)",
+  "generatedAt": "2026-03-10T11:52:28.004Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "proposal",
+    "dynamic-properties",
+    "witness"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "Bad chain parameter id [MAX_CREATE_ACCOUNT_TX_SIZE]",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
+  "dynamicProperties": {
+    "MAX_CREATE_ACCOUNT_TX_SIZE": 500
+  },
+  "notes": []
+}

@@ -1,0 +1,1 @@
+generate git PR title and description for $ARGUMENTS in mardown format

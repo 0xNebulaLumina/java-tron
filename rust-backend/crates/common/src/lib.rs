@@ -8,4 +8,4 @@ pub use config::{Config, StorageConfig, ExecutionConfig, ExecutionFeeConfig, Rem
 pub use module::{Module, ModuleManager, ModuleHealth, HealthStatus};
 pub use error::{BackendError, BackendResult};
 pub use metrics::Metrics;
-pub use address::{to_tron_address, from_tron_address}; 
+pub use address::{to_tron_address, from_tron_address, from_tron_base58_to_bytes};

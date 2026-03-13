@@ -4,7 +4,7 @@
   "caseName": "validate_fail_unfreeze_delay_disabled",
   "caseCategory": "validate_fail",
   "description": "Fail when supportUnfreezeDelay() is false (unfreezeDelayDays == 0)",
-  "generatedAt": "2026-01-14T06:56:51.933Z",
+  "generatedAt": "2026-03-10T11:52:29.122Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

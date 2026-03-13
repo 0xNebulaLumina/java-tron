@@ -82,7 +82,15 @@ impl AccountVoteSnapshot {
         data
     }
 
-    /// Deserialize from bytes (Account protobuf format).
+    /// Deserialize from bytes (full Account protobuf format).
+    ///
+    /// Java's DelegationStore.setAccountVote() stores `accountCapsule.getData()`, which is
+    /// the full Account proto. This parser handles the full Account proto:
+    ///   field 1 = account_name (string, skip)
+    ///   field 3 = address (bytes, 21-byte with prefix)
+    ///   field 5 = votes (repeated Vote)
+    ///
+    /// For backwards compatibility, also accepts field 1 as address if it's 20/21 bytes.
     pub fn deserialize(data: &[u8]) -> Result<Self> {
         let mut pos = 0;
         let mut address: Option<Address> = None;
@@ -98,7 +106,24 @@ impl AccountVoteSnapshot {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // address (length-delimited)
+                    // In custom format: address (length-delimited, 20 or 21 bytes)
+                    // In Account proto: account_name (string, variable length)
+                    let (length, new_pos) = read_varint(data, pos)?;
+                    pos = new_pos;
+                    if pos + length as usize > data.len() {
+                        return Err(anyhow::anyhow!("Invalid field 1 length"));
+                    }
+                    let field_bytes = &data[pos..pos + length as usize];
+                    pos += length as usize;
+
+                    // Try to parse as address (backwards compat with custom format)
+                    if let Some(addr) = try_parse_address(field_bytes) {
+                        address = Some(addr);
+                    }
+                    // Otherwise skip (it's account_name from full Account proto)
+                }
+                (3, 2) => {
+                    // Account proto field 3: address (bytes, 21-byte with prefix)
                     let (length, new_pos) = read_varint(data, pos)?;
                     pos = new_pos;
                     if pos + length as usize > data.len() {
@@ -107,21 +132,9 @@ impl AccountVoteSnapshot {
                     let addr_bytes = &data[pos..pos + length as usize];
                     pos += length as usize;
 
-                    // Remove TRON prefix if present (0x41 mainnet / 0xa0 testnet)
-                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
-                        &addr_bytes[1..]
-                    } else if addr_bytes.len() == 20 {
-                        addr_bytes
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "Invalid address length: {}",
-                            addr_bytes.len()
-                        ));
-                    };
-
-                    let mut addr = [0u8; 20];
-                    addr.copy_from_slice(evm_addr);
-                    address = Some(Address::from(addr));
+                    if let Some(addr) = try_parse_address(addr_bytes) {
+                        address = Some(addr);
+                    }
                 }
                 (5, 2) => {
                     // votes (length-delimited, repeated)
@@ -135,7 +148,7 @@ impl AccountVoteSnapshot {
                     votes.push(deserialize_vote(vote_bytes)?);
                 }
                 _ => {
-                    // Skip other fields
+                    // Skip other fields (balance, frozen, etc.)
                     pos = skip_field(data, pos, wire_type)?;
                 }
             }
@@ -228,6 +241,22 @@ fn deserialize_vote(data: &[u8]) -> Result<DelegationVote> {
         vote_address.ok_or_else(|| anyhow::anyhow!("Missing vote_address"))?,
         vote_count.ok_or_else(|| anyhow::anyhow!("Missing vote_count"))?,
     ))
+}
+
+// --- Address parsing helper ---
+
+/// Try to parse bytes as a TRON/EVM address. Returns None if not a valid address.
+fn try_parse_address(bytes: &[u8]) -> Option<Address> {
+    let evm_bytes = if bytes.len() == 21 && (bytes[0] == 0x41 || bytes[0] == 0xa0) {
+        &bytes[1..]
+    } else if bytes.len() == 20 {
+        bytes
+    } else {
+        return None;
+    };
+    let mut addr = [0u8; 20];
+    addr.copy_from_slice(evm_bytes);
+    Some(Address::from(addr))
 }
 
 // --- Protobuf helpers ---

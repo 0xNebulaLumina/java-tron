@@ -4,7 +4,7 @@
   "caseName": "happy_path_create_account",
   "caseCategory": "happy",
   "description": "Create a new account when owner has sufficient balance and target absent",
-  "generatedAt": "2026-01-14T06:56:45.271Z",
+  "generatedAt": "2026-03-10T11:52:22.712Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

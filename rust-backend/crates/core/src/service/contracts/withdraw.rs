@@ -10,7 +10,8 @@ use tracing::{debug, info, warn};
 /// FROZEN_PERIOD constant: 24 hours in milliseconds
 const FROZEN_PERIOD_MS: i64 = 86_400_000;
 
-// Genesis witnesses (guard representatives) from java-tron configs.
+// Hardcoded genesis witnesses (guard representatives) used as fallback when
+// config.genesis_guard_representatives_base58 is empty.
 // - Mainnet: `main_net_config.conf` genesis.block.witnesses
 // - Testnet: `framework/src/test/resources/config-test.conf` genesis.block.witnesses
 const TESTNET_GENESIS_GUARD_REPS: [[u8; 21]; 11] = [
@@ -171,10 +172,25 @@ const MAINNET_GENESIS_GUARD_REPS: [[u8; 21]; 27] = [
     ],
 ];
 
-fn is_genesis_guard_representative(owner_tron: &[u8], address_prefix: u8) -> bool {
+/// Check if an address is a genesis guard representative using the config-provided list.
+/// Falls back to hardcoded mainnet/testnet lists when config list is empty.
+///
+/// Java reference: CommonParameter.getInstance().getGenesisBlock().getWitnesses()
+fn is_genesis_guard_representative(
+    owner_tron: &[u8],
+    address_prefix: u8,
+    config_guard_reps: &[Vec<u8>],
+) -> bool {
     if owner_tron.len() != 21 {
         return false;
     }
+
+    // If config provides guard representatives, use them (strict parity with Java's config)
+    if !config_guard_reps.is_empty() {
+        return config_guard_reps.iter().any(|addr| addr.as_slice() == owner_tron);
+    }
+
+    // Fallback: use hardcoded lists based on address prefix
     match address_prefix {
         0xa0 => TESTNET_GENESIS_GUARD_REPS
             .iter()
@@ -185,26 +201,35 @@ fn is_genesis_guard_representative(owner_tron: &[u8], address_prefix: u8) -> boo
     }
 }
 
+/// Decode Base58 guard representative addresses from config to raw 21-byte TRON addresses.
+/// Invalid addresses are logged as warnings and skipped.
+fn decode_guard_reps_from_config(base58_list: &[String]) -> Vec<Vec<u8>> {
+    base58_list
+        .iter()
+        .filter_map(|addr| {
+            match tron_backend_common::from_tron_base58_to_bytes(addr) {
+                Ok(raw) => Some(raw.to_vec()),
+                Err(e) => {
+                    warn!("Invalid guard representative address '{}': {}", addr, e);
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+/// TRX precision constant: 1 TRX = 1,000,000 SUN
+const TRX_PRECISION: u64 = 1_000_000;
+
 impl BackendService {
     /// Execute a WITHDRAW_BALANCE_CONTRACT
     ///
-    /// Phase 1 Implementation (delegation_reward_enabled = false):
-    /// - Uses Account.allowance only (skips delegation/mortgage queryReward)
-    ///
-    /// Phase 2 Implementation (delegation_reward_enabled = true):
-    /// - First computes delegation rewards via withdraw_reward()
-    /// - Adds computed rewards to allowance before reading
-    ///
-    /// Both phases:
-    /// - Validates owner exists, cooldown satisfied, and has positive allowance
-    /// - Updates balance by adding allowance
-    /// - Emits WithdrawChange sidecar for Java to update allowance=0 and latestWithdrawTime
-    ///
-    /// Validation rules (matching embedded):
-    /// - Owner account must exist
-    /// - Cooldown: now - latestWithdrawTime >= witnessAllowanceFrozenTime * FROZEN_PERIOD
-    /// - Allowance must be positive
-    /// - No overflow when adding allowance to balance
+    /// Matches java-tron's WithdrawBalanceActuator.validate() + execute() end-to-end:
+    /// 1. Validates contract type_url, address, account, guard rep, cooldown, reward, overflow
+    /// 2. Computes delegation rewards via withdraw_reward() (self-gated on allowChangeDelegation)
+    /// 3. Updates balance by adding (base_allowance + delegation_reward)
+    /// 4. Tracks bandwidth resource usage for AEXT parity (when aext_mode = "tracked")
+    /// 5. Emits WithdrawChange sidecar for Java to set allowance=0 and latestWithdrawTime
     pub(crate) fn execute_withdraw_balance_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
@@ -212,6 +237,17 @@ impl BackendService {
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         let owner_address = transaction.from;
+
+        // 0) Validate contract type_url in Any wrapper (java-tron: any.is(WithdrawBalanceContract.class))
+        //    If contract_parameter is provided, validate it matches the expected type.
+        if let Some(ref param) = transaction.metadata.contract_parameter {
+            if !param.type_url.ends_with("WithdrawBalanceContract") {
+                return Err(format!(
+                    "contract type error, expected type [WithdrawBalanceContract], real type[{}]",
+                    param.type_url
+                ));
+            }
+        }
 
         // 1) Validate owner address (java-tron: DecodeUtil.addressValid)
         let prefix = storage_adapter.address_prefix();
@@ -233,7 +269,12 @@ impl BackendService {
             .ok_or_else(|| format!("Account[{}] not exists", readable_owner_address))?;
 
         // 3) Validate not guard representative (genesis witness)
-        if is_genesis_guard_representative(owner_from_field, prefix) {
+        //    Java: CommonParameter.getInstance().getGenesisBlock().getWitnesses()
+        let config = self.get_execution_config()?;
+        let config_guard_reps = decode_guard_reps_from_config(
+            &config.remote.genesis_guard_representatives_base58,
+        );
+        if is_genesis_guard_representative(owner_from_field, prefix, &config_guard_reps) {
             return Err(format!(
                 "Account[{}] is a guard representative and is not allowed to withdraw Balance",
                 readable_owner_address
@@ -242,7 +283,7 @@ impl BackendService {
 
         debug!("Owner account loaded: balance={}", owner_account.balance);
 
-        // Step 2: Read dynamic properties for cooldown check
+        // 4) Cooldown check
         let now_ms = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to read block timestamp: {}", e))?;
 
@@ -255,7 +296,6 @@ impl BackendService {
         debug!("Cooldown check: now_ms={}, latest_withdraw_time={}, frozen_time_days={}",
                now_ms, latest_withdraw_time, witness_allowance_frozen_time);
 
-        // Calculate cooldown period in milliseconds
         let cooldown_ms = witness_allowance_frozen_time * FROZEN_PERIOD_MS;
         let time_since_last_withdraw = now_ms - latest_withdraw_time;
 
@@ -268,9 +308,9 @@ impl BackendService {
         debug!("Cooldown satisfied: {} ms since last withdraw (required: {} ms)",
                time_since_last_withdraw, cooldown_ms);
 
-        // Step 4: Check if delegation reward computation is enabled
-        // If enabled, compute delegation rewards and add to allowance
-        let delegation_reward = self.compute_delegation_reward_if_enabled(storage_adapter, &owner_address)?;
+        // 5) Compute delegation reward (always, matching Java's MortgageService.withdrawReward)
+        //    delegation::withdraw_reward self-gates on allowChangeDelegation() from dynamic properties
+        let delegation_reward = delegation::withdraw_reward(storage_adapter, &owner_address)?;
 
         if delegation_reward > 0 {
             info!(
@@ -279,20 +319,28 @@ impl BackendService {
             );
         }
 
-        // Step 5: Read allowance and add delegation reward
+        // 6) Read base allowance and check no-reward condition
+        //    Java: if (getAllowance() <= 0 && queryReward(owner) <= 0) reject
+        //    queryReward() returns (reward + allowance), so the combined condition is:
+        //    allowance <= 0 && (delegation_reward + allowance) <= 0
         let base_allowance = storage_adapter
             .get_account_allowance(&owner_address)
             .map_err(|e| format!("Failed to read allowance: {}", e))?;
 
-        if base_allowance <= 0 && delegation_reward <= 0 {
-            warn!(
-                "Account {} has no reward to withdraw (allowance={}, delegation_reward={})",
-                readable_owner_address, base_allowance, delegation_reward
-            );
-            return Err("witnessAccount does not have any reward".to_string());
+        if base_allowance <= 0 {
+            // Match Java's queryReward semantics: total = reward + allowance
+            let total_query_reward = delegation_reward.wrapping_add(base_allowance);
+            if total_query_reward <= 0 {
+                warn!(
+                    "Account {} has no reward to withdraw (allowance={}, delegation_reward={}, total={})",
+                    readable_owner_address, base_allowance, delegation_reward, total_query_reward
+                );
+                return Err("witnessAccount does not have any reward".to_string());
+            }
         }
 
-        // java-tron validate() checks overflow on balance + allowance (LongMath.checkedAdd).
+        // 7) Overflow check: java-tron validate() checks LongMath.checkedAdd(balance, allowance)
+        //    Note: Java checks balance + base_allowance (before delegation reward is added)
         let old_balance_u64: u64 = owner_account
             .balance
             .try_into()
@@ -307,7 +355,7 @@ impl BackendService {
             ));
         }
 
-        // Total allowance = base allowance + delegation reward
+        // 8) Total allowance = base allowance + delegation reward
         let allowance = base_allowance
             .checked_add(delegation_reward)
             .ok_or("Overflow when adding delegation reward to allowance")?;
@@ -329,7 +377,7 @@ impl BackendService {
             old_balance, allowance, new_balance_u64
         );
 
-        // Step 6: Create new account with updated balance
+        // 9) Create new account with updated balance
         let mut new_owner = owner_account.clone();
         new_owner.balance = revm_primitives::U256::from(new_balance_u64);
 
@@ -340,7 +388,6 @@ impl BackendService {
         // In rust_persist_enabled mode, persist the allowance reset + latestWithdrawTime update
         // directly to the Account proto. This matches java-tron's embedded persistence and is
         // required for rust-only conformance fixtures (no Java apply path).
-        let config = self.get_execution_config()?;
         if config.remote.rust_persist_enabled {
             let mut owner_proto = storage_adapter
                 .get_account_proto(&owner_address)
@@ -360,7 +407,7 @@ impl BackendService {
             readable_owner_address, allowance, new_balance_u64
         );
 
-        // Step 7: Emit AccountChange for balance delta
+        // 10) Emit AccountChange for balance delta
         let state_changes = vec![
             TronStateChange::AccountChange {
                 address: owner_address,
@@ -369,8 +416,7 @@ impl BackendService {
             }
         ];
 
-        // Step 8: Emit WithdrawChange sidecar for Java to update allowance and latestWithdrawTime
-        // Java will set Account.allowance = 0 and Account.latestWithdrawTime = now_ms
+        // 11) Emit WithdrawChange sidecar for Java to update allowance and latestWithdrawTime
         let withdraw_changes = vec![
             WithdrawChange {
                 owner_address,
@@ -384,8 +430,126 @@ impl BackendService {
             readable_owner_address, allowance, now_ms
         );
 
-        // Step 9: Calculate bandwidth usage
+        // 12) Calculate bandwidth usage
+        //     Prefers Java-computed transaction_bytes_size (sent via gRPC) for exact parity
+        //     with Java's BandwidthProcessor.consume() tx size calculation.
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+
+        // 13) Track AEXT for bandwidth if in "tracked" mode
+        //     Matches Java's BandwidthProcessor resource window accounting:
+        //     - Tries account bandwidth first (from frozen balance)
+        //     - Falls back to free bandwidth (FREE_NET_LIMIT)
+        //     - Falls back to fee-based consumption (TRANSACTION_FEE)
+        //     In "hybrid" mode, Java passes pre-execution AEXT via gRPC and the conversion
+        //     layer echoes them back (handled outside this handler).
+        let aext_mode = &config.remote.accountinfo_aext_mode;
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker, BandwidthParams};
+
+            // Get current AEXT for owner (or initialize with defaults)
+            let current_aext = storage_adapter
+                .get_account_aext(&owner_address)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(AccountAext::with_defaults);
+
+            // Read dynamic properties for bandwidth tracking
+            let free_net_limit = storage_adapter
+                .get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+            let public_net_limit = storage_adapter
+                .get_public_net_limit()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_LIMIT: {}", e))?;
+            let public_net_usage = storage_adapter
+                .get_public_net_usage()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_USAGE: {}", e))?;
+            let public_net_time = storage_adapter
+                .get_public_net_time()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_TIME: {}", e))?;
+            let transaction_fee = storage_adapter
+                .get_transaction_fee()
+                .map_err(|e| format!("Failed to get TRANSACTION_FEE: {}", e))?;
+            let create_account_bandwidth_rate = storage_adapter
+                .get_create_new_account_bandwidth_rate()
+                .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?;
+
+            // Compute account_net_limit from frozen bandwidth
+            let account_net_limit = {
+                let freeze_record = storage_adapter
+                    .get_freeze_record(&owner_address, 0) // 0 = BANDWIDTH
+                    .map_err(|e| format!("Failed to get freeze record: {}", e))?;
+                let total_net_weight = storage_adapter
+                    .get_total_net_weight()
+                    .map_err(|e| format!("Failed to get TOTAL_NET_WEIGHT: {}", e))?;
+                let total_net_limit = storage_adapter
+                    .get_total_net_limit()
+                    .map_err(|e| format!("Failed to get TOTAL_NET_LIMIT: {}", e))?;
+                if let Some(record) = freeze_record {
+                    if total_net_weight > 0 {
+                        let frozen_trx = record.frozen_amount as i64 / TRX_PRECISION as i64;
+                        frozen_trx.saturating_mul(total_net_limit) / total_net_weight
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            };
+
+            // Java: headSlot = (latestBlockTimestamp - genesisTimestamp) / 3000
+            let genesis_ts = config.remote.genesis_block_timestamp;
+            let now_slot = (context.block_timestamp as i64 - genesis_ts) / 3000;
+
+            let bw_params = BandwidthParams {
+                bytes_used: bandwidth_used as i64,
+                now: now_slot,
+                current_aext,
+                account_net_limit,
+                free_net_limit,
+                public_net_limit,
+                public_net_usage,
+                public_net_time,
+                creates_new_account: false, // WithdrawBalance never creates accounts
+                create_account_bandwidth_rate,
+                transaction_fee,
+            };
+
+            let bw_result = ResourceTracker::track_bandwidth_v2(&bw_params)
+                .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter
+                .set_account_aext(&owner_address, &bw_result.after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner_address, &bw_result.after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
+
+            // Persist global PUBLIC_NET changes if FREE_NET path was used
+            if let Some(new_pub_usage) = bw_result.new_public_net_usage {
+                storage_adapter
+                    .set_public_net_usage(new_pub_usage)
+                    .map_err(|e| format!("Failed to persist PUBLIC_NET_USAGE: {}", e))?;
+            }
+            if let Some(new_pub_time) = bw_result.new_public_net_time {
+                storage_adapter
+                    .set_public_net_time(new_pub_time)
+                    .map_err(|e| format!("Failed to persist PUBLIC_NET_TIME: {}", e))?;
+            }
+
+            // Add to aext_map for result conversion
+            aext_map.insert(owner_address, (bw_result.before_aext.clone(), bw_result.after_aext.clone()));
+
+            debug!(
+                "AEXT tracked for withdraw: owner={}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                readable_owner_address,
+                bw_result.path,
+                bw_result.before_aext.net_usage,
+                bw_result.after_aext.net_usage,
+                bw_result.before_aext.free_net_usage,
+                bw_result.after_aext.free_net_usage
+            );
+        }
 
         // Build Transaction.Result with withdraw_amount for receipt passthrough
         let tron_transaction_result = TransactionResultBuilder::new()
@@ -403,51 +567,210 @@ impl BackendService {
             state_changes,
             logs: vec![],
             error: None,
-            aext_map: std::collections::HashMap::new(),
+            aext_map,
             freeze_changes: vec![], // Not applicable
             global_resource_changes: vec![], // Not applicable
             trc10_changes: vec![], // Not applicable
             vote_changes: vec![], // Not applicable
             withdraw_changes, // WithdrawChange sidecar for Java apply
-            tron_transaction_result: Some(tron_transaction_result), // Phase 0.4: Receipt passthrough with withdraw_amount
+            tron_transaction_result: Some(tron_transaction_result), // Receipt passthrough with withdraw_amount
             contract_address: None, // Not applicable for withdraw contracts
         })
     }
 
-    /// Compute delegation reward if enabled in config.
+    /// Compute delegation reward for an address.
     ///
-    /// When `delegation_reward_enabled` is true, calls the full withdraw_reward()
-    /// computation which reads from DelegationStore and updates delegation state.
-    /// When false (Phase 1), returns 0 and skips delegation computation.
+    /// Always calls `delegation::withdraw_reward()` which self-gates on
+    /// `allowChangeDelegation()` from dynamic properties, matching Java's
+    /// `MortgageService.withdrawReward()` behavior exactly.
     ///
-    /// # Arguments
-    /// * `storage_adapter` - Storage adapter
-    /// * `address` - Account address
+    /// Note: The `delegation_reward_enabled` config flag is deprecated and ignored.
+    /// Delegation rewards are always computed when the dynamic property allows it.
     ///
     /// # Returns
-    /// * `Ok(reward)` - Delegation reward in SUN (0 if disabled)
-    fn compute_delegation_reward_if_enabled(
+    /// * `Ok(reward)` - Delegation reward in SUN (0 if delegation not allowed)
+    pub(crate) fn compute_delegation_reward_if_enabled(
         &self,
         storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore,
         address: &revm_primitives::Address,
     ) -> Result<i64, String> {
-        // Check if delegation reward computation is enabled
-        let config = self.get_execution_config()?;
-
-        if !config.remote.delegation_reward_enabled {
-            debug!(
-                "Delegation reward computation disabled, skipping for {}",
-                tron_backend_common::to_tron_address(address)
-            );
-            return Ok(0);
-        }
-
         debug!(
-            "Delegation reward computation enabled, computing for {}",
+            "Computing delegation reward for {}",
             tron_backend_common::to_tron_address(address)
         );
 
-        // Call the full delegation reward computation
+        // Always compute delegation reward; withdraw_reward() self-gates on
+        // allowChangeDelegation() from dynamic properties, matching Java exactly.
         delegation::withdraw_reward(storage_adapter, address)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- Guard representative detection tests ----
+
+    #[test]
+    fn test_guard_rep_hardcoded_mainnet_match() {
+        // First mainnet guard rep address should be detected
+        let addr = MAINNET_GENESIS_GUARD_REPS[0];
+        assert!(is_genesis_guard_representative(&addr, 0x41, &[]));
+    }
+
+    #[test]
+    fn test_guard_rep_hardcoded_testnet_match() {
+        // First testnet guard rep address should be detected
+        let addr = TESTNET_GENESIS_GUARD_REPS[0];
+        assert!(is_genesis_guard_representative(&addr, 0xa0, &[]));
+    }
+
+    #[test]
+    fn test_guard_rep_hardcoded_no_match() {
+        // A random address should not be a guard rep
+        let mut addr = [0u8; 21];
+        addr[0] = 0x41;
+        addr[1] = 0xFF;
+        assert!(!is_genesis_guard_representative(&addr, 0x41, &[]));
+    }
+
+    #[test]
+    fn test_guard_rep_config_overrides_hardcoded() {
+        // When config provides a list, only those addresses should be checked
+        let custom_addr = vec![0x41u8; 21];
+        let config_guard_reps = vec![custom_addr.clone()];
+
+        // Custom address should match
+        assert!(is_genesis_guard_representative(&custom_addr, 0x41, &config_guard_reps));
+
+        // Hardcoded mainnet address should NOT match (config overrides)
+        let mainnet_addr = MAINNET_GENESIS_GUARD_REPS[0];
+        assert!(!is_genesis_guard_representative(&mainnet_addr, 0x41, &config_guard_reps));
+    }
+
+    #[test]
+    fn test_guard_rep_empty_config_uses_hardcoded() {
+        // Empty config should fall back to hardcoded lists
+        let mainnet_addr = MAINNET_GENESIS_GUARD_REPS[0];
+        assert!(is_genesis_guard_representative(&mainnet_addr, 0x41, &[]));
+    }
+
+    #[test]
+    fn test_guard_rep_invalid_length() {
+        // Addresses with wrong length should never match
+        assert!(!is_genesis_guard_representative(&[0x41; 20], 0x41, &[]));
+        assert!(!is_genesis_guard_representative(&[0x41; 22], 0x41, &[]));
+        assert!(!is_genesis_guard_representative(&[], 0x41, &[]));
+    }
+
+    #[test]
+    fn test_decode_guard_reps_from_config_valid() {
+        // Use a known Base58 address (TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy)
+        let addresses = vec!["TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy".to_string()];
+        let decoded = decode_guard_reps_from_config(&addresses);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].len(), 21);
+        assert_eq!(decoded[0][0], 0x41); // Mainnet prefix
+    }
+
+    #[test]
+    fn test_decode_guard_reps_from_config_invalid_skipped() {
+        // Invalid addresses should be skipped with a warning
+        let addresses = vec![
+            "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy".to_string(),
+            "INVALID_ADDRESS".to_string(),
+        ];
+        let decoded = decode_guard_reps_from_config(&addresses);
+        assert_eq!(decoded.len(), 1); // Only the valid one
+    }
+
+    #[test]
+    fn test_decode_guard_reps_from_config_empty() {
+        let decoded = decode_guard_reps_from_config(&[]);
+        assert!(decoded.is_empty());
+    }
+
+    // ---- No-reward predicate tests (Java parity) ----
+    // Tests validate the Java-matching logic:
+    //   reject when: base_allowance <= 0 && (delegation_reward + base_allowance) <= 0
+
+    #[test]
+    fn test_no_reward_predicate_both_zero() {
+        // allowance=0, reward=0 → Java: getAllowance()<=0 && queryReward()<=0 → reject
+        let base_allowance: i64 = 0;
+        let delegation_reward: i64 = 0;
+        let should_reject = base_allowance <= 0 && {
+            let total = delegation_reward.wrapping_add(base_allowance);
+            total <= 0
+        };
+        assert!(should_reject, "Should reject when both zero");
+    }
+
+    #[test]
+    fn test_no_reward_predicate_positive_allowance() {
+        // allowance=100, reward=0 → Java: getAllowance()>0 → skip check → allow
+        let base_allowance: i64 = 100;
+        let delegation_reward: i64 = 0;
+        let should_reject = base_allowance <= 0 && {
+            let total = delegation_reward.wrapping_add(base_allowance);
+            total <= 0
+        };
+        assert!(!should_reject, "Should allow when allowance > 0");
+    }
+
+    #[test]
+    fn test_no_reward_predicate_positive_reward_zero_allowance() {
+        // allowance=0, reward=100 → Java: getAllowance()<=0 && queryReward()==100 → allow
+        let base_allowance: i64 = 0;
+        let delegation_reward: i64 = 100;
+        let should_reject = base_allowance <= 0 && {
+            let total = delegation_reward.wrapping_add(base_allowance);
+            total <= 0
+        };
+        assert!(!should_reject, "Should allow when delegation reward > 0");
+    }
+
+    #[test]
+    fn test_no_reward_predicate_negative_allowance_positive_reward_net_negative() {
+        // allowance=-5, reward=3 → total=-2 → Java: getAllowance()<=0 && queryReward()==-2<=0 → reject
+        // This is the pathological case the fix addresses
+        let base_allowance: i64 = -5;
+        let delegation_reward: i64 = 3;
+        let should_reject = base_allowance <= 0 && {
+            let total = delegation_reward.wrapping_add(base_allowance);
+            total <= 0
+        };
+        assert!(should_reject, "Should reject when net total is negative");
+    }
+
+    #[test]
+    fn test_no_reward_predicate_negative_allowance_positive_reward_net_positive() {
+        // allowance=-5, reward=10 → total=5 → Java: getAllowance()<=0 && queryReward()==5>0 → allow
+        let base_allowance: i64 = -5;
+        let delegation_reward: i64 = 10;
+        let should_reject = base_allowance <= 0 && {
+            let total = delegation_reward.wrapping_add(base_allowance);
+            total <= 0
+        };
+        assert!(!should_reject, "Should allow when net total is positive");
+    }
+
+    #[test]
+    fn test_no_reward_predicate_old_behavior_would_be_wrong() {
+        // Verify that the OLD predicate (base_allowance <= 0 && delegation_reward <= 0)
+        // would give a DIFFERENT result for the pathological case
+        let base_allowance: i64 = -5;
+        let delegation_reward: i64 = 3;
+
+        // Old behavior: would ALLOW (delegation_reward > 0)
+        let old_reject = base_allowance <= 0 && delegation_reward <= 0;
+        assert!(!old_reject, "Old behavior would incorrectly allow");
+
+        // New behavior: correctly REJECTS (total = -2 <= 0)
+        let new_reject = base_allowance <= 0 && {
+            let total = delegation_reward.wrapping_add(base_allowance);
+            total <= 0
+        };
+        assert!(new_reject, "New behavior correctly rejects");
     }
 }

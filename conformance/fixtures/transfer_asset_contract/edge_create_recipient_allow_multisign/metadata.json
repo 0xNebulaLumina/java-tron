@@ -1,0 +1,25 @@
+{
+  "contractType": "TRANSFER_ASSET_CONTRACT",
+  "contractTypeNum": 2,
+  "caseName": "edge_create_recipient_allow_multisign",
+  "caseCategory": "happy",
+  "description": "Create recipient with allowMultiSign=1 (default permissions initialized)",
+  "generatedAt": "2026-03-10T11:52:30.124Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "asset-issue-v2",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049151",
+  "dynamicProperties": {
+    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT": 1000000,
+    "allowMultiSign": 1,
+    "amount": 1000,
+    "token_id": "1000001"
+  },
+  "notes": []
+}

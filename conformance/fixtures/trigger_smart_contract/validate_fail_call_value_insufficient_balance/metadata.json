@@ -4,7 +4,7 @@
   "caseName": "validate_fail_call_value_insufficient_balance",
   "caseCategory": "validate_fail",
   "description": "Trigger with callValue greater than owner balance",
-  "generatedAt": "2026-01-14T06:57:18.273Z",
+  "generatedAt": "2026-03-10T11:52:56.997Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

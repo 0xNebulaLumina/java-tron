@@ -15,14 +15,17 @@ import java.util.SortedMap;
 import java.util.TreeMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.tron.common.utils.FileUtil;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.actuator.Actuator;
 import org.tron.core.actuator.ActuatorFactory;
+import org.tron.core.Constant;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.capsule.TransactionResultCapsule;
 import org.tron.core.db.Manager;
+import org.tron.core.db2.ISession;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.protos.Protocol;
@@ -130,6 +133,13 @@ public class FixtureGenerator {
     FixtureResult result = new FixtureResult();
 
     try {
+      // Ensure there is a base revoking session (java-tron pattern) so nested tx sessions can
+      // merge on success. This base session remains active across fixture generations within a
+      // test run, allowing multi-step fixtures (e.g. Market) to build on prior state.
+      if (!dbManager.getSession().valid()) {
+        dbManager.getSession().setValue(dbManager.getRevokingStore().buildSession(true));
+      }
+
       // Capture pre-execution state for relevant databases
       logger.info("Capturing pre-execution state for {} databases", databases.size());
       File preDbDir = new File(fixtureDir, "pre_db");
@@ -144,12 +154,20 @@ public class FixtureGenerator {
       }
       logger.info("Saved request.pb ({} bytes)", requestFile.length());
 
-      // Execute using embedded actuator
-      result = executeEmbedded(trxCap, blockCap);
+      // Execute using embedded actuator under a nested revoking session.
+      // Only merge on success; failures are rolled back, so post_db == pre_db.
+      try (ISession txSession = dbManager.getRevokingStore().buildSession(true)) {
+        result = executeEmbedded(trxCap, blockCap);
+        if (result.isSuccess()) {
+          txSession.merge();
+        }
+      }
 
-      // Capture post-execution state
-      logger.info("Capturing post-execution state");
       File expectedDir = new File(fixtureDir, "expected");
+      expectedDir.mkdirs();
+
+      // Capture post-execution state.
+      logger.info("Capturing post-execution state");
       File postDbDir = new File(expectedDir, "post_db");
       postDbDir.mkdirs();
       captureDbState(databases, postDbDir);
@@ -546,12 +564,24 @@ public class FixtureGenerator {
         .setTransactionId(trxCap.getTransactionId().toString())
         .build();
 
+    // Compute transaction_bytes_size matching BandwidthProcessor.consume() / RemoteExecutionSPI.
+    // Formula (VM-enabled): clearRet().getSerializedSize() + numContracts * MAX_RESULT_SIZE_IN_TX
+    long txBytesSize;
+    if (chainBaseManager.getDynamicPropertiesStore().supportVM()) {
+      txBytesSize = trxCap.getInstance().toBuilder().clearRet().build().getSerializedSize();
+      int numContracts = trxCap.getInstance().getRawData().getContractCount();
+      txBytesSize += (long) numContracts * Constant.MAX_RESULT_SIZE_IN_TX;
+    } else {
+      txBytesSize = trxCap.getSerializedSize();
+    }
+
     List<AccountAextSnapshot> preExecAext =
         collectPreExecutionAext(contract.getType(), fromAddress, toAddress);
     return ExecuteTransactionRequest.newBuilder()
         .setTransaction(tronTx)
         .setContext(context)
         .addAllPreExecutionAext(preExecAext)
+        .setTransactionBytesSize(txBytesSize)
         .build();
   }
 

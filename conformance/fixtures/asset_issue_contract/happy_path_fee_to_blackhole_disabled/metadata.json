@@ -4,7 +4,7 @@
   "caseName": "happy_path_fee_to_blackhole_disabled",
   "caseCategory": "happy",
   "description": "Blackhole mode: fee is credited to blackhole account instead of being burned",
-  "generatedAt": "2026-01-14T06:56:41.981Z",
+  "generatedAt": "2026-03-10T11:52:19.362Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

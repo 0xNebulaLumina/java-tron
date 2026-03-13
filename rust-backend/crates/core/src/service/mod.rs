@@ -19,8 +19,8 @@ pub mod contracts;
 
 // Import utilities from submodules
 use contracts::proto::read_varint;
-use contracts::proto::TransactionResultBuilder;
-use grpc::address::add_tron_address_prefix;
+use contracts::proto::{TransactionResultBuilder, MarketOrderDetail};
+use grpc::address::{add_tron_address_prefix, add_tron_address_prefix_with, validate_tron_address_prefix};
 
 /// Vote witness contract constants
 const MAX_VOTE_NUMBER: usize = 30;
@@ -40,6 +40,126 @@ impl BackendService {
             Some((_, tail)) => tail == expected_full_name,
             None => false,
         }
+    }
+
+    /// Validate that `data` is a valid protobuf-encoded `WitnessUpdateContract`.
+    ///
+    /// ```protobuf
+    /// message WitnessUpdateContract {
+    ///   bytes owner_address = 1;   // wire type 2
+    ///   bytes update_url   = 12;   // wire type 2
+    /// }
+    /// ```
+    ///
+    /// We walk the wire format and reject if any field header is malformed or a
+    /// length-delimited field extends past the buffer.  Unknown fields are
+    /// tolerated (protobuf forward-compatibility).
+    fn validate_witness_update_contract_bytes(data: &[u8]) -> Result<(), String> {
+        let mut pos = 0;
+        while pos < data.len() {
+            let (field_header, header_len) = read_varint(&data[pos..])
+                .map_err(|e| format!("WitnessUpdateContract decode error: {}", e))?;
+            pos += header_len;
+            let wire_type = field_header & 0x7;
+
+            match wire_type {
+                0 => {
+                    // Varint — consume one varint value
+                    let (_val, val_len) = read_varint(&data[pos..])
+                        .map_err(|e| format!("WitnessUpdateContract decode error: {}", e))?;
+                    pos += val_len;
+                }
+                1 => {
+                    // 64-bit fixed
+                    if pos + 8 > data.len() {
+                        return Err("WitnessUpdateContract decode error: truncated fixed64".to_string());
+                    }
+                    pos += 8;
+                }
+                2 => {
+                    // Length-delimited
+                    let (len, len_bytes) = read_varint(&data[pos..])
+                        .map_err(|e| format!("WitnessUpdateContract decode error: {}", e))?;
+                    pos += len_bytes;
+                    let end = pos + len as usize;
+                    if end > data.len() {
+                        return Err(format!(
+                            "WitnessUpdateContract decode error: length-delimited field extends past buffer ({} > {})",
+                            end, data.len()
+                        ));
+                    }
+                    pos = end;
+                }
+                5 => {
+                    // 32-bit fixed
+                    if pos + 4 > data.len() {
+                        return Err("WitnessUpdateContract decode error: truncated fixed32".to_string());
+                    }
+                    pos += 4;
+                }
+                _ => {
+                    return Err(format!(
+                        "WitnessUpdateContract decode error: unknown wire type {}",
+                        wire_type
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Parse `asset_name` (field 1, length-delimited) from a serialized
+    /// `TransferAssetContract` protobuf message.
+    ///
+    /// Proto definition (asset_issue_contract.proto):
+    ///   bytes asset_name = 1;
+    ///   bytes owner_address = 2;
+    ///   bytes to_address = 3;
+    ///   int64 amount = 4;
+    ///
+    /// Wire format: tag = (field_number << 3) | wire_type
+    /// Field 1, wire type 2 (length-delimited) → tag byte = 0x0a
+    fn parse_asset_name_from_transfer_asset_contract(data: &[u8]) -> Option<Vec<u8>> {
+        let mut pos = 0;
+        while pos < data.len() {
+            let (tag, bytes_read) = read_varint(&data[pos..]).ok()?;
+            pos += bytes_read;
+
+            let field_number = tag >> 3;
+            let wire_type = tag & 0x07;
+
+            match wire_type {
+                0 => {
+                    // Varint: skip
+                    let (_, vr) = read_varint(&data[pos..]).ok()?;
+                    pos += vr;
+                }
+                2 => {
+                    // Length-delimited
+                    let (len, lr) = read_varint(&data[pos..]).ok()?;
+                    pos += lr;
+                    let len = len as usize;
+                    if pos + len > data.len() {
+                        return None;
+                    }
+                    if field_number == 1 {
+                        // asset_name
+                        return Some(data[pos..pos + len].to_vec());
+                    }
+                    pos += len;
+                }
+                5 => {
+                    // 32-bit fixed
+                    pos += 4;
+                }
+                1 => {
+                    // 64-bit fixed
+                    pos += 8;
+                }
+                _ => return None,
+            }
+        }
+        None
     }
 
     pub fn new(module_manager: ModuleManager) -> Self {
@@ -226,6 +346,17 @@ impl BackendService {
         // Build the SmartContract proto with all metadata
         let mut smart_contract = new_contract.clone();
 
+        // Java VMActuator.create() forces version = 1 for newly created contracts
+        // when ALLOW_TVM_COMPATIBLE_EVM is enabled. This affects downstream behavior
+        // (e.g., TransferContract rejects transfers to version=1 contracts).
+        let allow_tvm_compatible_evm = storage_adapter
+            .get_allow_tvm_compatible_evm()
+            .map_err(|e| format!("Failed to get ALLOW_TVM_COMPATIBLE_EVM: {}", e))?;
+        if allow_tvm_compatible_evm == 1 {
+            smart_contract.version = 1;
+            debug!("Setting SmartContract.version = 1 (ALLOW_TVM_COMPATIBLE_EVM enabled)");
+        }
+
         // Set the contract_address to the EVM-created address (21-byte TRON format)
         let tron_address = storage_adapter.to_tron_address_21(created_address).to_vec();
         smart_contract.contract_address = tron_address.clone();
@@ -264,8 +395,8 @@ impl BackendService {
         storage_adapter.put_smart_contract(&smart_contract)
             .map_err(|e| format!("Failed to persist SmartContract to ContractStore: {}", e))?;
 
-        info!("Successfully persisted SmartContract: name='{}', origin_energy_limit={}, consume_user_resource_percent={}",
-              smart_contract.name, smart_contract.origin_energy_limit, smart_contract.consume_user_resource_percent);
+        info!("Successfully persisted SmartContract: name='{}', version={}, origin_energy_limit={}, consume_user_resource_percent={}",
+              smart_contract.name, smart_contract.version, smart_contract.origin_energy_limit, smart_contract.consume_user_resource_percent);
 
         // Ensure AccountStore entry for the contract has the correct type/name (Contract account).
         let mut contract_account = storage_adapter
@@ -290,6 +421,74 @@ impl BackendService {
         Ok(())
     }
 
+    /// Extract TRC-10 call_token_value transfer for CreateSmartContract
+    ///
+    /// When ALLOW_TVM_TRANSFER_TRC10 is enabled and call_token_value > 0,
+    /// Java's VMActuator transfers TRC-10 tokens from owner to contract before execution.
+    /// This function returns the corresponding Trc10Change to be emitted on success.
+    ///
+    /// Returns: Some(Trc10Change) if TRC-10 transfer is needed, None otherwise.
+    pub(crate) fn extract_create_contract_trc10_transfer(
+        &self,
+        storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore,
+        transaction: &TronTransaction,
+        created_address: &revm_primitives::Address,
+    ) -> Result<Option<tron_backend_execution::Trc10Change>, String> {
+        use prost::Message;
+        use tron_backend_execution::protocol::CreateSmartContract;
+
+        // Check if TRC-10 transfers are enabled
+        let allow_tvm_transfer_trc10 = storage_adapter
+            .tron_dynamic_property_i64(b"ALLOW_TVM_TRANSFER_TRC10")
+            .map_err(|e| format!("Failed to get ALLOW_TVM_TRANSFER_TRC10: {}", e))?
+            .unwrap_or(0);
+
+        if allow_tvm_transfer_trc10 == 0 {
+            return Ok(None);
+        }
+
+        // Parse CreateSmartContract proto
+        let create_contract = CreateSmartContract::decode(transaction.data.as_ref())
+            .map_err(|e| format!("Failed to parse CreateSmartContract proto: {}", e))?;
+
+        let call_token_value = create_contract.call_token_value;
+        let token_id = create_contract.token_id;
+
+        // No transfer needed if token_value is 0 or negative
+        if call_token_value <= 0 {
+            return Ok(None);
+        }
+
+        // Build the TRC-10 transfer change
+        let owner_address = if create_contract.owner_address.len() == 21 {
+            // TRON 21-byte format - strip the 0x41 prefix
+            revm_primitives::Address::from_slice(&create_contract.owner_address[1..])
+        } else if create_contract.owner_address.len() == 20 {
+            revm_primitives::Address::from_slice(&create_contract.owner_address)
+        } else {
+            return Err(format!("Invalid owner_address length: {}", create_contract.owner_address.len()));
+        };
+
+        let token_id_str = token_id.to_string();
+
+        let trc10_change = tron_backend_execution::Trc10Change::AssetTransferred(
+            tron_backend_execution::Trc10AssetTransferred {
+                owner_address,
+                to_address: *created_address,
+                asset_name: token_id_str.as_bytes().to_vec(),
+                token_id: Some(token_id_str),
+                amount: call_token_value,
+            }
+        );
+
+        info!(
+            "CreateSmartContract TRC-10 transfer: owner={:?} -> contract={:?}, token_id={}, amount={}",
+            owner_address, created_address, token_id, call_token_value
+        );
+
+        Ok(Some(trc10_change))
+    }
+
     /// Execute a non-VM transaction with contract type dispatch
     /// Routes to specific handlers based on TRON contract type
     pub(crate) fn execute_non_vm_contract(
@@ -301,9 +500,20 @@ impl BackendService {
         // Java sends `Transaction.Contract.parameter` bytes, which are encoded as
         // `google.protobuf.Any { type_url, value }`. Most parsers below expect the inner
         // contract protobuf bytes, so unwrap once here.
+        //
+        // Payload-style contracts where `tx.data` is NOT the contract proto but a raw
+        // payload (e.g. URL bytes) must be excluded to avoid accidentally unwrapping a
+        // crafted payload that looks like a valid `Any` wrapper.
         let mut tx = transaction.clone();
-        if let Ok(inner) = Self::unwrap_any_value_if_present(tx.data.as_ref()) {
-            tx.data = revm_primitives::Bytes::from(inner);
+        let is_payload_style = matches!(
+            tx.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WitnessCreateContract)
+                | Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
+        );
+        if !is_payload_style {
+            if let Ok(inner) = Self::unwrap_any_value_if_present(tx.data.as_ref()) {
+                tx.data = revm_primitives::Bytes::from(inner);
+            }
         }
         let transaction = &tx;
 
@@ -670,7 +880,6 @@ impl BackendService {
         }
 
         let execution_config = self.get_execution_config()?;
-        let fee_config = &execution_config.fees;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         // TransferContract amount is a signed long; fixtures encode it into the low 8 bytes of
@@ -684,6 +893,9 @@ impl BackendService {
         };
 
         // Validation parity with java-tron TransferActuator.validate()
+        // Java checks: DecodeUtil.addressValid(ownerAddress) then DecodeUtil.addressValid(toAddress)
+        // addressValid requires: non-null, exactly 21 bytes, prefix == configured prefix byte.
+        // Error ordering: ownerAddress validation MUST happen before toAddress validation.
         let prefix = storage_adapter.address_prefix();
         if let Some(owner_raw) = transaction.metadata.from_raw.as_deref() {
             if owner_raw.len() != 21 || owner_raw[0] != prefix {
@@ -691,10 +903,15 @@ impl BackendService {
             }
         }
 
-        // For TRANSFER_CONTRACT specifically, we need the 'to' address.
-        let to_address = match transaction.to {
-            Some(addr) => addr,
-            None => {
+        // Validate to_raw using the same rules as Java's DecodeUtil.addressValid(toAddress).
+        // We derive the 20-byte EVM address directly from validated to_raw bytes rather than
+        // relying on the pre-converted transaction.to (which may be None for malformed addresses
+        // that failed during gRPC conversion).
+        let to_address = match transaction.metadata.to_raw.as_deref() {
+            Some(raw) if raw.len() == 21 && raw[0] == prefix => {
+                revm_primitives::Address::from_slice(&raw[1..])
+            }
+            _ => {
                 return Err("Invalid toAddress!".to_string());
             }
         };
@@ -743,19 +960,10 @@ impl BackendService {
             0
         };
 
-        // Phase 3 Fix: Only calculate fee if explicitly configured for non-VM transactions
-        let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
-            Some(flat_fee) => {
-                debug!("Using configured flat fee for non-VM: {} SUN", flat_fee);
-                flat_fee
-            },
-            None => {
-                // Phase 3 Fix: Default to no forced TRX fee for non-VM transactions
-                // TRON uses free bandwidth first; only charge TRX when free bandwidth is insufficient
-                debug!("No flat fee configured for non-VM, using 0 (TRON free bandwidth semantics)");
-                0
-            }
-        };
+        // Strict actuator parity: Java's TransferActuator.calcFee() returns TRANSFER_FEE = 0.
+        // The only fee for TransferContract is the create-account-fee when recipient is new.
+        // No additional flat fee is applied at the actuator level.
+        let fee_amount: u64 = 0;
 
         // Contract-type restrictions (java: ForbidTransferToContract, AllowTvmCompatibleEvm).
         // Apply after fee adjustment for existence, but before balance checks.
@@ -802,10 +1010,9 @@ impl BackendService {
         }
 
         // Validate sender has enough balance for amount + fees (java: addExact(amount, fee)).
+        // fee = create_account_fee (TRANSFER_FEE is always 0 in Java's TransferActuator).
         let fee_i64 = i64::try_from(create_account_fee)
-            .map_err(|_| "long overflow".to_string())?
-            .checked_add(i64::try_from(fee_amount).map_err(|_| "long overflow".to_string())?)
-            .ok_or_else(|| "long overflow".to_string())?;
+            .map_err(|_| "long overflow".to_string())?;
         let total_cost_i64 = amount_i64
             .checked_add(fee_i64)
             .ok_or_else(|| "long overflow".to_string())?;
@@ -828,7 +1035,7 @@ impl BackendService {
         // Track AEXT for bandwidth if in tracked mode (after validation to ensure validate_fail has 0 writes)
         let mut aext_map = std::collections::HashMap::new();
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::{AccountAext, ResourceTracker, BandwidthParams};
 
             // Get current AEXT for sender (or initialize with defaults)
             let current_aext = storage_adapter
@@ -836,37 +1043,104 @@ impl BackendService {
                 .map_err(|e| format!("Failed to get account AEXT: {}", e))?
                 .unwrap_or_else(AccountAext::with_defaults);
 
-            // Get FREE_NET_LIMIT from dynamic properties
+            // Get dynamic properties for bandwidth tracking
             let free_net_limit = storage_adapter
                 .get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+            let public_net_limit = storage_adapter
+                .get_public_net_limit()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_LIMIT: {}", e))?;
+            let public_net_usage = storage_adapter
+                .get_public_net_usage()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_USAGE: {}", e))?;
+            let public_net_time = storage_adapter
+                .get_public_net_time()
+                .map_err(|e| format!("Failed to get PUBLIC_NET_TIME: {}", e))?;
+            let transaction_fee = storage_adapter
+                .get_transaction_fee()
+                .map_err(|e| format!("Failed to get TRANSACTION_FEE: {}", e))?;
+            let create_account_bandwidth_rate = storage_adapter
+                .get_create_new_account_bandwidth_rate()
+                .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?;
 
-            // Track bandwidth usage (returns path, before_aext, after_aext)
-            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
-                &transaction.from,
-                bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
-                &current_aext,
+            // Compute account_net_limit from frozen bandwidth
+            let account_net_limit = {
+                let freeze_record = storage_adapter
+                    .get_freeze_record(&transaction.from, 0) // 0 = BANDWIDTH
+                    .map_err(|e| format!("Failed to get freeze record: {}", e))?;
+                let total_net_weight = storage_adapter
+                    .get_total_net_weight()
+                    .map_err(|e| format!("Failed to get TOTAL_NET_WEIGHT: {}", e))?;
+                let total_net_limit = storage_adapter
+                    .get_total_net_limit()
+                    .map_err(|e| format!("Failed to get TOTAL_NET_LIMIT: {}", e))?;
+                if let Some(record) = freeze_record {
+                    if total_net_weight > 0 {
+                        // Java: calculateGlobalNetLimit = (frozenBalance / TRX_PRECISION) * (totalNetLimit / totalNetWeight)
+                        let frozen_trx = record.frozen_amount as i64 / TRX_PRECISION as i64;
+                        frozen_trx.saturating_mul(total_net_limit) / total_net_weight
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            };
+
+            // Java uses headSlot = (latestBlockTimestamp - genesisTimestamp) / 3000
+            let genesis_ts = execution_config.remote.genesis_block_timestamp;
+            let now_slot = (context.block_timestamp as i64 - genesis_ts) / 3000;
+
+            let creates_new_account = recipient_opt.is_none();
+
+            let bw_params = BandwidthParams {
+                bytes_used: bandwidth_used as i64,
+                now: now_slot,
+                current_aext,
+                account_net_limit,
                 free_net_limit,
-            )
-            .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+                public_net_limit,
+                public_net_usage,
+                public_net_time,
+                creates_new_account,
+                create_account_bandwidth_rate,
+                transaction_fee,
+            };
+
+            let bw_result = ResourceTracker::track_bandwidth_v2(&bw_params)
+                .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
             // Persist after AEXT to storage
             storage_adapter
-                .set_account_aext(&transaction.from, &after_aext)
+                .set_account_aext(&transaction.from, &bw_result.after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &bw_result.after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
+
+            // Persist global PUBLIC_NET changes if FREE_NET path was used
+            if let Some(new_pub_usage) = bw_result.new_public_net_usage {
+                storage_adapter
+                    .set_public_net_usage(new_pub_usage)
+                    .map_err(|e| format!("Failed to persist PUBLIC_NET_USAGE: {}", e))?;
+            }
+            if let Some(new_pub_time) = bw_result.new_public_net_time {
+                storage_adapter
+                    .set_public_net_time(new_pub_time)
+                    .map_err(|e| format!("Failed to persist PUBLIC_NET_TIME: {}", e))?;
+            }
 
             // Add to aext_map
-            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
+            aext_map.insert(transaction.from, (bw_result.before_aext.clone(), bw_result.after_aext.clone()));
 
             debug!(
                 "AEXT tracked for transfer: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
                 transaction.from,
-                path,
-                before_aext.net_usage,
-                after_aext.net_usage,
-                before_aext.free_net_usage,
-                after_aext.free_net_usage
+                bw_result.path,
+                bw_result.before_aext.net_usage,
+                bw_result.after_aext.net_usage,
+                bw_result.before_aext.free_net_usage,
+                bw_result.after_aext.free_net_usage
             );
         }
 
@@ -1023,67 +1297,9 @@ impl BackendService {
             }
         }
 
-        // Handle fee based on configuration (only if fee_amount > 0)
-        if fee_amount > 0 {
-            match fee_config.mode.as_str() {
-                "burn" => {
-                    debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
-                    // No additional state change - fee is burned (supply reduction)
-                },
-                "blackhole" => {
-                    if !fee_config.blackhole_address_base58.is_empty() {
-                        // Parse blackhole address and credit it
-                        match tron_backend_common::from_tron_address(&fee_config.blackhole_address_base58) {
-                            Ok(blackhole_bytes) => {
-                                let blackhole_address = revm_primitives::Address::from_slice(&blackhole_bytes);
-                                
-                                // Load blackhole account (track existence)
-                                let blackhole_opt = storage_adapter.get_account(&blackhole_address)
-                                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?;
-                                let blackhole_account = blackhole_opt.clone().unwrap_or_default();
-                                
-                                // Credit blackhole account with fee
-                                let new_blackhole_balance = blackhole_account.balance + revm_primitives::U256::from(fee_amount);
-                                let new_blackhole_account = revm_primitives::AccountInfo {
-                                    balance: new_blackhole_balance,
-                                    nonce: blackhole_account.nonce,
-                                    code_hash: blackhole_account.code_hash,
-                                    code: blackhole_account.code.clone(),
-                                };
-                                
-                                // Add blackhole account change
-                                let old_blackhole_account = if blackhole_opt.is_none() {
-                                    None // Account creation if needed
-                                } else {
-                                    Some(blackhole_account)
-                                };
-                                
-                                state_changes.push(TronStateChange::AccountChange {
-                                    address: blackhole_address,
-                                    old_account: old_blackhole_account,
-                                    new_account: Some(new_blackhole_account.clone()),
-                                });
-                                // Persist blackhole account update
-                                storage_adapter
-                                    .set_account(blackhole_address, new_blackhole_account.clone())
-                                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
-                                
-                                debug!("Credited fee {} SUN to blackhole address {}", fee_amount, fee_config.blackhole_address_base58);
-                            },
-                            Err(e) => {
-                                warn!("Invalid blackhole address '{}': {}, falling back to burn mode", 
-                                      fee_config.blackhole_address_base58, e);
-                            }
-                        }
-                    }
-                },
-                _ => {
-                    debug!("Unknown fee mode '{}', defaulting to burn", fee_config.mode);
-                }
-            }
-        } else {
-            debug!("No fee to process (fee_amount = 0), skipping fee handling");
-        }
+        // fee_amount is always 0 for TransferContract (strict actuator parity).
+        // Only create-account-fee is charged (handled above).
+        debug_assert_eq!(fee_amount, 0, "TransferContract fee_amount must be 0 for actuator parity");
         
         // Sort state changes deterministically for digest parity
         state_changes.sort_by(|a, b| {
@@ -1108,8 +1324,8 @@ impl BackendService {
             }
         });
         
-        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, fee: {} SUN, state_changes: {}",
-               bandwidth_used, fee_amount, state_changes.len());
+        debug!("Non-VM transaction executed successfully - bandwidth_used: {}, create_account_fee: {}, state_changes: {}",
+               bandwidth_used, create_account_fee, state_changes.len());
 
         Ok(TronExecutionResult {
             success: true,
@@ -1222,10 +1438,69 @@ impl BackendService {
         debug!("Created witness entry for address {:?}", transaction.from);
 
         // 9. Mark owner account as witness (Account.is_witness = true)
+        //    and set default witness permissions if ALLOW_MULTI_SIGN == 1
+        //    (Java: AccountCapsule.setDefaultWitnessPermission)
         let mut owner_account_proto = storage_adapter.get_account_proto(&transaction.from)
             .map_err(|e| format!("Failed to load owner account proto: {}", e))?
             .ok_or_else(|| format!("account[{}] not exists", readable_owner))?;
         owner_account_proto.is_witness = true;
+
+        if allow_multi_sign {
+            use tron_backend_execution::protocol::{Key, Permission, permission::PermissionType};
+
+            // Java: setDefaultWitnessPermission(dynamicStore)
+            // Always set witness_permission (id=1, type=Witness)
+            owner_account_proto.witness_permission = Some(Permission {
+                r#type: PermissionType::Witness as i32,
+                id: 1,
+                permission_name: "witness".to_string(),
+                threshold: 1,
+                parent_id: 0,
+                operations: vec![],
+                keys: vec![Key {
+                    address: owner_from_field.to_vec(),
+                    weight: 1,
+                }],
+            });
+
+            // If owner_permission is not set, initialize default (id=0, type=Owner)
+            if owner_account_proto.owner_permission.is_none() {
+                owner_account_proto.owner_permission = Some(Permission {
+                    r#type: PermissionType::Owner as i32,
+                    id: 0,
+                    permission_name: "owner".to_string(),
+                    threshold: 1,
+                    parent_id: 0,
+                    operations: vec![],
+                    keys: vec![Key {
+                        address: owner_from_field.to_vec(),
+                        weight: 1,
+                    }],
+                });
+            }
+
+            // If active_permission is empty, add default (id=2, type=Active)
+            if owner_account_proto.active_permission.is_empty() {
+                let active_ops = storage_adapter.get_active_default_operations()
+                    .map_err(|e| format!("Failed to get ACTIVE_DEFAULT_OPERATIONS: {}", e))?;
+
+                owner_account_proto.active_permission.push(Permission {
+                    r#type: PermissionType::Active as i32,
+                    id: 2,
+                    permission_name: "active".to_string(),
+                    threshold: 1,
+                    parent_id: 0,
+                    operations: active_ops,
+                    keys: vec![Key {
+                        address: owner_from_field.to_vec(),
+                        weight: 1,
+                    }],
+                });
+            }
+
+            debug!("Set default witness permissions for account {}", readable_owner);
+        }
+
         storage_adapter.put_account_proto(&transaction.from, &owner_account_proto)
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
@@ -1329,11 +1604,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &transaction.from,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -1341,6 +1619,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&transaction.from, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
@@ -1387,7 +1668,26 @@ impl BackendService {
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        use tron_backend_execution::{TronExecutionResult, TronStateChange, WitnessInfo};
+        use tron_backend_execution::{TronExecutionResult, TronStateChange};
+
+        // 0. Validate contract parameter type (Any.is) and decodability (Any.unpack)
+        //    when raw Any is available.  Mirrors Java WitnessUpdateActuator.validate():
+        //    - any.is(WitnessUpdateContract.class)  →  type_url check
+        //    - any.unpack(WitnessUpdateContract.class) →  protobuf decode check
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.WitnessUpdateContract") {
+                return Err(
+                    "contract type error, expected type [WitnessUpdateContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+            // Validate that the value bytes are decodable as WitnessUpdateContract.
+            // WitnessUpdateContract { bytes owner_address = 1; bytes update_url = 12; }
+            // Java throws ContractValidateException(e.getMessage()) on decode failure.
+            if !any.value.is_empty() {
+                Self::validate_witness_update_contract_bytes(&any.value)?;
+            }
+        }
 
         // 1. Validate owner address (java-tron: DecodeUtil.addressValid)
         let prefix = storage_adapter.address_prefix();
@@ -1426,38 +1726,24 @@ impl BackendService {
 
         debug!("WitnessUpdate: new URL = {}", new_url);
 
-        // 4. Load existing witness (required)
-        let existing_witness = storage_adapter.get_witness(&owner)
+        // 4. Load existing witness (required) — validates witness existence
+        let _existing_witness = storage_adapter.get_witness(&owner)
             .map_err(|e| format!("Failed to load witness: {}", e))?
             .ok_or_else(|| {
                 warn!("WITNESS_UPDATE_CONTRACT: Witness does not exist for {}", owner_tron);
                 "Witness does not exist".to_string()
             })?;
 
-        let old_url = existing_witness.url.clone();
-
-        // 5. Create updated witness entry with new URL, preserving address and vote_count
-        let updated_witness = WitnessInfo::new(
-            existing_witness.address,
-            new_url.clone(),
-            existing_witness.vote_count,
+        // 5. Update only the URL field, preserving all other protocol.Witness fields
+        //    (pub_key, total_produced, total_missed, latest_block_num, latest_slot_num, is_jobs).
+        //    Java always calls witnessStore.put(...) even when URL is unchanged, so we do the same.
+        storage_adapter
+            .update_witness_url(&owner, &new_url)
+            .map_err(|e| format!("Failed to update witness: {}", e))?;
+        info!(
+            "Updated witness URL: owner={}, new_url='{}'",
+            owner_tron, new_url
         );
-
-        // 6. Persist updated witness only if URL actually changes to avoid no-op writes
-        if new_url != old_url {
-            storage_adapter
-                .put_witness(&updated_witness)
-                .map_err(|e| format!("Failed to update witness: {}", e))?;
-            info!(
-                "Updated witness URL: owner={}, old_url='{}', new_url='{}'",
-                owner_tron, old_url, new_url
-            );
-        } else {
-            info!(
-                "Witness update is a no-op (URL unchanged): owner={}, url='{}'",
-                owner_tron, new_url
-            );
-        }
 
         // 7. Do not emit state changes for WitnessUpdateContract to match embedded semantics
         // (Java embedded CSV logs 0 state changes and empty digest for witness updates)
@@ -1483,11 +1769,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (_path, before_aext, after_aext) = tron_backend_execution::ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64,
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -1495,6 +1784,9 @@ impl BackendService {
             // Persist updated AEXT
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Populate aext_map
             aext_map.insert(owner, (before_aext, after_aext));
@@ -1778,8 +2070,37 @@ impl BackendService {
                               sum_sun, tron_power_sun));
         }
 
-        // 5. Phase 1: Skip withdrawReward (log only)
-        info!("Skipping withdrawReward for {} (Phase 1 - delegation not yet ported)", owner_tron);
+        // 5. Withdraw delegation rewards (Java: mortgageService.withdrawReward at start of countVoteAccount)
+        // Must be called BEFORE mutating votes, since reward computation uses the old vote set.
+        let reward = contracts::delegation::withdraw_reward(storage_adapter, &owner)
+            .map_err(|e| format!("Failed to withdraw reward: {}", e))?;
+        if reward > 0 {
+            info!("VoteWitness withdrawReward: owner={} reward={} SUN", owner_tron, reward);
+        }
+
+        // 5.5 Load owner account proto (after withdrawReward, matching Java ordering)
+        // Java: accountCapsule = accountStore.get(ownerAddress) after withdrawReward
+        let mut owner_account = storage_adapter.get_account_proto(&owner)
+            .map_err(|e| format!("Failed to get owner account: {}", e))?
+            .ok_or_else(|| format!("Account[{}] not exists", readable_owner_address))?;
+
+        // 5.6 Apply reward to allowance (Java: MortgageService.adjustAllowance)
+        // Java skips if amount <= 0
+        if reward > 0 {
+            owner_account.allowance = owner_account.allowance.checked_add(reward)
+                .ok_or_else(|| "Allowance overflow".to_string())?;
+            info!("VoteWitness adjustAllowance: owner={} new_allowance={}", owner_tron, owner_account.allowance);
+        }
+
+        // 5.7 Initialize oldTronPower (Java: accountCapsule.initializeOldTronPower)
+        // Java: if (supportAllowNewResourceModel() && oldTronPowerIsNotInitialized())
+        //   initializeOldTronPower() → value = getTronPower(); if (value == 0) value = -1
+        if new_model && owner_account.old_tron_power == 0 {
+            let tron_power = storage_adapter.compute_tron_power_in_sun(&owner, false)
+                .map_err(|e| format!("Failed to compute tron power for oldTronPower: {}", e))?;
+            owner_account.old_tron_power = if tron_power == 0 { -1 } else { tron_power as i64 };
+            info!("VoteWitness: initialized oldTronPower to {} for {}", owner_account.old_tron_power, owner_tron);
+        }
 
         // 6. Load or create VotesRecord
         // java-tron semantics:
@@ -1846,10 +2167,7 @@ impl BackendService {
 
         // 8.5 Update Account.votes list to match embedded semantics.
         // java-tron clears the existing votes and appends the new ones on every vote.
-        let mut owner_account = storage_adapter.get_account_proto(&owner)
-            .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or_else(|| format!("Account[{}] not exists", readable_owner_address))?;
-
+        // Reuse owner_account loaded at step 5.5 (already has allowance + oldTronPower updates).
         owner_account.votes.clear();
         for (vote_address, vote_count) in &votes {
             let vote_count_i64: i64 = (*vote_count).try_into()
@@ -1861,8 +2179,9 @@ impl BackendService {
             });
         }
 
+        // Persist all account changes: allowance (from withdrawReward), oldTronPower, and votes
         storage_adapter.put_account_proto(&owner, &owner_account)
-            .map_err(|e| format!("Failed to persist owner account votes: {}", e))?;
+            .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
         // 9. Build result with CSV parity
         // Get owner account for state change
@@ -1894,11 +2213,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -1906,6 +2228,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -1950,26 +2275,61 @@ impl BackendService {
 
     /// Execute an ACCOUNT_UPDATE_CONTRACT
     /// Updates the account name for a given address with proper validation and CSV parity
+    ///
+    /// End-to-end parity with Java UpdateAccountActuator:
+    /// 1. Unpacks contract_parameter.value as AccountUpdateContract protobuf
+    /// 2. Validates owner_address via DecodeUtil.addressValid (21 bytes, correct prefix)
+    /// 3. Validates account_name via TransactionUtil.validAccountName (allows empty, max 200)
+    /// 4. Validates consistency between decoded proto fields and transaction fields
+    /// 5. Tracks bandwidth/AEXT usage for resource accounting
     fn execute_account_update_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        _context: &TronExecutionContext,
+        context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
+        use contracts::proto::parse_account_update_contract;
 
-        // Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.AccountUpdateContract") {
-                return Err(
-                    "contract type error, expected type [AccountUpdateContract], real type[class com.google.protobuf.Any]"
-                        .to_string(),
+        // 1. Validate contract parameter type and unpack (Any.is + Any.unpack parity)
+        // Java: any.unpack(AccountUpdateContract.class) - fails with InvalidProtocolBufferException
+        let (decoded_owner_address, decoded_account_name): (Option<Vec<u8>>, Option<Vec<u8>>) =
+            if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+                // Validate type URL
+                if !Self::any_type_url_matches(&any.type_url, "protocol.AccountUpdateContract") {
+                    return Err(
+                        "contract type error, expected type [AccountUpdateContract], real type[class com.google.protobuf.Any]"
+                            .to_string(),
+                    );
+                }
+
+                // Parse the protobuf value - mirrors Java's any.unpack()
+                let parsed = parse_account_update_contract(&any.value)
+                    .map_err(|e| format!("Protocol buffer parse error: {}", e))?;
+
+                (Some(parsed.owner_address), Some(parsed.account_name))
+            } else {
+                (None, None)
+            };
+
+        // 2. Determine canonical source for name_bytes
+        // Prefer decoded proto if available, fall back to transaction.data
+        let name_bytes: &[u8] = if let Some(ref decoded_name) = decoded_account_name {
+            // Validate consistency: decoded account_name should match transaction.data
+            if transaction.data.as_ref() != decoded_name.as_slice() {
+                warn!(
+                    "AccountUpdate: decoded account_name differs from transaction.data: decoded={} tx_data={}",
+                    decoded_name.len(),
+                    transaction.data.len()
                 );
+                // Use decoded proto as canonical source (matches Java behavior)
             }
-        }
+            decoded_name.as_slice()
+        } else {
+            transaction.data.as_ref()
+        };
 
         let owner_tron = tron_backend_common::to_tron_address(&transaction.from);
-        let name_bytes = transaction.data.as_ref();
 
         info!(
             "AccountUpdate owner={} name_len={}",
@@ -1977,7 +2337,7 @@ impl BackendService {
             name_bytes.len()
         );
 
-        // Validation parity: TransactionUtil.validAccountName(bytes)
+        // 3. Validation parity: TransactionUtil.validAccountName(bytes)
         // - allow empty
         // - max length = 200
         if name_bytes.len() > 200 {
@@ -1989,25 +2349,41 @@ impl BackendService {
             return Err("Invalid accountName".to_string());
         }
 
-        // Validation parity: DecodeUtil.addressValid(ownerAddress)
-        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
-            let owner_address_valid = match from_raw.len() {
-                21 => from_raw[0] == 0x41 || from_raw[0] == 0xa0,
-                20 => true,
-                _ => false,
-            };
-            if !owner_address_valid {
-                return Err("Invalid ownerAddress".to_string());
+        // 4. Validation parity: DecodeUtil.addressValid(ownerAddress)
+        // Java requires: len == 21 AND prefix == configured addressPreFixByte
+        // This matches DecodeUtil.addressValid exactly:
+        //   - Empty address → false (warn: "Address is empty")
+        //   - len != 21 → false (warn: "Address length need 42 but...")
+        //   - prefix != addressPreFixByte → false (warn: "Address need prefix with...")
+        let from_raw = transaction.metadata.from_raw.as_deref()
+            .ok_or_else(|| "Invalid ownerAddress".to_string())?;
+
+        let expected_prefix = storage_adapter.address_prefix();
+        let owner_address_valid = from_raw.len() == 21 && from_raw[0] == expected_prefix;
+        if !owner_address_valid {
+            return Err("Invalid ownerAddress".to_string());
+        }
+
+        // 5. Validate consistency: decoded owner_address should match from_raw
+        if let Some(ref decoded_owner) = decoded_owner_address {
+            if !decoded_owner.is_empty() && decoded_owner.as_slice() != from_raw {
+                warn!(
+                    "AccountUpdate: decoded owner_address differs from from_raw: decoded_len={} from_raw_len={}",
+                    decoded_owner.len(),
+                    from_raw.len()
+                );
+                // For strict parity, we could reject here, but Java uses decoded proto internally
+                // and the request mapping ensures they match. Log warning but proceed.
             }
         }
 
-        // Validation: owner account must exist (java: \"Account does not exist\")
+        // 6. Validation: owner account must exist (java: "Account does not exist")
         let owner_account = storage_adapter
             .get_account(&transaction.from)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or_else(|| "Account does not exist".to_string())?;
 
-        // Validation: only-set-once + duplicate name checks depend on ALLOW_UPDATE_ACCOUNT_NAME
+        // 7. Validation: only-set-once + duplicate name checks depend on ALLOW_UPDATE_ACCOUNT_NAME
         let owner_proto = storage_adapter
             .get_account_proto(&transaction.from)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
@@ -2029,12 +2405,12 @@ impl BackendService {
             return Err("This name is existed".to_string());
         }
 
-        // Apply: persist account name and update account-index (name -> address).
+        // 8. Apply: persist account name and update account-index (name -> address).
         storage_adapter
             .set_account_name(transaction.from, name_bytes)
             .map_err(|e| format!("Failed to set account name: {}", e))?;
 
-        // State Changes: emit exactly one account-level change for CSV parity
+        // 9. State Changes: emit exactly one account-level change for CSV parity
         // old_account == new_account (no balance/nonce/code changes) to match embedded journaled no-op
         let state_changes = vec![
             TronStateChange::AccountChange {
@@ -2044,10 +2420,62 @@ impl BackendService {
             }
         ];
 
-        // Calculate bandwidth based on transaction payload size
+        // 10. Calculate bandwidth based on transaction payload size
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        // Result: success with energy_used=0, exactly 1 state change
+        // 11. AEXT tracking for end-to-end parity (bandwidth/resource accounting)
+        let execution_config = self.get_execution_config()?;
+        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
+
+        let mut aext_map = std::collections::HashMap::new();
+        if aext_mode == "tracked" {
+            use tron_backend_execution::{AccountAext, ResourceTracker};
+
+            // Get current AEXT for owner (or initialize with proper defaults including window size 28800)
+            let current_aext = storage_adapter
+                .get_account_aext(&transaction.from)
+                .map_err(|e| format!("Failed to get owner AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            // Get free net limit from dynamic properties (default: 5000)
+            let free_net_limit = storage_adapter
+                .get_free_net_limit()
+                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
+            // Track bandwidth usage
+            let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &transaction.from,
+                bandwidth_used as i64,
+                now_slot,
+                &current_aext,
+                free_net_limit,
+            ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Persist after AEXT to storage
+            storage_adapter
+                .set_account_aext(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&transaction.from, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
+
+            // Add to aext_map
+            aext_map.insert(transaction.from, (before_aext.clone(), after_aext.clone()));
+
+            debug!(
+                "AEXT tracked for account_update: owner={}, before_net_usage={}, after_net_usage={}, before_free_net={}, after_free_net={}",
+                owner_tron,
+                before_aext.net_usage,
+                after_aext.net_usage,
+                before_aext.free_net_usage,
+                after_aext.free_net_usage
+            );
+        }
+
+        // Result: success with energy_used=0, state change, and AEXT tracking
         Ok(TronExecutionResult {
             success: true,
             return_data: revm_primitives::Bytes::new(), // No return data for account update
@@ -2056,8 +2484,8 @@ impl BackendService {
             state_changes,      // Exactly one account-level change
             logs: vec![],       // No logs for account update
             error: None,
-            aext_map: std::collections::HashMap::new(), // Will be populated for tracked mode
-            freeze_changes: vec![], // Will be populated by freeze-related contracts
+            aext_map,           // Populated with tracked AEXT if mode is "tracked"
+            freeze_changes: vec![], // Not applicable for account update
             global_resource_changes: vec![], // Not applicable for account update
             trc10_changes: vec![], // Not applicable for account update
             vote_changes: vec![], // Not applicable for account update
@@ -2097,14 +2525,17 @@ impl BackendService {
         // AccountCreateContract protobuf:
         //   bytes owner_address = 1;
         //   bytes account_address = 2; (target account to create)
-        //   AccountType type = 3;      (ignored - always Normal)
+        //   AccountType type = 3;      (account type enum)
         let contract_bytes = transaction
             .metadata
             .contract_parameter
             .as_ref()
             .map(|any| any.value.as_slice())
             .unwrap_or(transaction.data.as_ref());
-        let (owner, target_address) = self.parse_account_create_contract(contract_bytes)?;
+
+        // Get expected address prefix for strict validation (matches Java DecodeUtil.addressValid)
+        let expected_prefix = storage_adapter.address_prefix();
+        let (owner, target_address, account_type) = self.parse_account_create_contract(contract_bytes, expected_prefix)?;
         let owner_tron = tron_backend_common::to_tron_address(&owner);
         let owner_tron_21 = storage_adapter.to_tron_address_21(&owner);
         let readable_owner_address = revm_primitives::hex::encode(owner_tron_21);
@@ -2113,8 +2544,8 @@ impl BackendService {
         let target_tron = tron_backend_common::to_tron_address(&target_address);
 
         info!(
-            "AccountCreate: owner={}, target={}",
-            owner_tron, target_tron
+            "AccountCreate: owner={}, target={}, type={}",
+            owner_tron, target_tron, account_type
         );
 
         // 2. Validate owner account exists
@@ -2201,7 +2632,8 @@ impl BackendService {
             new_account: Some(new_target_account.clone()),
         });
 
-        // Persist new account (include create_time for fixture parity).
+        // Persist new account (include create_time and account_type for fixture parity).
+        // Java's AccountCapsule(AccountCreateContract, ...) stores the contract's type field.
         use tron_backend_execution::protocol::permission::PermissionType;
         use tron_backend_execution::protocol::{Account as ProtoAccount, Key, Permission};
         let create_time = storage_adapter
@@ -2216,6 +2648,7 @@ impl BackendService {
         let mut target_proto = ProtoAccount {
             address: target_address_bytes.clone(),
             create_time,
+            r#type: account_type, // Respect contract's type field (matches Java AccountCapsule)
             ..Default::default()
         };
 
@@ -2316,16 +2749,31 @@ impl BackendService {
             }
         });
 
-        // 12. Calculate bandwidth usage
-        let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
+        // 12. Calculate bandwidth usage with CREATE_NEW_ACCOUNT_BANDWIDTH_RATE multiplier
+        // Java BandwidthProcessor: netCost = bytes * createNewAccountBandwidthRatio
+        let raw_bandwidth_bytes = Self::calculate_bandwidth_usage(transaction);
+        let bandwidth_rate = storage_adapter.get_create_new_account_bandwidth_rate()
+            .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?;
+        let net_cost = (raw_bandwidth_bytes as i64).saturating_mul(bandwidth_rate);
+
+        info!(
+            "AccountCreate bandwidth: raw_bytes={}, rate={}, netCost={}",
+            raw_bandwidth_bytes, bandwidth_rate, net_cost
+        );
 
         // 13. Track AEXT for bandwidth if in tracked mode
+        // Implements Java BandwidthProcessor create-account path selection:
+        // 1. Try ACCOUNT_NET (if account has frozen bandwidth)
+        // 2. Try FREE_NET (if public bandwidth available)
+        // 3. Fall back to FEE (charge CREATE_ACCOUNT_FEE)
         let execution_config = self.get_execution_config()?;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
         let mut aext_map = std::collections::HashMap::new();
+        let mut bandwidth_path_used = "none";
+        let mut create_account_fee_charged: u64 = 0;
 
         if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, ResourceTracker};
+            use tron_backend_execution::{AccountAext, ResourceTracker, BandwidthPath};
 
             // Get current AEXT for owner (or initialize with defaults)
             let current_aext = storage_adapter.get_account_aext(&owner)
@@ -2336,38 +2784,97 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
-            // Track bandwidth usage (returns path, before_aext, after_aext)
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
+            // Track bandwidth usage with netCost (not raw bytes) - matches Java semantics
             let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
-                bandwidth_used as i64,
-                context.block_number as i64,
+                net_cost,  // Use netCost (bytes * rate) for create-account
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
 
+            bandwidth_path_used = match path {
+                BandwidthPath::AccountNet => "ACCOUNT_NET",
+                BandwidthPath::CreateAccount => "CREATE_ACCOUNT",
+                BandwidthPath::FreeNet => "FREE_NET",
+                BandwidthPath::Fee => "FEE",
+            };
+
+            // If fee path is used, charge CREATE_ACCOUNT_FEE and update TOTAL_CREATE_ACCOUNT_COST
+            // This is separate from CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT
+            if path == BandwidthPath::Fee {
+                create_account_fee_charged = storage_adapter.get_create_account_fee()
+                    .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?;
+
+                // Validate owner has sufficient balance for CREATE_ACCOUNT_FEE
+                // This matches Java BandwidthProcessor.payFee() which checks balance before deduction
+                // Get current owner balance (after actuator fee deduction if any)
+                let current_owner_balance = storage_adapter.get_account(&owner)
+                    .map_err(|e| format!("Failed to reload owner account: {}", e))?
+                    .map(|acc| acc.balance.as_limbs()[0]) // Get u64 balance
+                    .unwrap_or(0);
+
+                if current_owner_balance < create_account_fee_charged {
+                    // Calculate available bandwidth for error message
+                    let available_bandwidth = free_net_limit.saturating_sub(after_aext.free_net_usage);
+                    let error_msg = format!(
+                        "account [{}] has insufficient bandwidth[{}] and balance[{}] to create new account",
+                        owner_tron,
+                        available_bandwidth,
+                        current_owner_balance
+                    );
+                    warn!("{}", error_msg);
+                    return Err(error_msg);
+                }
+
+                info!(
+                    "AccountCreate bandwidth insufficient, using fee fallback: CREATE_ACCOUNT_FEE={} SUN",
+                    create_account_fee_charged
+                );
+
+                // Update TOTAL_CREATE_ACCOUNT_COST dynamic property
+                storage_adapter.add_total_create_account_cost(create_account_fee_charged)
+                    .map_err(|e| format!("Failed to update TOTAL_CREATE_ACCOUNT_COST: {}", e))?;
+
+                // Note: The CREATE_ACCOUNT_FEE is already deducted by Java BandwidthProcessor
+                // before the actuator runs. In remote mode, the actual fee deduction happens
+                // on the Java side, so we just track the path here.
+            }
+
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
 
             debug!(
-                "AEXT tracked for account_create: owner={:?}, path={:?}, before_net_usage={}, after_net_usage={}",
-                owner, path, before_aext.net_usage, after_aext.net_usage
+                "AEXT tracked for account_create: owner={:?}, path={}, netCost={}, before_net_usage={}, after_net_usage={}",
+                owner, bandwidth_path_used, net_cost, before_aext.net_usage, after_aext.net_usage
             );
         }
 
+        // 14. Build receipt passthrough (matches Java ret.setStatus(fee, SUCESS))
+        let tron_transaction_result = TransactionResultBuilder::new()
+            .with_fee(fee as i64)
+            .build();
+
         info!(
-            "AccountCreate completed: fee={} SUN, state_changes={}, owner={}, target={}, fee_dest={}",
-            fee, state_changes.len(), owner_tron, target_tron, fee_destination
+            "AccountCreate completed: actuator_fee={} SUN, bandwidth_path={}, create_account_fee={}, state_changes={}, owner={}, target={}, fee_dest={}",
+            fee, bandwidth_path_used, create_account_fee_charged, state_changes.len(), owner_tron, target_tron, fee_destination
         );
 
         Ok(TronExecutionResult {
             success: true,
             return_data: revm_primitives::Bytes::new(),
             energy_used: 0, // System contracts use 0 energy
-            bandwidth_used,
+            bandwidth_used: raw_bandwidth_bytes,  // Report raw bytes for bandwidth_used field
             logs: Vec::new(), // No logs for account creation
             state_changes,
             error: None,
@@ -2377,7 +2884,7 @@ impl BackendService {
             trc10_changes: vec![],
             vote_changes: vec![],
             withdraw_changes: vec![],
-            tron_transaction_result: None,
+            tron_transaction_result: Some(tron_transaction_result), // Receipt passthrough
             contract_address: None,
         })
     }
@@ -2386,13 +2893,18 @@ impl BackendService {
     /// AccountCreateContract structure:
     ///   bytes owner_address = 1;   (field 1, length-delimited)
     ///   bytes account_address = 2; (field 2, length-delimited) - target account
-    ///   AccountType type = 3;      (field 3, varint) - ignored, always Normal
+    ///   AccountType type = 3;      (field 3, varint) - account type enum
+    ///
+    /// Returns (owner_address, account_address, account_type)
+    /// account_type defaults to 0 (Normal) if not present
     fn parse_account_create_contract(
         &self,
         data: &[u8],
-    ) -> Result<(revm::primitives::Address, revm::primitives::Address), String> {
+        expected_prefix: u8,
+    ) -> Result<(revm::primitives::Address, revm::primitives::Address, i32), String> {
         let mut owner_address_bytes: Option<Vec<u8>> = None;
         let mut account_address_bytes: Option<Vec<u8>> = None;
+        let mut account_type: i32 = 0; // Default: Normal
         let mut pos = 0;
 
         while pos < data.len() {
@@ -2427,9 +2939,10 @@ impl BackendService {
                     account_address_bytes = Some(data[pos..pos + length as usize].to_vec());
                     pos += length as usize;
                 },
-                (3, 0) => { // type (varint) - ignored, always use Normal
-                    let (_, bytes_read) = read_varint(&data[pos..])
+                (3, 0) => { // type (varint) - account type enum
+                    let (type_val, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read type: {}", e))?;
+                    account_type = type_val as i32;
                     pos += bytes_read;
                 },
                 _ => {
@@ -2444,23 +2957,24 @@ impl BackendService {
         let owner_address_bytes = owner_address_bytes.ok_or_else(|| "Invalid ownerAddress".to_string())?;
         let account_address_bytes = account_address_bytes.ok_or_else(|| "Invalid account address".to_string())?;
 
-        fn parse_tron_prefixed_address(bytes: &[u8]) -> Result<revm::primitives::Address, ()> {
+        // Validate address with configured prefix (matches Java DecodeUtil.addressValid semantics)
+        fn parse_tron_prefixed_address(bytes: &[u8], expected_prefix: u8) -> Result<revm::primitives::Address, &'static str> {
             if bytes.len() != 21 {
-                return Err(());
+                return Err("length");
             }
             let prefix = bytes[0];
-            if prefix != 0x41 && prefix != 0xa0 {
-                return Err(());
+            if prefix != expected_prefix {
+                return Err("prefix");
             }
             Ok(revm::primitives::Address::from_slice(&bytes[1..]))
         }
 
-        let owner_address = parse_tron_prefixed_address(&owner_address_bytes)
-            .map_err(|()| "Invalid ownerAddress".to_string())?;
-        let account_address = parse_tron_prefixed_address(&account_address_bytes)
-            .map_err(|()| "Invalid account address".to_string())?;
+        let owner_address = parse_tron_prefixed_address(&owner_address_bytes, expected_prefix)
+            .map_err(|_| "Invalid ownerAddress".to_string())?;
+        let account_address = parse_tron_prefixed_address(&account_address_bytes, expected_prefix)
+            .map_err(|_| "Invalid account address".to_string())?;
 
-        Ok((owner_address, account_address))
+        Ok((owner_address, account_address, account_type))
     }
 
     // =========================================================================
@@ -2469,81 +2983,11 @@ impl BackendService {
     // These contracts handle TRON governance proposals (parameter changes).
     // Java reference: ProposalCreateActuator, ProposalApproveActuator, ProposalDeleteActuator
 
+    /// Check if a proposal parameter code is supported.
+    /// Delegates to the proposal module's ProposalType enum.
+    #[allow(dead_code)]
     fn is_supported_proposal_parameter_code(code: i64) -> bool {
-        // Matches java-tron's ProposalUtil.ProposalType enum codes.
-        matches!(
-            code,
-            0 | 1
-                | 2
-                | 3
-                | 4
-                | 5
-                | 6
-                | 7
-                | 8
-                | 9
-                | 10
-                | 11
-                | 12
-                | 13
-                | 14
-                | 15
-                | 16
-                | 17
-                | 18
-                | 19
-                | 20
-                | 21
-                | 22
-                | 23
-                | 24
-                | 25
-                | 26
-                | 29
-                | 30
-                | 31
-                | 32
-                | 33
-                | 35
-                | 39
-                | 40
-                | 41
-                | 44
-                | 45
-                | 46
-                | 47
-                | 48
-                | 49
-                | 51
-                | 52
-                | 53
-                | 59
-                | 60
-                | 61
-                | 62
-                | 63
-                | 65
-                | 66
-                | 67
-                | 68
-                | 69
-                | 70
-                | 71
-                | 72
-                | 73
-                | 74
-                | 75
-                | 76
-                | 77
-                | 78
-                | 79
-                | 81
-                | 82
-                | 83
-                | 87
-                | 88
-                | 89
-        )
+        contracts::proposal::ProposalType::from_code(code).is_some()
     }
 
     /// Execute a PROPOSAL_CREATE_CONTRACT
@@ -2558,6 +3002,17 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
         use tron_backend_execution::protocol::Proposal;
+
+        // Java parity: Check type_url in Any wrapper (ProposalCreateActuator.validate()).
+        // If contract_parameter is provided, validate it matches the expected type.
+        if let Some(ref param) = transaction.metadata.contract_parameter {
+            if !param.type_url.ends_with("ProposalCreateContract") {
+                return Err(format!(
+                    "contract type error,expected type [ProposalCreateContract],real type[{}]",
+                    param.type_url
+                ));
+            }
+        }
 
         // 1. Parse ProposalCreateContract from transaction.data
         // ProposalCreateContract:
@@ -2602,67 +3057,10 @@ impl BackendService {
         info!("ProposalCreate: {} parameters", parameters.len());
 
         // 4. Validate proposal parameter values (java-tron: ProposalUtil.validator)
-        const LONG_VALUE: i64 = 100_000_000_000_000_000;
+        // Full parity with Java's ProposalUtil.validator() including fork gating,
+        // prerequisites, and "already active" checks.
         for (&code, &value) in parameters.iter() {
-            match code {
-                0 => {
-                    if value < 3 * 27 * 1000 || value > 24 * 3600 * 1000 {
-                        return Err("Bad chain parameter value, valid range is [3 * 27 * 1000,24 * 3600 * 1000]".to_string());
-                    }
-                }
-                1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 => {
-                    if value < 0 || value > LONG_VALUE {
-                        return Err(format!(
-                            "Bad chain parameter value, valid range is [0,{}]",
-                            LONG_VALUE
-                        ));
-                    }
-                }
-                9 => {
-                    if value != 1 {
-                        return Err(
-                            "This value[ALLOW_CREATION_OF_CONTRACTS] is only allowed to be 1"
-                                .to_string(),
-                        );
-                    }
-                }
-                10 => {
-                    let remove_power = storage_adapter
-                        .get_remove_the_power_of_the_gr()
-                        .map_err(|e| format!("Failed to get REMOVE_THE_POWER_OF_THE_GR: {}", e))?;
-                    if remove_power == -1 {
-                        return Err(
-                            "This proposal has been executed before and is only allowed to be executed once"
-                                .to_string(),
-                        );
-                    }
-                    if value != 1 {
-                        return Err(
-                            "This value[REMOVE_THE_POWER_OF_THE_GR] is only allowed to be 1"
-                                .to_string(),
-                        );
-                    }
-                }
-                18 => {
-                    if value != 1 {
-                        return Err(
-                            "This value[ALLOW_TVM_TRANSFER_TRC10] is only allowed to be 1"
-                                .to_string(),
-                        );
-                    }
-                    let allow_same_token_name = storage_adapter
-                        .get_allow_same_token_name()
-                        .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
-                    if allow_same_token_name == 0 {
-                        return Err("[ALLOW_SAME_TOKEN_NAME] proposal must be approved before [ALLOW_TVM_TRANSFER_TRC10] can be proposed".to_string());
-                    }
-                }
-                _ => {
-                    if !Self::is_supported_proposal_parameter_code(code) {
-                        return Err(format!("Does not support code : {}", code));
-                    }
-                }
-            }
+            contracts::proposal::validate_proposal_parameter(storage_adapter, code, value)?;
         }
 
         // 5. Get next proposal ID
@@ -2852,14 +3250,20 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
 
-        // 0. Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.ProposalApproveContract") {
-                return Err(
-                    "contract type error,expected type [ProposalApproveContract],real type[class com.google.protobuf.Any]"
-                        .to_string(),
-                );
-            }
+        // 0. Validate contract parameter presence and type (strict Java parity)
+        // Java: ProposalApproveActuator.validate() throws "No contract!" if this.any is null
+        let any = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .ok_or_else(|| "No contract!".to_string())?;
+
+        // Java: any.is(ProposalApproveContract.class) check
+        if !Self::any_type_url_matches(&any.type_url, "protocol.ProposalApproveContract") {
+            return Err(
+                "contract type error,expected type [ProposalApproveContract],real type[class com.google.protobuf.Any]"
+                    .to_string(),
+            );
         }
 
         // 1. Parse ProposalApproveContract
@@ -2867,12 +3271,7 @@ impl BackendService {
         //   bytes owner_address = 1;
         //   int64 proposal_id = 2;
         //   bool is_add_approval = 3;
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
+        let contract_bytes = any.value.as_slice();
         let (owner_address_bytes, proposal_id, is_add_approval) =
             self.parse_proposal_approve_contract(contract_bytes)?;
         let readable_owner_address = hex::encode(&owner_address_bytes);
@@ -2915,7 +3314,9 @@ impl BackendService {
             return Err(format!("Proposal[{}] not exists", proposal_id));
         }
 
-        let mut proposal = storage_adapter.get_proposal(proposal_id)
+        // Get proposal with raw bytes to preserve unknown protobuf fields (Java parity)
+        // Java's toBuilder()...build() preserves unknown fields; we do the same via surgical update.
+        let (mut proposal, raw_bytes) = storage_adapter.get_proposal_with_raw(proposal_id)
             .map_err(|e| format!("Failed to get proposal: {}", e))?
             .ok_or_else(|| format!("Proposal[{}] not exists", proposal_id))?;
 
@@ -2948,11 +3349,20 @@ impl BackendService {
         if is_add_approval {
             proposal.approvals.push(owner_address_bytes.clone());
         } else {
-            proposal.approvals.retain(|a| a != &owner_address_bytes);
+            // Java parity: removeApproval() removes only the FIRST matching entry
+            // (using ArrayList.remove(Object) semantics), not all occurrences.
+            // This matters if corrupted/non-canonical DB ever contains duplicates.
+            if let Some(idx) = proposal.approvals.iter().position(|a| a == &owner_address_bytes) {
+                proposal.approvals.remove(idx);
+            }
         }
 
-        // 7. Persist updated proposal
-        storage_adapter.put_proposal(&proposal)
+        // 7. Persist updated proposal using surgical update to preserve unknown protobuf fields
+        // Java's toBuilder()...build() preserves unknown fields when rebuilding the protobuf.
+        // We achieve the same by surgically replacing only field 6 (approvals) in the raw bytes.
+        let updated_bytes = storage_adapter.surgical_update_proposal_approvals(&raw_bytes, &proposal.approvals)
+            .map_err(|e| format!("Failed to update proposal approvals: {}", e))?;
+        storage_adapter.put_proposal_raw(proposal_id, updated_bytes)
             .map_err(|e| format!("Failed to persist proposal: {}", e))?;
 
         info!(
@@ -3101,7 +3511,9 @@ impl BackendService {
             return Err(format!("Proposal[{}] not exists", proposal_id));
         }
 
-        let mut proposal = storage_adapter.get_proposal(proposal_id)
+        // Use get_proposal_with_raw to preserve original bytes for byte-level parity.
+        // This avoids re-encoding the proposal (which would reorder BTreeMap parameters).
+        let (proposal, raw_bytes) = storage_adapter.get_proposal_with_raw(proposal_id)
             .map_err(|e| format!("Failed to get proposal: {}", e))?
             .ok_or_else(|| format!("Proposal[{}] not exists", proposal_id))?;
 
@@ -3123,11 +3535,13 @@ impl BackendService {
             return Err(format!("Proposal[{}] canceled", proposal_id));
         }
 
-        // 7. Set state to CANCELED (3)
-        proposal.state = 3;
+        // 7. Surgically patch state to CANCELED (3) in raw bytes, preserving original
+        //    parameter map ordering for byte-level parity with java-tron.
+        let patched_bytes = storage_adapter.surgical_update_proposal_state(&raw_bytes, 3)
+            .map_err(|e| format!("Failed to patch proposal state: {}", e))?;
 
-        // 8. Persist updated proposal
-        storage_adapter.put_proposal(&proposal)
+        // 8. Persist updated proposal raw bytes
+        storage_adapter.put_proposal_raw(proposal_id, patched_bytes)
             .map_err(|e| format!("Failed to persist proposal: {}", e))?;
 
         info!("ProposalDelete completed: id={}, state=CANCELED", proposal_id);
@@ -3153,51 +3567,70 @@ impl BackendService {
         })
     }
 
-    /// Parse ProposalDeleteContract from protobuf bytes
+    /// Parse ProposalDeleteContract from protobuf bytes with Java-compatible error strings.
     /// ProposalDeleteContract:
     ///   bytes owner_address = 1;
     ///   int64 proposal_id = 2;
+    ///
+    /// Error handling matches protobuf-java 3.21.12 for exact parity:
+    /// - Truncated input → PROTOBUF_TRUNCATED_MESSAGE
+    /// - Malformed varint → PROTOBUF_MALFORMED_VARINT
     fn parse_proposal_delete_contract(&self, data: &[u8]) -> Result<(Vec<u8>, i64), String> {
+        use contracts::proto::{
+            read_varint_typed, skip_protobuf_field_checked, VarintError,
+            PROTOBUF_TRUNCATED_MESSAGE, PROTOBUF_MALFORMED_VARINT,
+        };
+
+        let map_varint_error = |e: VarintError| -> String {
+            match e {
+                VarintError::Truncated => PROTOBUF_TRUNCATED_MESSAGE.to_string(),
+                VarintError::TooLong => PROTOBUF_MALFORMED_VARINT.to_string(),
+            }
+        };
+
         let mut owner_address_bytes: Vec<u8> = Vec::new();
         let mut proposal_id: Option<i64> = None;
         let mut pos = 0;
 
         while pos < data.len() {
-            let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            let (field_header, bytes_read) = read_varint_typed(&data[pos..])
+                .map_err(&map_varint_error)?;
             pos += bytes_read;
 
             let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
+            let wire_type = (field_header & 0x7) as u8;
 
             match (field_number, wire_type) {
                 (1, 2) => {
                     // owner_address (bytes)
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    let (length, bytes_read) = read_varint_typed(&data[pos..])
+                        .map_err(&map_varint_error)?;
                     pos += bytes_read;
                     if pos + length as usize > data.len() {
-                        return Err("Invalid ownerAddress".to_string());
+                        return Err(PROTOBUF_TRUNCATED_MESSAGE.to_string());
                     }
                     owner_address_bytes = data[pos..pos + length as usize].to_vec();
                     pos += length as usize;
                 }
                 (2, 0) => {
                     // proposal_id (int64, varint)
-                    let (v, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read proposal_id: {}", e))?;
+                    let (v, bytes_read) = read_varint_typed(&data[pos..])
+                        .map_err(&map_varint_error)?;
                     pos += bytes_read;
                     proposal_id = Some(v as i64);
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(|e| e.to_java_message())?;
                     pos += skip_len;
                 }
             }
         }
 
-        let id = proposal_id.ok_or_else(|| "Missing proposal_id".to_string())?;
+        // Proto3 default: absent proposal_id field defaults to 0, matching java-tron behavior.
+        // Java's protobuf decoding returns 0 for absent int64 fields, so validation
+        // proceeds to "Proposal[0] not exists" rather than a parse-level error.
+        let id = proposal_id.unwrap_or(0);
         Ok((owner_address_bytes, id))
     }
 
@@ -3227,11 +3660,6 @@ impl BackendService {
             }
         }
 
-        let owner = transaction.from;
-        let owner_tron = tron_backend_common::to_tron_address(&owner);
-
-        info!("SetAccountId owner={}", owner_tron);
-
         // 1. Parse SetAccountIdContract
         // SetAccountIdContract:
         //   bytes account_id = 1;
@@ -3242,53 +3670,52 @@ impl BackendService {
             .as_ref()
             .map(|any| any.value.as_slice())
             .unwrap_or(transaction.data.as_ref());
-        let account_id = self.parse_set_account_id_contract(contract_bytes)?;
+        let (account_id, owner_address_bytes) = self.parse_set_account_id_contract(contract_bytes)?;
 
-        info!("SetAccountId: owner={}, account_id={:?}",
-              owner_tron, String::from_utf8_lossy(&account_id));
-
-        // 2. Validate account ID format
+        // 2. Validate account ID format (java-tron: TransactionUtil.validAccountId)
+        // Java validates accountId BEFORE ownerAddress.
         if !self.validate_account_id(&account_id) {
             return Err("Invalid accountId".to_string());
         }
 
-        // 2.5 Validate owner address
-        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
-            let prefix = storage_adapter.address_prefix();
-            let owner_address_valid = match from_raw.len() {
-                21 => from_raw[0] == prefix,
-                20 => true,
-                _ => false,
-            };
-            if !owner_address_valid {
-                return Err("Invalid ownerAddress".to_string());
-            }
+        // 3. Validate owner address from contract bytes (java-tron: DecodeUtil.addressValid)
+        // Java requires exactly 21 bytes with the correct TRON prefix (0x41).
+        let expected_prefix = storage_adapter.address_prefix();
+        if owner_address_bytes.len() != 21 || owner_address_bytes[0] != expected_prefix {
+            return Err("Invalid ownerAddress".to_string());
         }
 
-        // 3. Get owner account
+        // Derive the 20-byte EVM address from the parsed 21-byte TRON address
+        let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
+        let owner_tron = tron_backend_common::to_tron_address(&owner);
+
+        info!("SetAccountId: owner={}, account_id={:?}",
+              owner_tron, String::from_utf8_lossy(&account_id));
+
+        // 4. Get owner account
         let mut account_proto = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .ok_or_else(|| "Account has not existed".to_string())?;
 
-        // 4. Check if account already has an ID
+        // 5. Check if account already has an ID
         if !account_proto.account_id.is_empty() {
             return Err("This account id already set".to_string());
         }
 
-        // 5. Check if account ID is already taken
+        // 6. Check if account ID is already taken
         if storage_adapter.has_account_id(&account_id)
             .map_err(|e| format!("Failed to check account id: {}", e))? {
             return Err("This id has existed".to_string());
         }
 
-        // 6. Set account ID
+        // 7. Set account ID
         account_proto.account_id = account_id.clone();
 
-        // 7. Persist account
+        // 8. Persist account
         storage_adapter.put_account_proto(&owner, &account_proto)
             .map_err(|e| format!("Failed to persist account: {}", e))?;
 
-        // 8. Add to account ID index
+        // 9. Add to account ID index
         let owner_address_bytes = storage_adapter.to_tron_address_21(&owner).to_vec();
 
         storage_adapter.put_account_id_index(&account_id, &owner_address_bytes)
@@ -3318,12 +3745,15 @@ impl BackendService {
         })
     }
 
-    /// Parse SetAccountIdContract from protobuf bytes
+    /// Parse SetAccountIdContract from protobuf bytes.
+    /// Returns `(account_id, owner_address)`.
+    ///
     /// SetAccountIdContract:
     ///   bytes account_id = 1;
     ///   bytes owner_address = 2;
-    fn parse_set_account_id_contract(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+    fn parse_set_account_id_contract(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
         let mut account_id: Option<Vec<u8>> = None;
+        let mut owner_address: Option<Vec<u8>> = None;
         let mut pos = 0;
 
         while pos < data.len() {
@@ -3348,10 +3778,16 @@ impl BackendService {
                     pos = end;
                 }
                 (2, 2) => {
-                    // owner_address - skip
+                    // owner_address (bytes)
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_address = Some(data[pos..end].to_vec());
+                    pos = end;
                 }
                 _ => {
                     let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
@@ -3362,7 +3798,7 @@ impl BackendService {
         }
 
         // In proto3, empty bytes fields are omitted on the wire; treat missing as empty.
-        Ok(account_id.unwrap_or_default())
+        Ok((account_id.unwrap_or_default(), owner_address.unwrap_or_default()))
     }
 
     /// Validate account ID format
@@ -3469,13 +3905,17 @@ impl BackendService {
             return Err("operations size must 32".to_string());
         }
 
-        // Check operations bits against AVAILABLE_CONTRACT_TYPE bitmap when present.
+        // Check operations bits against AVAILABLE_CONTRACT_TYPE bitmap.
+        // Java-tron requires this property to exist and be >= 32 bytes; missing/short is an error.
         let available_contract_type = storage_adapter.get_available_contract_type()
-            .map_err(|e| format!("Failed to get AVAILABLE_CONTRACT_TYPE: {}", e))?;
-        let allow_all = [0xFFu8; 32];
-        let allowed_bitmap: &[u8] = match available_contract_type.as_deref() {
-            Some(b) if b.len() >= 32 => &b[..32],
-            _ => &allow_all,
+            .map_err(|e| format!("{}", e))?;
+        let allowed_bitmap: &[u8] = if available_contract_type.len() >= 32 {
+            &available_contract_type[..32]
+        } else {
+            return Err(format!(
+                "AVAILABLE_CONTRACT_TYPE is too short: expected >= 32 bytes, got {}",
+                available_contract_type.len()
+            ));
         };
 
         for i in 0..256 {
@@ -3595,7 +4035,19 @@ impl BackendService {
             self.check_account_permission_update_permission(storage_adapter, active_perm, address_prefix)?;
         }
 
-        // Execute (match java-tron: update permissions first, then charge fee)
+        let fee = storage_adapter.get_update_account_permission_fee()
+            .map_err(|e| format!("Failed to get update_account_permission_fee: {}", e))?;
+        info!("AccountPermissionUpdate: owner={}, fee={}", owner_tron, fee);
+
+        if fee < 0 {
+            return Err("Invalid update account permission fee".to_string());
+        }
+
+        // Java actuator order: persist permission updates, then charge the fee.
+        // In java-tron this runs under the revoking store, so if fee payment fails
+        // (BalanceInsufficientException) all writes are rolled back.
+
+        // Update permissions in memory
         owner_permission.id = 0;
         account_proto.owner_permission = Some(owner_permission);
 
@@ -3612,17 +4064,11 @@ impl BackendService {
             account_proto.active_permission.push(active_perm);
         }
 
-        // Persist permissions update before charging fee (so insufficient balance keeps permission changes)
+        // Persist permission changes first (before fee charging).
         storage_adapter.put_account_proto(&owner, &account_proto)
-            .map_err(|e| format!("Failed to persist account: {}", e))?;
+            .map_err(|e| format!("Failed to persist account permissions: {}", e))?;
 
-        let fee = storage_adapter.get_update_account_permission_fee()
-            .map_err(|e| format!("Failed to get update_account_permission_fee: {}", e))?;
-        info!("AccountPermissionUpdate: owner={}, fee={}", owner_tron, fee);
-
-        if fee < 0 {
-            return Err("Invalid update account permission fee".to_string());
-        }
+        // Charge fee after permissions are persisted.
         if fee > 0 {
             let current_balance = account_proto.balance;
             if current_balance < fee {
@@ -3632,23 +4078,36 @@ impl BackendService {
                     owner_hex, current_balance, fee
                 ));
             }
-            account_proto.balance = current_balance - fee;
-            storage_adapter.put_account_proto(&owner, &account_proto)
-                .map_err(|e| format!("Failed to persist account: {}", e))?;
+
+            account_proto.balance -= fee;
         }
 
-        // Handle fee: burn or credit to blackhole
+        // Persist fee deduction (if any) in a separate write.
+        if fee > 0 {
+            storage_adapter.put_account_proto(&owner, &account_proto)
+                .map_err(|e| format!("Failed to persist fee deduction: {}", e))?;
+        }
+
+        // Handle fee destination: burn or credit to blackhole
+        // Java: supportBlackHoleOptimization() ? burnTrx(fee) : credit blackhole account
         let support_blackhole_optimization = storage_adapter.support_black_hole_optimization()
             .map_err(|e| format!("Failed to get blackhole optimization flag: {}", e))?;
 
-        if !support_blackhole_optimization {
-            if fee > 0 {
-                let blackhole_addr = storage_adapter.get_blackhole_address_evm();
-                storage_adapter.add_balance(&blackhole_addr, fee as u64)
-                    .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+        if fee > 0 {
+            if support_blackhole_optimization {
+                // Burn mode: increment BURN_TRX_AMOUNT (matches Java's burnTrx())
+                storage_adapter.burn_trx(fee as u64)
+                    .map_err(|e| format!("Failed to burn TRX: {}", e))?;
+            } else {
+                // Credit blackhole account (use get_blackhole_address for consistency)
+                if let Some(blackhole_addr) = storage_adapter.get_blackhole_address()
+                    .map_err(|e| format!("Failed to get blackhole address: {}", e))?
+                {
+                    storage_adapter.add_balance(&blackhole_addr, fee as u64)
+                        .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+                }
             }
         }
-        // If blackhole optimization is enabled, fee is just burned (not credited anywhere)
 
         info!("AccountPermissionUpdate completed: owner={}, fee={}", owner_tron, fee);
 
@@ -3813,30 +4272,59 @@ impl BackendService {
         }
 
         // Validation parity: DecodeUtil.addressValid(ownerAddress)
-        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
-            let owner_address_valid = match from_raw.len() {
-                21 => from_raw[0] == 0x41 || from_raw[0] == 0xa0,
-                20 => true,
-                _ => false,
-            };
-            if !owner_address_valid {
+        // Java requires exactly 21 bytes and prefix == configured network prefix.
+        // Missing or empty from_raw is invalid (mirrors Java's ArrayUtils.isEmpty check).
+        let prefix = storage_adapter.address_prefix();
+        match transaction.metadata.from_raw.as_deref() {
+            None | Some(&[]) => {
                 return Err("Invalid ownerAddress".to_string());
+            }
+            Some(from_raw) => {
+                if from_raw.len() != 21 || from_raw[0] != prefix {
+                    return Err("Invalid ownerAddress".to_string());
+                }
+            }
+        }
+
+        // Validation parity: DecodeUtil.addressValid(toAddress)
+        // Java checks toAddress is non-empty, 21 bytes, and has the correct prefix.
+        match transaction.metadata.to_raw.as_deref() {
+            None | Some(&[]) => {
+                return Err("Invalid toAddress".to_string());
+            }
+            Some(to_raw) => {
+                if to_raw.len() != 21 || to_raw[0] != prefix {
+                    return Err("Invalid toAddress".to_string());
+                }
             }
         }
 
         // 1. Extract required fields from transaction
-        // Validation parity: DecodeUtil.addressValid(toAddress)
         let to_address = transaction.to.ok_or_else(|| "Invalid toAddress".to_string())?;
         let to_tron = tron_backend_common::to_tron_address(&to_address);
 
-        // Get asset_id from metadata (Java passes it as metadata.asset_id)
-        let asset_id = transaction.metadata.asset_id.as_ref()
-            .ok_or("asset_id is required for TransferAssetContract")?
-            .clone();
-
-        if asset_id.is_empty() {
-            return Err("asset_id cannot be empty".to_string());
-        }
+        // Get asset_id from metadata (Java passes it as metadata.asset_id).
+        // If metadata.asset_id is absent (Java omits empty bytes), fall back to parsing
+        // TransferAssetContract from contract_parameter.value to extract asset_name bytes.
+        // Java's TransferAssetActuator treats empty asset_name as "No asset!" via store lookup.
+        let asset_id = match transaction.metadata.asset_id.as_ref() {
+            Some(id) if !id.is_empty() => id.clone(),
+            _ => {
+                // Try to parse asset_name from the raw TransferAssetContract protobuf
+                let asset_name_from_proto = transaction
+                    .metadata
+                    .contract_parameter
+                    .as_ref()
+                    .and_then(|param| Self::parse_asset_name_from_transfer_asset_contract(&param.value));
+                match asset_name_from_proto {
+                    Some(name) if !name.is_empty() => name,
+                    _ => {
+                        // Java: empty asset_name → store.has() returns false → "No asset!"
+                        return Err("No asset!".to_string());
+                    }
+                }
+            }
+        };
 
         // Java uses ByteArray.toStr(assetName) as the TRC-10 map key.
         let asset_key_str = String::from_utf8_lossy(&asset_id).to_string();
@@ -3937,20 +4425,77 @@ impl BackendService {
         }
 
         // Java execute(): create recipient when absent, update TRC-10 balances, and apply fee.
+        // When creating a missing recipient, java-tron's AccountCapsule constructor initializes
+        // default permissions if ALLOW_MULTI_SIGN == 1 (owner_permission id=0, active_permission id=2).
         let mut recipient_account_proto = match recipient_proto_opt {
             Some(acc) => acc,
             None => {
                 use tron_backend_execution::protocol::{Account as ProtoAccount, AccountType as ProtoAccountType};
+                use tron_backend_execution::protocol::permission::PermissionType;
+                use tron_backend_execution::protocol::{Key, Permission};
                 let create_time = storage_adapter
                     .get_latest_block_header_timestamp()
                     .map_err(|e| format!("Failed to get LATEST_BLOCK_HEADER_TIMESTAMP: {}", e))?;
-                ProtoAccount {
-                    address: storage_adapter.to_tron_address_21(&to_address).to_vec(),
+                let recipient_address_bytes = storage_adapter.to_tron_address_21(&to_address).to_vec();
+
+                let mut new_account = ProtoAccount {
+                    address: recipient_address_bytes.clone(),
                     create_time,
                     r#type: ProtoAccountType::Normal as i32,
                     ..Default::default()
+                };
+
+                // Mirror java-tron: withDefaultPermission = (ALLOW_MULTI_SIGN == 1)
+                let allow_multi_sign = storage_adapter
+                    .get_allow_multi_sign()
+                    .map_err(|e| format!("Failed to get ALLOW_MULTI_SIGN: {}", e))?;
+
+                if allow_multi_sign {
+                    let active_default_operations = storage_adapter
+                        .get_active_default_operations()
+                        .map_err(|e| format!("Failed to get ACTIVE_DEFAULT_OPERATIONS: {}", e))?;
+
+                    let default_key = Key {
+                        address: recipient_address_bytes,
+                        weight: 1,
+                    };
+
+                    new_account.owner_permission = Some(Permission {
+                        r#type: PermissionType::Owner as i32,
+                        id: 0,
+                        permission_name: "owner".to_string(),
+                        threshold: 1,
+                        parent_id: 0,
+                        operations: Vec::new(),
+                        keys: vec![default_key.clone()],
+                    });
+
+                    new_account.active_permission = vec![Permission {
+                        r#type: PermissionType::Active as i32,
+                        id: 2,
+                        permission_name: "active".to_string(),
+                        threshold: 1,
+                        parent_id: 0,
+                        operations: active_default_operations,
+                        keys: vec![default_key],
+                    }];
                 }
+
+                new_account
             }
+        };
+
+        // Capture old_account snapshots BEFORE any mutations for state_changes parity.
+        // Java's revoking session journals account deltas; we must replicate by snapshotting
+        // pre-execution state and emitting real AccountChange entries.
+        let old_owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to load owner account: {}", e))?
+            .ok_or("Owner account does not exist".to_string())?;
+        let old_recipient_account = if !recipient_was_missing {
+            storage_adapter.get_account(&to_address)
+                .map_err(|e| format!("Failed to load recipient account: {}", e))?
+        } else {
+            None
         };
 
         Self::reduce_asset_amount_v2(
@@ -3982,7 +4527,24 @@ impl BackendService {
             .put_account_proto(&to_address, &recipient_account_proto)
             .map_err(|e| format!("Failed to persist recipient Account proto: {}", e))?;
 
+        // Handle create-account fee at the EVM layer + blackhole crediting/burning.
+        // Track blackhole change for state_changes emission.
+        let mut blackhole_state_change: Option<(Address, Option<revm_primitives::AccountInfo>, revm_primitives::AccountInfo)> = None;
         if create_account_fee > 0 {
+            // Also deduct create-account fee from owner EVM AccountInfo balance
+            // so state_changes reflect the real delta.
+            let fee_u256 = revm_primitives::U256::from(create_account_fee);
+            let new_owner_evm = revm_primitives::AccountInfo {
+                balance: old_owner_account.balance.checked_sub(fee_u256)
+                    .ok_or("Owner balance underflow for create-account fee".to_string())?,
+                nonce: old_owner_account.nonce,
+                code_hash: old_owner_account.code_hash,
+                code: old_owner_account.code.clone(),
+            };
+            storage_adapter
+                .set_account(owner, new_owner_evm)
+                .map_err(|e| format!("Failed to persist owner EVM account: {}", e))?;
+
             let support_blackhole = storage_adapter
                 .support_black_hole_optimization()
                 .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
@@ -3994,37 +4556,43 @@ impl BackendService {
                 .get_blackhole_address()
                 .map_err(|e| format!("Failed to get blackhole address: {}", e))?
             {
-                let blackhole_account = storage_adapter
+                let old_blackhole_account = storage_adapter
                     .get_account(&blackhole_addr)
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
-                let fee_u256 = revm_primitives::U256::from(create_account_fee);
-                let new_blackhole_balance = blackhole_account
+                let new_blackhole_balance = old_blackhole_account
                     .balance
                     .checked_add(fee_u256)
                     .ok_or("Blackhole balance overflow")?;
                 let new_blackhole_account = revm_primitives::AccountInfo {
                     balance: new_blackhole_balance,
-                    nonce: blackhole_account.nonce,
-                    code_hash: blackhole_account.code_hash,
-                    code: blackhole_account.code.clone(),
+                    nonce: old_blackhole_account.nonce,
+                    code_hash: old_blackhole_account.code_hash,
+                    code: old_blackhole_account.code.clone(),
                 };
 
                 storage_adapter
-                    .set_account(blackhole_addr, new_blackhole_account)
+                    .set_account(blackhole_addr, new_blackhole_account.clone())
                     .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
+
+                // Track for state_changes emission
+                let old_bh = if old_blackhole_account.balance.is_zero() && old_blackhole_account.nonce == 0 {
+                    None
+                } else {
+                    Some(old_blackhole_account)
+                };
+                blackhole_state_change = Some((blackhole_addr, old_bh, new_blackhole_account));
             }
         }
 
         info!(
-            "TRC-10 Transfer: owner={}, to={}, asset_id_len={}, amount={}",
-            owner_tron, to_tron, asset_id.len(), amount
+            "TRC-10 Transfer: owner={}, to={}, asset_id_len={}, amount={}, create_fee={}",
+            owner_tron, to_tron, asset_id.len(), amount, create_account_fee
         );
 
         // 2. Get execution configuration
         let execution_config = self.get_execution_config()?;
-        let fee_config = &execution_config.fees;
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         // 3. Calculate bandwidth usage
@@ -4044,11 +4612,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64,
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -4056,6 +4627,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -4067,150 +4641,37 @@ impl BackendService {
             );
         }
 
-        // 5. Build state changes
+        // 5. Build state changes with real pre/post snapshots.
         let mut state_changes = Vec::new();
 
-        // Load owner account for AccountChange (needed for AEXT passthrough)
-        let owner_account = storage_adapter.get_account(&owner)
-            .map_err(|e| format!("Failed to load owner account: {}", e))?
-            .ok_or("Owner account does not exist".to_string())?;
+        // Owner account: emit real delta (balance changes if create_account_fee > 0)
+        let new_owner_account = storage_adapter.get_account(&owner)
+            .map_err(|e| format!("Failed to reload owner account: {}", e))?
+            .ok_or("Owner account does not exist after mutation".to_string())?;
 
-        // Check if there's a TRX fee configured for non-VM transactions
-        let fee_amount = match fee_config.non_vm_blackhole_credit_flat {
-            Some(flat_fee) => {
-                debug!("Using configured flat fee for TRC-10 transfer: {} SUN", flat_fee);
-                flat_fee
-            },
-            None => {
-                // Default: no TRX fee for TRC-10 transfers (TRON free bandwidth semantics)
-                debug!("No flat fee configured for TRC-10 transfer, using 0 (TRON free bandwidth semantics)");
-                0
-            }
-        };
+        state_changes.push(TronStateChange::AccountChange {
+            address: owner,
+            old_account: Some(old_owner_account),
+            new_account: Some(new_owner_account),
+        });
 
-        if fee_amount > 0 {
-            // Validate owner has enough TRX for fee
-            let fee_u256 = revm_primitives::U256::from(fee_amount);
-            if owner_account.balance < fee_u256 {
-                return Err(format!(
-                    "Insufficient TRX balance for fee: owner has {} SUN, fee is {} SUN",
-                    owner_account.balance, fee_amount
-                ));
-            }
+        // Recipient account: emit creation (old=None) or delta
+        let new_recipient_account = storage_adapter.get_account(&to_address)
+            .map_err(|e| format!("Failed to reload recipient account: {}", e))?;
+        let new_recip = new_recipient_account
+            .ok_or_else(|| "Recipient account not found after mutation; storage inconsistency".to_string())?;
+        state_changes.push(TronStateChange::AccountChange {
+            address: to_address,
+            old_account: old_recipient_account,
+            new_account: Some(new_recip),
+        });
 
-            // Deduct fee from owner
-            let new_owner_balance = owner_account.balance - fee_u256;
-            let new_owner_account = revm_primitives::AccountInfo {
-                balance: new_owner_balance,
-                nonce: owner_account.nonce, // Do NOT increment nonce for non-VM
-                code_hash: owner_account.code_hash,
-                code: owner_account.code.clone(),
-            };
-
-            // Emit owner account change
+        // Blackhole account: emit delta when credited (not burning)
+        if let Some((bh_addr, old_bh, new_bh)) = blackhole_state_change {
             state_changes.push(TronStateChange::AccountChange {
-                address: owner,
-                old_account: Some(owner_account.clone()),
-                new_account: Some(new_owner_account.clone()),
-            });
-
-            // Persist owner account update
-            storage_adapter
-                .set_account(owner, new_owner_account.clone())
-                .map_err(|e| format!("Failed to persist owner account: {}", e))?;
-
-            // Handle fee crediting based on mode
-            match fee_config.mode.as_str() {
-                "burn" => {
-                    debug!("Burning fee {} SUN (no account delta for burn)", fee_amount);
-                },
-                "blackhole" => {
-                    if !fee_config.blackhole_address_base58.is_empty() {
-                        match tron_backend_common::from_tron_address(&fee_config.blackhole_address_base58) {
-                            Ok(blackhole_bytes) => {
-                                let blackhole_address = revm_primitives::Address::from_slice(&blackhole_bytes);
-
-                                let blackhole_account = storage_adapter.get_account(&blackhole_address)
-                                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
-                                    .unwrap_or_default();
-
-                                let new_blackhole_balance = blackhole_account.balance + fee_u256;
-                                let new_blackhole_account = revm_primitives::AccountInfo {
-                                    balance: new_blackhole_balance,
-                                    nonce: blackhole_account.nonce,
-                                    code_hash: blackhole_account.code_hash,
-                                    code: blackhole_account.code.clone(),
-                                };
-
-                                let old_blackhole_account = if blackhole_account.balance.is_zero() && blackhole_account.nonce == 0 {
-                                    None
-                                } else {
-                                    Some(blackhole_account)
-                                };
-
-                                state_changes.push(TronStateChange::AccountChange {
-                                    address: blackhole_address,
-                                    old_account: old_blackhole_account,
-                                    new_account: Some(new_blackhole_account.clone()),
-                                });
-
-                                storage_adapter
-                                    .set_account(blackhole_address, new_blackhole_account.clone())
-                                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
-
-                                debug!("Credited fee {} SUN to blackhole address {}",
-                                       fee_amount, fee_config.blackhole_address_base58);
-                            },
-                            Err(e) => {
-                                warn!("Invalid blackhole address '{}': {}, falling back to burn mode",
-                                      fee_config.blackhole_address_base58, e);
-                            }
-                        }
-                    }
-                },
-                _ => {
-                    debug!("Unknown fee mode '{}', defaulting to burn", fee_config.mode);
-                }
-            }
-        } else {
-            // No TRX fee - emit a no-op AccountChange for owner to carry AEXT
-            // This ensures the owner account is included in state changes for CSV parity
-            state_changes.push(TronStateChange::AccountChange {
-                address: owner,
-                old_account: Some(owner_account.clone()),
-                new_account: Some(owner_account.clone()), // Same account (no-op)
-            });
-        }
-
-        // 6. Also include a no-op AccountChange for recipient to mirror embedded journaling
-        //    so that both sender and recipient appear in account_changes/state_changes.
-        //    This carries AEXT if present and stabilizes CSV parity.
-        if let Ok(Some(recipient_account)) = storage_adapter.get_account(&to_address) {
-            state_changes.push(TronStateChange::AccountChange {
-                address: to_address,
-                // If the protocol-level account was missing before execution, mirror embedded
-                // journaling semantics by emitting an account creation (old_account absent).
-                old_account: if recipient_was_missing {
-                    None
-                } else {
-                    Some(recipient_account.clone())
-                },
-                // Ledger updates are tracked separately; we still carry AccountInfo (incl. AEXT)
-                // so Java can derive account/resource usage deltas deterministically.
-                new_account: Some(recipient_account),
-            });
-        } else {
-            // If recipient account does not exist yet, fabricate a minimal placeholder
-            // with zero fields so Java side still sees an account-level entry for CSV parity.
-            let placeholder = AccountInfo::default();
-            state_changes.push(TronStateChange::AccountChange {
-                address: to_address,
-                old_account: if recipient_was_missing {
-                    None
-                } else {
-                    Some(placeholder.clone())
-                },
-                new_account: Some(placeholder),
+                address: bh_addr,
+                old_account: old_bh,
+                new_account: Some(new_bh),
             });
         }
 
@@ -4235,8 +4696,8 @@ impl BackendService {
         );
 
         info!(
-            "TRC-10 Transfer completed: owner={}, to={}, asset_id_len={}, amount={}, fee={} SUN, state_changes={}, bandwidth={}",
-            owner_tron, to_tron, asset_id.len(), amount, fee_amount, state_changes.len(), bandwidth_used
+            "TRC-10 Transfer completed: owner={}, to={}, asset_id_len={}, amount={}, create_fee={} SUN, state_changes={}, bandwidth={}",
+            owner_tron, to_tron, asset_id.len(), amount, create_account_fee, state_changes.len(), bandwidth_used
         );
 
         Ok(TronExecutionResult {
@@ -4293,10 +4754,11 @@ impl BackendService {
         .map_err(|e| format!("Failed to decode AssetIssueContractData: {}", e))?;
 
         // Validation parity: DecodeUtil.addressValid(ownerAddress)
-        let owner = match asset_proto.owner_address.as_slice() {
-            bytes if bytes.len() == 21 && (bytes[0] == 0x41 || bytes[0] == 0xa0) => {
-                Address::from_slice(&bytes[1..])
-            }
+        // Java requires exact match with network-specific prefix (0x41 mainnet, 0xa0 testnet)
+        let expected_prefix = storage_adapter.tron_address_prefix()
+            .map_err(|e| format!("Failed to get address prefix: {}", e))?;
+        let owner = match validate_tron_address_prefix(asset_proto.owner_address.as_slice(), expected_prefix) {
+            Ok(bytes) if bytes.len() == 20 => Address::from_slice(bytes),
             _ => return Err("Invalid ownerAddress".to_string()),
         };
 
@@ -4304,8 +4766,10 @@ impl BackendService {
 
         debug!("Executing ASSET_ISSUE_CONTRACT for owner {}", owner_tron);
 
-        // 1. Parse AssetIssueContract proto from transaction.data
-        let asset_info = Self::parse_asset_issue_contract(&transaction.data)?;
+        // 1. Parse AssetIssueContract proto from contract_bytes (same source as prost decode)
+        // This ensures consistency: both parse_asset_issue_contract and AssetIssueContractData::decode
+        // use the same bytes, avoiding divergence if callers populate only one field.
+        let asset_info = Self::parse_asset_issue_contract(contract_bytes)?;
 
         info!(
             "AssetIssue: owner={}, name={}, total_supply={}, precision={}",
@@ -4321,16 +4785,24 @@ impl BackendService {
         }
 
         // 3. Contract validation (match java-tron's AssetIssueActuator.validate ordering)
+        // Use raw bytes from asset_proto for validation to match Java's byte-based validation.
+        // This avoids discrepancies from lossy UTF-8 conversion.
         let allow_same_token_name = storage_adapter
             .get_allow_same_token_name()
             .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
 
-        if !Self::valid_asset_name(asset_info.name.as_bytes()) {
+        // Validate using raw bytes from proto (not lossy-decoded strings)
+        if !Self::valid_asset_name(&asset_proto.name) {
             return Err("Invalid assetName".to_string());
         }
 
-        if allow_same_token_name != 0 && asset_info.name.to_lowercase() == "trx" {
-            return Err("assetName can't be trx".to_string());
+        // Java's "trx" check uses: new String(name).toLowerCase().equals("trx")
+        // We use lossy decode here since Java does explicit String conversion for this check
+        if allow_same_token_name != 0 {
+            let name_str = String::from_utf8_lossy(&asset_proto.name).to_lowercase();
+            if name_str == "trx" {
+                return Err("assetName can't be trx".to_string());
+            }
         }
 
         if asset_info.precision != 0
@@ -4340,15 +4812,18 @@ impl BackendService {
             return Err("precision cannot exceed 6".to_string());
         }
 
-        if !asset_info.abbr.is_empty() && !Self::valid_asset_name(asset_info.abbr.as_bytes()) {
+        // Validate abbr using raw bytes
+        if !asset_proto.abbr.is_empty() && !Self::valid_asset_name(&asset_proto.abbr) {
             return Err("Invalid abbreviation for token".to_string());
         }
 
-        if !Self::valid_url(asset_info.url.as_bytes()) {
+        // Validate url using raw bytes
+        if !Self::valid_url(&asset_proto.url) {
             return Err("Invalid url".to_string());
         }
 
-        if !Self::valid_asset_description(asset_info.description.as_bytes()) {
+        // Validate description using raw bytes
+        if !Self::valid_asset_description(&asset_proto.description) {
             return Err("Invalid description".to_string());
         }
 
@@ -4372,9 +4847,10 @@ impl BackendService {
             return Err("Start time should be greater than HeadBlockTime".to_string());
         }
 
+        // Use raw name bytes for legacy "Token exists" lookup (V1 store keyed by name)
         if allow_same_token_name == 0
             && storage_adapter
-                .get_asset_issue(asset_info.name.as_bytes(), allow_same_token_name)
+                .get_asset_issue(&asset_proto.name, allow_same_token_name)
                 .map_err(|e| format!("Failed to query AssetIssueStore: {}", e))?
                 .is_some()
         {
@@ -4623,11 +5099,14 @@ impl BackendService {
             let free_net_limit = storage_adapter.get_free_net_limit()
                 .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
 
+            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
+            let now_slot = (context.block_timestamp / 3000) as i64;
+
             // Track bandwidth usage (returns path, before_aext, after_aext)
             let (_path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
                 &owner,
                 bandwidth_used as i64,
-                context.block_number as i64, // Use block number as "now"
+                now_slot,
                 &current_aext,
                 free_net_limit,
             ).map_err(|e| format!("Failed to track bandwidth: {}", e))?;
@@ -4635,6 +5114,9 @@ impl BackendService {
             // Persist after AEXT to storage
             storage_adapter.set_account_aext(&owner, &after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
+            storage_adapter
+                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .map_err(|e| format!("Failed to persist bandwidth usage to account proto: {}", e))?;
 
             // Add to aext_map
             aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
@@ -4671,7 +5153,7 @@ impl BackendService {
                 public_free_asset_net_limit: asset_info.public_free_asset_net_limit,
                 public_free_asset_net_usage: asset_info.public_free_asset_net_usage,
                 public_latest_free_net_time: asset_info.public_latest_free_net_time,
-                token_id: None, // Java will compute via TOKEN_ID_NUM
+                token_id: Some(token_id_str.clone()), // Self-contained: no Java dependency on TOKEN_ID_NUM
             }
         );
 
@@ -4924,6 +5406,13 @@ impl BackendService {
         }
 
         // 2. Parse the contract data
+        // NOTE: RemoteExecutionSPI always sets contract_parameter for UpdateSettingContract.
+        // The Any-less fallback (using transaction.data) is kept for backward compatibility
+        // with older clients / synthetic tests, but is not expected in production.
+        if transaction.metadata.contract_parameter.is_none() {
+            warn!("UpdateSettingContract: contract_parameter is missing; using transaction.data as fallback. \
+                   This path is not used by RemoteExecutionSPI and may not achieve full Java parity.");
+        }
         let contract_bytes = transaction
             .metadata
             .contract_parameter
@@ -5108,13 +5597,11 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::TronExecutionResult;
 
-        let owner = transaction.from;
-        let owner_tron = tron_backend_common::to_tron_address(&owner);
+        debug!("Executing UPDATE_ENERGY_LIMIT_CONTRACT");
 
-        debug!("Executing UPDATE_ENERGY_LIMIT_CONTRACT for owner {}", owner_tron);
-
-        // 1. Check if energy limit feature is enabled
-        // This is equivalent to ReceiptCapsule.checkForEnergyLimit()
+        // 1. Check if energy limit feature is enabled (fork gate)
+        // Java: ReceiptCapsule.checkForEnergyLimit(ds)
+        // Must pass BEFORE any other validation.
         let energy_limit_enabled = storage_adapter.check_for_energy_limit()
             .map_err(|e| format!("Failed to check energy limit: {}", e))?;
 
@@ -5123,6 +5610,7 @@ impl BackendService {
         }
 
         // 2. Validate contract parameter type (Any.is) when raw Any is available
+        // Java: !any.is(UpdateEnergyLimitContract.class)
         if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
             if !Self::any_type_url_matches(&any.type_url, "protocol.UpdateEnergyLimitContract") {
                 return Err(
@@ -5139,49 +5627,82 @@ impl BackendService {
             .as_ref()
             .map(|any| any.value.as_slice())
             .unwrap_or(transaction.data.as_ref());
-        let (contract_address, new_origin_energy_limit) =
+        let (owner_in_contract, contract_address, new_origin_energy_limit) =
             self.parse_update_energy_limit_contract(contract_bytes)?;
+
+        // Java-tron validates the Any type_url before unpacking. In the fixture generator, a type
+        // mismatch causes TransactionCapsule#getOwnerAddress() to return an empty `from` field
+        // while the encoded payload still contains a non-empty owner address. Mirror that behavior
+        // so type-mismatch fixtures produce the expected message.
+        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        if transaction.metadata.contract_parameter.is_none()
+            && owner_from_field.is_empty()
+            && !owner_in_contract.is_empty()
+        {
+            return Err(
+                "contract type error, expected type [UpdateEnergyLimitContract],real type[class com.google.protobuf.Any]"
+                    .to_string(),
+            );
+        }
 
         debug!("Parsed UpdateEnergyLimitContract: contract_address={}, new_origin_energy_limit={}",
                hex::encode(&contract_address), new_origin_energy_limit);
 
-        // 4. Validate owner exists
-        // Build owner key as 21-byte TRON address (network-aware prefix)
-        let owner_key = storage_adapter.to_tron_address_21(&owner).to_vec();
+        // 4. Validate owner address (Java: DecodeUtil.addressValid)
+        // Use payload owner_address first; fall back to from_raw for Any-less compatibility.
+        let owner_tron = if !owner_in_contract.is_empty() {
+            owner_in_contract.as_slice()
+        } else {
+            owner_from_field
+        };
 
-        let _owner_account = storage_adapter.get_account(&owner)
+        let expected_prefix = storage_adapter.address_prefix();
+        if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
+            return Err("Invalid address".to_string());
+        }
+        let owner = revm_primitives::Address::from_slice(&owner_tron[1..]);
+        let owner_key = owner_tron.to_vec();
+        let readable_owner_address = hex::encode(owner_tron);
+
+        // 5. Validate owner account exists
+        // Java: "Account[<hex 21-byte owner>] does not exist"
+        let _owner_account = storage_adapter
+            .get_account(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or_else(|| format!("Owner account {} does not exist", owner_tron))?;
+            .ok_or_else(|| format!("Account[{}] does not exist", readable_owner_address))?;
 
-        // 5. Validate new_origin_energy_limit > 0
+        // 6. Validate new_origin_energy_limit > 0
+        // Java: "origin energy limit must be > 0"
         if new_origin_energy_limit <= 0 {
             return Err("origin energy limit must be > 0".to_string());
         }
 
-        // 6. Get the smart contract
+        // 7. Get the smart contract
+        // Java: "Contract does not exist" (empty contract_address falls through here)
         let mut smart_contract = storage_adapter.get_smart_contract(&contract_address)
             .map_err(|e| format!("Failed to get contract: {}", e))?
             .ok_or_else(|| "Contract does not exist".to_string())?;
 
-        // 7. Validate owner is the contract's origin_address
+        // 8. Validate owner is the contract's origin_address
+        // Java: "Account[<hex 21-byte owner>] is not the owner of the contract"
         if smart_contract.origin_address != owner_key {
             return Err(format!(
                 "Account[{}] is not the owner of the contract",
-                hex::encode(&owner_key)
+                readable_owner_address
             ));
         }
 
-        // 8. Update the origin_energy_limit field
+        // 9. Update the origin_energy_limit field
         let old_limit = smart_contract.origin_energy_limit;
         smart_contract.origin_energy_limit = new_origin_energy_limit;
 
         debug!("Updating origin_energy_limit: {} -> {}", old_limit, new_origin_energy_limit);
 
-        // 9. Write back to ContractStore
+        // 10. Write back to ContractStore
         storage_adapter.put_smart_contract(&smart_contract)
             .map_err(|e| format!("Failed to update contract: {}", e))?;
 
-        // 10. Build result - no state changes for account balances, fee = 0
+        // 11. Build result - no state changes for account balances, fee = 0
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
         Ok(TronExecutionResult {
@@ -5208,9 +5729,12 @@ impl BackendService {
     ///   bytes owner_address = 1;
     ///   bytes contract_address = 2;
     ///   int64 origin_energy_limit = 3;
-    fn parse_update_energy_limit_contract(&self, data: &[u8]) -> Result<(Vec<u8>, i64), String> {
+    ///
+    /// Returns (owner_address, contract_address, origin_energy_limit).
+    fn parse_update_energy_limit_contract(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>, i64), String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address: Vec<u8> = vec![];
         let mut contract_address: Vec<u8> = vec![];
         let mut origin_energy_limit: i64 = 0;
         let mut pos = 0;
@@ -5225,10 +5749,16 @@ impl BackendService {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address - skip
+                    // owner_address
                     let (length, bytes_read) = read_varint(&data[pos..])
                         .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_address = data[pos..end].to_vec();
+                    pos = end;
                 }
                 (2, 2) => {
                     // contract_address
@@ -5257,11 +5787,7 @@ impl BackendService {
             }
         }
 
-        if contract_address.is_empty() {
-            return Err("contract_address is required".to_string());
-        }
-
-        Ok((contract_address, origin_energy_limit))
+        Ok((owner_address, contract_address, origin_energy_limit))
     }
 
     /// Execute a CLEAR_ABI_CONTRACT (type 48)
@@ -5291,29 +5817,21 @@ impl BackendService {
             return Err("contract type error,unexpected type [ClearABIContract]".to_string());
         }
 
-        // 2. Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.ClearABIContract") {
-                return Err(
-                    "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]"
-                        .to_string(),
-                );
-            }
-        }
-
-        // 3. Parse the contract data
-        let contract_bytes = transaction
+        // 2. Strict contract_parameter requirement for NON_VM system contracts
+        // Java always populates contract_parameter; we require it for strict parity.
+        // Treat None and empty type_url as "missing" → return type-mismatch error.
+        let any = transaction
             .metadata
             .contract_parameter
             .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
-        let (owner_in_contract, contract_address) = self.parse_clear_abi_contract(contract_bytes)?;
+            .ok_or_else(|| {
+                "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]"
+                    .to_string()
+            })?;
 
-        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if transaction.metadata.contract_parameter.is_none()
-            && owner_from_field.is_empty()
-            && !owner_in_contract.is_empty()
+        // Validate type_url is present and matches expected type
+        if any.type_url.is_empty()
+            || !Self::any_type_url_matches(&any.type_url, "protocol.ClearABIContract")
         {
             return Err(
                 "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]"
@@ -5321,6 +5839,11 @@ impl BackendService {
             );
         }
 
+        // 3. Parse the contract data from contract_parameter.value only (no fallback)
+        let (owner_in_contract, contract_address) = self.parse_clear_abi_contract(&any.value)?;
+
+        // Use owner from contract if present, else from metadata.from_raw
+        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
         let owner_tron = if !owner_in_contract.is_empty() {
             owner_in_contract.as_slice()
         } else {
@@ -5586,53 +6109,88 @@ impl BackendService {
         Ok((owner_address, brokerage))
     }
 
-    /// Parse ClearABIContract from protobuf bytes
+    /// Parse ClearABIContract from protobuf bytes with exhaustive error handling
     /// ClearABIContract:
     ///   bytes owner_address = 1;
     ///   bytes contract_address = 2;
+    ///
+    /// Error handling matches protobuf-java 3.21.12 for exact parity:
+    /// - Truncated input → PROTOBUF_TRUNCATED_MESSAGE
+    /// - Malformed varint → PROTOBUF_MALFORMED_VARINT
+    /// - Invalid tag (0) → PROTOBUF_INVALID_TAG_ZERO
+    /// - Invalid wire type (6/7) → PROTOBUF_INVALID_WIRE_TYPE
     fn parse_clear_abi_contract(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
-        use contracts::proto::read_varint;
+        use contracts::proto::{
+            read_varint_typed, skip_protobuf_field_checked, ProtobufError, VarintError,
+            PROTOBUF_INVALID_TAG_ZERO, PROTOBUF_INVALID_WIRE_TYPE, PROTOBUF_MALFORMED_VARINT,
+            PROTOBUF_TRUNCATED_MESSAGE,
+        };
 
         let mut owner_address: Vec<u8> = vec![];
         let mut contract_address: Vec<u8> = vec![];
         let mut pos = 0;
 
         while pos < data.len() {
-            let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            // Read field tag (field_number << 3 | wire_type)
+            let (field_header, bytes_read) = read_varint_typed(&data[pos..]).map_err(|e| {
+                match e {
+                    VarintError::Truncated => PROTOBUF_TRUNCATED_MESSAGE.to_string(),
+                    VarintError::TooLong => PROTOBUF_MALFORMED_VARINT.to_string(),
+                }
+            })?;
             pos += bytes_read;
 
+            // Check for invalid tag (0)
+            // protobuf-java: InvalidProtocolBufferException.invalidTag()
+            if field_header == 0 {
+                return Err(PROTOBUF_INVALID_TAG_ZERO.to_string());
+            }
+
             let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
+            let wire_type = (field_header & 0x7) as u8;
+
+            // Check for invalid wire types (6/7) before processing
+            if wire_type == 6 || wire_type == 7 {
+                return Err(PROTOBUF_INVALID_WIRE_TYPE.to_string());
+            }
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    // owner_address (bytes, length-delimited)
+                    let (length, bytes_read) = read_varint_typed(&data[pos..]).map_err(|e| {
+                        match e {
+                            VarintError::Truncated => PROTOBUF_TRUNCATED_MESSAGE.to_string(),
+                            VarintError::TooLong => PROTOBUF_MALFORMED_VARINT.to_string(),
+                        }
+                    })?;
                     pos += bytes_read;
                     let end = pos + length as usize;
                     if end > data.len() {
-                        return Err("Invalid owner_address length".to_string());
+                        return Err(PROTOBUF_TRUNCATED_MESSAGE.to_string());
                     }
                     owner_address = data[pos..end].to_vec();
                     pos = end;
                 }
                 (2, 2) => {
-                    // contract_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
+                    // contract_address (bytes, length-delimited)
+                    let (length, bytes_read) = read_varint_typed(&data[pos..]).map_err(|e| {
+                        match e {
+                            VarintError::Truncated => PROTOBUF_TRUNCATED_MESSAGE.to_string(),
+                            VarintError::TooLong => PROTOBUF_MALFORMED_VARINT.to_string(),
+                        }
+                    })?;
                     pos += bytes_read;
                     let end = pos + length as usize;
                     if end > data.len() {
-                        return Err("Invalid contract_address length".to_string());
+                        return Err(PROTOBUF_TRUNCATED_MESSAGE.to_string());
                     }
                     contract_address = data[pos..end].to_vec();
                     pos = end;
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    // Unknown field - skip with bounds checking
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(|e| e.to_java_message())?;
                     pos += skip_len;
                 }
             }
@@ -5825,28 +6383,57 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         use contracts::proto::TransactionResultBuilder;
 
-        let owner = transaction.from;
-        let owner_tron = transaction
+        // 1. Validate contract parameter type (Any.is) and parse owner_address
+        // Java parity: parse owner_address from CancelAllUnfreezeV2Contract protobuf (field 1)
+        let any = transaction
             .metadata
-            .from_raw
-            .as_deref()
-            .unwrap_or(&[]);
+            .contract_parameter
+            .as_ref()
+            .ok_or_else(|| "No contract!".to_string())?;
 
-        debug!("CancelAllUnfreezeV2: owner={}", hex::encode(&owner_tron));
+        if !Self::any_type_url_matches(&any.type_url, "protocol.CancelAllUnfreezeV2Contract") {
+            return Err(
+                "contract type error, expected type [CancelAllUnfreezeV2Contract], real type[class com.google.protobuf.Any]"
+                    .to_string(),
+            );
+        }
 
-        // 1. Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.CancelAllUnfreezeV2Contract") {
-                return Err(
-                    "contract type error, expected type [CancelAllUnfreezeV2Contract], real type[class com.google.protobuf.Any]"
-                        .to_string(),
-                );
+        // Parse owner_address from contract bytes (CancelAllUnfreezeV2Contract: bytes owner_address = 1)
+        let mut owner_tron: Vec<u8> = Vec::new();
+        let mut pos = 0;
+        while pos < any.value.len() {
+            let (field_header, bytes_read) = read_varint(&any.value[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x7;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // owner_address (bytes, field 1, wire type 2 = length-delimited)
+                    let (length, bytes_read) = read_varint(&any.value[pos..])
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += bytes_read;
+                    if pos + length as usize > any.value.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_tron = any.value[pos..pos + length as usize].to_vec();
+                    pos += length as usize;
+                }
+                _ => {
+                    let skip_len = Self::skip_protobuf_field(&any.value[pos..], wire_type)
+                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    pos += skip_len;
+                }
             }
         }
+
+        debug!("CancelAllUnfreezeV2: owner={}", hex::encode(&owner_tron));
 
         // 2. Gate check: supportAllowCancelAllUnfreezeV2() must be true
         let allow_cancel = storage_adapter.support_allow_cancel_all_unfreeze_v2()
@@ -5855,11 +6442,12 @@ impl BackendService {
             return Err("Not support CancelAllUnfreezeV2 transaction, need to be opened by the committee".to_string());
         }
 
-        // 3. Validate owner address
+        // 3. Validate owner address (must be 21 bytes with correct prefix)
         let expected_prefix = storage_adapter.address_prefix();
         if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
             return Err("Invalid address".to_string());
         }
+        let owner = revm_primitives::Address::from_slice(&owner_tron[1..]);
 
         // 4. Validate owner account exists
         let account_proto = storage_adapter.get_account_proto(&owner)
@@ -5992,8 +6580,12 @@ impl BackendService {
         }];
 
         // 12. Build receipt with withdraw_expire_amount and cancel_unfreezeV2_amount map
-        let receipt_bytes = TransactionResultBuilder::new()
-            .with_withdraw_expire_amount(withdraw_expire_amount)
+        // Java parity: withdraw_expire_amount is only emitted when non-zero
+        let mut builder = TransactionResultBuilder::new();
+        if withdraw_expire_amount > 0 {
+            builder = builder.with_withdraw_expire_amount(withdraw_expire_amount);
+        }
+        let receipt_bytes = builder
             .with_cancel_unfreeze_v2_amounts(cancel_bandwidth, cancel_energy, cancel_tron_power)
             .build();
 
@@ -6049,8 +6641,9 @@ impl BackendService {
         }
 
         // 3. Validate owner address (DecodeUtil.addressValid)
+        // Java parity: use owner_address from contract protobuf (field 1), not transaction.metadata.from_raw
         let expected_prefix = storage_adapter.address_prefix();
-        let owner_raw = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
+        let owner_raw = delegate_info.owner_address.as_slice();
         if owner_raw.len() != 21 || owner_raw[0] != expected_prefix {
             return Err("Invalid address".to_string());
         }
@@ -6067,17 +6660,72 @@ impl BackendService {
             return Err("delegateBalance must be greater than or equal to 1 TRX".to_string());
         }
 
-        // 6. Validate sufficient frozen balance for the resource type
+        // 6. Validate sufficient AVAILABLE frozen balance for the resource type
+        // Java parity: DelegateResourceActuator.validate() - uses "available FreezeV2" which
+        // accounts for current resource usage (net_usage / energy_usage after decay)
+        //
+        // Get timestamp and compute head_slot for usage decay calculation
+        let now_timestamp = storage_adapter.get_latest_block_header_timestamp()
+            .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
+        let head_slot = (now_timestamp as i64) / 3000; // slot = timestamp_ms / BLOCK_PRODUCED_INTERVAL
+
         match delegate_info.resource {
             0 => { // BANDWIDTH
-                let frozen_v2_bandwidth = Self::get_frozen_v2_balance_for_bandwidth(&owner_account);
-                if frozen_v2_bandwidth < delegate_info.balance {
+                // Get global totals for bandwidth
+                let total_net_weight = storage_adapter.get_total_net_weight()
+                    .map_err(|e| format!("Failed to get total net weight: {}", e))?;
+                let total_net_limit = storage_adapter.get_total_net_limit()
+                    .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+
+                // Compute available FreezeV2 balance after accounting for usage
+                let available_bandwidth = Self::compute_available_freeze_v2_bandwidth(
+                    &owner_account,
+                    total_net_weight,
+                    total_net_limit,
+                    head_slot,
+                );
+
+                debug!("DelegateResource BANDWIDTH validation: frozen_v2={}, available={}, delegate_balance={}, net_usage={}, latest_consume_time={}, head_slot={}",
+                       Self::get_frozen_v2_balance_for_bandwidth(&owner_account),
+                       available_bandwidth,
+                       delegate_info.balance,
+                       owner_account.net_usage,
+                       owner_account.latest_consume_time,
+                       head_slot);
+
+                if available_bandwidth < delegate_info.balance {
                     return Err("delegateBalance must be less than or equal to available FreezeBandwidthV2 balance".to_string());
                 }
             }
             1 => { // ENERGY
-                let frozen_v2_energy = Self::get_frozen_v2_balance_for_energy(&owner_account);
-                if frozen_v2_energy < delegate_info.balance {
+                // Get global totals for energy
+                let total_energy_weight = storage_adapter.get_total_energy_weight()
+                    .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
+                let total_energy_limit = storage_adapter.get_total_energy_limit()
+                    .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
+
+                // Compute available FreezeV2 balance after accounting for usage
+                let available_energy = Self::compute_available_freeze_v2_energy(
+                    &owner_account,
+                    total_energy_weight,
+                    total_energy_limit,
+                    head_slot,
+                );
+
+                let (energy_usage, latest_consume_time) = match &owner_account.account_resource {
+                    Some(res) => (res.energy_usage, res.latest_consume_time_for_energy),
+                    None => (0, 0),
+                };
+
+                debug!("DelegateResource ENERGY validation: frozen_v2={}, available={}, delegate_balance={}, energy_usage={}, latest_consume_time={}, head_slot={}",
+                       Self::get_frozen_v2_balance_for_energy(&owner_account),
+                       available_energy,
+                       delegate_info.balance,
+                       energy_usage,
+                       latest_consume_time,
+                       head_slot);
+
+                if available_energy < delegate_info.balance {
                     return Err("delegateBalance must be less than or equal to available FreezeEnergyV2 balance".to_string());
                 }
             }
@@ -6104,9 +6752,8 @@ impl BackendService {
             .map_err(|e| format!("Failed to get receiver account: {}", e))?
             .ok_or_else(|| format!("Account[{}] not exists", readable_receiver_address))?;
 
-        // 10. Get timestamp and calculate expiration
-        let now = storage_adapter.get_latest_block_header_timestamp()
-            .map_err(|e| format!("Failed to get latest timestamp: {}", e))?;
+        // 10. Calculate expiration (reuse now_timestamp from step 6)
+        let now = now_timestamp;
 
         let support_max_delegate_lock_period = storage_adapter.support_max_delegate_lock_period()
             .map_err(|e| format!("Failed to check supportMaxDelegateLockPeriod: {}", e))?;
@@ -6400,54 +7047,152 @@ impl BackendService {
             readable_owner_address, readable_receiver_address, undelegate_info.balance, undelegate_info.resource
         );
 
-        // 10. Get receiver account (might not exist if contract was destroyed)
+        // 10. Load dynamic properties needed for usage transfer computation
+        let head_slot = (now as i64) / 3000; // Java: chainBaseManager.getHeadSlot()
+        let support_cancel_all_unfreeze_v2 = storage_adapter.support_allow_cancel_all_unfreeze_v2()
+            .map_err(|e| format!("Failed to check supportAllowCancelAllUnfreezeV2: {}", e))?;
+
+        // 11. Get receiver account (might not exist if contract was destroyed)
         let receiver_account_opt = storage_adapter.get_account_proto(&receiver_address)
             .map_err(|e| format!("Failed to get receiver account: {}", e))?;
 
-        // 11. Update receiver if exists (reduce acquired balance)
+        // 12. Modify receiver account: recover usage, compute transferUsage, adjust balances
+        // Java oracle: UnDelegateResourceActuator.execute() receiver section
+        let mut transfer_usage: i64 = 0;
         let mut updated_receiver_opt = None;
         if let Some(receiver_account) = receiver_account_opt.as_ref() {
             let mut updated_receiver = receiver_account.clone();
-            // Java uses `chainBaseManager.getHeadSlot()` (slot = latest_block_header_timestamp / 3000)
-            // for resource usage timestamps.
-            let head_slot = (now as i64) / 3000;
             match undelegate_info.resource {
                 0 => { // BANDWIDTH
-                    // Java: BandwidthProcessor.updateUsageForDelegated(receiverCapsule)
-                    // Minimal parity for fixtures: set window fields and consume time.
-                    if updated_receiver.net_window_size == 0 {
-                        updated_receiver.net_window_size = 28_800_000; // 28800s * 1000ms
-                    }
-                    updated_receiver.net_window_optimized = true;
-                    updated_receiver.latest_consume_time = head_slot;
+                    // Step A: BandwidthProcessor.updateUsageForDelegated(receiverCapsule)
+                    // = increase(ac, BANDWIDTH, oldNetUsage, 0, latestConsumeTime, now)
+                    let (recovered_net_usage, new_window_raw, new_window_optimized) =
+                        Self::resource_increase_with_window(
+                            updated_receiver.net_usage,
+                            0,
+                            updated_receiver.latest_consume_time,
+                            head_slot,
+                            updated_receiver.net_window_size,
+                            updated_receiver.net_window_optimized,
+                            support_cancel_all_unfreeze_v2,
+                        );
+                    // Apply window updates from increase()
+                    updated_receiver.net_usage = recovered_net_usage;
+                    updated_receiver.net_window_size = new_window_raw;
+                    updated_receiver.net_window_optimized = new_window_optimized;
 
-                    let current = Self::get_acquired_delegated_frozen_v2_balance_for_bandwidth(&updated_receiver);
-                    if current < undelegate_info.balance {
-                        // Edge case: contract suicide/re-create
+                    // Step B: Check acquired delegated balance and compute transferUsage
+                    let current_acquired = Self::get_acquired_delegated_frozen_v2_balance_for_bandwidth(&updated_receiver);
+                    if current_acquired < undelegate_info.balance {
+                        // Edge case: TVM contract suicide/re-create
                         Self::set_acquired_delegated_frozen_v2_balance_for_bandwidth(&mut updated_receiver, 0);
+                        // transferUsage stays 0
                     } else {
+                        // Compute transferUsage: proportional usage transfer
+                        let total_net_limit = storage_adapter.get_total_net_limit()
+                            .map_err(|e| format!("Failed to get total net limit: {}", e))?;
+                        let total_net_weight = storage_adapter.get_total_net_weight()
+                            .map_err(|e| format!("Failed to get total net weight: {}", e))?;
+
+                        // Java: (long) ((double) unDelegateBalance / TRX_PRECISION
+                        //              * ((double) totalNetLimit / totalNetWeight))
+                        let un_delegate_max_usage = if total_net_weight == 0 {
+                            0
+                        } else {
+                            (undelegate_info.balance as f64 / TRX_PRECISION as f64
+                                * (total_net_limit as f64 / total_net_weight as f64)) as i64
+                        };
+
+                        // Java: (long) (receiverCapsule.getNetUsage()
+                        //              * ((double) unDelegateBalance / receiverCapsule.getAllFrozenBalanceForBandwidth()))
+                        let all_frozen_bw = Self::get_all_frozen_balance_for_bandwidth(&updated_receiver);
+                        transfer_usage = if all_frozen_bw == 0 {
+                            0
+                        } else {
+                            (recovered_net_usage as f64
+                                * (undelegate_info.balance as f64 / all_frozen_bw as f64)) as i64
+                        };
+                        transfer_usage = std::cmp::min(un_delegate_max_usage, transfer_usage);
+
                         Self::add_acquired_delegated_frozen_v2_balance_for_bandwidth(&mut updated_receiver, -undelegate_info.balance);
                     }
+
+                    // Step C: Reduce receiver usage and set latest consume time
+                    let new_net_usage = updated_receiver.net_usage - transfer_usage;
+                    updated_receiver.net_usage = new_net_usage;
+                    updated_receiver.latest_consume_time = head_slot;
                 }
                 1 => { // ENERGY
-                    // Java: EnergyProcessor.updateUsage(receiverCapsule)
-                    // Minimal parity for fixtures: set window fields and consume time.
+                    // Ensure account_resource exists
                     if updated_receiver.account_resource.is_none() {
                         updated_receiver.account_resource = Some(tron_backend_execution::protocol::account::AccountResource::default());
                     }
+
+                    let (old_energy_usage, old_energy_time, old_energy_window, old_energy_optimized) = {
+                        let ar = updated_receiver.account_resource.as_ref().unwrap();
+                        (ar.energy_usage, ar.latest_consume_time_for_energy, ar.energy_window_size, ar.energy_window_optimized)
+                    };
+
+                    // Step A: EnergyProcessor.updateUsage(receiverCapsule)
+                    // = increase(ac, ENERGY, oldEnergyUsage, 0, latestConsumeTimeForEnergy, now)
+                    let (recovered_energy_usage, new_window_raw, new_window_optimized) =
+                        Self::resource_increase_with_window(
+                            old_energy_usage,
+                            0,
+                            old_energy_time,
+                            head_slot,
+                            old_energy_window,
+                            old_energy_optimized,
+                            support_cancel_all_unfreeze_v2,
+                        );
+                    // Apply window updates from increase()
                     if let Some(ar) = updated_receiver.account_resource.as_mut() {
-                        if ar.energy_window_size == 0 {
-                            ar.energy_window_size = 28_800_000; // 28800s * 1000ms
-                        }
-                        ar.energy_window_optimized = true;
-                        ar.latest_consume_time_for_energy = head_slot;
+                        ar.energy_usage = recovered_energy_usage;
+                        ar.energy_window_size = new_window_raw;
+                        ar.energy_window_optimized = new_window_optimized;
                     }
 
-                    let current = Self::get_acquired_delegated_frozen_v2_balance_for_energy(&updated_receiver);
-                    if current < undelegate_info.balance {
+                    // Step B: Check acquired delegated balance and compute transferUsage
+                    let current_acquired = Self::get_acquired_delegated_frozen_v2_balance_for_energy(&updated_receiver);
+                    if current_acquired < undelegate_info.balance {
+                        // Edge case: TVM contract suicide/re-create
                         Self::set_acquired_delegated_frozen_v2_balance_for_energy(&mut updated_receiver, 0);
+                        // transferUsage stays 0
                     } else {
+                        // Compute transferUsage: proportional usage transfer
+                        let total_energy_limit = storage_adapter.get_total_energy_limit()
+                            .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
+                        let total_energy_weight = storage_adapter.get_total_energy_weight()
+                            .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
+
+                        // Java: (long) ((double) unDelegateBalance / TRX_PRECISION
+                        //              * ((double) totalEnergyCurrentLimit / totalEnergyWeight))
+                        let un_delegate_max_usage = if total_energy_weight == 0 {
+                            0
+                        } else {
+                            (undelegate_info.balance as f64 / TRX_PRECISION as f64
+                                * (total_energy_limit as f64 / total_energy_weight as f64)) as i64
+                        };
+
+                        // Java: (long) (receiverCapsule.getEnergyUsage()
+                        //              * ((double) unDelegateBalance / receiverCapsule.getAllFrozenBalanceForEnergy()))
+                        let all_frozen_energy = Self::get_all_frozen_balance_for_energy(&updated_receiver);
+                        transfer_usage = if all_frozen_energy == 0 {
+                            0
+                        } else {
+                            (recovered_energy_usage as f64
+                                * (undelegate_info.balance as f64 / all_frozen_energy as f64)) as i64
+                        };
+                        transfer_usage = std::cmp::min(un_delegate_max_usage, transfer_usage);
+
                         Self::add_acquired_delegated_frozen_v2_balance_for_energy(&mut updated_receiver, -undelegate_info.balance);
+                    }
+
+                    // Step C: Reduce receiver usage and set latest consume time
+                    if let Some(ar) = updated_receiver.account_resource.as_mut() {
+                        let new_energy_usage = ar.energy_usage - transfer_usage;
+                        ar.energy_usage = new_energy_usage;
+                        ar.latest_consume_time_for_energy = head_slot;
                     }
                 }
                 _ => {}
@@ -6455,7 +7200,13 @@ impl BackendService {
             updated_receiver_opt = Some(updated_receiver);
         }
 
-        // 12. Update DelegatedResourceStore
+        // 13. Persist receiver before reading it for unDelegateIncrease window data
+        if let Some(updated_receiver) = updated_receiver_opt.as_ref() {
+            storage_adapter.put_account_proto(&receiver_address, updated_receiver)
+                .map_err(|e| format!("Failed to persist receiver account: {}", e))?;
+        }
+
+        // 14. Update DelegatedResourceStore (transfer lock delegate to unlock)
         storage_adapter.undelegate_resource(
             &owner,
             &receiver_address,
@@ -6464,7 +7215,7 @@ impl BackendService {
             now as i64,
         ).map_err(|e| format!("Failed to update DelegatedResource: {}", e))?;
 
-        // 13. If both lock/unlock records are gone, remove DelegatedResourceAccountIndex entries.
+        // 15. If both lock/unlock records are gone, remove DelegatedResourceAccountIndex entries.
         let unlock_after = storage_adapter
             .get_delegated_resource(&owner, &receiver_address, false)
             .map_err(|e| format!("Failed to load DelegatedResource: {}", e))?;
@@ -6477,30 +7228,81 @@ impl BackendService {
                 .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex: {}", e))?;
         }
 
-        // 14. Update owner account (add back to frozen, reduce delegated)
+        // 16. Update owner account: frozen balance + unDelegateIncrease (usage/window transfer)
         let mut updated_owner = owner_account.clone();
         match undelegate_info.resource {
             0 => { // BANDWIDTH
                 Self::add_delegated_frozen_v2_balance_for_bandwidth(&mut updated_owner, -undelegate_info.balance);
                 Self::add_frozen_v2_bandwidth(&mut updated_owner, undelegate_info.balance);
+
+                // Java: if (Objects.nonNull(receiverCapsule) && transferUsage > 0)
+                //         processor.unDelegateIncrease(ownerCapsule, receiverCapsule, transferUsage, BANDWIDTH, now)
+                if updated_receiver_opt.is_some() && transfer_usage > 0 {
+                    let receiver_ref = updated_receiver_opt.as_ref().unwrap();
+                    let (new_usage, new_window, new_optimized, new_time) = Self::un_delegate_increase(
+                        updated_owner.net_usage,
+                        updated_owner.latest_consume_time,
+                        updated_owner.net_window_size,
+                        updated_owner.net_window_optimized,
+                        receiver_ref.net_window_size,
+                        receiver_ref.net_window_optimized,
+                        transfer_usage,
+                        head_slot,
+                        support_cancel_all_unfreeze_v2,
+                    );
+                    updated_owner.net_usage = new_usage;
+                    updated_owner.net_window_size = new_window;
+                    updated_owner.net_window_optimized = new_optimized;
+                    updated_owner.latest_consume_time = new_time;
+                }
             }
             1 => { // ENERGY
                 Self::add_delegated_frozen_v2_balance_for_energy(&mut updated_owner, -undelegate_info.balance);
                 Self::add_frozen_v2_energy(&mut updated_owner, undelegate_info.balance);
+
+                // Java: if (Objects.nonNull(receiverCapsule) && transferUsage > 0)
+                //         processor.unDelegateIncrease(ownerCapsule, receiverCapsule, transferUsage, ENERGY, now)
+                if updated_receiver_opt.is_some() && transfer_usage > 0 {
+                    let receiver_ref = updated_receiver_opt.as_ref().unwrap();
+                    let (recv_window, recv_optimized) = receiver_ref.account_resource.as_ref()
+                        .map(|ar| (ar.energy_window_size, ar.energy_window_optimized))
+                        .unwrap_or((0, false));
+                    let (owner_energy_usage, owner_energy_time, owner_energy_window, owner_energy_optimized) =
+                        updated_owner.account_resource.as_ref()
+                            .map(|ar| (ar.energy_usage, ar.latest_consume_time_for_energy, ar.energy_window_size, ar.energy_window_optimized))
+                            .unwrap_or((0, 0, 0, false));
+
+                    let (new_usage, new_window, new_optimized, new_time) = Self::un_delegate_increase(
+                        owner_energy_usage,
+                        owner_energy_time,
+                        owner_energy_window,
+                        owner_energy_optimized,
+                        recv_window,
+                        recv_optimized,
+                        transfer_usage,
+                        head_slot,
+                        support_cancel_all_unfreeze_v2,
+                    );
+
+                    if updated_owner.account_resource.is_none() {
+                        updated_owner.account_resource = Some(tron_backend_execution::protocol::account::AccountResource::default());
+                    }
+                    if let Some(ar) = updated_owner.account_resource.as_mut() {
+                        ar.energy_usage = new_usage;
+                        ar.energy_window_size = new_window;
+                        ar.energy_window_optimized = new_optimized;
+                        ar.latest_consume_time_for_energy = new_time;
+                    }
+                }
             }
             _ => {}
         }
 
-        // 15. Persist accounts
+        // 17. Persist owner account
         storage_adapter.put_account_proto(&owner, &updated_owner)
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
-        if let Some(updated_receiver) = updated_receiver_opt.as_ref() {
-            storage_adapter.put_account_proto(&receiver_address, updated_receiver)
-                .map_err(|e| format!("Failed to persist receiver account: {}", e))?;
-        }
-
-        // 16. Build state changes
+        // 18. Build state changes
         let mut state_changes = vec![
             TronStateChange::AccountChange {
                 address: owner,
@@ -6539,9 +7341,9 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("UnDelegateResource: undelegated {} SUN of resource {} from {} back to {}",
+        debug!("UnDelegateResource: undelegated {} SUN of resource {} from {} back to {}, transferUsage={}",
                undelegate_info.balance, undelegate_info.resource,
-               readable_receiver_address, readable_owner_address);
+               readable_receiver_address, readable_owner_address, transfer_usage);
 
         Ok(TronExecutionResult {
             success: true,
@@ -6573,6 +7375,7 @@ impl BackendService {
     fn parse_delegate_resource_contract(&self, data: &[u8]) -> Result<DelegateResourceInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address: Vec<u8> = vec![];
         let mut receiver_address: Vec<u8> = vec![];
         let mut balance: i64 = 0;
         let mut resource: i32 = 0;
@@ -6590,10 +7393,16 @@ impl BackendService {
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address - skip
+                    // owner_address - Java parity: parse this field instead of skipping
                     let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read + length as usize;
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += bytes_read;
+                    let end = pos + length as usize;
+                    if end > data.len() {
+                        return Err("Invalid owner_address length".to_string());
+                    }
+                    owner_address = data[pos..end].to_vec();
+                    pos = end;
                 }
                 (2, 0) => {
                     // resource (ResourceCode enum, varint)
@@ -6643,11 +7452,17 @@ impl BackendService {
             }
         }
 
+        // Java parity: invalid/missing owner address maps to "Invalid address" (DelegateResourceActuator.validate()).
+        if owner_address.is_empty() {
+            return Err("Invalid address".to_string());
+        }
+
         if receiver_address.is_empty() {
             return Err("Invalid receiverAddress".to_string());
         }
 
         Ok(DelegateResourceInfo {
+            owner_address,
             receiver_address,
             balance,
             resource,
@@ -6880,6 +7695,517 @@ impl BackendService {
         }
     }
 
+    // ========================================================================
+    // Helper methods for "available FreezeV2" calculation for delegation
+    // Java parity: DelegateResourceActuator.validate()
+    // ========================================================================
+
+    /// Constants for resource calculation
+    const PRECISION: i64 = 1_000_000;
+    const WINDOW_SIZE_MS: i64 = 24 * 3600 * 1000; // 24 hours in milliseconds
+    const BLOCK_PRODUCED_INTERVAL: i64 = 3000;    // 3 seconds in milliseconds
+    const WINDOW_SIZE_SLOTS: i64 = Self::WINDOW_SIZE_MS / Self::BLOCK_PRODUCED_INTERVAL; // 28800 slots
+    const WINDOW_SIZE_PRECISION: i64 = 1000; // Java: Parameter.ChainConstant.WINDOW_SIZE_PRECISION
+
+    /// Normalize Account window size fields to logical "slots" (Java parity).
+    ///
+    /// Java reference: `AccountCapsule.getWindowSize(ResourceCode)`.
+    /// - raw == 0 => default 28800 slots
+    /// - optimized:
+    ///   - raw < 1000 => default 28800 slots
+    ///   - else raw / 1000
+    /// - not optimized => raw
+    fn normalize_window_size_slots(raw: i64, optimized: bool) -> i64 {
+        let default_slots = Self::WINDOW_SIZE_SLOTS;
+        if raw == 0 {
+            return default_slots;
+        }
+
+        let normalized = if optimized {
+            if raw < Self::WINDOW_SIZE_PRECISION {
+                default_slots
+            } else {
+                raw / Self::WINDOW_SIZE_PRECISION
+            }
+        } else {
+            raw
+        };
+
+        if normalized <= 0 {
+            default_slots
+        } else {
+            normalized
+        }
+    }
+
+    /// Get V1 frozen balance for bandwidth (sum of account.frozen[].frozen_balance)
+    /// Java: AccountCapsule.getFrozenBalance()
+    fn get_frozen_v1_balance_for_bandwidth(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.frozen.iter()
+            .map(|f| f.frozen_balance)
+            .sum()
+    }
+
+    /// Get V1 frozen balance for energy (account_resource.frozen_balance_for_energy.frozen_balance)
+    /// Java: AccountCapsule.getEnergyFrozenBalance()
+    fn get_frozen_v1_balance_for_energy(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.account_resource.as_ref()
+            .and_then(|r| r.frozen_balance_for_energy.as_ref())
+            .map(|f| f.frozen_balance)
+            .unwrap_or(0)
+    }
+
+    /// Get acquired delegated V1 balance for bandwidth
+    /// Java: AccountCapsule.getAcquiredDelegatedFrozenBalanceForBandwidth()
+    fn get_acquired_delegated_frozen_v1_balance_for_bandwidth(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.acquired_delegated_frozen_balance_for_bandwidth
+    }
+
+    /// Get acquired delegated V1 balance for energy
+    /// Java: AccountCapsule.getAcquiredDelegatedFrozenBalanceForEnergy()
+    fn get_acquired_delegated_frozen_v1_balance_for_energy(account: &tron_backend_execution::protocol::Account) -> i64 {
+        account.account_resource.as_ref()
+            .map(|r| r.acquired_delegated_frozen_balance_for_energy)
+            .unwrap_or(0)
+    }
+
+    /// Calculate decayed usage using the Java resource decay algorithm.
+    /// Java: ResourceProcessor.increase(lastUsage, usage=0, lastTime, now, windowSize)
+    ///
+    /// This implements the decay portion (usage=0 case) which is what updateUsageForDelegated uses.
+    /// The formula:
+    ///   averageLastUsage = divideCeil(lastUsage * precision, windowSize)
+    ///   if lastTime != now:
+    ///       if lastTime + windowSize > now:
+    ///           decay = (windowSize - (now - lastTime)) / windowSize
+    ///           averageLastUsage = round(averageLastUsage * decay)
+    ///       else:
+    ///           averageLastUsage = 0
+    ///   return averageLastUsage * windowSize / precision
+    fn calculate_decayed_usage(last_usage: i64, last_time: i64, now: i64, window_size: i64) -> i64 {
+        if last_usage <= 0 {
+            return 0;
+        }
+
+        // divideCeil(lastUsage * precision, windowSize)
+        let precision = Self::PRECISION;
+        let numerator = last_usage.saturating_mul(precision);
+        let mut average_last_usage = numerator / window_size + if numerator % window_size > 0 { 1 } else { 0 };
+
+        if last_time != now {
+            if last_time + window_size > now {
+                let delta = now - last_time;
+                let decay = (window_size - delta) as f64 / window_size as f64;
+                // Java: round(averageLastUsage * decay)
+                // Java's Math.round rounds to nearest integer (half-up)
+                average_last_usage = (average_last_usage as f64 * decay).round() as i64;
+            } else {
+                average_last_usage = 0;
+            }
+        }
+
+        // getUsage: averageLastUsage * windowSize / precision
+        average_last_usage * window_size / precision
+    }
+
+    /// Calculate V2 net usage for bandwidth delegation validation.
+    /// Java: FreezeV2Util.getV2NetUsage(ownerCapsule, netUsage, disableJavaLangMath)
+    ///
+    /// v2NetUsage = max(0, netUsage - frozenBalanceV1 - acquiredDelegatedV1 - acquiredDelegatedV2)
+    fn get_v2_net_usage(account: &tron_backend_execution::protocol::Account, net_usage: i64) -> i64 {
+        let frozen_v1 = Self::get_frozen_v1_balance_for_bandwidth(account);
+        let acquired_delegated_v1 = Self::get_acquired_delegated_frozen_v1_balance_for_bandwidth(account);
+        let acquired_delegated_v2 = Self::get_acquired_delegated_frozen_v2_balance_for_bandwidth(account);
+
+        let v2_net_usage = net_usage
+            .saturating_sub(frozen_v1)
+            .saturating_sub(acquired_delegated_v1)
+            .saturating_sub(acquired_delegated_v2);
+
+        std::cmp::max(0, v2_net_usage)
+    }
+
+    /// Calculate V2 energy usage for energy delegation validation.
+    /// Java: FreezeV2Util.getV2EnergyUsage(ownerCapsule, energyUsage, disableJavaLangMath)
+    ///
+    /// v2EnergyUsage = max(0, energyUsage - energyFrozenBalanceV1 - acquiredDelegatedV1 - acquiredDelegatedV2)
+    fn get_v2_energy_usage(account: &tron_backend_execution::protocol::Account, energy_usage: i64) -> i64 {
+        let frozen_v1 = Self::get_frozen_v1_balance_for_energy(account);
+        let acquired_delegated_v1 = Self::get_acquired_delegated_frozen_v1_balance_for_energy(account);
+        let acquired_delegated_v2 = Self::get_acquired_delegated_frozen_v2_balance_for_energy(account);
+
+        let v2_energy_usage = energy_usage
+            .saturating_sub(frozen_v1)
+            .saturating_sub(acquired_delegated_v1)
+            .saturating_sub(acquired_delegated_v2);
+
+        std::cmp::max(0, v2_energy_usage)
+    }
+
+    // ========================================================================
+    // Helper methods for UNDELEGATE_RESOURCE_CONTRACT usage transfer parity
+    // Java oracle: UnDelegateResourceActuator.java, ResourceProcessor.java
+    // ========================================================================
+
+    /// Java parity: AccountCapsule.getAllFrozenBalanceForBandwidth()
+    /// = getFrozenBalance() + getAcquiredDelegatedFrozenBalanceForBandwidth()
+    ///   + getFrozenV2BalanceForBandwidth() + getAcquiredDelegatedFrozenV2BalanceForBandwidth()
+    fn get_all_frozen_balance_for_bandwidth(account: &tron_backend_execution::protocol::Account) -> i64 {
+        let frozen_v1 = Self::get_frozen_v1_balance_for_bandwidth(account);
+        let acquired_v1 = account.acquired_delegated_frozen_balance_for_bandwidth;
+        let frozen_v2 = Self::get_frozen_v2_balance_for_bandwidth(account);
+        let acquired_v2 = Self::get_acquired_delegated_frozen_v2_balance_for_bandwidth(account);
+        frozen_v1 + acquired_v1 + frozen_v2 + acquired_v2
+    }
+
+    /// Java parity: AccountCapsule.getAllFrozenBalanceForEnergy()
+    /// = getEnergyFrozenBalance() + getAcquiredDelegatedFrozenBalanceForEnergy()
+    ///   + getFrozenV2BalanceForEnergy() + getAcquiredDelegatedFrozenV2BalanceForEnergy()
+    fn get_all_frozen_balance_for_energy(account: &tron_backend_execution::protocol::Account) -> i64 {
+        let frozen_v1 = Self::get_frozen_v1_balance_for_energy(account);
+        let acquired_v1 = Self::get_acquired_delegated_frozen_v1_balance_for_energy(account);
+        let frozen_v2 = Self::get_frozen_v2_balance_for_energy(account);
+        let acquired_v2 = Self::get_acquired_delegated_frozen_v2_balance_for_energy(account);
+        frozen_v1 + acquired_v1 + frozen_v2 + acquired_v2
+    }
+
+    /// Java parity: AccountCapsule.getWindowSizeV2(resourceCode)
+    /// Returns raw precision-scaled window size (slots * WINDOW_SIZE_PRECISION).
+    /// - raw == 0 => 28800 * 1000 = 28_800_000
+    /// - optimized => raw (already in precision units)
+    /// - not optimized => raw * 1000
+    fn normalize_window_size_v2_raw(raw: i64, optimized: bool) -> i64 {
+        if raw == 0 {
+            return Self::WINDOW_SIZE_SLOTS * Self::WINDOW_SIZE_PRECISION;
+        }
+        if optimized {
+            raw
+        } else {
+            raw * Self::WINDOW_SIZE_PRECISION
+        }
+    }
+
+    /// Java parity: ResourceProcessor.divideCeil(numerator, denominator)
+    fn divide_ceil_resource(numerator: i64, denominator: i64) -> i64 {
+        if denominator == 0 {
+            return 0;
+        }
+        numerator / denominator + if numerator % denominator > 0 { 1 } else { 0 }
+    }
+
+    /// Java parity: ResourceProcessor.increase(AccountCapsule, ResourceCode, lastUsage, usage, lastTime, now)
+    /// V1 path (supportAllowCancelAllUnfreezeV2 == false, supportUnfreezeDelay == true).
+    /// Returns (new_usage, new_window_raw, new_window_optimized).
+    fn resource_increase_v1(
+        last_usage: i64,
+        usage: i64,
+        last_time: i64,
+        now: i64,
+        current_window_raw: i64,
+        current_window_optimized: bool,
+    ) -> (i64, i64, bool) {
+        let old_window_size = Self::normalize_window_size_slots(current_window_raw, current_window_optimized);
+        let default_window = Self::WINDOW_SIZE_SLOTS; // 28800
+        let precision = Self::PRECISION;
+
+        let mut avg_last = Self::divide_ceil_resource(last_usage.saturating_mul(precision), old_window_size);
+        let avg_new = Self::divide_ceil_resource(usage.saturating_mul(precision), default_window);
+
+        if last_time != now {
+            if last_time + old_window_size > now {
+                let delta = now - last_time;
+                let decay = (old_window_size - delta) as f64 / old_window_size as f64;
+                avg_last = (avg_last as f64 * decay).round() as i64;
+            } else {
+                avg_last = 0;
+            }
+        }
+
+        // getUsage(averageLastUsage, oldWindowSize, averageUsage, this.windowSize)
+        let new_usage = (avg_last * old_window_size + avg_new * default_window) / precision;
+
+        // supportUnfreezeDelay is always true for UNDELEGATE context
+        let remain_usage = avg_last * old_window_size / precision;
+        if remain_usage == 0 {
+            return (new_usage, default_window, current_window_optimized);
+        }
+        let remain_window_size = old_window_size - (now - last_time);
+        // getNewWindowSize(remainUsage, remainWindowSize, usage, windowSize, newUsage)
+        let new_window_size = (remain_usage * remain_window_size + usage * default_window) / new_usage;
+
+        (new_usage, new_window_size, current_window_optimized)
+    }
+
+    /// Java parity: ResourceProcessor.increaseV2(AccountCapsule, ResourceCode, lastUsage, usage, lastTime, now)
+    /// Returns (new_usage, new_window_raw, true).
+    fn resource_increase_v2_fn(
+        last_usage: i64,
+        usage: i64,
+        last_time: i64,
+        now: i64,
+        current_window_raw: i64,
+        current_window_optimized: bool,
+    ) -> (i64, i64, bool) {
+        let old_window_size_v2 = Self::normalize_window_size_v2_raw(current_window_raw, current_window_optimized);
+        let old_window_size = Self::normalize_window_size_slots(current_window_raw, current_window_optimized);
+        let default_window = Self::WINDOW_SIZE_SLOTS; // 28800
+        let precision = Self::PRECISION;
+        let wsp = Self::WINDOW_SIZE_PRECISION; // 1000
+
+        let mut avg_last = Self::divide_ceil_resource(last_usage.saturating_mul(precision), old_window_size);
+        let avg_new = Self::divide_ceil_resource(usage.saturating_mul(precision), default_window);
+
+        if last_time != now {
+            if last_time + old_window_size > now {
+                let delta = now - last_time;
+                let decay = (old_window_size - delta) as f64 / old_window_size as f64;
+                avg_last = (avg_last as f64 * decay).round() as i64;
+            } else {
+                avg_last = 0;
+            }
+        }
+
+        let new_usage = (avg_last * old_window_size + avg_new * default_window) / precision;
+        let remain_usage = avg_last * old_window_size / precision;
+
+        if remain_usage == 0 {
+            return (new_usage, default_window * wsp, true);
+        }
+
+        let remain_window_size = old_window_size_v2 - (now - last_time) * wsp;
+        let mut new_window_size = Self::divide_ceil_resource(
+            remain_usage * remain_window_size + usage * default_window * wsp,
+            new_usage,
+        );
+        new_window_size = std::cmp::min(new_window_size, default_window * wsp);
+
+        (new_usage, new_window_size, true)
+    }
+
+    /// Dispatch to increase v1 or v2 based on supportAllowCancelAllUnfreezeV2 flag.
+    /// Returns (new_usage, new_window_raw, new_window_optimized).
+    fn resource_increase_with_window(
+        last_usage: i64,
+        usage: i64,
+        last_time: i64,
+        now: i64,
+        current_window_raw: i64,
+        current_window_optimized: bool,
+        support_cancel_all_unfreeze_v2: bool,
+    ) -> (i64, i64, bool) {
+        if support_cancel_all_unfreeze_v2 {
+            Self::resource_increase_v2_fn(last_usage, usage, last_time, now, current_window_raw, current_window_optimized)
+        } else {
+            Self::resource_increase_v1(last_usage, usage, last_time, now, current_window_raw, current_window_optimized)
+        }
+    }
+
+    /// Java parity: ResourceProcessor.unDelegateIncrease (v1 path, supportAllowCancelAllUnfreezeV2 == false).
+    /// Returns (new_owner_usage, new_owner_window_raw, new_owner_window_optimized, new_owner_latest_time).
+    fn un_delegate_increase_v1(
+        owner_usage: i64,
+        owner_latest_time: i64,
+        owner_window_raw: i64,
+        owner_window_optimized: bool,
+        receiver_window_raw: i64,
+        receiver_window_optimized: bool,
+        transfer_usage: i64,
+        now: i64,
+    ) -> (i64, i64, bool, i64) {
+        // Step 1: Update owner usage to "now" (recovery via increase v1)
+        let (decayed_owner_usage, new_owner_window_raw, new_owner_optimized) =
+            Self::resource_increase_v1(owner_usage, 0, owner_latest_time, now, owner_window_raw, owner_window_optimized);
+
+        // Step 2: Read updated window sizes (after increase modified them)
+        let remain_owner_window = std::cmp::max(0, Self::normalize_window_size_slots(new_owner_window_raw, new_owner_optimized));
+        let remain_receiver_window = std::cmp::max(0, Self::normalize_window_size_slots(receiver_window_raw, receiver_window_optimized));
+
+        let new_owner_usage = decayed_owner_usage + transfer_usage;
+
+        if new_owner_usage == 0 {
+            return (0, Self::WINDOW_SIZE_SLOTS, new_owner_optimized, now);
+        }
+
+        // getNewWindowSize(ownerUsage, remainOwnerWindowSize, transferUsage, remainReceiverWindowSize, newOwnerUsage)
+        let new_window = (decayed_owner_usage * remain_owner_window + transfer_usage * remain_receiver_window) / new_owner_usage;
+
+        (new_owner_usage, new_window, new_owner_optimized, now)
+    }
+
+    /// Java parity: ResourceProcessor.unDelegateIncreaseV2.
+    /// Returns (new_owner_usage, new_owner_window_raw, true, new_owner_latest_time).
+    fn un_delegate_increase_v2_fn(
+        owner_usage: i64,
+        owner_latest_time: i64,
+        owner_window_raw: i64,
+        owner_window_optimized: bool,
+        receiver_window_raw: i64,
+        receiver_window_optimized: bool,
+        transfer_usage: i64,
+        now: i64,
+    ) -> (i64, i64, bool, i64) {
+        let wsp = Self::WINDOW_SIZE_PRECISION;
+        let default_window = Self::WINDOW_SIZE_SLOTS;
+
+        // Step 1: Update owner usage to "now" (recovery via increaseV2)
+        let (decayed_owner_usage, new_owner_window_raw, _) =
+            Self::resource_increase_v2_fn(owner_usage, 0, owner_latest_time, now, owner_window_raw, owner_window_optimized);
+
+        let new_owner_usage = decayed_owner_usage + transfer_usage;
+
+        if new_owner_usage == 0 {
+            return (0, default_window * wsp, true, now);
+        }
+
+        // Read updated V2 window sizes (increaseV2 always sets optimized=true)
+        let remain_owner_window_v2 = std::cmp::max(0, Self::normalize_window_size_v2_raw(new_owner_window_raw, true));
+        let remain_receiver_window_v2 = std::cmp::max(0, Self::normalize_window_size_v2_raw(receiver_window_raw, receiver_window_optimized));
+
+        // divideCeil(ownerUsage * remainOwnerWindowSizeV2 + transferUsage * remainReceiverWindowSizeV2, newOwnerUsage)
+        let mut new_window = Self::divide_ceil_resource(
+            decayed_owner_usage * remain_owner_window_v2 + transfer_usage * remain_receiver_window_v2,
+            new_owner_usage,
+        );
+        new_window = std::cmp::min(new_window, default_window * wsp);
+
+        (new_owner_usage, new_window, true, now)
+    }
+
+    /// Dispatch unDelegateIncrease to v1 or v2 based on supportAllowCancelAllUnfreezeV2 flag.
+    /// Returns (new_owner_usage, new_owner_window_raw, new_owner_window_optimized, new_owner_latest_time).
+    fn un_delegate_increase(
+        owner_usage: i64,
+        owner_latest_time: i64,
+        owner_window_raw: i64,
+        owner_window_optimized: bool,
+        receiver_window_raw: i64,
+        receiver_window_optimized: bool,
+        transfer_usage: i64,
+        now: i64,
+        support_cancel_all_unfreeze_v2: bool,
+    ) -> (i64, i64, bool, i64) {
+        if support_cancel_all_unfreeze_v2 {
+            Self::un_delegate_increase_v2_fn(
+                owner_usage, owner_latest_time, owner_window_raw, owner_window_optimized,
+                receiver_window_raw, receiver_window_optimized, transfer_usage, now,
+            )
+        } else {
+            Self::un_delegate_increase_v1(
+                owner_usage, owner_latest_time, owner_window_raw, owner_window_optimized,
+                receiver_window_raw, receiver_window_optimized, transfer_usage, now,
+            )
+        }
+    }
+
+    /// Compute available FreezeV2 balance for bandwidth delegation.
+    /// Java: DelegateResourceActuator.validate() BANDWIDTH case
+    ///
+    /// Steps:
+    /// 1. Update net_usage by decaying old usage to current time (like BandwidthProcessor.updateUsageForDelegated)
+    /// 2. Calculate weighted net_usage in SUN: netUsage = accountNetUsage * TRX_PRECISION * (totalNetWeight / totalNetLimit)
+    /// 3. Calculate V2-only usage: v2NetUsage = max(0, netUsage - frozenV1 - acquiredDelegatedV1 - acquiredDelegatedV2)
+    /// 4. Return: frozenV2Balance - v2NetUsage
+    fn compute_available_freeze_v2_bandwidth(
+        account: &tron_backend_execution::protocol::Account,
+        total_net_weight: i64,
+        total_net_limit: i64,
+        head_slot: i64,
+    ) -> i64 {
+        // Get frozen V2 balance
+        let frozen_v2_bandwidth = Self::get_frozen_v2_balance_for_bandwidth(account);
+
+        // 1. Get current net_usage from account and decay it to current time
+        let old_net_usage = account.net_usage;
+        let latest_consume_time = account.latest_consume_time;
+
+        // Java parity: AccountCapsule.getWindowSize(BANDWIDTH)
+        let window_size = Self::normalize_window_size_slots(
+            account.net_window_size,
+            account.net_window_optimized,
+        );
+
+        // Decay the usage to current time (parity with BandwidthProcessor.updateUsageForDelegated)
+        let decayed_net_usage = Self::calculate_decayed_usage(
+            old_net_usage,
+            latest_consume_time,
+            head_slot,
+            window_size,
+        );
+
+        // 2. Calculate weighted net usage in SUN units
+        // Java: (long) (accountNetUsage * TRX_PRECISION * ((double) totalNetWeight / totalNetLimit))
+        if total_net_limit == 0 {
+            // Avoid division by zero - if no limit, all frozen balance is available
+            return frozen_v2_bandwidth;
+        }
+
+        let net_usage_scaled = (decayed_net_usage as f64
+            * TRX_PRECISION as f64
+            * (total_net_weight as f64 / total_net_limit as f64)) as i64;
+
+        // 3. Calculate V2 usage (subtract V1 and acquired delegated amounts)
+        let v2_net_usage = Self::get_v2_net_usage(account, net_usage_scaled);
+
+        // 4. Return available balance
+        frozen_v2_bandwidth.saturating_sub(v2_net_usage)
+    }
+
+    /// Compute available FreezeV2 balance for energy delegation.
+    /// Java: DelegateResourceActuator.validate() ENERGY case
+    ///
+    /// Steps:
+    /// 1. Update energy_usage by decaying old usage to current time (like EnergyProcessor.updateUsage)
+    /// 2. Calculate weighted energy_usage in SUN: energyUsage = accountEnergyUsage * TRX_PRECISION * (totalEnergyWeight / totalEnergyCurrentLimit)
+    /// 3. Calculate V2-only usage: v2EnergyUsage = max(0, energyUsage - frozenV1 - acquiredDelegatedV1 - acquiredDelegatedV2)
+    /// 4. Return: frozenV2Balance - v2EnergyUsage
+    fn compute_available_freeze_v2_energy(
+        account: &tron_backend_execution::protocol::Account,
+        total_energy_weight: i64,
+        total_energy_current_limit: i64,
+        head_slot: i64,
+    ) -> i64 {
+        // Get frozen V2 balance
+        let frozen_v2_energy = Self::get_frozen_v2_balance_for_energy(account);
+
+        // 1. Get current energy_usage from account and decay it to current time
+        let (old_energy_usage, latest_consume_time, window_size) = match &account.account_resource {
+            Some(res) => (
+                res.energy_usage,
+                res.latest_consume_time_for_energy,
+                Self::normalize_window_size_slots(
+                    res.energy_window_size,
+                    res.energy_window_optimized,
+                ),
+            ),
+            None => (0, 0, Self::WINDOW_SIZE_SLOTS),
+        };
+
+        // Decay the usage to current time (parity with EnergyProcessor.updateUsage)
+        let decayed_energy_usage = Self::calculate_decayed_usage(
+            old_energy_usage,
+            latest_consume_time,
+            head_slot,
+            window_size,
+        );
+
+        // 2. Calculate weighted energy usage in SUN units
+        // Java: (long) (ownerCapsule.getEnergyUsage() * TRX_PRECISION * ((double) totalEnergyWeight / totalEnergyCurrentLimit))
+        if total_energy_current_limit == 0 {
+            // Avoid division by zero - if no limit, all frozen balance is available
+            return frozen_v2_energy;
+        }
+
+        let energy_usage_scaled = (decayed_energy_usage as f64
+            * TRX_PRECISION as f64
+            * (total_energy_weight as f64 / total_energy_current_limit as f64)) as i64;
+
+        // 3. Calculate V2 usage (subtract V1 and acquired delegated amounts)
+        let v2_energy_usage = Self::get_v2_energy_usage(account, energy_usage_scaled);
+
+        // 4. Return available balance
+        frozen_v2_energy.saturating_sub(v2_energy_usage)
+    }
+
     // ==========================================================================
     // Phase 2.E: TRC-10 Extension Contracts (9/14/15)
     // ==========================================================================
@@ -6892,59 +8218,77 @@ impl BackendService {
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
-        context: &TronExecutionContext,
+        _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        let owner = transaction.from;
-        let owner_tron = add_tron_address_prefix(&owner);
-
-        // Parse contract data
+        // Parse contract data first to get all fields
         let participate_info = self.parse_participate_asset_issue_contract(&transaction.data)?;
 
+        // Get expected address prefix for validation (Java: DecodeUtil.addressPreFixByte)
+        let expected_prefix = storage_adapter.address_prefix();
+
+        // 1. Validate owner_address (Java parity: DecodeUtil.addressValid(ownerAddress))
+        // Java requires: length == 21 and prefix == configured prefix
+        if participate_info.owner_address.is_empty() || participate_info.owner_address.len() != 21 {
+            return Err("Invalid ownerAddress".to_string());
+        }
+        if participate_info.owner_address[0] != expected_prefix {
+            return Err("Invalid ownerAddress".to_string());
+        }
+        let owner = revm_primitives::Address::from_slice(&participate_info.owner_address[1..]);
+
+        // 2. Validate to_address (Java parity: DecodeUtil.addressValid(toAddress))
+        // Java requires: length == 21 and prefix == configured prefix
+        if participate_info.to_address.is_empty() || participate_info.to_address.len() != 21 {
+            return Err("Invalid toAddress".to_string());
+        }
+        if participate_info.to_address[0] != expected_prefix {
+            return Err("Invalid toAddress".to_string());
+        }
+        let to_address = revm_primitives::Address::from_slice(&participate_info.to_address[1..]);
+
         debug!("ParticipateAssetIssue: owner={}, to={}, asset={}, amount={}",
-               hex::encode(&owner_tron),
+               hex::encode(&participate_info.owner_address),
                hex::encode(&participate_info.to_address),
                String::from_utf8_lossy(&participate_info.asset_name),
                participate_info.amount);
 
-        // 1. Validate addresses
-        let to_address = if participate_info.to_address.len() == 21 {
-            revm_primitives::Address::from_slice(&participate_info.to_address[1..])
-        } else if participate_info.to_address.len() == 20 {
-            revm_primitives::Address::from_slice(&participate_info.to_address)
-        } else {
-            return Err("Invalid to address length".to_string());
-        };
-
-        if owner == to_address {
-            return Err("Cannot participate asset Issue yourself !".to_string());
-        }
-
-        // 2. Validate amount > 0
+        // 3. Validate amount > 0 (before self-participation check, matching Java order)
         if participate_info.amount <= 0 {
             return Err("Amount must greater than 0!".to_string());
         }
 
-        // 3. Validate owner account exists
+        // 4. Validate not self-participation (Java: Arrays.equals(ownerAddress, toAddress))
+        if owner == to_address {
+            return Err("Cannot participate asset Issue yourself !".to_string());
+        }
+
+        // 5. Validate owner account exists
         let owner_account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
             .ok_or("Account does not exist!")?;
 
-        // 4. Validate owner has enough balance (amount + fee)
+        // 6. Validate owner has enough balance (amount + fee)
         // Java oracle validates balance before time window checks.
         let fee = 0i64; // ParticipateAssetIssue has no fee
         if owner_account.balance < participate_info.amount + fee {
             return Err("No enough balance !".to_string());
         }
 
-        // 5. Get asset issue (using asset name as key)
+        // 7. Get asset issue (using asset name as key)
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
 
+        // Java parity: ByteArray.toStr([]) returns "null", not ""
+        let asset_name_display = if participate_info.asset_name.is_empty() {
+            "null".to_string()
+        } else {
+            String::from_utf8_lossy(&participate_info.asset_name).to_string()
+        };
         let asset_issue = storage_adapter.get_asset_issue(&participate_info.asset_name, allow_same_token_name)
             .map_err(|e| format!("Failed to get asset issue: {}", e))?
-            .ok_or_else(|| format!("No asset named {}", String::from_utf8_lossy(&participate_info.asset_name)))?;
+            .ok_or_else(|| format!("No asset named {}", asset_name_display))?;
 
-        // 6. Validate to_address is the asset owner
+        // 8. Validate to_address is the asset owner
         let asset_owner_address = if asset_issue.owner_address.len() == 21 {
             &asset_issue.owner_address[1..]
         } else {
@@ -6957,14 +8301,14 @@ impl BackendService {
             ));
         }
 
-        // 7. Validate time window
+        // 9. Validate time window
         let now = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get timestamp: {}", e))?;
         if now >= asset_issue.end_time || now < asset_issue.start_time {
             return Err("No longer valid period!".to_string());
         }
 
-        // 8. Calculate exchange amount
+        // 10. Calculate exchange amount
         let exchange_amount = Self::safe_multiply_divide(
             participate_info.amount,
             asset_issue.num as i64,
@@ -6974,12 +8318,12 @@ impl BackendService {
             return Err("Can not process the exchange!".to_string());
         }
 
-        // 9. Validate to account exists (asset issuer)
+        // 11. Validate to account exists (asset issuer)
         let to_account = storage_adapter.get_account_proto(&to_address)
             .map_err(|e| format!("Failed to get to account: {}", e))?
             .ok_or("To account does not exist!")?;
 
-        // 10. Validate issuer has enough tokens
+        // 12. Validate issuer has enough tokens
         let issuer_asset_balance = Self::get_asset_balance_v2(&to_account, &participate_info.asset_name, allow_same_token_name);
         if issuer_asset_balance < exchange_amount {
             return Err("Asset balance is not enough !".to_string());
@@ -6990,11 +8334,13 @@ impl BackendService {
         } else {
             String::from_utf8_lossy(&participate_info.asset_name).to_string()
         };
+        // NOTE: This check is stricter than Java. Java does not explicitly validate empty token_id
+        // in the actuator - it relies on the asset's existence. We keep this as a safety invariant.
         if token_id_str.is_empty() {
             return Err("token_id cannot be empty".to_string());
         }
 
-        // 11. Execute the exchange
+        // 13. Execute the exchange
         let mut updated_owner = owner_account.clone();
         let mut updated_to = to_account.clone();
 
@@ -7024,13 +8370,13 @@ impl BackendService {
             allow_same_token_name,
         )?;
 
-        // 12. Persist updated accounts
+        // 14. Persist updated accounts
         storage_adapter.put_account_proto(&owner, &updated_owner)
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
         storage_adapter.put_account_proto(&to_address, &updated_to)
             .map_err(|e| format!("Failed to persist to account: {}", e))?;
 
-        // 13. Build state changes for CSV parity
+        // 15. Build state changes for CSV parity
         let mut state_changes = Vec::new();
 
         let old_owner_info = revm_primitives::AccountInfo {
@@ -7113,35 +8459,76 @@ impl BackendService {
     /// Unfreezes frozen TRC-10 supply and returns it to the asset issuer's balance
     ///
     /// Java oracle: UnfreezeAssetActuator.java
+    ///
+    /// Validation order (matches Java):
+    ///   1. Any.is(UnfreezeAssetContract.class) type_url check
+    ///   2. DecodeUtil.addressValid(ownerAddress)  — address parsed from contract bytes
+    ///   3. Account exists
+    ///   4. frozenSupplyCount > 0
+    ///   5. assetIssuedName / assetIssuedID non-empty
+    ///   6. allowedUnfreezeCount > 0 (time gate)
+    ///
+    /// Overflow parity: Java uses unchecked `+=` for the frozen-balance summation,
+    /// then `addExact()` (throws ArithmeticException) inside `addAssetAmountV2`.
+    /// Rust matches this: `wrapping_add` for the summation, `checked_add` in
+    /// `add_asset_amount_v2` (→ "long overflow").
     fn execute_unfreeze_asset_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         transaction: &TronTransaction,
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
+        // 1. Validate contract parameter type (Any.is) when raw Any is available
+        //    Java: any.is(UnfreezeAssetContract.class)
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.UnfreezeAssetContract") {
+                return Err(
+                    "contract type error, expected type [UnfreezeAssetContract], real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
+
+        // 2. Parse owner_address from contract bytes (Java: any.unpack(UnfreezeAssetContract.class))
+        //    UnfreezeAssetContract proto: bytes owner_address = 1;
+        let contract_bytes = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .map(|any| any.value.as_slice())
+            .unwrap_or(transaction.data.as_ref());
+
+        let owner_tron = Self::parse_unfreeze_asset_owner_address(contract_bytes)?;
+
+        // Use parsed owner_address for validation; fall back to from_raw only if proto is empty
+        let owner_address_bytes = if !owner_tron.is_empty() {
+            owner_tron.as_slice()
+        } else {
+            transaction.metadata.from_raw.as_deref().unwrap_or(&[])
+        };
+
         // Validation parity: DecodeUtil.addressValid(ownerAddress)
         let expected_prefix = storage_adapter.address_prefix();
-        let owner_raw = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if owner_raw.len() != 21 || owner_raw[0] != expected_prefix {
+        if owner_address_bytes.len() != 21 || owner_address_bytes[0] != expected_prefix {
             return Err("Invalid address".to_string());
         }
-        let owner = revm_primitives::Address::from_slice(&owner_raw[1..]);
-        let readable_owner_address = hex::encode(owner_raw);
+        let owner = revm_primitives::Address::from_slice(&owner_address_bytes[1..]);
+        let readable_owner_address = hex::encode(owner_address_bytes);
 
         debug!("UnfreezeAsset: owner={}", readable_owner_address);
 
-        // 1. Validate owner account exists
+        // 3. Validate owner account exists
         let account = storage_adapter
             .get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .ok_or_else(|| format!("Account[{}] does not exist", readable_owner_address))?;
 
-        // 2. Validate account has frozen supply
+        // 4. Validate account has frozen supply
         if account.frozen_supply.is_empty() {
             return Err("no frozen supply balance".to_string());
         }
 
-        // 3. Get asset issued info
+        // 5. Get asset issued info (name or id must be non-empty)
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
 
@@ -7156,51 +8543,67 @@ impl BackendService {
             }
             account.asset_issued_id.clone()
         };
-        let asset_issue = storage_adapter
-            .get_asset_issue(&asset_key, allow_same_token_name)
-            .map_err(|e| format!("Failed to get asset issue: {}", e))?
-            .ok_or("No asset!".to_string())?;
-        let token_id_str = if !asset_issue.id.is_empty() {
-            asset_issue.id
-        } else {
-            String::from_utf8_lossy(&asset_key).to_string()
-        };
-        if token_id_str.is_empty() {
-            return Err("token_id cannot be empty".to_string());
-        }
 
-        // 4. Get current timestamp
+        // 6. Time gate: at least one frozen entry must have expired
         let now = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get timestamp: {}", e))?;
 
-        // 5. Calculate how many entries have expired
         let expired_count = account.frozen_supply.iter()
-            .filter(|frozen| frozen.expire_time <= now as i64)
+            .filter(|frozen| frozen.expire_time <= now)
             .count();
         if expired_count == 0 {
             return Err("It's not time to unfreeze asset supply".to_string());
         }
 
-        // 6. Process frozen supply - separate expired from non-expired
+        // --- Execution phase (matches UnfreezeAssetActuator.execute) ---
+
+        // Resolve token_id_str for addAssetAmountV2:
+        //   - allowSameTokenName == 0: need AssetIssue lookup to map name → tokenId
+        //     Java: AssetIssueCapsule.getId() used directly (no fallback)
+        //   - allowSameTokenName == 1: key IS the tokenId, no lookup needed (Java parity)
+        let token_id_str = if allow_same_token_name == 0 {
+            let asset_issue = storage_adapter
+                .get_asset_issue(&asset_key, allow_same_token_name)
+                .map_err(|e| format!("Failed to get asset issue: {}", e))?
+                .ok_or("No asset!".to_string())?;
+            // Java: String tokenID = assetIssueCapsule.getId(); — used as-is
+            asset_issue.id.clone()
+        } else {
+            // allowSameTokenName == 1: key is already the tokenId string
+            String::from_utf8_lossy(&asset_key).to_string()
+        };
+
+        // Process frozen supply — separate expired from non-expired.
+        // Java: unfreezeAsset += frozenBalance  (unchecked long +=, wrapping on overflow)
+        // Overflow is caught later by addExact() in addAssetAmountV2.
         let mut unfreeze_asset: i64 = 0;
         let mut remaining_frozen = Vec::new();
 
         for frozen in account.frozen_supply.iter() {
-            if frozen.expire_time <= now as i64 {
-                // Expired - add to unfreeze amount
-                unfreeze_asset = unfreeze_asset.checked_add(frozen.frozen_balance)
-                    .ok_or("Overflow calculating unfreeze amount")?;
+            if frozen.expire_time <= now {
+                // Expired — wrapping_add matches Java's unchecked `+=`
+                unfreeze_asset = unfreeze_asset.wrapping_add(frozen.frozen_balance);
             } else {
-                // Not expired - keep in frozen list
+                // Not expired — keep in frozen list
                 remaining_frozen.push(frozen.clone());
             }
         }
 
-        // 7. Update account
+        // Update account
         let mut updated_account = account.clone();
         updated_account.frozen_supply = remaining_frozen;
 
+        // Import asset from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+        // (mirrors Java's AccountCapsule.importAsset(key) called inside addAssetAmountV2)
+        Self::import_asset_if_optimized(
+            storage_adapter,
+            &mut updated_account,
+            &asset_key,
+            &owner,
+        )?;
+
         // Add unfrozen assets back to balance
+        // (Java: addAssetAmountV2 uses addExact → ArithmeticException on overflow)
         Self::add_asset_amount_v2(
             &mut updated_account,
             &asset_key,
@@ -7209,11 +8612,11 @@ impl BackendService {
             allow_same_token_name,
         )?;
 
-        // 8. Persist updated account
+        // Persist updated account
         storage_adapter.put_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to persist account: {}", e))?;
 
-        // 9. Build state change for CSV parity (balance unchanged, but for consistency)
+        // Build state change for CSV parity (balance unchanged, but for consistency)
         let old_account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(account.balance as u64),
             nonce: 0,
@@ -7256,10 +8659,70 @@ impl BackendService {
         })
     }
 
+    /// Parse `owner_address` (field 1, length-delimited) from a serialized
+    /// `UnfreezeAssetContract` protobuf message.
+    ///
+    /// Proto definition (asset_issue_contract.proto):
+    ///   bytes owner_address = 1;
+    fn parse_unfreeze_asset_owner_address(data: &[u8]) -> Result<Vec<u8>, String> {
+        let mut owner_address: Vec<u8> = Vec::new();
+        let mut pos = 0;
+        while pos < data.len() {
+            let (field_header, bytes_read) = read_varint(&data[pos..])
+                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            pos += bytes_read;
+
+            let field_number = field_header >> 3;
+            let wire_type = field_header & 0x07;
+
+            match (field_number, wire_type) {
+                (1, 2) => {
+                    // bytes owner_address = 1;
+                    let (length, len_bytes) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to read owner_address length: {}", e))?;
+                    pos += len_bytes;
+                    let length = length as usize;
+                    if pos + length > data.len() {
+                        return Err("owner_address extends beyond data".to_string());
+                    }
+                    owner_address = data[pos..pos + length].to_vec();
+                    pos += length;
+                }
+                (_, 0) => {
+                    // varint — skip
+                    let (_, vlen) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to skip varint: {}", e))?;
+                    pos += vlen;
+                }
+                (_, 2) => {
+                    // length-delimited — skip
+                    let (length, len_bytes) = read_varint(&data[pos..])
+                        .map_err(|e| format!("Failed to skip length-delimited: {}", e))?;
+                    pos += len_bytes + length as usize;
+                }
+                (_, 1) => { pos += 8; } // 64-bit — skip
+                (_, 5) => { pos += 4; } // 32-bit — skip
+                _ => {
+                    return Err(format!("Unknown wire type {} at field {}", wire_type, field_number));
+                }
+            }
+        }
+        Ok(owner_address)
+    }
+
     /// Execute UPDATE_ASSET_CONTRACT (type 15)
     /// Updates TRC-10 asset metadata: url, description, free_asset_net_limit, public_free_asset_net_limit
     ///
     /// Java oracle: UpdateAssetActuator.java
+    /// Validation order matches Java exactly:
+    ///   1) Any.is(UpdateAssetContract.class)
+    ///   2) Parse contract → owner_address, newLimit, newPublicLimit, url, description
+    ///   3) DecodeUtil.addressValid(ownerAddress) — 21 bytes, prefix 0x41
+    ///   4) Account exists
+    ///   5) Asset issued name/ID + store existence
+    ///   6) URL valid
+    ///   7) Description valid
+    ///   8) Limit bounds
     fn execute_update_asset_contract(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
@@ -7267,9 +8730,8 @@ impl BackendService {
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         let owner = transaction.from;
-        let owner_tron = add_tron_address_prefix(&owner);
 
-        // Validate contract parameter type (Any.is) when raw Any is available
+        // 1. Validate contract parameter type (Any.is) when raw Any is available
         if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
             if !Self::any_type_url_matches(&any.type_url, "protocol.UpdateAssetContract") {
                 return Err(
@@ -7279,7 +8741,7 @@ impl BackendService {
             }
         }
 
-        // Parse contract data
+        // 2. Parse contract data (including owner_address for Java parity)
         let contract_bytes = transaction
             .metadata
             .contract_parameter
@@ -7289,53 +8751,57 @@ impl BackendService {
         let update_info = self.parse_update_asset_contract(contract_bytes)?;
 
         debug!("UpdateAsset: owner={}, new_limit={}, new_public_limit={}",
-               hex::encode(&owner_tron), update_info.new_limit, update_info.new_public_limit);
+               hex::encode(&update_info.owner_address), update_info.new_limit, update_info.new_public_limit);
 
-        // Validation parity: DecodeUtil.addressValid(ownerAddress)
-        if let Some(from_raw) = transaction.metadata.from_raw.as_deref() {
-            let owner_address_valid = match from_raw.len() {
-                21 => from_raw[0] == 0x41 || from_raw[0] == 0xa0,
-                20 => true,
-                _ => false,
-            };
-            if !owner_address_valid {
-                return Err("Invalid ownerAddress".to_string());
-            }
+        // 3. Validate owner address (Java parity: DecodeUtil.addressValid)
+        // Java requires exactly 21 bytes with correct prefix (0x41 mainnet).
+        // Use owner_address from the parsed contract bytes (same as Java's any.unpack()).
+        let owner_address = &update_info.owner_address;
+        let owner_address_valid = owner_address.len() == 21
+            && (owner_address[0] == 0x41 || owner_address[0] == 0xa0);
+        if !owner_address_valid {
+            return Err("Invalid ownerAddress".to_string());
         }
 
-        // 1. Validate owner account exists
+        // 4. Validate owner account exists
         let account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get account: {}", e))?
             .ok_or("Account does not exist")?;
 
-        // 2. Get asset info and validate ownership
+        // 5. Get asset info and validate ownership + store existence
+        // Java checks store existence BEFORE url/description/limits.
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
 
-        // Get asset key based on allowSameTokenName flag
-        let asset_key = if allow_same_token_name == 0 {
+        if allow_same_token_name == 0 {
             if account.asset_issued_name.is_empty() {
                 return Err("Account has not issued any asset".to_string());
             }
-            account.asset_issued_name.clone()
+            // Check legacy store existence (Java: assetIssueStore.get(account.getAssetIssuedName().toByteArray()) == null)
+            let _legacy_asset = storage_adapter.get_asset_issue(&account.asset_issued_name, 0)
+                .map_err(|e| format!("Failed to get asset issue: {}", e))?
+                .ok_or("Asset is not existed in AssetIssueStore")?;
         } else {
             if account.asset_issued_id.is_empty() {
                 return Err("Account has not issued any asset".to_string());
             }
-            account.asset_issued_id.clone()
-        };
+            // Check V2 store existence (Java: assetIssueV2Store.get(account.getAssetIssuedID().toByteArray()) == null)
+            let _v2_asset = storage_adapter.get_asset_issue(&account.asset_issued_id, 1)
+                .map_err(|e| format!("Failed to get asset issue: {}", e))?
+                .ok_or("Asset is not existed in AssetIssueV2Store")?;
+        }
 
-        // 3. Validate URL
+        // 6. Validate URL
         if !Self::valid_url(&update_info.url) {
             return Err("Invalid url".to_string());
         }
 
-        // 4. Validate description
+        // 7. Validate description
         if !Self::valid_asset_description(&update_info.description) {
             return Err("Invalid description".to_string());
         }
 
-        // 5. Validate limits
+        // 8. Validate limits
         let one_day_net_limit = storage_adapter.get_one_day_net_limit()
             .map_err(|e| format!("Failed to get oneDayNetLimit: {}", e))?;
 
@@ -7347,36 +8813,45 @@ impl BackendService {
             return Err("Invalid PublicFreeAssetNetLimit".to_string());
         }
 
-        // 6. Get and update asset issue
-        let asset_issue = storage_adapter.get_asset_issue(&asset_key, allow_same_token_name)
-            .map_err(|e| format!("Failed to get asset issue: {}", e))?
-            .ok_or_else(|| format!("Asset is not existed in AssetIssue{}Store",
-                                   if allow_same_token_name == 0 { "" } else { "V2" }))?;
+        // === Execution (Java: UpdateAssetActuator.execute) ===
+        // Java always loads V2 entry by account.assetIssuedID first, then updates it.
+        // If allowSameTokenName == 0, also loads legacy entry by name and updates it separately.
+        // Each store entry is updated in-place (only 4 fields), preserving all other fields.
 
-        let mut updated_asset = asset_issue.clone();
-        updated_asset.free_asset_net_limit = update_info.new_limit;
-        updated_asset.public_free_asset_net_limit = update_info.new_public_limit;
-        updated_asset.url = update_info.url.clone();
-        updated_asset.description = update_info.description.clone();
+        // Load V2 entry (Java always loads this in execute, regardless of allowSameTokenName)
+        let mut asset_issue_v2 = storage_adapter.get_asset_issue(&account.asset_issued_id, 1)
+            .map_err(|e| format!("Failed to get asset issue V2: {}", e))?
+            .ok_or("Asset is not existed in AssetIssueV2Store")?;
 
-        // 7. Persist updated asset issue
-        // If allowSameTokenName == 0, update both stores
+        // Update only the four fields on V2 entry
+        asset_issue_v2.free_asset_net_limit = update_info.new_limit;
+        asset_issue_v2.public_free_asset_net_limit = update_info.new_public_limit;
+        asset_issue_v2.url = update_info.url.clone();
+        asset_issue_v2.description = update_info.description.clone();
+
         if allow_same_token_name == 0 {
-            // Update AssetIssueStore (by name)
-            storage_adapter.put_asset_issue(&account.asset_issued_name, &updated_asset, false)
+            // Load legacy entry separately and update only 4 fields (preserving per-store fields)
+            let mut asset_issue_legacy = storage_adapter.get_asset_issue(&account.asset_issued_name, 0)
+                .map_err(|e| format!("Failed to get asset issue: {}", e))?
+                .ok_or("Asset is not existed in AssetIssueStore")?;
+
+            asset_issue_legacy.free_asset_net_limit = update_info.new_limit;
+            asset_issue_legacy.public_free_asset_net_limit = update_info.new_public_limit;
+            asset_issue_legacy.url = update_info.url.clone();
+            asset_issue_legacy.description = update_info.description.clone();
+
+            // Persist both stores (Java: assetIssueStore.put + assetIssueStoreV2.put)
+            storage_adapter.put_asset_issue(&account.asset_issued_name, &asset_issue_legacy, false)
                 .map_err(|e| format!("Failed to persist asset issue: {}", e))?;
-            // Update AssetIssueV2Store (by id) if account has issued ID
-            if !account.asset_issued_id.is_empty() {
-                storage_adapter.put_asset_issue(&account.asset_issued_id, &updated_asset, true)
-                    .map_err(|e| format!("Failed to persist asset issue V2: {}", e))?;
-            }
+            storage_adapter.put_asset_issue(&account.asset_issued_id, &asset_issue_v2, true)
+                .map_err(|e| format!("Failed to persist asset issue V2: {}", e))?;
         } else {
-            // Only update AssetIssueV2Store
-            storage_adapter.put_asset_issue(&account.asset_issued_id, &updated_asset, true)
+            // Only update AssetIssueV2Store (Java: assetIssueV2Store.put)
+            storage_adapter.put_asset_issue(&account.asset_issued_id, &asset_issue_v2, true)
                 .map_err(|e| format!("Failed to persist asset issue V2: {}", e))?;
         }
 
-        // 8. Build minimal state change (no TRX balance change)
+        // Build minimal state change (no TRX balance change, fee == 0)
         let account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(account.balance as u64),
             nonce: 0,
@@ -7392,7 +8867,7 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        debug!("UpdateAsset: updated asset {}", String::from_utf8_lossy(&asset_key));
+        debug!("UpdateAsset: updated asset id={}", String::from_utf8_lossy(&account.asset_issued_id));
 
         Ok(TronExecutionResult {
             success: true,
@@ -7414,9 +8889,13 @@ impl BackendService {
     }
 
     /// Parse ParticipateAssetIssueContract protobuf bytes
+    ///
+    /// Parses all fields including owner_address for Java-parity validation.
+    /// Java oracle: ParticipateAssetIssueActuator validates owner_address via DecodeUtil.addressValid
     fn parse_participate_asset_issue_contract(&self, data: &[u8]) -> Result<ParticipateAssetIssueInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut to_address = Vec::new();
         let mut asset_name = Vec::new();
         let mut amount: i64 = 0;
@@ -7431,13 +8910,18 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip, we use transaction.from)
+                // owner_address = 1 (parsed for Java-parity validation)
                 1 => {
                     if wire_type != 2 {
                         return Err("Invalid wire type for owner_address".to_string());
                     }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Data truncated reading owner_address".to_string());
+                    }
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // to_address = 2
                 2 => {
@@ -7486,16 +8970,20 @@ impl BackendService {
         }
 
         Ok(ParticipateAssetIssueInfo {
+            owner_address,
             to_address,
             asset_name,
             amount,
         })
     }
 
-    /// Parse UpdateAssetContract protobuf bytes
+    /// Parse UpdateAssetContract protobuf bytes.
+    /// Parses all fields including owner_address for Java-parity validation.
+    /// Java oracle: UpdateAssetActuator validates owner_address via DecodeUtil.addressValid
     fn parse_update_asset_contract(&self, data: &[u8]) -> Result<UpdateAssetInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut description = Vec::new();
         let mut url = Vec::new();
         let mut new_limit: i64 = 0;
@@ -7511,13 +8999,18 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip, we use transaction.from)
+                // owner_address = 1 (parsed for Java-parity validation)
                 1 => {
                     if wire_type != 2 {
                         return Err("Invalid wire type for owner_address".to_string());
                     }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    if pos + len as usize > data.len() {
+                        return Err("Data truncated reading owner_address".to_string());
+                    }
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // description = 2
                 2 => {
@@ -7575,6 +9068,7 @@ impl BackendService {
         }
 
         Ok(UpdateAssetInfo {
+            owner_address,
             description,
             url,
             new_limit,
@@ -7680,6 +9174,46 @@ impl BackendService {
             .checked_sub(amount)
             .ok_or_else(|| "long overflow".to_string())?;
         account.asset_v2.insert(token_id.to_string(), new_amount);
+        Ok(())
+    }
+
+    /// Import asset balance from AccountAssetStore into account.asset_v2 map
+    /// when ALLOW_ASSET_OPTIMIZATION == 1.
+    ///
+    /// This mirrors Java's AccountCapsule.importAsset() which loads balances
+    /// from the external AccountAssetStore into the in-memory asset map.
+    fn import_asset_if_optimized(
+        storage_adapter: &tron_backend_execution::EngineBackedEvmStateStore,
+        account: &mut tron_backend_execution::protocol::Account,
+        token_id: &[u8],
+        address: &revm_primitives::Address,
+    ) -> Result<(), String> {
+        // Check if asset optimization is enabled
+        let allow_asset_optimization = storage_adapter.get_allow_asset_optimization()
+            .map_err(|e| format!("Failed to get ALLOW_ASSET_OPTIMIZATION: {}", e))?;
+        let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+            .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
+
+        // Only import when asset optimization is enabled and using V2 format
+        if allow_asset_optimization != 1 || allow_same_token_name != 1 {
+            return Ok(());
+        }
+
+        let token_key = String::from_utf8_lossy(token_id).to_string();
+
+        // Skip if already in the asset_v2 map
+        if account.asset_v2.contains_key(&token_key) {
+            return Ok(());
+        }
+
+        // Import from AccountAssetStore
+        let balance = storage_adapter.get_asset_balance_from_asset_store(address, token_id)
+            .map_err(|e| format!("Failed to read from AccountAssetStore: {}", e))?;
+
+        if balance > 0 {
+            account.asset_v2.insert(token_key, balance);
+        }
+
         Ok(())
     }
 
@@ -7799,9 +9333,16 @@ impl BackendService {
                 return Err("balance is not enough".to_string());
             }
         } else {
-            let asset_balance = storage_adapter.get_asset_balance_v2(&owner, &create_info.first_token_id)
-                .map_err(|e| format!("Failed to get first token balance: {}", e))?;
-            if asset_balance < create_info.first_token_balance {
+            // Use asset_balance_enough_v2 which handles:
+            // - ALLOW_SAME_TOKEN_NAME == 0: reads Account.asset (token name key)
+            // - ALLOW_SAME_TOKEN_NAME == 1: reads Account.asset_v2 (token ID key)
+            // - ALLOW_ASSET_OPTIMIZATION == 1: also checks AccountAssetStore
+            let has_enough = storage_adapter.asset_balance_enough_v2(
+                &owner,
+                &create_info.first_token_id,
+                create_info.first_token_balance,
+            ).map_err(|e| format!("Failed to check first token balance: {}", e))?;
+            if !has_enough {
                 return Err("first token balance is not enough".to_string());
             }
         }
@@ -7812,9 +9353,16 @@ impl BackendService {
                 return Err("balance is not enough".to_string());
             }
         } else {
-            let asset_balance = storage_adapter.get_asset_balance_v2(&owner, &create_info.second_token_id)
-                .map_err(|e| format!("Failed to get second token balance: {}", e))?;
-            if asset_balance < create_info.second_token_balance {
+            // Use asset_balance_enough_v2 which handles:
+            // - ALLOW_SAME_TOKEN_NAME == 0: reads Account.asset (token name key)
+            // - ALLOW_SAME_TOKEN_NAME == 1: reads Account.asset_v2 (token ID key)
+            // - ALLOW_ASSET_OPTIMIZATION == 1: also checks AccountAssetStore
+            let has_enough = storage_adapter.asset_balance_enough_v2(
+                &owner,
+                &create_info.second_token_id,
+                create_info.second_token_balance,
+            ).map_err(|e| format!("Failed to check second token balance: {}", e))?;
+            if !has_enough {
                 return Err("second token balance is not enough".to_string());
             }
         }
@@ -7853,6 +9401,13 @@ impl BackendService {
         if is_trx(&create_info.first_token_id) {
             updated_account.balance -= create_info.first_token_balance;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &create_info.first_token_id,
+                &owner,
+            )?;
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &create_info.first_token_id,
@@ -7866,6 +9421,13 @@ impl BackendService {
         if is_trx(&create_info.second_token_id) {
             updated_account.balance -= create_info.second_token_balance;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &create_info.second_token_id,
+                &owner,
+            )?;
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &create_info.second_token_id,
@@ -7934,9 +9496,16 @@ impl BackendService {
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
         // Handle fee (burn or blackhole)
+        // Java: DynamicPropertiesStore.supportBlackHoleOptimization()
+        //   - if true: burnTrx(fee) -> increment BURN_TRX_AMOUNT
+        //   - if false: credit blackhole account balance
         let support_black_hole = storage_adapter.support_black_hole_optimization()
-            .unwrap_or(true);
-        if !support_black_hole {
+            .map_err(|e| format!("Failed to get blackhole optimization flag: {}", e))?;
+        if support_black_hole {
+            // Burn the fee by incrementing BURN_TRX_AMOUNT
+            storage_adapter.burn_trx(exchange_create_fee as u64)
+                .map_err(|e| format!("Failed to burn fee: {}", e))?;
+        } else {
             // Credit blackhole account
             let blackhole_addr = storage_adapter.get_blackhole_address_evm();
             storage_adapter.add_balance(&blackhole_addr, exchange_create_fee as u64)
@@ -7964,8 +9533,11 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        // Build receipt with exchange_id
+        // Build receipt with fee and exchange_id
+        // Java: ret.setStatus(fee, SUCESS) + ret.setExchangeId(id)
+        // Proto fields: fee=1, exchange_id=21
         let receipt = TransactionResultBuilder::new()
+            .with_fee(exchange_create_fee)
             .with_exchange_id(exchange_id)
             .build();
 
@@ -8019,21 +9591,29 @@ impl BackendService {
             inject_info.quant
         );
 
-        // 2. Get owner account
+        // 2. Validate owner address (Java: DecodeUtil.addressValid)
+        let address_prefix = storage_adapter.address_prefix();
+        if inject_info.owner_address.len() != 21 || inject_info.owner_address[0] != address_prefix {
+            return Err("Invalid address".to_string());
+        }
+
+        // 3. Get owner account
+        // Java: ExchangeInjectActuator.validate() - "account[<hex>] not exists"
         let owner = transaction.from;
         let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
         let account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or("Owner account not found")?;
+            .ok_or_else(|| format!("account[{}] not exists", hex::encode(&owner_tron)))?;
 
-        // 3. Get exchange
+        // 4. Get exchange (routed by allowSameTokenName)
+        // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
-        let exchange = storage_adapter.get_exchange(inject_info.exchange_id)
+        let exchange = storage_adapter.get_exchange_routed(inject_info.exchange_id, allow_same_token_name)
             .map_err(|e| format!("Failed to get exchange: {}", e))?
             .ok_or(format!("Exchange[{}] not exists", inject_info.exchange_id))?;
 
-        // 4. Validate
+        // 5. Validate
         // - Must be creator
         if owner_tron != exchange.creator_address {
             return Err(format!("account[{}] is not creator", hex::encode(&owner_tron)));
@@ -8102,12 +9682,13 @@ impl BackendService {
         }
 
         // - Sufficient balance for token
+        // Java: AccountCapsule.assetBalanceEnoughV2() routes by allowSameTokenName
         if is_trx(&inject_info.token_id) {
             if account.balance < inject_info.quant {
                 return Err("balance is not enough".to_string());
             }
         } else {
-            let balance = storage_adapter.get_asset_balance_v2(&owner, &inject_info.token_id)
+            let balance = storage_adapter.get_asset_balance_routed(&owner, &inject_info.token_id, allow_same_token_name)
                 .map_err(|e| format!("Failed to get token balance: {}", e))?;
             if balance < inject_info.quant {
                 return Err("token balance is not enough".to_string());
@@ -8120,7 +9701,7 @@ impl BackendService {
                 return Err("balance is not enough".to_string());
             }
         } else {
-            let balance = storage_adapter.get_asset_balance_v2(&owner, &another_token_id)
+            let balance = storage_adapter.get_asset_balance_routed(&owner, &another_token_id, allow_same_token_name)
                 .map_err(|e| format!("Failed to get another token balance: {}", e))?;
             if balance < another_token_quant_validate {
                 return Err("another token balance is not enough".to_string());
@@ -8181,6 +9762,13 @@ impl BackendService {
         if is_trx(&inject_info.token_id) {
             updated_account.balance -= inject_info.quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &inject_info.token_id,
+                &owner,
+            )?;
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &inject_info.token_id,
@@ -8194,6 +9782,13 @@ impl BackendService {
         if is_trx(&another_token_id) {
             updated_account.balance -= another_token_quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &another_token_id,
+                &owner,
+            )?;
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &another_token_id,
@@ -8203,18 +9798,19 @@ impl BackendService {
             )?;
         }
 
-        // Update exchange
+        // Update exchange (dual-write when allowSameTokenName=0)
+        // Java: Commons.putExchangeCapsule() writes to both v1 and v2 in legacy mode
         let mut updated_exchange = exchange.clone();
         updated_exchange.first_token_balance = new_first_balance;
         updated_exchange.second_token_balance = new_second_balance;
-        storage_adapter.put_exchange(&updated_exchange)
+        storage_adapter.put_exchange_dual_write(&updated_exchange, allow_same_token_name)
             .map_err(|e| format!("Failed to update exchange: {}", e))?;
 
         // Update account
         storage_adapter.set_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
-        // 6. Build result
+        // 6. Build result - ExchangeInject
         let account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(updated_account.balance as u64),
             nonce: 0,
@@ -8285,21 +9881,29 @@ impl BackendService {
             withdraw_info.quant
         );
 
-        // 2. Get owner account
+        // 2. Validate owner address (Java: DecodeUtil.addressValid)
+        let address_prefix = storage_adapter.address_prefix();
+        if withdraw_info.owner_address.len() != 21 || withdraw_info.owner_address[0] != address_prefix {
+            return Err("Invalid address".to_string());
+        }
+
+        // 3. Get owner account
+        // Java: ExchangeWithdrawActuator.validate() - "account[<hex>] not exists"
         let owner = transaction.from;
         let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
         let account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or("Owner account not found")?;
+            .ok_or_else(|| format!("account[{}] not exists", hex::encode(&owner_tron)))?;
 
-        // 3. Get exchange
+        // 4. Get exchange (routed by allowSameTokenName)
+        // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
-        let exchange = storage_adapter.get_exchange(withdraw_info.exchange_id)
+        let exchange = storage_adapter.get_exchange_routed(withdraw_info.exchange_id, allow_same_token_name)
             .map_err(|e| format!("Failed to get exchange: {}", e))?
             .ok_or(format!("Exchange[{}] not exists", withdraw_info.exchange_id))?;
 
-        // 4. Validate
+        // 5. Validate
         // - Must be creator
         if owner_tron != exchange.creator_address {
             return Err(format!("account[{}] is not creator", hex::encode(&owner_tron)));
@@ -8402,6 +10006,13 @@ impl BackendService {
         if is_trx(&withdraw_info.token_id) {
             updated_account.balance += withdraw_info.quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &withdraw_info.token_id,
+                &owner,
+            )?;
             Self::add_asset_amount_v2(
                 &mut updated_account,
                 &withdraw_info.token_id,
@@ -8415,6 +10026,13 @@ impl BackendService {
         if is_trx(&another_token_id) {
             updated_account.balance += another_token_quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &another_token_id,
+                &owner,
+            )?;
             Self::add_asset_amount_v2(
                 &mut updated_account,
                 &another_token_id,
@@ -8424,18 +10042,19 @@ impl BackendService {
             )?;
         }
 
-        // Update exchange
+        // Update exchange (dual-write when allowSameTokenName=0)
+        // Java: Commons.putExchangeCapsule() writes to both v1 and v2 in legacy mode
         let mut updated_exchange = exchange.clone();
         updated_exchange.first_token_balance = new_first_balance;
         updated_exchange.second_token_balance = new_second_balance;
-        storage_adapter.put_exchange(&updated_exchange)
+        storage_adapter.put_exchange_dual_write(&updated_exchange, allow_same_token_name)
             .map_err(|e| format!("Failed to update exchange: {}", e))?;
 
         // Update account
         storage_adapter.set_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
-        // 6. Build result
+        // 6. Build result - ExchangeWithdraw
         let account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(updated_account.balance as u64),
             nonce: 0,
@@ -8507,22 +10126,32 @@ impl BackendService {
             tx_info.expected
         );
 
-        // 2. Get owner account
+        // 2. Validate owner address (Java: DecodeUtil.addressValid)
+        // Must be 21 bytes with correct network prefix
+        let address_prefix = storage_adapter.address_prefix();
+        if tx_info.owner_address.len() != 21 || tx_info.owner_address[0] != address_prefix {
+            return Err("Invalid address".to_string());
+        }
+
+        // 3. Get owner account
+        // Java: ExchangeTransactionActuator.validate() - "account[<hex>] not exists"
         let owner = transaction.from;
+        let owner_tron = storage_adapter.to_tron_address_21(&owner).to_vec();
         let account = storage_adapter.get_account_proto(&owner)
             .map_err(|e| format!("Failed to get owner account: {}", e))?
-            .ok_or("Owner account not found")?;
+            .ok_or_else(|| format!("account[{}] not exists", hex::encode(&owner_tron)))?;
 
-        // 3. Get exchange and properties
+        // 4. Get exchange and properties (routed by allowSameTokenName)
+        // Java: Commons.getExchangeStoreFinal() - reads from v1 when allowSameTokenName=0, v2 otherwise
         let allow_same_token_name = storage_adapter.get_allow_same_token_name()
             .map_err(|e| format!("Failed to get allowSameTokenName: {}", e))?;
         let use_strict_math = storage_adapter.allow_strict_math()
             .map_err(|e| format!("Failed to get allowStrictMath: {}", e))?;
-        let mut exchange = storage_adapter.get_exchange(tx_info.exchange_id)
+        let mut exchange = storage_adapter.get_exchange_routed(tx_info.exchange_id, allow_same_token_name)
             .map_err(|e| format!("Failed to get exchange: {}", e))?
             .ok_or(format!("Exchange[{}] not exists", tx_info.exchange_id))?;
 
-        // 4. Validate
+        // 5. Validate
         // - Token ID format validation
         if allow_same_token_name == 1 && !is_trx(&tx_info.token_id) && !is_number(&tx_info.token_id) {
             return Err("token id is not a valid number".to_string());
@@ -8559,12 +10188,13 @@ impl BackendService {
         }
 
         // - Sufficient balance for token
+        // Java: AccountCapsule.assetBalanceEnoughV2() routes by allowSameTokenName
         if is_trx(&tx_info.token_id) {
             if account.balance < tx_info.quant {
                 return Err("balance is not enough".to_string());
             }
         } else {
-            let balance = storage_adapter.get_asset_balance_v2(&owner, &tx_info.token_id)
+            let balance = storage_adapter.get_asset_balance_routed(&owner, &tx_info.token_id, allow_same_token_name)
                 .map_err(|e| format!("Failed to get token balance: {}", e))?;
             if balance < tx_info.quant {
                 return Err("token balance is not enough".to_string());
@@ -8590,7 +10220,7 @@ impl BackendService {
             return Err("token required must greater than expected".to_string());
         }
 
-        // 5. Execute
+        // 6. Execute
         let mut updated_account = account.clone();
 
         let token_id_str = if is_trx(&tx_info.token_id) {
@@ -8619,6 +10249,13 @@ impl BackendService {
         if is_trx(&tx_info.token_id) {
             updated_account.balance -= tx_info.quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &tx_info.token_id,
+                &owner,
+            )?;
             Self::reduce_asset_amount_v2(
                 &mut updated_account,
                 &tx_info.token_id,
@@ -8632,6 +10269,13 @@ impl BackendService {
         if is_trx(&another_token_id) {
             updated_account.balance += another_token_quant;
         } else {
+            // Import from AccountAssetStore if ALLOW_ASSET_OPTIMIZATION == 1
+            Self::import_asset_if_optimized(
+                storage_adapter,
+                &mut updated_account,
+                &another_token_id,
+                &owner,
+            )?;
             Self::add_asset_amount_v2(
                 &mut updated_account,
                 &another_token_id,
@@ -8641,7 +10285,8 @@ impl BackendService {
             )?;
         }
 
-        // Update exchange balances
+        // Update exchange balances (dual-write when allowSameTokenName=0)
+        // Java: Commons.putExchangeCapsule() writes to both v1 and v2 in legacy mode
         if is_first_token {
             exchange.first_token_balance += tx_info.quant;
             exchange.second_token_balance -= another_token_quant;
@@ -8649,14 +10294,14 @@ impl BackendService {
             exchange.first_token_balance -= another_token_quant;
             exchange.second_token_balance += tx_info.quant;
         }
-        storage_adapter.put_exchange(&exchange)
+        storage_adapter.put_exchange_dual_write(&exchange, allow_same_token_name)
             .map_err(|e| format!("Failed to update exchange: {}", e))?;
 
         // Update account
         storage_adapter.set_account_proto(&owner, &updated_account)
             .map_err(|e| format!("Failed to update account: {}", e))?;
 
-        // 6. Build result
+        // 7. Build result - ExchangeTransaction
         let account_info = revm_primitives::AccountInfo {
             balance: revm_primitives::U256::from(updated_account.balance as u64),
             nonce: 0,
@@ -8785,6 +10430,7 @@ impl BackendService {
     fn parse_exchange_inject_contract(&self, data: &[u8]) -> Result<ExchangeInjectInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut exchange_id: i64 = 0;
         let mut token_id = Vec::new();
         let mut quant: i64 = 0;
@@ -8798,11 +10444,13 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip)
+                // owner_address = 1
                 1 => {
                     if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // exchange_id = 2
                 2 => {
@@ -8836,7 +10484,7 @@ impl BackendService {
             }
         }
 
-        Ok(ExchangeInjectInfo { exchange_id, token_id, quant })
+        Ok(ExchangeInjectInfo { owner_address, exchange_id, token_id, quant })
     }
 
     /// Parse ExchangeWithdrawContract protobuf bytes
@@ -8844,6 +10492,7 @@ impl BackendService {
         // Same structure as inject
         let inject_info = self.parse_exchange_inject_contract(data)?;
         Ok(ExchangeWithdrawInfo {
+            owner_address: inject_info.owner_address,
             exchange_id: inject_info.exchange_id,
             token_id: inject_info.token_id,
             quant: inject_info.quant,
@@ -8854,6 +10503,7 @@ impl BackendService {
     fn parse_exchange_transaction_contract(&self, data: &[u8]) -> Result<ExchangeTransactionInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut exchange_id: i64 = 0;
         let mut token_id = Vec::new();
         let mut quant: i64 = 0;
@@ -8868,11 +10518,13 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip)
+                // owner_address = 1
                 1 => {
                     if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // exchange_id = 2
                 2 => {
@@ -8913,7 +10565,7 @@ impl BackendService {
             }
         }
 
-        Ok(ExchangeTransactionInfo { exchange_id, token_id, quant, expected })
+        Ok(ExchangeTransactionInfo { owner_address, exchange_id, token_id, quant, expected })
     }
 
     // ==========================================================================
@@ -8945,6 +10597,17 @@ impl BackendService {
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         debug!("Executing MARKET_CANCEL_ORDER_CONTRACT");
+
+        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        // Matches Java: MarketCancelOrderActuator.validate() contract-type check
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.MarketCancelOrderContract") {
+                return Err(
+                    "contract type error,expected type [MarketCancelOrderContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+        }
 
         // Parse the contract
         let MarketCancelOrderInfo {
@@ -9018,6 +10681,8 @@ impl BackendService {
         };
 
         // 7. Return remaining sell tokens to owner
+        // This mirrors Java's MarketUtils.returnSellTokenRemain() which calls
+        // AccountCapsule.addAssetAmountV2()
         let sell_token_remain = order.sell_token_quantity_remain;
         if sell_token_remain > 0 {
             let sell_token_id = &order.sell_token_id;
@@ -9027,10 +10692,49 @@ impl BackendService {
                     .ok_or("Balance overflow")?;
             } else {
                 // TRC-10 token
-                let token_key = String::from_utf8_lossy(sell_token_id).to_string();
-                let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
-                let updated = current.checked_add(sell_token_remain).ok_or("Token balance overflow")?;
-                account.asset_v2.insert(token_key, updated);
+                // Java's addAssetAmountV2 behavior depends on ALLOW_SAME_TOKEN_NAME:
+                // - When 0: key is token name, updates both asset[name] and assetV2[id]
+                // - When 1: key is token id, updates only assetV2[id]
+                let allow_same_token_name = storage_adapter.get_allow_same_token_name()
+                    .map_err(|e| format!("Failed to get ALLOW_SAME_TOKEN_NAME: {}", e))?;
+
+                if allow_same_token_name == 0 {
+                    // Legacy mode: key is token name
+                    // Look up asset by name to get numeric ID
+                    let asset_opt = storage_adapter.get_asset_issue(sell_token_id, 0)
+                        .map_err(|e| format!("Failed to get asset issue: {}", e))?;
+
+                    if let Some(asset) = asset_opt {
+                        let token_name = String::from_utf8_lossy(sell_token_id).to_string();
+                        let token_id = asset.id.clone(); // numeric ID string
+
+                        // Update asset[name] (legacy map)
+                        let current_name = account.asset.get(&token_name).copied().unwrap_or(0);
+                        let updated_name = current_name.checked_add(sell_token_remain)
+                            .ok_or("Token balance overflow (asset)")?;
+                        account.asset.insert(token_name, updated_name);
+
+                        // Update assetV2[id] (modern map)
+                        let current_id = account.asset_v2.get(&token_id).copied().unwrap_or(0);
+                        let updated_id = current_id.checked_add(sell_token_remain)
+                            .ok_or("Token balance overflow (assetV2)")?;
+                        account.asset_v2.insert(token_id, updated_id);
+                    } else {
+                        // Asset not found - fallback to treating key as ID (defensive)
+                        let token_key = String::from_utf8_lossy(sell_token_id).to_string();
+                        let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+                        let updated = current.checked_add(sell_token_remain)
+                            .ok_or("Token balance overflow")?;
+                        account.asset_v2.insert(token_key, updated);
+                    }
+                } else {
+                    // Modern mode: key is token id, only update assetV2[id]
+                    let token_key = String::from_utf8_lossy(sell_token_id).to_string();
+                    let current = account.asset_v2.get(&token_key).copied().unwrap_or(0);
+                    let updated = current.checked_add(sell_token_remain)
+                        .ok_or("Token balance overflow")?;
+                    account.asset_v2.insert(token_key, updated);
+                }
             }
         }
 
@@ -9039,15 +10743,30 @@ impl BackendService {
         updated_order.state = 2; // CANCELED
         updated_order.sell_token_quantity_remain = 0;
 
+        // Get strict parity mode flag
+        let execution_config = self.get_execution_config()?;
+        let strict_parity = execution_config.remote.market_strict_index_parity;
+
         // 9. Update MarketAccountOrder (remove order from account's list)
-        if let Some(mut account_order) = storage_adapter.get_market_account_order(&owner)
-            .map_err(|e| format!("Failed to get account order: {}", e))? {
-            // Remove order_id from the list
-            account_order.orders.retain(|id| id != &order_id);
+        // Java: MarketUtils.updateOrderState() calls marketAccountStore.get(ownerAddress) which
+        // throws ItemNotFoundException if missing. Rust behavior depends on strict_parity flag.
+        let account_order_opt = storage_adapter.get_market_account_order(&owner)
+            .map_err(|e| format!("Failed to get account order: {}", e))?;
+
+        if let Some(mut account_order) = account_order_opt {
+            // Remove order_id from the list - match Java's single-removal semantics
+            // Java's List.remove(orderId) removes only the first occurrence
+            if let Some(pos) = account_order.orders.iter().position(|id| id == &order_id) {
+                account_order.orders.remove(pos);
+            }
             account_order.count -= 1;
             storage_adapter.put_market_account_order(&owner, &account_order)
                 .map_err(|e| format!("Failed to update account order: {}", e))?;
+        } else if strict_parity {
+            // Java throws ItemNotFoundException when MarketAccountStore.get(owner) is missing
+            return Err(format!("MarketAccountOrder not found for owner"));
         }
+        // else: defensive recovery mode - skip removal if not found
 
         // 10. Remove from order book linked list
         let pair_price_key = Self::create_pair_price_key(
@@ -9055,17 +10774,19 @@ impl BackendService {
             &order.buy_token_id,
             order.sell_token_quantity,
             order.buy_token_quantity,
-        );
+        )?;
 
-        if let Some(mut order_list) = storage_adapter.get_market_order_id_list(&pair_price_key)
-            .map_err(|e| format!("Failed to get order list: {}", e))? {
+        let order_list_opt = storage_adapter.get_market_order_id_list(&pair_price_key)
+            .map_err(|e| format!("Failed to get order list: {}", e))?;
 
+        if let Some(mut order_list) = order_list_opt {
             // Handle linked list removal
             self.remove_order_from_linked_list(
                 storage_adapter,
                 &mut order_list,
                 &updated_order,
                 &pair_price_key,
+                strict_parity,
             )?;
 
             // Update or delete the order list
@@ -9075,7 +10796,7 @@ impl BackendService {
                     .map_err(|e| format!("Failed to delete order list: {}", e))?;
 
                 // Decrease price count for the pair
-                let pair_key = Self::create_pair_key(&order.sell_token_id, &order.buy_token_id);
+                let pair_key = Self::create_pair_key(&order.sell_token_id, &order.buy_token_id)?;
                 let price_count = storage_adapter.get_market_pair_price_count(&pair_key)
                     .map_err(|e| format!("Failed to get price count: {}", e))?;
 
@@ -9091,7 +10812,11 @@ impl BackendService {
                 storage_adapter.put_market_order_id_list(&pair_price_key, &order_list)
                     .map_err(|e| format!("Failed to update order list: {}", e))?;
             }
+        } else if strict_parity {
+            // Java throws ItemNotFoundException when pairPriceToOrderStore.get(pairPriceKey) is missing
+            return Err(format!("MarketOrderIdList not found for pairPriceKey"));
         }
+        // else: defensive recovery mode - skip orderbook removal if list not found
 
         // Keep `updated_order` consistent with what was persisted during linked-list removal.
         updated_order.prev = vec![];
@@ -9172,13 +10897,10 @@ impl BackendService {
             }
         }
 
-        let owner = transaction.from;
-        let execution_config = self.get_execution_config()?;
-        let fee_config = &execution_config.fees;
-
         // Parse the contract
         let tx_info = self.parse_market_sell_asset_contract(&transaction.data)?;
-        debug!("MarketSellAsset: sell_token={:?}, sell_qty={}, buy_token={:?}, buy_qty={}",
+        debug!("MarketSellAsset: owner={:?}, sell_token={:?}, sell_qty={}, buy_token={:?}, buy_qty={}",
+            hex::encode(&tx_info.owner_address),
             String::from_utf8_lossy(&tx_info.sell_token_id),
             tx_info.sell_token_quantity,
             String::from_utf8_lossy(&tx_info.buy_token_id),
@@ -9191,12 +10913,14 @@ impl BackendService {
             return Err("Not support Market Transaction, need to be opened by the committee".to_string());
         }
 
-        // 2. Validate owner address (java-tron: DecodeUtil.addressValid)
+        // 2. Validate owner address from contract (java-tron: DecodeUtil.addressValid)
+        // Java validates contract.owner_address, not transaction metadata
         let prefix = storage_adapter.address_prefix();
-        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if owner_from_field.len() != 21 || owner_from_field[0] != prefix {
+        if tx_info.owner_address.len() != 21 || tx_info.owner_address[0] != prefix {
             return Err("Invalid address".to_string());
         }
+        // Derive 20-byte EVM address from 21-byte TRON address
+        let owner = revm_primitives::Address::from_slice(&tx_info.owner_address[1..]);
 
         // 3. Validate account exists (java-tron: AccountStore.get)
         let mut account = storage_adapter.get_account_proto(&owner)
@@ -9291,11 +11015,22 @@ impl BackendService {
         account.balance = account.balance.checked_sub(fee)
             .ok_or("Balance underflow")?;
 
-        // Handle fee: burn or credit to blackhole
-        if !fee_config.support_black_hole_optimization && fee > 0 {
-            let blackhole = storage_adapter.get_blackhole_address_evm();
-            storage_adapter.add_balance(&blackhole, fee as u64)
-                .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+        // Handle fee: burn or credit to blackhole (matches Java parity)
+        // Java behavior: MarketSellAssetActuator.execute reads ALLOW_BLACKHOLE_OPTIMIZATION
+        // from DynamicPropertiesStore, not from static config.
+        // When ALLOW_BLACKHOLE_OPTIMIZATION == 1: burnTrx(fee) updates BURN_TRX_AMOUNT
+        // When ALLOW_BLACKHOLE_OPTIMIZATION == 0: credit blackhole account balance
+        let support_blackhole = storage_adapter.support_black_hole_optimization()
+            .map_err(|e| format!("Failed to check ALLOW_BLACKHOLE_OPTIMIZATION: {}", e))?;
+        if fee > 0 {
+            if support_blackhole {
+                storage_adapter.burn_trx(fee as u64)
+                    .map_err(|e| format!("Failed to burn TRX: {}", e))?;
+            } else {
+                let blackhole = storage_adapter.get_blackhole_address_evm();
+                storage_adapter.add_balance(&blackhole, fee as u64)
+                    .map_err(|e| format!("Failed to credit blackhole: {}", e))?;
+            }
         }
 
         // 10. Transfer sell tokens from account to order (escrow)
@@ -9326,7 +11061,7 @@ impl BackendService {
             &tx_info.sell_token_id,
             &tx_info.buy_token_id,
             account_order.total_count,
-        );
+        )?;
 
         let timestamp = storage_adapter.get_latest_block_header_timestamp()
             .map_err(|e| format!("Failed to get timestamp: {}", e))?;
@@ -9357,8 +11092,8 @@ impl BackendService {
         storage_adapter.put_market_account_order(&owner, &account_order)
             .map_err(|e| format!("Failed to save account order: {}", e))?;
 
-        // 14. Match order (updates maker-side state as it goes).
-        self.match_market_sell_order(storage_adapter, &mut order, &mut account)?;
+        // 14. Match order (updates maker-side state as it goes) and collect fill details.
+        let order_details = self.match_market_sell_order(storage_adapter, &mut order, &mut account)?;
 
         // 15. Save remain order into order book (only if still active with non-zero remain).
         if order.sell_token_quantity_remain != 0 {
@@ -9392,10 +11127,10 @@ impl BackendService {
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
-        // Build receipt with order_id
-        // Note: orderDetails are omitted for now (fixtures currently assert DB state only).
+        // Build receipt with order_id and order details (Java parity)
         let receipt = TransactionResultBuilder::new()
             .with_order_id(&order_id)
+            .with_order_details(order_details)
             .build();
 
         debug!("MarketSellAsset: order created with id={}", hex::encode(&order_id));
@@ -9419,23 +11154,31 @@ impl BackendService {
         })
     }
 
+    /// Match taker order against maker orders and return fill details for receipt
     fn match_market_sell_order(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         taker_order: &mut tron_backend_execution::protocol::MarketOrder,
         taker_account: &mut tron_backend_execution::protocol::Account,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<MarketOrderDetail>, String> {
         const MAX_MATCH_NUM: i32 = 20;
+
+        // Collect order details for receipt
+        let mut order_details: Vec<MarketOrderDetail> = Vec::new();
+
+        // Get strict parity mode flag for missing-index behavior
+        let execution_config = self.get_execution_config()?;
+        let strict_parity = execution_config.remote.market_strict_index_parity;
 
         let maker_sell_token_id = taker_order.buy_token_id.clone();
         let maker_buy_token_id = taker_order.sell_token_id.clone();
-        let maker_pair_key = Self::create_pair_key(&maker_sell_token_id, &maker_buy_token_id);
+        let maker_pair_key = Self::create_pair_key(&maker_sell_token_id, &maker_buy_token_id)?;
 
         let maker_price_number = storage_adapter
             .get_market_pair_price_count(&maker_pair_key)
             .map_err(|e| format!("Failed to get maker price count: {}", e))?;
         if maker_price_number == 0 {
-            return Ok(());
+            return Ok(order_details);
         }
 
         let mut remain_count = maker_price_number;
@@ -9451,20 +11194,31 @@ impl BackendService {
 
         while taker_order.sell_token_quantity_remain != 0 {
             if !self.market_has_match(&price_keys_list, taker_order)? {
-                return Ok(());
+                return Ok(order_details);
             }
 
             let pair_price_key = match price_keys_list.first() {
                 Some(key) => key.clone(),
-                None => return Ok(()),
+                None => return Ok(order_details),
             };
 
+            // Java: MarketPairPriceToOrderStore.get(pairPriceKey) throws if missing
+            // when a price key exists but the order list is missing (corrupt index)
             let mut order_list = match storage_adapter
                 .get_market_order_id_list(&pair_price_key)
                 .map_err(|e| format!("Failed to get order list: {}", e))?
             {
                 Some(list) => list,
-                None => return Ok(()),
+                None => {
+                    if strict_parity {
+                        return Err(format!(
+                            "MarketOrderIdList not found for price key (corrupt index): {}",
+                            hex::encode(&pair_price_key)
+                        ));
+                    }
+                    // Defensive recovery: skip this price level
+                    return Ok(order_details);
+                }
             };
 
             while taker_order.sell_token_quantity_remain != 0 && !order_list.head.is_empty() {
@@ -9474,20 +11228,27 @@ impl BackendService {
                     .map_err(|e| format!("Failed to get maker order: {}", e))?
                     .ok_or("Maker order does not exist")?;
 
-                self.market_match_single_order(
+                // Match and collect order detail for receipt
+                if let Some(detail) = self.market_match_single_order(
                     storage_adapter,
                     taker_order,
                     &mut maker_order,
                     taker_account,
-                )?;
+                )? {
+                    order_details.push(detail);
+                }
 
                 // Remove maker order from order book when fully consumed.
                 if maker_order.sell_token_quantity_remain == 0 {
+                    // For MARKET_SELL_ASSET, we use strict_parity=true since the order matching
+                    // logic assumes the order book is consistent - a fully consumed order should
+                    // have valid prev/next pointers.
                     self.remove_order_from_linked_list(
                         storage_adapter,
                         &mut order_list,
                         &maker_order,
                         &pair_price_key,
+                        true, // strict parity for order matching
                     )?;
 
                     // Persist list updates even if it becomes empty (matches java-tron behavior).
@@ -9527,16 +11288,18 @@ impl BackendService {
             }
         }
 
-        Ok(())
+        Ok(order_details)
     }
 
+    /// Match a single order and return fill details for receipt
+    /// Returns Some(detail) when there's a fill, None when quantity too small
     fn market_match_single_order(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         taker_order: &mut tron_backend_execution::protocol::MarketOrder,
         maker_order: &mut tron_backend_execution::protocol::MarketOrder,
         taker_account: &mut tron_backend_execution::protocol::Account,
-    ) -> Result<(), String> {
+    ) -> Result<Option<MarketOrderDetail>, String> {
         let taker_sell_remain = taker_order.sell_token_quantity_remain;
         let maker_sell_quantity = maker_order.sell_token_quantity;
         let maker_buy_quantity = maker_order.buy_token_quantity;
@@ -9555,7 +11318,7 @@ impl BackendService {
             taker_order.sell_token_quantity_return = taker_order.sell_token_quantity_remain;
             self.market_return_sell_token_remain(taker_order, taker_account)?;
             self.market_update_order_state(storage_adapter, taker_order, 1)?;
-            return Ok(());
+            return Ok(None); // No fill occurred
         }
 
         let (taker_buy_receive, maker_buy_receive) = if taker_buy_remain == maker_sell_remain {
@@ -9608,7 +11371,7 @@ impl BackendService {
                 // Quantity too small, return remaining sellToken to maker (should not happen).
                 maker_order.sell_token_quantity_return = maker_order.sell_token_quantity_remain;
                 self.market_return_sell_token_remain_to_owner(storage_adapter, maker_order)?;
-                return Ok(());
+                return Ok(None); // No fill occurred
             }
 
             maker_order.sell_token_quantity_remain = 0;
@@ -9638,7 +11401,17 @@ impl BackendService {
             maker_buy_receive,
         )?;
 
-        Ok(())
+        // Build order detail for receipt
+        // Java: fillSellQuantity = makerBuyTokenQuantityReceive (what maker received = taker sold)
+        // Java: fillBuyQuantity = takerBuyTokenQuantityReceive (what taker received = maker sold)
+        let order_detail = MarketOrderDetail::new(
+            maker_order.order_id.clone(),
+            taker_order.order_id.clone(),
+            maker_buy_receive,  // fillSellQuantity
+            taker_buy_receive,  // fillBuyQuantity
+        );
+
+        Ok(Some(order_detail))
     }
 
     fn save_remain_market_order(
@@ -9651,7 +11424,7 @@ impl BackendService {
             &order.buy_token_id,
             order.sell_token_quantity,
             order.buy_token_quantity,
-        );
+        )?;
 
         let existing_order_list = storage_adapter
             .get_market_order_id_list(&pair_price_key)
@@ -9704,7 +11477,7 @@ impl BackendService {
         sell_token_id: &[u8],
         buy_token_id: &[u8],
     ) -> Result<(), String> {
-        let pair_key = Self::create_pair_key(sell_token_id, buy_token_id);
+        let pair_key = Self::create_pair_key(sell_token_id, buy_token_id)?;
         let has_pair = storage_adapter
             .has_market_pair(&pair_key)
             .map_err(|e| format!("Failed to check pair: {}", e))?;
@@ -9723,7 +11496,7 @@ impl BackendService {
             .set_market_pair_price_count(&pair_key, 1)
             .map_err(|e| format!("Failed to set price count: {}", e))?;
 
-        let head_key = Self::create_pair_price_key(sell_token_id, buy_token_id, 0, 0);
+        let head_key = Self::create_pair_price_key(sell_token_id, buy_token_id, 0, 0)?;
         let empty_list = tron_backend_execution::protocol::MarketOrderIdList {
             head: vec![],
             tail: vec![],
@@ -9747,7 +11520,7 @@ impl BackendService {
             return Ok(Vec::new());
         }
 
-        let head_key = Self::create_pair_price_key(sell_token_id, buy_token_id, 0, 0);
+        let head_key = Self::create_pair_price_key(sell_token_id, buy_token_id, 0, 0)?;
         let has_head = storage_adapter
             .has_market_price_key(&head_key)
             .map_err(|e| format!("Failed to check head key: {}", e))?;
@@ -9755,7 +11528,7 @@ impl BackendService {
             return Ok(Vec::new());
         }
 
-        let pair_key = Self::create_pair_key(sell_token_id, buy_token_id);
+        let pair_key = Self::create_pair_key(sell_token_id, buy_token_id)?;
         let mut keys = storage_adapter
             .list_market_pair_price_keys(&pair_key)
             .map_err(|e| format!("Failed to list price keys: {}", e))?;
@@ -9911,11 +11684,16 @@ impl BackendService {
 
         // Remove from account order list when inactive/canceled.
         if state == 1 || state == 2 {
+            // Get strict parity mode flag for missing-index behavior
+            let execution_config = self.get_execution_config()?;
+            let strict_parity = execution_config.remote.market_strict_index_parity;
+
             let owner = Self::market_owner_address(&order.owner_address)?;
-            if let Some(mut account_order) = storage_adapter
+            let account_order_opt = storage_adapter
                 .get_market_account_order(&owner)
-                .map_err(|e| format!("Failed to get account order: {}", e))?
-            {
+                .map_err(|e| format!("Failed to get account order: {}", e))?;
+
+            if let Some(mut account_order) = account_order_opt {
                 account_order.orders.retain(|id| id != &order.order_id);
                 account_order.count = account_order
                     .count
@@ -9924,7 +11702,14 @@ impl BackendService {
                 storage_adapter
                     .put_market_account_order(&owner, &account_order)
                     .map_err(|e| format!("Failed to update account order: {}", e))?;
+            } else if strict_parity {
+                // Java: MarketAccountStore.get(owner) throws ItemNotFoundException if missing
+                return Err(format!(
+                    "MarketAccountOrder not found for owner: {}",
+                    hex::encode(storage_adapter.to_tron_address_21(&owner))
+                ));
             }
+            // else: defensive recovery mode - skip removal if not found
         }
 
         Ok(())
@@ -10083,9 +11868,11 @@ impl BackendService {
     }
 
     /// Parse MarketSellAssetContract protobuf bytes
+    /// Now parses owner_address (field 1) for Java parity validation
     fn parse_market_sell_asset_contract(&self, data: &[u8]) -> Result<MarketSellAssetInfo, String> {
         use contracts::proto::read_varint;
 
+        let mut owner_address = Vec::new();
         let mut sell_token_id = Vec::new();
         let mut sell_token_quantity: i64 = 0;
         let mut buy_token_id = Vec::new();
@@ -10100,11 +11887,13 @@ impl BackendService {
             let wire_type = tag & 0x7;
 
             match field_number {
-                // owner_address = 1 (skip)
+                // owner_address = 1 (parse for Java parity)
                 1 => {
                     if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
                     let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    pos += new_pos;
+                    owner_address = data[pos..pos + len as usize].to_vec();
+                    pos += len as usize;
                 }
                 // sell_token_id = 2
                 2 => {
@@ -10147,6 +11936,7 @@ impl BackendService {
         }
 
         Ok(MarketSellAssetInfo {
+            owner_address,
             sell_token_id,
             sell_token_quantity,
             buy_token_id,
@@ -10155,12 +11945,20 @@ impl BackendService {
     }
 
     /// Remove order from the linked list in MarketOrderIdList
+    ///
+    /// Java behavior (MarketOrderIdListCapsule.removeOrder):
+    /// - Calls getPrevCapsule/getNextCapsule which call marketOrderStore.get()
+    /// - If prev/next ID is non-empty but order not found, throws ItemNotFoundException
+    ///
+    /// When strict_parity=true, we match Java's behavior and fail on missing neighbors.
+    /// When strict_parity=false, we use defensive recovery (skip updating missing neighbors).
     fn remove_order_from_linked_list(
         &self,
         storage_adapter: &mut tron_backend_execution::EngineBackedEvmStateStore,
         order_list: &mut tron_backend_execution::protocol::MarketOrderIdList,
         order: &tron_backend_execution::protocol::MarketOrder,
         _price_key: &[u8],
+        strict_parity: bool,
     ) -> Result<(), String> {
         let order_id = &order.order_id;
 
@@ -10170,12 +11968,18 @@ impl BackendService {
 
         // Update prev's next pointer
         if !prev_id.is_empty() {
-            if let Some(mut prev_order) = storage_adapter.get_market_order(prev_id)
-                .map_err(|e| format!("Failed to get prev order: {}", e))? {
+            let prev_order_opt = storage_adapter.get_market_order(prev_id)
+                .map_err(|e| format!("Failed to get prev order: {}", e))?;
+
+            if let Some(mut prev_order) = prev_order_opt {
                 prev_order.next = next_id.clone();
                 storage_adapter.put_market_order(prev_id, &prev_order)
                     .map_err(|e| format!("Failed to update prev order: {}", e))?;
+            } else if strict_parity {
+                // Java's getPrevCapsule() calls orderStore.get() which throws ItemNotFoundException
+                return Err(format!("Prev order not found: {:?}", hex::encode(prev_id)));
             }
+            // else: defensive recovery - skip updating missing prev neighbor
         } else {
             // Order is head, update list head
             order_list.head = next_id.clone();
@@ -10183,12 +11987,18 @@ impl BackendService {
 
         // Update next's prev pointer
         if !next_id.is_empty() {
-            if let Some(mut next_order) = storage_adapter.get_market_order(next_id)
-                .map_err(|e| format!("Failed to get next order: {}", e))? {
+            let next_order_opt = storage_adapter.get_market_order(next_id)
+                .map_err(|e| format!("Failed to get next order: {}", e))?;
+
+            if let Some(mut next_order) = next_order_opt {
                 next_order.prev = prev_id.clone();
                 storage_adapter.put_market_order(next_id, &next_order)
                     .map_err(|e| format!("Failed to update next order: {}", e))?;
+            } else if strict_parity {
+                // Java's getNextCapsule() calls orderStore.get() which throws ItemNotFoundException
+                return Err(format!("Next order not found: {:?}", hex::encode(next_id)));
             }
+            // else: defensive recovery - skip updating missing next neighbor
         } else {
             // Order is tail, update list tail
             order_list.tail = prev_id.clone();
@@ -10206,28 +12016,64 @@ impl BackendService {
 
     /// Create pair key: sellTokenId(19) + buyTokenId(19) = 38 bytes
     /// Matches MarketUtils.createPairKey
-    fn create_pair_key(sell_token_id: &[u8], buy_token_id: &[u8]) -> Vec<u8> {
+    ///
+    /// Java throws ArrayIndexOutOfBoundsException if token ID length > 19 bytes.
+    /// For strict parity, we return an error in this case.
+    fn create_pair_key(sell_token_id: &[u8], buy_token_id: &[u8]) -> Result<Vec<u8>, String> {
         const TOKEN_ID_LENGTH: usize = 19;
+
+        // Java's System.arraycopy throws ArrayIndexOutOfBoundsException if length > 19
+        if sell_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "sellTokenId length {} exceeds maximum {}",
+                sell_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
+        if buy_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "buyTokenId length {} exceeds maximum {}",
+                buy_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
+
         let mut result = vec![0u8; TOKEN_ID_LENGTH * 2];
 
-        let sell_len = std::cmp::min(sell_token_id.len(), TOKEN_ID_LENGTH);
-        result[..sell_len].copy_from_slice(&sell_token_id[..sell_len]);
+        result[..sell_token_id.len()].copy_from_slice(sell_token_id);
+        result[TOKEN_ID_LENGTH..TOKEN_ID_LENGTH + buy_token_id.len()].copy_from_slice(buy_token_id);
 
-        let buy_len = std::cmp::min(buy_token_id.len(), TOKEN_ID_LENGTH);
-        result[TOKEN_ID_LENGTH..TOKEN_ID_LENGTH + buy_len].copy_from_slice(&buy_token_id[..buy_len]);
-
-        result
+        Ok(result)
     }
 
     /// Create pair price key: sellTokenId(19) + buyTokenId(19) + sellQty(8) + buyQty(8) = 54 bytes
     /// Matches MarketUtils.createPairPriceKey (with GCD normalization)
+    ///
+    /// Java throws ArrayIndexOutOfBoundsException if token ID length > 19 bytes.
+    /// For strict parity, we return an error in this case.
     fn create_pair_price_key(
         sell_token_id: &[u8],
         buy_token_id: &[u8],
         sell_token_quantity: i64,
         buy_token_quantity: i64,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, String> {
         const TOKEN_ID_LENGTH: usize = 19;
+
+        // Java's System.arraycopy throws ArrayIndexOutOfBoundsException if length > 19
+        if sell_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "sellTokenId length {} exceeds maximum {}",
+                sell_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
+        if buy_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "buyTokenId length {} exceeds maximum {}",
+                buy_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
 
         // Calculate GCD for price normalization
         let gcd = Self::find_gcd(sell_token_quantity, buy_token_quantity);
@@ -10240,17 +12086,14 @@ impl BackendService {
         let mut result = vec![0u8; TOKEN_ID_LENGTH * 2 + 16];
 
         // Copy token IDs
-        let sell_len = std::cmp::min(sell_token_id.len(), TOKEN_ID_LENGTH);
-        result[..sell_len].copy_from_slice(&sell_token_id[..sell_len]);
-
-        let buy_len = std::cmp::min(buy_token_id.len(), TOKEN_ID_LENGTH);
-        result[TOKEN_ID_LENGTH..TOKEN_ID_LENGTH + buy_len].copy_from_slice(&buy_token_id[..buy_len]);
+        result[..sell_token_id.len()].copy_from_slice(sell_token_id);
+        result[TOKEN_ID_LENGTH..TOKEN_ID_LENGTH + buy_token_id.len()].copy_from_slice(buy_token_id);
 
         // Append quantities as big-endian
         result[TOKEN_ID_LENGTH * 2..TOKEN_ID_LENGTH * 2 + 8].copy_from_slice(&norm_sell.to_be_bytes());
         result[TOKEN_ID_LENGTH * 2 + 8..].copy_from_slice(&norm_buy.to_be_bytes());
 
-        result
+        Ok(result)
     }
 
     /// Find GCD of two numbers
@@ -10267,15 +12110,34 @@ impl BackendService {
 
     /// Calculate order ID: SHA3(ownerAddress + sellTokenId(padded) + buyTokenId(padded) + count)
     /// Matches MarketUtils.calculateOrderId
+    /// Calculate order ID using SHA3 hash
+    /// Java's MarketUtils.calculateOrderId throws ArrayIndexOutOfBoundsException if token ID > 19 bytes
     fn calculate_order_id(
         owner_address: &[u8],
         sell_token_id: &[u8],
         buy_token_id: &[u8],
         count: i64,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, String> {
         use sha3::{Digest, Keccak256};
 
         const TOKEN_ID_LENGTH: usize = 19;
+
+        // Java's System.arraycopy throws ArrayIndexOutOfBoundsException if length > 19
+        if sell_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "sellTokenId length {} exceeds maximum {}",
+                sell_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
+        if buy_token_id.len() > TOKEN_ID_LENGTH {
+            return Err(format!(
+                "buyTokenId length {} exceeds maximum {}",
+                buy_token_id.len(),
+                TOKEN_ID_LENGTH
+            ));
+        }
+
         let count_bytes = count.to_be_bytes();
 
         let mut data = Vec::with_capacity(owner_address.len() + TOKEN_ID_LENGTH * 2 + 8);
@@ -10283,21 +12145,19 @@ impl BackendService {
 
         // Pad sell token ID
         let mut sell_padded = vec![0u8; TOKEN_ID_LENGTH];
-        let sell_len = std::cmp::min(sell_token_id.len(), TOKEN_ID_LENGTH);
-        sell_padded[..sell_len].copy_from_slice(&sell_token_id[..sell_len]);
+        sell_padded[..sell_token_id.len()].copy_from_slice(sell_token_id);
         data.extend_from_slice(&sell_padded);
 
         // Pad buy token ID
         let mut buy_padded = vec![0u8; TOKEN_ID_LENGTH];
-        let buy_len = std::cmp::min(buy_token_id.len(), TOKEN_ID_LENGTH);
-        buy_padded[..buy_len].copy_from_slice(&buy_token_id[..buy_len]);
+        buy_padded[..buy_token_id.len()].copy_from_slice(buy_token_id);
         data.extend_from_slice(&buy_padded);
 
         data.extend_from_slice(&count_bytes);
 
         let mut hasher = Keccak256::new();
         hasher.update(&data);
-        hasher.finalize().to_vec()
+        Ok(hasher.finalize().to_vec())
     }
 }
 
@@ -10314,6 +12174,7 @@ struct ExchangeCreateInfo {
 /// Parsed ExchangeInjectContract information
 #[derive(Debug, Clone)]
 struct ExchangeInjectInfo {
+    owner_address: Vec<u8>,
     exchange_id: i64,
     token_id: Vec<u8>,
     quant: i64,
@@ -10322,6 +12183,7 @@ struct ExchangeInjectInfo {
 /// Parsed ExchangeWithdrawContract information
 #[derive(Debug, Clone)]
 struct ExchangeWithdrawInfo {
+    owner_address: Vec<u8>,
     exchange_id: i64,
     token_id: Vec<u8>,
     quant: i64,
@@ -10330,6 +12192,7 @@ struct ExchangeWithdrawInfo {
 /// Parsed ExchangeTransactionContract information
 #[derive(Debug, Clone)]
 struct ExchangeTransactionInfo {
+    owner_address: Vec<u8>,
     exchange_id: i64,
     token_id: Vec<u8>,
     quant: i64,
@@ -10339,6 +12202,7 @@ struct ExchangeTransactionInfo {
 /// Parsed ParticipateAssetIssueContract information
 #[derive(Debug, Clone)]
 struct ParticipateAssetIssueInfo {
+    owner_address: Vec<u8>,
     to_address: Vec<u8>,
     asset_name: Vec<u8>,
     amount: i64,
@@ -10347,6 +12211,7 @@ struct ParticipateAssetIssueInfo {
 /// Parsed UpdateAssetContract information
 #[derive(Debug, Clone)]
 struct UpdateAssetInfo {
+    owner_address: Vec<u8>,
     description: Vec<u8>,
     url: Vec<u8>,
     new_limit: i64,
@@ -10376,6 +12241,7 @@ struct AssetIssueInfo {
 /// Parsed DelegateResourceContract information
 #[derive(Debug, Clone)]
 struct DelegateResourceInfo {
+    owner_address: Vec<u8>,     // Java parity: use contract's owner_address, not transaction.from_raw
     receiver_address: Vec<u8>,
     balance: i64,
     resource: i32, // 0 = BANDWIDTH, 1 = ENERGY
@@ -10401,6 +12267,7 @@ struct MarketCancelOrderInfo {
 /// Parsed MarketSellAssetContract information
 #[derive(Debug, Clone)]
 struct MarketSellAssetInfo {
+    owner_address: Vec<u8>,
     sell_token_id: Vec<u8>,
     sell_token_quantity: i64,
     buy_token_id: Vec<u8>,
