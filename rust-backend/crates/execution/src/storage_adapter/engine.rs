@@ -158,6 +158,13 @@ impl EngineBackedEvmStateStore {
         self.storage_engine.get(db, key)
     }
 
+    /// Public read helper — delegates to `buffered_get` (consults write buffer
+    /// first, then falls through to the storage engine).  Useful for tests that
+    /// need to read raw bytes from an arbitrary database by key.
+    pub fn raw_get(&self, db: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.buffered_get(db, key)
+    }
+
     /// Helper method to prefix-query from storage with buffer overlay.
     ///
     /// Some system/market handlers iterate keys after writing new ones within
@@ -2140,6 +2147,44 @@ impl EngineBackedEvmStateStore {
                        witness.address, hex::encode(&key), witness.url, witness.vote_count);
 
         self.buffered_put(self.witness_database(), key, data)?;
+        Ok(())
+    }
+
+    /// Update only the URL field of an existing witness, preserving all other
+    /// `protocol.Witness` fields (pub_key, total_produced, total_missed,
+    /// latest_block_num, latest_slot_num, is_jobs).
+    ///
+    /// This matches Java `WitnessUpdateActuator.updateWitness()` which calls
+    /// `witnessCapsule.setUrl(...)` and re-persists the capsule, leaving every
+    /// other field intact.
+    pub fn update_witness_url(&self, address: &Address, new_url: &str) -> Result<()> {
+        use prost::Message;
+        use crate::protocol::Witness;
+
+        let key = self.witness_key(address);
+
+        // 1. Load raw bytes from witness DB (respects write buffer for read-your-writes)
+        let raw = self
+            .buffered_get(self.witness_database(), &key)?
+            .ok_or_else(|| anyhow::anyhow!("Witness not found for address {:?}", address))?;
+
+        // 2. Decode as protocol.Witness protobuf
+        let mut witness = Witness::decode(raw.as_slice())
+            .map_err(|e| anyhow::anyhow!("Failed to decode Witness protobuf: {}", e))?;
+
+        // 3. Update only the URL
+        witness.url = new_url.to_string();
+
+        // 4. Re-encode and write back
+        let data = witness.encode_to_vec();
+        self.buffered_put(self.witness_database(), key, data)?;
+
+        tracing::debug!(
+            "update_witness_url: address={:?}, new_url='{}'",
+            address,
+            new_url
+        );
+
         Ok(())
     }
 

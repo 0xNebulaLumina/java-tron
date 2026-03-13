@@ -42,6 +42,72 @@ impl BackendService {
         }
     }
 
+    /// Validate that `data` is a valid protobuf-encoded `WitnessUpdateContract`.
+    ///
+    /// ```protobuf
+    /// message WitnessUpdateContract {
+    ///   bytes owner_address = 1;   // wire type 2
+    ///   bytes update_url   = 12;   // wire type 2
+    /// }
+    /// ```
+    ///
+    /// We walk the wire format and reject if any field header is malformed or a
+    /// length-delimited field extends past the buffer.  Unknown fields are
+    /// tolerated (protobuf forward-compatibility).
+    fn validate_witness_update_contract_bytes(data: &[u8]) -> Result<(), String> {
+        let mut pos = 0;
+        while pos < data.len() {
+            let (field_header, header_len) = read_varint(&data[pos..])
+                .map_err(|e| format!("WitnessUpdateContract decode error: {}", e))?;
+            pos += header_len;
+            let wire_type = field_header & 0x7;
+
+            match wire_type {
+                0 => {
+                    // Varint — consume one varint value
+                    let (_val, val_len) = read_varint(&data[pos..])
+                        .map_err(|e| format!("WitnessUpdateContract decode error: {}", e))?;
+                    pos += val_len;
+                }
+                1 => {
+                    // 64-bit fixed
+                    if pos + 8 > data.len() {
+                        return Err("WitnessUpdateContract decode error: truncated fixed64".to_string());
+                    }
+                    pos += 8;
+                }
+                2 => {
+                    // Length-delimited
+                    let (len, len_bytes) = read_varint(&data[pos..])
+                        .map_err(|e| format!("WitnessUpdateContract decode error: {}", e))?;
+                    pos += len_bytes;
+                    let end = pos + len as usize;
+                    if end > data.len() {
+                        return Err(format!(
+                            "WitnessUpdateContract decode error: length-delimited field extends past buffer ({} > {})",
+                            end, data.len()
+                        ));
+                    }
+                    pos = end;
+                }
+                5 => {
+                    // 32-bit fixed
+                    if pos + 4 > data.len() {
+                        return Err("WitnessUpdateContract decode error: truncated fixed32".to_string());
+                    }
+                    pos += 4;
+                }
+                _ => {
+                    return Err(format!(
+                        "WitnessUpdateContract decode error: unknown wire type {}",
+                        wire_type
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Parse `asset_name` (field 1, length-delimited) from a serialized
     /// `TransferAssetContract` protobuf message.
     ///
@@ -434,9 +500,20 @@ impl BackendService {
         // Java sends `Transaction.Contract.parameter` bytes, which are encoded as
         // `google.protobuf.Any { type_url, value }`. Most parsers below expect the inner
         // contract protobuf bytes, so unwrap once here.
+        //
+        // Payload-style contracts where `tx.data` is NOT the contract proto but a raw
+        // payload (e.g. URL bytes) must be excluded to avoid accidentally unwrapping a
+        // crafted payload that looks like a valid `Any` wrapper.
         let mut tx = transaction.clone();
-        if let Ok(inner) = Self::unwrap_any_value_if_present(tx.data.as_ref()) {
-            tx.data = revm_primitives::Bytes::from(inner);
+        let is_payload_style = matches!(
+            tx.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WitnessCreateContract)
+                | Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
+        );
+        if !is_payload_style {
+            if let Ok(inner) = Self::unwrap_any_value_if_present(tx.data.as_ref()) {
+                tx.data = revm_primitives::Bytes::from(inner);
+            }
         }
         let transaction = &tx;
 
@@ -1591,7 +1668,26 @@ impl BackendService {
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        use tron_backend_execution::{TronExecutionResult, TronStateChange, WitnessInfo};
+        use tron_backend_execution::{TronExecutionResult, TronStateChange};
+
+        // 0. Validate contract parameter type (Any.is) and decodability (Any.unpack)
+        //    when raw Any is available.  Mirrors Java WitnessUpdateActuator.validate():
+        //    - any.is(WitnessUpdateContract.class)  →  type_url check
+        //    - any.unpack(WitnessUpdateContract.class) →  protobuf decode check
+        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
+            if !Self::any_type_url_matches(&any.type_url, "protocol.WitnessUpdateContract") {
+                return Err(
+                    "contract type error, expected type [WitnessUpdateContract],real type[class com.google.protobuf.Any]"
+                        .to_string(),
+                );
+            }
+            // Validate that the value bytes are decodable as WitnessUpdateContract.
+            // WitnessUpdateContract { bytes owner_address = 1; bytes update_url = 12; }
+            // Java throws ContractValidateException(e.getMessage()) on decode failure.
+            if !any.value.is_empty() {
+                Self::validate_witness_update_contract_bytes(&any.value)?;
+            }
+        }
 
         // 1. Validate owner address (java-tron: DecodeUtil.addressValid)
         let prefix = storage_adapter.address_prefix();
@@ -1630,38 +1726,24 @@ impl BackendService {
 
         debug!("WitnessUpdate: new URL = {}", new_url);
 
-        // 4. Load existing witness (required)
-        let existing_witness = storage_adapter.get_witness(&owner)
+        // 4. Load existing witness (required) — validates witness existence
+        let _existing_witness = storage_adapter.get_witness(&owner)
             .map_err(|e| format!("Failed to load witness: {}", e))?
             .ok_or_else(|| {
                 warn!("WITNESS_UPDATE_CONTRACT: Witness does not exist for {}", owner_tron);
                 "Witness does not exist".to_string()
             })?;
 
-        let old_url = existing_witness.url.clone();
-
-        // 5. Create updated witness entry with new URL, preserving address and vote_count
-        let updated_witness = WitnessInfo::new(
-            existing_witness.address,
-            new_url.clone(),
-            existing_witness.vote_count,
+        // 5. Update only the URL field, preserving all other protocol.Witness fields
+        //    (pub_key, total_produced, total_missed, latest_block_num, latest_slot_num, is_jobs).
+        //    Java always calls witnessStore.put(...) even when URL is unchanged, so we do the same.
+        storage_adapter
+            .update_witness_url(&owner, &new_url)
+            .map_err(|e| format!("Failed to update witness: {}", e))?;
+        info!(
+            "Updated witness URL: owner={}, new_url='{}'",
+            owner_tron, new_url
         );
-
-        // 6. Persist updated witness only if URL actually changes to avoid no-op writes
-        if new_url != old_url {
-            storage_adapter
-                .put_witness(&updated_witness)
-                .map_err(|e| format!("Failed to update witness: {}", e))?;
-            info!(
-                "Updated witness URL: owner={}, old_url='{}', new_url='{}'",
-                owner_tron, old_url, new_url
-            );
-        } else {
-            info!(
-                "Witness update is a no-op (URL unchanged): owner={}, url='{}'",
-                owner_tron, new_url
-            );
-        }
 
         // 7. Do not emit state changes for WitnessUpdateContract to match embedded semantics
         // (Java embedded CSV logs 0 state changes and empty digest for witness updates)
