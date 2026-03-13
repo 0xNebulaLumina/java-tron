@@ -43,7 +43,7 @@ Goal: mirror Java `validate()` contract-type behavior when `tx.contract_paramete
   - [x] If `transaction.metadata.contract_parameter` is present, verify `type_url` matches `protocol.WitnessUpdateContract`.
   - [x] On mismatch, return the Java-like message:
     - [x] `contract type error, expected type [WitnessUpdateContract],real type[class com.google.protobuf.Any]`
-- [ ] (Optional) Consider validating that `contract_parameter.value` is decodable as `WitnessUpdateContract` to mirror `any.unpack(...)` failure modes.
+- [x] (Optional) Validate that `contract_parameter.value` is decodable as `WitnessUpdateContract` to mirror `any.unpack(...)` failure modes. Implemented `validate_witness_update_contract_bytes()` which walks the protobuf wire format and rejects truncated/malformed fields. Test: `test_witness_update_any_value_malformed`.
 
 ## 3) Review Any-unwrapping of `tx.data` (edge case hardening)
 

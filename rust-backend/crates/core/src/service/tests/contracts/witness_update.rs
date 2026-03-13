@@ -551,6 +551,82 @@ fn test_witness_update_any_type_url_mismatch() {
     );
 }
 
+/// Verify that malformed `contract_parameter.value` bytes produce a decode error,
+/// mirroring Java's `any.unpack(WitnessUpdateContract.class)` → InvalidProtocolBufferException.
+#[test]
+fn test_witness_update_any_value_malformed() {
+    use tron_backend_execution::TronContractParameter;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    let exec_config = ExecutionConfig {
+        remote: RemoteExecutionConfig {
+            system_enabled: true,
+            witness_update_enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut module_manager = ModuleManager::new();
+    let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+    module_manager.register("execution", Box::new(exec_module));
+    let service = BackendService::new(module_manager);
+
+    let owner_address = Address::from([8u8; 20]);
+
+    // Malformed protobuf: claims a length-delimited field of 200 bytes but only
+    // provides 2 bytes of payload → truncation error.
+    let malformed_value = vec![
+        0x0a, // field 1, wire type 2 (length-delimited)
+        0xC8, 0x01, // varint 200 (length)
+        0x41, 0x42, // only 2 bytes instead of 200
+    ];
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from("some-url.com".as_bytes()),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
+            asset_id: None,
+            from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.WitnessUpdateContract".to_string(),
+                value: malformed_value,
+            }),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1,
+        block_timestamp: 1_000_000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 420,
+        bandwidth_price: 1000,
+        transaction_id: None,
+    };
+
+    let result = service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(result.is_err(), "Malformed value should fail");
+    let err_msg = result.unwrap_err();
+    assert!(
+        err_msg.contains("WitnessUpdateContract decode error"),
+        "Error should mention decode error, got: {}",
+        err_msg
+    );
+}
+
 /// Verify that a correct type_url passes validation and continues to later checks.
 #[test]
 fn test_witness_update_any_type_url_correct() {

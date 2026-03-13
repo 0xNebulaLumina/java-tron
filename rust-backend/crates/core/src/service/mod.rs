@@ -42,6 +42,72 @@ impl BackendService {
         }
     }
 
+    /// Validate that `data` is a valid protobuf-encoded `WitnessUpdateContract`.
+    ///
+    /// ```protobuf
+    /// message WitnessUpdateContract {
+    ///   bytes owner_address = 1;   // wire type 2
+    ///   bytes update_url   = 12;   // wire type 2
+    /// }
+    /// ```
+    ///
+    /// We walk the wire format and reject if any field header is malformed or a
+    /// length-delimited field extends past the buffer.  Unknown fields are
+    /// tolerated (protobuf forward-compatibility).
+    fn validate_witness_update_contract_bytes(data: &[u8]) -> Result<(), String> {
+        let mut pos = 0;
+        while pos < data.len() {
+            let (field_header, header_len) = read_varint(&data[pos..])
+                .map_err(|e| format!("WitnessUpdateContract decode error: {}", e))?;
+            pos += header_len;
+            let wire_type = field_header & 0x7;
+
+            match wire_type {
+                0 => {
+                    // Varint — consume one varint value
+                    let (_val, val_len) = read_varint(&data[pos..])
+                        .map_err(|e| format!("WitnessUpdateContract decode error: {}", e))?;
+                    pos += val_len;
+                }
+                1 => {
+                    // 64-bit fixed
+                    if pos + 8 > data.len() {
+                        return Err("WitnessUpdateContract decode error: truncated fixed64".to_string());
+                    }
+                    pos += 8;
+                }
+                2 => {
+                    // Length-delimited
+                    let (len, len_bytes) = read_varint(&data[pos..])
+                        .map_err(|e| format!("WitnessUpdateContract decode error: {}", e))?;
+                    pos += len_bytes;
+                    let end = pos + len as usize;
+                    if end > data.len() {
+                        return Err(format!(
+                            "WitnessUpdateContract decode error: length-delimited field extends past buffer ({} > {})",
+                            end, data.len()
+                        ));
+                    }
+                    pos = end;
+                }
+                5 => {
+                    // 32-bit fixed
+                    if pos + 4 > data.len() {
+                        return Err("WitnessUpdateContract decode error: truncated fixed32".to_string());
+                    }
+                    pos += 4;
+                }
+                _ => {
+                    return Err(format!(
+                        "WitnessUpdateContract decode error: unknown wire type {}",
+                        wire_type
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Parse `asset_name` (field 1, length-delimited) from a serialized
     /// `TransferAssetContract` protobuf message.
     ///
@@ -1604,13 +1670,22 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
-        // 0. Validate contract parameter type (Any.is) when raw Any is available
+        // 0. Validate contract parameter type (Any.is) and decodability (Any.unpack)
+        //    when raw Any is available.  Mirrors Java WitnessUpdateActuator.validate():
+        //    - any.is(WitnessUpdateContract.class)  →  type_url check
+        //    - any.unpack(WitnessUpdateContract.class) →  protobuf decode check
         if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
             if !Self::any_type_url_matches(&any.type_url, "protocol.WitnessUpdateContract") {
                 return Err(
                     "contract type error, expected type [WitnessUpdateContract],real type[class com.google.protobuf.Any]"
                         .to_string(),
                 );
+            }
+            // Validate that the value bytes are decodable as WitnessUpdateContract.
+            // WitnessUpdateContract { bytes owner_address = 1; bytes update_url = 12; }
+            // Java throws ContractValidateException(e.getMessage()) on decode failure.
+            if !any.value.is_empty() {
+                Self::validate_witness_update_contract_bytes(&any.value)?;
             }
         }
 
