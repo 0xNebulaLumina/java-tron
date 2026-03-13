@@ -4,7 +4,7 @@
   "caseName": "validate_fail_no_delegated_frozen_balance_bandwidth",
   "caseCategory": "validate_fail",
   "description": "Fail when delegated frozen balance for BANDWIDTH is 0",
-  "generatedAt": "2026-01-14T06:56:47.398Z",
+  "generatedAt": "2026-03-10T11:52:25.001Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

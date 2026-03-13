@@ -141,12 +141,17 @@ vote_witness_seed_old_from_account = true
 # Default: false for safe rollout - falls back to Java embedded execution when disabled
 account_create_enabled = true
 
-# Delegation reward computation for WithdrawBalanceContract (Phase 2)
-# When true: Computes delegation rewards from DelegationStore (MortgageService.withdrawReward)
-#            This includes reading cycle data, computing old/new algorithm rewards, and updating delegation state
-# When false: Uses only Account.allowance (Phase 1 behavior)
-# Default: false for safe rollout - set true to enable full delegation reward computation
+# DEPRECATED: Delegation reward is now always computed when CHANGE_DELEGATION dynamic property
+# is enabled, matching Java's MortgageService.withdrawReward() which self-gates on
+# allowChangeDelegation(). This field is kept for backward config compatibility but has no effect.
 delegation_reward_enabled = true
+
+# Genesis guard representative addresses (Base58-encoded TRON addresses)
+# These witnesses from the genesis block are not allowed to withdraw balance, matching Java's
+# CommonParameter.getInstance().getGenesisBlock().getWitnesses() check.
+# When empty (default), falls back to built-in mainnet/testnet genesis witness lists.
+# Set this for custom/private networks with different genesis witnesses.
+# genesis_guard_representatives_base58 = ["T...", "T..."]
 
 # === Phase 0.3: Write Consistency Model ===
 # This flag controls whether Rust persists state changes directly to storage during commit.
@@ -168,6 +173,19 @@ delegation_reward_enabled = true
 # - Easier transaction rollback on validation failure
 rust_persist_enabled = true
 
+# Dynamic property strictness (Task 5 - Java parity)
+# When true: Methods like get_asset_issue_fee_strict() return errors when keys are missing
+# When false: Uses safe defaults (backward compatible behavior)
+# Set to true for conformance testing or strict Java parity
+strict_dynamic_properties = true
+
+# Genesis block timestamp (milliseconds) for headSlot computation
+# Used in bandwidth resource tracking: headSlot = (block_timestamp - genesis_block_timestamp) / 3000
+# Default: 1529891469000 (TRON mainnet genesis block timestamp)
+genesis_block_timestamp = 1529891469000
+
+market_strict_index_parity = true
+
 # Genesis Account Initialization
 # Pre-populate accounts with initial balances at startup for testing/parity.
 # This ensures the Rust storage has the same initial state as mainnet at a given starting block.
@@ -185,3 +203,4 @@ address = "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy"
 # IMPORTANT: Adjust this value based on your specific test scenario and starting block.
 balance_sun = -9223372036854075808
 comment = "Blackhole address - receives system fees when support_black_hole_optimization=false"
+

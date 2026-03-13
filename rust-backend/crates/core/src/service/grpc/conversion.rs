@@ -11,7 +11,7 @@ use super::address::{strip_tron_address_prefix, add_tron_address_prefix};
 
 impl BackendService {
     // Helper functions for converting between protobuf and execution types
-    pub(super) fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>) -> Result<(TronTransaction, crate::backend::TxKind), String> {
+    pub(super) fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>, transaction_bytes_size: i64) -> Result<(TronTransaction, crate::backend::TxKind), String> {
         let tx = tx.ok_or("Transaction is required")?;
 
         // Log the raw transaction data from Java
@@ -65,6 +65,13 @@ impl BackendService {
                 | Some(tron_backend_execution::TronContractType::WitnessCreateContract)
                 | Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
                 | Some(tron_backend_execution::TronContractType::WithdrawBalanceContract)
+                | Some(tron_backend_execution::TronContractType::FreezeBalanceContract)
+                | Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract)
+                | Some(tron_backend_execution::TronContractType::FreezeBalanceV2Contract)
+                | Some(tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract)
+                | Some(tron_backend_execution::TronContractType::WithdrawExpireUnfreezeContract)
+                | Some(tron_backend_execution::TronContractType::DelegateResourceContract)
+                | Some(tron_backend_execution::TronContractType::UndelegateResourceContract)
                 | Some(tron_backend_execution::TronContractType::MarketSellAssetContract)
                 | Some(tron_backend_execution::TronContractType::MarketCancelOrderContract)
         );
@@ -77,6 +84,17 @@ impl BackendService {
             Err(e) => return Err(e),
         };
 
+        // Some NON_VM system contracts validate `to` raw bytes themselves using Java's
+        // `DecodeUtil.addressValid` semantics (21 bytes + prefix match). If the gRPC conversion
+        // fails for these contract types, we must not fail early — instead we store the raw bytes
+        // in `to_raw` and let contract-level validation produce the correct Java error messages
+        // and ordering.
+        let allow_malformed_to = matches!(
+            contract_type,
+            Some(tron_backend_execution::TronContractType::TransferContract)
+                | Some(tron_backend_execution::TronContractType::TransferAssetContract)
+        );
+
         // Phase 0.5: Fix CreateSmartContract toAddress semantics
         // When tx_kind=VM and contract_type=CREATE_SMART_CONTRACT (30), Java sends a 20-byte
         // zero array for toAddress. Rust must treat this as None (contract creation), not
@@ -84,19 +102,28 @@ impl BackendService {
         let to = if tx.to.is_empty() {
             None // Contract creation (empty to field)
         } else {
-            let to_bytes = strip_tron_address_prefix(&tx.to)?;
-            let to_address = revm_primitives::Address::from_slice(to_bytes);
+            match strip_tron_address_prefix(&tx.to) {
+                Ok(to_bytes) => {
+                    let to_address = revm_primitives::Address::from_slice(to_bytes);
 
-            // For VM contract creation, treat all-zero address as None
-            // This is needed because Java sends new byte[20] (all zeros) for CreateSmartContract
-            let is_vm_create =
-                tx_kind == crate::backend::TxKind::Vm && tx.contract_type == 30; // CREATE_SMART_CONTRACT = 30
+                    // For VM contract creation, treat all-zero address as None
+                    // This is needed because Java sends new byte[20] (all zeros) for CreateSmartContract
+                    let is_vm_create =
+                        tx_kind == crate::backend::TxKind::Vm && tx.contract_type == 30; // CREATE_SMART_CONTRACT = 30
 
-            if is_vm_create && to_address == revm_primitives::Address::ZERO {
-                debug!("CreateSmartContract detected: treating zero address as contract creation (to=None)");
-                None
-            } else {
-                Some(to_address)
+                    if is_vm_create && to_address == revm_primitives::Address::ZERO {
+                        debug!("CreateSmartContract detected: treating zero address as contract creation (to=None)");
+                        None
+                    } else {
+                        Some(to_address)
+                    }
+                }
+                Err(e) if allow_malformed_to => {
+                    debug!("Allowing malformed to address for {:?}: {}", contract_type, e);
+                    // Contract-level validation will check to_raw and return "Invalid toAddress!"
+                    None
+                }
+                Err(e) => return Err(e),
             }
         };
 
@@ -155,11 +182,23 @@ impl BackendService {
             value: any.value.clone(),
         });
 
+        let to_raw = if !tx.to.is_empty() {
+            Some(tx.to.clone())
+        } else {
+            None
+        };
+
         let metadata = tron_backend_execution::TxMetadata {
             contract_type,
             asset_id,
             from_raw: Some(tx.from.clone()),
+            to_raw,
             contract_parameter,
+            transaction_bytes_size: if transaction_bytes_size > 0 {
+                Some(transaction_bytes_size)
+            } else {
+                None
+            },
         };
 
         let transaction = TronTransaction {
@@ -608,7 +647,7 @@ mod tests {
         proto_tx.contract_type = ContractType::WitnessCreateContract as i32;
 
         let (transaction, tx_kind) = backend_service
-            .convert_protobuf_transaction(Some(&proto_tx))
+            .convert_protobuf_transaction(Some(&proto_tx), 0)
             .unwrap();
 
         assert_eq!(tx_kind, TxKind::NonVm);
@@ -634,7 +673,7 @@ mod tests {
         proto_tx.contract_type = ContractType::WitnessUpdateContract as i32;
 
         let (transaction, tx_kind) = backend_service
-            .convert_protobuf_transaction(Some(&proto_tx))
+            .convert_protobuf_transaction(Some(&proto_tx), 0)
             .unwrap();
 
         assert_eq!(tx_kind, TxKind::NonVm);
@@ -644,5 +683,74 @@ mod tests {
             Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
         );
         assert_eq!(transaction.metadata.from_raw, Some(vec![]));
+    }
+
+    #[test]
+    fn test_convert_protobuf_transaction_allows_empty_from_for_withdraw_expire_unfreeze() {
+        let config = ExecutionConfig::default();
+        let mut module_manager = ModuleManager::new();
+        module_manager.register("execution", Box::new(ExecutionModule::new(config)));
+
+        let backend_service = BackendService::new(module_manager);
+
+        let mut proto_tx = ProtoTx::default();
+        proto_tx.from = vec![];
+        proto_tx.tx_kind = TxKind::NonVm as i32;
+        proto_tx.contract_type = ContractType::WithdrawExpireUnfreezeContract as i32;
+        proto_tx.contract_parameter = Some(prost_types::Any {
+            type_url: "type.googleapis.com/protocol.WithdrawExpireUnfreezeContract".to_string(),
+            value: vec![],
+        });
+
+        let (transaction, tx_kind) = backend_service
+            .convert_protobuf_transaction(Some(&proto_tx), 0)
+            .unwrap();
+
+        assert_eq!(tx_kind, TxKind::NonVm);
+        assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::WithdrawExpireUnfreezeContract)
+        );
+        assert_eq!(transaction.metadata.from_raw, Some(vec![]));
+        // Verify contract_parameter is preserved for contract-level validation
+        assert!(transaction.metadata.contract_parameter.is_some());
+        let param = transaction.metadata.contract_parameter.unwrap();
+        assert!(param.type_url.ends_with("WithdrawExpireUnfreezeContract"));
+    }
+
+    #[test]
+    fn test_convert_protobuf_transaction_allows_empty_from_for_freeze_v2_family() {
+        // Test that all freeze-v2 related contracts allow malformed from addresses
+        let contract_types = vec![
+            (ContractType::FreezeBalanceV2Contract, tron_backend_execution::TronContractType::FreezeBalanceV2Contract),
+            (ContractType::UnfreezeBalanceV2Contract, tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract),
+            (ContractType::DelegateResourceContract, tron_backend_execution::TronContractType::DelegateResourceContract),
+            (ContractType::UndelegateResourceContract, tron_backend_execution::TronContractType::UndelegateResourceContract),
+            (ContractType::FreezeBalanceContract, tron_backend_execution::TronContractType::FreezeBalanceContract),
+            (ContractType::UnfreezeBalanceContract, tron_backend_execution::TronContractType::UnfreezeBalanceContract),
+        ];
+
+        for (proto_ct, expected_ct) in contract_types {
+            let config = ExecutionConfig::default();
+            let mut module_manager = ModuleManager::new();
+            module_manager.register("execution", Box::new(ExecutionModule::new(config)));
+            let backend_service = BackendService::new(module_manager);
+
+            let mut proto_tx = ProtoTx::default();
+            proto_tx.from = vec![];
+            proto_tx.tx_kind = TxKind::NonVm as i32;
+            proto_tx.contract_type = proto_ct as i32;
+
+            let result = backend_service.convert_protobuf_transaction(Some(&proto_tx), 0);
+            assert!(
+                result.is_ok(),
+                "Contract type {:?} should allow empty from, but got error: {:?}",
+                expected_ct, result.err()
+            );
+            let (transaction, _) = result.unwrap();
+            assert_eq!(transaction.from, revm_primitives::Address::ZERO);
+            assert_eq!(transaction.metadata.contract_type, Some(expected_ct));
+        }
     }
 }

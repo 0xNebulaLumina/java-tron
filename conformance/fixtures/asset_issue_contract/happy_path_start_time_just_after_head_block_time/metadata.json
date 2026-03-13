@@ -4,7 +4,7 @@
   "caseName": "happy_path_start_time_just_after_head_block_time",
   "caseCategory": "happy",
   "description": "Success when start_time = headBlockTime + 1",
-  "generatedAt": "2026-01-14T06:56:41.940Z",
+  "generatedAt": "2026-03-10T11:52:19.320Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

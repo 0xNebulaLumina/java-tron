@@ -2,18 +2,131 @@
 
 set -e
 
+# Poll interval while waiting for java-tron to exit (seconds).
+WAIT_INTERVAL=${WAIT_INTERVAL:-30}
+# How often to print a progress line while waiting (seconds).
+PROGRESS_INTERVAL=${PROGRESS_INTERVAL:-300}
+
 # Configurable max wait duration (in seconds), default 1200 (20 minutes).
 # If set to 0, wait until java-tron exits (e.g., via node.shutdown BlockHeight).
 SLEEP_DURATION=${1:-1200}
 # Configurable embedded Java log path
-EMBEDDED_JAVA_LOG=${2:-1.embedded-java.log}
+EMBEDDED_JAVA_LOG=${2:-621c89c.embedded-java.log}
 # Configurable embedded-embedded CSV path
-EMBEDDED_CSV=${3:-output-directory/execution-csv/20260112-060750-377bf631-embedded-embedded.csv}
+EMBEDDED_CSV=${3:-output-directory/execution-csv/20260128-131248-9835b834-embedded-embedded.csv}
+
+# ResourceSync debug/confirm flags (default false). Override via env vars:
+#   REMOTE_RESOURCE_SYNC_DEBUG=true
+#   REMOTE_RESOURCE_SYNC_CONFIRM=true
+REMOTE_RESOURCE_SYNC_DEBUG=${REMOTE_RESOURCE_SYNC_DEBUG:-false}
+REMOTE_RESOURCE_SYNC_CONFIRM=${REMOTE_RESOURCE_SYNC_CONFIRM:-false}
+
+JAVA_PID=""
+RUST_PID=""
+
+get_shutdown_height() {
+    local conf_file=${1}
+    if [ -f "${conf_file}" ]; then
+        # Best-effort parse for: BlockHeight = 12345
+        grep -E '^[[:space:]]*BlockHeight[[:space:]]*=' "${conf_file}" | head -n 1 | grep -Eo '[0-9]+' || true
+    fi
+}
+
+get_java_head_block() {
+    local log_file="logs/tron.log"
+    if [ -f "${log_file}" ]; then
+        tail -n 200 "${log_file}" \
+            | grep -Eo 'Update latest block header number = [0-9]+' \
+            | tail -n 1 \
+            | awk '{print $NF}'
+    fi
+}
+
+get_rust_block() {
+    local log_file="rust.log"
+    if [ -f "${log_file}" ]; then
+        tail -n 400 "${log_file}" \
+            | grep -Eo 'block: [0-9]+' \
+            | tail -n 1 \
+            | awk '{print $2}'
+    fi
+}
+
+print_wait_status() {
+    local java_head
+    local rust_block
+    java_head=$(get_java_head_block || true)
+    rust_block=$(get_rust_block || true)
+
+    local elapsed=${SECONDS}
+    if [ "${SLEEP_DURATION}" -eq 0 ]; then
+        if [ -n "${SHUTDOWN_HEIGHT}" ] && [ -n "${java_head}" ]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Waiting... elapsed=${elapsed}s java_head=${java_head}/${SHUTDOWN_HEIGHT} rust_block=${rust_block:-?}"
+        else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Waiting... elapsed=${elapsed}s java_head=${java_head:-?} rust_block=${rust_block:-?}"
+        fi
+    else
+        local remaining=$((end_time - SECONDS))
+        if [ "${remaining}" -lt 0 ]; then
+            remaining=0
+        fi
+        if [ -n "${SHUTDOWN_HEIGHT}" ] && [ -n "${java_head}" ]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Waiting... elapsed=${elapsed}s remaining=${remaining}s java_head=${java_head}/${SHUTDOWN_HEIGHT} rust_block=${rust_block:-?}"
+        else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Waiting... elapsed=${elapsed}s remaining=${remaining}s java_head=${java_head:-?} rust_block=${rust_block:-?}"
+        fi
+    fi
+}
+
+stop_process() {
+    local pid=${1}
+    local name=${2}
+    if [ -z "${pid}" ]; then
+        return 0
+    fi
+    if kill -0 "${pid}" 2>/dev/null; then
+        echo "Stopping ${name} (PID: ${pid})..."
+        kill "${pid}" 2>/dev/null || true
+        sleep 10
+        if kill -0 "${pid}" 2>/dev/null; then
+            echo "Force killing ${name} (PID: ${pid})..."
+            kill -9 "${pid}" 2>/dev/null || true
+        fi
+    fi
+}
+
+cleanup() {
+    local exit_code=$?
+    set +e
+    stop_process "${JAVA_PID}" "java-tron"
+    stop_process "${RUST_PID}" "rust-backend"
+    exit "${exit_code}"
+}
+
+on_interrupt() {
+    echo ""
+    echo "Received interrupt; stopping services..."
+    exit 130
+}
+
+trap cleanup EXIT
+trap on_interrupt INT TERM
+
+SHUTDOWN_HEIGHT=$(get_shutdown_height "main_net_config_remote.conf")
 
 echo "Starting remote execution + remote storage result collection..."
-echo "Sleep duration: ${SLEEP_DURATION} seconds ($(($SLEEP_DURATION / 60)) minutes)"
+if [ "${SLEEP_DURATION}" -eq 0 ]; then
+    echo "Sleep duration: 0 seconds (no timeout; waiting for java-tron to exit)"
+else
+    echo "Sleep duration: ${SLEEP_DURATION} seconds ($(($SLEEP_DURATION / 60)) minutes)"
+fi
 echo "Embedded Java log: ${EMBEDDED_JAVA_LOG}"
 echo "Embedded CSV: ${EMBEDDED_CSV}"
+echo "ResourceSync debug: ${REMOTE_RESOURCE_SYNC_DEBUG}"
+echo "ResourceSync confirm: ${REMOTE_RESOURCE_SYNC_CONFIRM}"
+if [ -n "${SHUTDOWN_HEIGHT}" ]; then
+    echo "Configured shutdown BlockHeight: ${SHUTDOWN_HEIGHT}"
+fi
 
 # Step 1: Clean up previous data
 echo "Step 1: Cleaning up previous data..."
@@ -52,7 +165,7 @@ nohup java -Xms9G -Xmx9G -XX:ReservedCodeCacheSize=256m \
      -XX:+UseCMSInitiatingOccupancyOnly  -XX:CMSInitiatingOccupancyFraction=70 \
      -Dexec.csv.enabled=true -Dexec.csv.stateChanges.enabled=true \
      -Dremote.exec.trc10.enabled=true -Dremote.exec.apply.trc10=false \
-     -Dremote.resource.sync.debug=true -Dremote.resource.sync.confirm=true \
+     -Dremote.resource.sync.debug=${REMOTE_RESOURCE_SYNC_DEBUG} -Dremote.resource.sync.confirm=${REMOTE_RESOURCE_SYNC_CONFIRM} \
      -jar ./build/libs/FullNode.jar -c ./main_net_config_remote.conf \
      --execution-spi-enabled --execution-mode "REMOTE" >> start.log 2>&1 &
 JAVA_PID=$!
@@ -64,45 +177,36 @@ echo "Rust-backend started with PID: $RUST_PID"
 echo "Current time: $(date '+%Y-%m-%d %H:%M:%S')"
 if [ "${SLEEP_DURATION}" -eq 0 ]; then
     echo "Waiting for java-tron to exit (no timeout; SLEEP_DURATION=0)..."
+    print_wait_status
+    last_progress=${SECONDS}
     while kill -0 $JAVA_PID 2>/dev/null; do
-        sleep 30
+        if [ $((SECONDS - last_progress)) -ge "${PROGRESS_INTERVAL}" ]; then
+            print_wait_status
+            last_progress=${SECONDS}
+        fi
+        sleep "${WAIT_INTERVAL}"
     done
 else
     echo "Waiting up to ${SLEEP_DURATION} seconds for java-tron to exit..."
     end_time=$((SECONDS + SLEEP_DURATION))
+    print_wait_status
+    last_progress=${SECONDS}
     while kill -0 $JAVA_PID 2>/dev/null; do
         if [ "${SECONDS}" -ge "${end_time}" ]; then
             echo "Timeout reached; java-tron still running."
             break
         fi
-        sleep 30
+        if [ $((SECONDS - last_progress)) -ge "${PROGRESS_INTERVAL}" ]; then
+            print_wait_status
+            last_progress=${SECONDS}
+        fi
+        sleep "${WAIT_INTERVAL}"
     done
 fi
 
 echo "Step 6: Stopping services..."
-# Stop java-tron first
-if kill -0 $JAVA_PID 2>/dev/null; then
-    echo "Stopping java-tron (PID: $JAVA_PID)..."
-    kill $JAVA_PID
-    sleep 10
-    # Force kill if still running
-    if kill -0 $JAVA_PID 2>/dev/null; then
-        kill -9 $JAVA_PID
-    fi
-else
-    echo "java-tron already exited."
-fi
-
-# Stop rust-backend
-if kill -0 $RUST_PID 2>/dev/null; then
-    echo "Stopping rust-backend (PID: $RUST_PID)..."
-    kill $RUST_PID
-    sleep 5
-    # Force kill if still running
-    if kill -0 $RUST_PID 2>/dev/null; then
-        kill -9 $RUST_PID
-    fi
-fi
+stop_process "${JAVA_PID}" "java-tron"
+stop_process "${RUST_PID}" "rust-backend"
 
 # Step 7: Get git commit hash
 echo "Step 7: Getting git commit hash..."

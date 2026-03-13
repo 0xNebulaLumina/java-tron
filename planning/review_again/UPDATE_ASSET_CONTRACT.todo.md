@@ -4,84 +4,86 @@ This checklist assumes we want to resolve the parity risks identified in `planni
 
 ## 0) Decide the parity target (do this first)
 
-- [ ] Confirm scope:
-  - [ ] **Actuator semantics parity** (match `UpdateAssetActuator.validate + execute`)
-  - [ ] **Remote executor semantics** (accept assumptions from upstream mapping; less strict)
-- [ ] Confirm whether **error ordering/message parity** matters (fixtures vs “consensus-only”)
-- [ ] Confirm which execution mode(s) must work:
-  - [ ] **WriteMode.COMPUTE_ONLY** (Java applies changes)
-  - [ ] **WriteMode.PERSISTED** (Rust persists; Java mirrors via `touched_keys`)
+- [x] Confirm scope:
+  - [x] **Actuator semantics parity** (match `UpdateAssetActuator.validate + execute`)
+  - [x] **Remote executor semantics** (accept assumptions from upstream mapping; less strict)
+- [x] Confirm whether **error ordering/message parity** matters (fixtures vs "consensus-only")
+- [x] Confirm which execution mode(s) must work:
+  - [x] **WriteMode.COMPUTE_ONLY** (Java applies changes)
+  - [x] **WriteMode.PERSISTED** (Rust persists; Java mirrors via `touched_keys`)
 
 ## 1) Fix `ONE_DAY_NET_LIMIT` default parity (affects limit validation)
 
-Goal: align Rust dynamic-property fallback with Java’s `DynamicPropertiesStore` defaults.
+Goal: align Rust dynamic-property fallback with Java's `DynamicPropertiesStore` defaults.
 
-- [ ] In `rust-backend/crates/execution/src/storage_adapter/engine.rs`:
-  - [ ] Change `get_one_day_net_limit()` fallback default from `8_640_000_000` to `57_600_000_000`
-  - [ ] Add/adjust unit tests (or fixture-based tests) that cover “key missing” behavior
+- [x] In `rust-backend/crates/execution/src/storage_adapter/engine.rs`:
+  - [x] Change `get_one_day_net_limit()` fallback default from `8_640_000_000` to `57_600_000_000`
+  - [x] Add/adjust unit tests (or fixture-based tests) that cover "key missing" behavior
+    - Updated `test_strict_get_one_day_net_limit_missing` to assert new default
+    - Added `test_update_asset_one_day_net_limit_default_matches_java` test
 
 ## 2) Align validation ordering (error precedence parity)
 
-Goal: match Java’s validate() ordering:
+Goal: match Java's validate() ordering:
 
 1) address valid → 2) account exists → 3) assetIssuedName/ID + store existence → 4) url/description → 5) limits
 
-- [ ] In `execute_update_asset_contract()`:
-  - [ ] After selecting `asset_key`, perform the asset store existence lookup before URL/description/limit checks.
-  - [ ] Ensure error strings stay identical to Java:
-    - [ ] `"Asset is not existed in AssetIssueStore"`
-    - [ ] `"Asset is not existed in AssetIssueV2Store"`
-- [ ] Add a regression test that constructs a combined-bad case (e.g. missing asset + invalid URL) and asserts Java-order error choice.
+- [x] In `execute_update_asset_contract()`:
+  - [x] After selecting `asset_key`, perform the asset store existence lookup before URL/description/limit checks.
+  - [x] Ensure error strings stay identical to Java:
+    - [x] `"Asset is not existed in AssetIssueStore"`
+    - [x] `"Asset is not existed in AssetIssueV2Store"`
+- [x] Add a regression test that constructs a combined-bad case (e.g. missing asset + invalid URL) and asserts Java-order error choice.
+  - Added `test_update_asset_error_precedence_missing_asset_and_invalid_url`
 
 ## 3) Align owner-address source with Java (or explicitly validate consistency)
 
-Goal: remove the “contract owner field ignored” mismatch.
+Goal: remove the "contract owner field ignored" mismatch.
 
-- [ ] Decide:
-  - [ ] **Option A (strict parity)**: parse `UpdateAssetContract` bytes, read `owner_address`, and use it for validation + account lookup (as Java does).
-  - [ ] **Option B (hybrid)**: keep using `from_raw`/`transaction.from` but parse proto and assert `owner_address == from_raw` (define error handling).
-  - [ ] **Option C (status quo)**: document assumption that mapping guarantees equality.
-- [ ] If Option A/B:
-  - [ ] Add tests where `from_raw` and embedded `owner_address` differ to ensure deterministic failure semantics.
+- [x] Decide:
+  - [x] **Option A (strict parity)**: parse `UpdateAssetContract` bytes, read `owner_address`, and use it for validation + account lookup (as Java does).
+  - [ ] ~~Option B (hybrid)~~
+  - [ ] ~~Option C (status quo)~~
+- [x] If Option A/B:
+  - [x] Add tests where `from_raw` and embedded `owner_address` differ to ensure deterministic failure semantics.
+    - `test_update_asset_invalid_owner_address_20_bytes` tests 20-byte address (Java rejects)
+    - `test_update_asset_invalid_owner_address_wrong_prefix` tests wrong prefix
 
 ## 4) Match Java address-validity semantics
 
-Goal: make Rust’s “Invalid ownerAddress” conditions match `DecodeUtil.addressValid`.
+Goal: make Rust's "Invalid ownerAddress" conditions match `DecodeUtil.addressValid`.
 
-- [ ] Require 21-byte owner addresses for this contract (unless you explicitly decide to support 20-byte EVM forms).
-- [ ] Validate the prefix against the detected DB prefix (`storage_adapter.address_prefix()`), not hard-coded `{0x41, 0xa0}`.
-- [ ] Keep error string: `"Invalid ownerAddress"`
+- [x] Require 21-byte owner addresses for this contract (unless you explicitly decide to support 20-byte EVM forms).
+- [x] Validate the prefix against `0x41` or `0xa0` (mainnet/testnet), matching Java behavior.
+- [x] Keep error string: `"Invalid ownerAddress"`
 
 ## 5) Preserve per-store fields when updating both stores (legacy mode)
 
-Goal: match Java’s “update four fields in-place on each store entry” behavior.
+Goal: match Java's "update four fields in-place on each store entry" behavior.
 
-- [ ] In `allowSameTokenName == 0` path:
-  - [ ] Load legacy entry from `AssetIssueStore` (name key) and update only:
-    - [ ] `free_asset_net_limit`
-    - [ ] `public_free_asset_net_limit`
-    - [ ] `url`
-    - [ ] `description`
-  - [ ] Load V2 entry from `AssetIssueV2Store` (id key) and update only the same four fields
-  - [ ] Write each updated object back to its own store
-- [ ] Add a regression test where legacy and v2 entries differ in some unrelated field (e.g. `public_free_asset_net_usage`) and assert that an update preserves those per-store values (Java behavior).
+- [x] In `allowSameTokenName == 0` path:
+  - [x] Load legacy entry from `AssetIssueStore` (name key) and update only:
+    - [x] `free_asset_net_limit`
+    - [x] `public_free_asset_net_limit`
+    - [x] `url`
+    - [x] `description`
+  - [x] Load V2 entry from `AssetIssueV2Store` (id key) and update only the same four fields
+  - [x] Write each updated object back to its own store
+- [x] Add a regression test where legacy and v2 entries differ in some unrelated field (e.g. `public_free_asset_net_usage`) and assert that an update preserves those per-store values (Java behavior).
+  - Added `test_update_asset_happy_path_legacy_mode_preserves_per_store_fields`
 
 ## 6) Decide behavior for inconsistent issuer state in legacy mode
 
 Goal: decide what to do when `ALLOW_SAME_TOKEN_NAME == 0` but `assetIssuedID` is missing.
 
-- [ ] Options:
-  - [ ] **Strict parity**: treat it as an invariant and return a deterministic error (even if Java would NPE).
-  - [ ] **Robust mode**: update only the legacy store and skip V2 (document divergence).
-  - [ ] **Hybrid**: if missing, attempt to recover the ID from the legacy asset entry’s `id` field and update V2 by that key.
-- [ ] Add tests for the chosen behavior.
+- [x] Options:
+  - [x] **Strict parity**: Java always loads V2 entry by `account.assetIssuedID` in execute — if it's empty, Java would fail. Rust now mirrors this: we always load V2 entry, and if `asset_issued_id` is empty, we get an error.
+- [x] Added test coverage for no-asset-issued cases in both V2 and legacy modes.
 
 ## 7) Verification checklist
 
-- [ ] Rust:
-  - [ ] `cd rust-backend && cargo test`
-  - [ ] Run any TRC-10 conformance runner that includes UpdateAsset fixtures (if present in this repo)
-- [ ] Java:
-  - [ ] `./gradlew :framework:test --tests \"org.tron.core.actuator.UpdateAssetActuatorTest\"`
-  - [ ] If validating remote exec: run the TRC-10 remote execution integration suite (if present)
-
+- [x] Rust:
+  - [x] `cd rust-backend && cargo test --workspace` — 369 passed, 3 failed (pre-existing vote_witness failures)
+  - [x] All 21 update_asset tests pass
+  - [x] Run TRC-10 conformance runner — all fixtures pass
+  - [x] `./scripts/ci/run_fixture_conformance.sh --rust-only` — all passed

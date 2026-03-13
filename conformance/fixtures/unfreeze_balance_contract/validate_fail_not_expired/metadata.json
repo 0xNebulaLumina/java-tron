@@ -4,7 +4,7 @@
   "caseName": "validate_fail_not_expired",
   "caseCategory": "validate_fail",
   "description": "Fail when frozen balance has not expired yet",
-  "generatedAt": "2026-01-14T06:56:47.436Z",
+  "generatedAt": "2026-03-10T11:52:25.055Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

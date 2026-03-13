@@ -1163,6 +1163,156 @@ public class TransferFixtureGeneratorTest extends BaseTest {
   }
 
   // --------------------------------------------------------------------------
+  // TransferAssetContract (2) - ALLOW_MULTI_SIGN Recipient Permission Fixtures
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateTransferAsset_edgeCreateRecipientAllowMultiSign() throws Exception {
+    String newRecipient = generateAddress("multisig_asset_recv01");
+    long amount = 1000;
+
+    // Enable multi-sign so created recipients get default permissions
+    dbManager.getDynamicPropertiesStore().saveAllowMultiSign(1);
+
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(newRecipient)))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(amount)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("edge_create_recipient_allow_multisign")
+        .caseCategory("happy")
+        .description("Create recipient with allowMultiSign=1 (default permissions initialized)")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .dynamicProperty("allowMultiSign", 1)
+        .dynamicProperty("token_id", TOKEN_ID)
+        .dynamicProperty("amount", amount)
+        .dynamicProperty("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", CREATE_ACCOUNT_FEE)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset multisign create: success={}", result.isSuccess());
+
+    // Reset to default
+    dbManager.getDynamicPropertiesStore().saveAllowMultiSign(0);
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailOwnerAddressWrongPrefix() throws Exception {
+    // Build an owner address with invalid prefix (0xBB instead of 0x41)
+    byte[] wrongPrefixOwner = new byte[21];
+    wrongPrefixOwner[0] = (byte) 0xBB;
+    System.arraycopy(ByteArray.fromHexString(OWNER_ADDRESS), 1, wrongPrefixOwner, 1, 20);
+    long amount = 1000;
+
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(wrongPrefixOwner))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(amount)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_owner_address_wrong_prefix")
+        .caseCategory("validate_fail")
+        .description("Fail when owner address has wrong prefix byte")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid ownerAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset wrong prefix owner: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailToAddressWrongPrefix() throws Exception {
+    // Build a to address with invalid prefix (0xBB instead of 0x41)
+    byte[] wrongPrefixTo = new byte[21];
+    wrongPrefixTo[0] = (byte) 0xBB;
+    System.arraycopy(ByteArray.fromHexString(RECEIVER_ADDRESS), 1, wrongPrefixTo, 1, 20);
+    long amount = 1000;
+
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(wrongPrefixTo))
+        .setAssetName(ByteString.copyFromUtf8(TOKEN_ID))
+        .setAmount(amount)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_to_address_wrong_prefix")
+        .caseCategory("validate_fail")
+        .description("Fail when to address has wrong prefix byte")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("Invalid toAddress")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset wrong prefix to: validationError={}", result.getValidationError());
+  }
+
+  @Test
+  public void generateTransferAsset_validateFailEmptyAssetName() throws Exception {
+    long amount = 1000;
+
+    TransferAssetContract contract = TransferAssetContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setToAddress(ByteString.copyFrom(ByteArray.fromHexString(RECEIVER_ADDRESS)))
+        .setAssetName(ByteString.EMPTY)
+        .setAmount(amount)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.TransferAssetContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("TRANSFER_ASSET_CONTRACT", 2)
+        .caseName("validate_fail_empty_asset_name")
+        .caseCategory("validate_fail")
+        .description("Fail with 'No asset!' when asset_name is empty")
+        .database("account")
+        .database("asset-issue-v2")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("No asset!")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("TransferAsset empty asset name: validationError={}", result.getValidationError());
+  }
+
+  // --------------------------------------------------------------------------
   // TransferAssetContract (2) - Legacy Mode (allowSameTokenName=0) Fixtures
   // --------------------------------------------------------------------------
 

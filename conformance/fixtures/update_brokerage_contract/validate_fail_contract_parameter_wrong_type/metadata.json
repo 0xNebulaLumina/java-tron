@@ -4,7 +4,7 @@
   "caseName": "validate_fail_contract_parameter_wrong_type",
   "caseCategory": "validate_fail",
   "description": "Fail when contract type is UpdateBrokerageContract but parameter is a different message type",
-  "generatedAt": "2026-01-14T06:56:43.105Z",
+  "generatedAt": "2026-03-10T11:52:20.517Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "happy_path_unfreeze_delegated_bandwidth",
   "caseCategory": "happy",
   "description": "Delegated unfreeze for expired BANDWIDTH delegation",
-  "generatedAt": "2026-01-14T06:56:47.446Z",
+  "generatedAt": "2026-03-10T11:52:25.067Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

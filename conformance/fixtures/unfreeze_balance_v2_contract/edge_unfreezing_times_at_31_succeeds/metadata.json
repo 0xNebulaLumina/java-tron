@@ -4,7 +4,7 @@
   "caseName": "edge_unfreezing_times_at_31_succeeds",
   "caseCategory": "edge",
   "description": "Success when unfreezing times = 31 (under limit, can add one more)",
-  "generatedAt": "2026-01-14T06:56:48.474Z",
+  "generatedAt": "2026-03-10T11:52:26.004Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

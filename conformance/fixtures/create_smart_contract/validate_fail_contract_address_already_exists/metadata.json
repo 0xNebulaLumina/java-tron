@@ -4,7 +4,7 @@
   "caseName": "validate_fail_contract_address_already_exists",
   "caseCategory": "validate_fail",
   "description": "Fail when contract address already exists",
-  "generatedAt": "2026-01-14T06:56:54.901Z",
+  "generatedAt": "2026-03-10T11:52:32.172Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

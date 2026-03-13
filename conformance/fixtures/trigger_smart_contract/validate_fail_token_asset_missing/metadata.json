@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_asset_missing",
   "caseCategory": "validate_fail",
   "description": "Trigger with tokenId for non-existent asset should fail",
-  "generatedAt": "2026-01-14T06:56:56.793Z",
+  "generatedAt": "2026-03-10T11:52:34.577Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

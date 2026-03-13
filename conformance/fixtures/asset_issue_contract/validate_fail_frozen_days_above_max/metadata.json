@@ -4,7 +4,7 @@
   "caseName": "validate_fail_frozen_days_above_max",
   "caseCategory": "validate_fail",
   "description": "Fail when frozen_days is above maxFrozenSupplyTime",
-  "generatedAt": "2026-01-14T06:56:41.886Z",
+  "generatedAt": "2026-03-10T11:52:19.245Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

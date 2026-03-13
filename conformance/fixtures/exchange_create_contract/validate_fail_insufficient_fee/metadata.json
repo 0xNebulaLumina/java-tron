@@ -4,7 +4,7 @@
   "caseName": "validate_fail_insufficient_fee",
   "caseCategory": "validate_fail",
   "description": "Fail when account has insufficient TRX for exchange creation fee",
-  "generatedAt": "2026-01-14T06:56:46.346Z",
+  "generatedAt": "2026-03-10T11:52:23.839Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

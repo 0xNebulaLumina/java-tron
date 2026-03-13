@@ -974,7 +974,7 @@ impl crate::backend::backend_server::Backend for BackendService {
             .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
         
         // Convert protobuf types to execution types
-        let (transaction, tx_kind) = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+        let (transaction, tx_kind) = match self.convert_protobuf_transaction(req.transaction.as_ref(), req.transaction_bytes_size) {
             Ok((tx, kind)) => {
                 debug!("Converted transaction - gas_limit: {}, gas_price: {}, data_len: {}, kind: {:?}", 
                        tx.gas_limit, tx.gas_price, tx.data.len(), kind);
@@ -1052,12 +1052,20 @@ impl crate::backend::backend_server::Backend for BackendService {
             .map(|cfg| cfg.remote.rust_persist_enabled)
             .unwrap_or(false);
 
-        // Create storage adapter with optional write buffer for Phase B conformance
-        let (mut storage_adapter, write_buffer) = if rust_persist_enabled {
+        // Create storage adapter with optional write buffer.
+        //
+        // Always buffer NON_VM execution to match java-tron's transactional semantics:
+        // if execution returns an error, no partial writes should be persisted.
+        let use_buffered_writes = rust_persist_enabled || matches!(tx_kind, crate::backend::TxKind::NonVm);
+        let (mut storage_adapter, write_buffer) = if use_buffered_writes {
             let (adapter, buffer) = tron_backend_execution::EngineBackedEvmStateStore::new_with_buffer(
                 storage_engine.clone(),
             );
-            info!("Phase B: Using buffered writes (rust_persist_enabled=true)");
+            if rust_persist_enabled {
+                info!("Phase B: Using buffered writes (rust_persist_enabled=true)");
+            } else {
+                info!("Using buffered writes for NON_VM atomicity");
+            }
             (adapter, Some(buffer))
         } else {
             let adapter = tron_backend_execution::EngineBackedEvmStateStore::new(
@@ -1165,6 +1173,27 @@ impl crate::backend::backend_server::Backend for BackendService {
                                 warn!("Failed to persist SmartContract metadata: {}", e);
                                 // Continue - contract was created, but metadata wasn't persisted
                                 // This is recoverable as Java can still access via embedded mode
+                            }
+
+                            // Phase 2: Emit TRC-10 call_token_value transfer if applicable
+                            // Java's VMActuator transfers TRC-10 tokens from owner to contract before execution.
+                            // We emit the Trc10Change on success so Java can apply the token transfer.
+                            match self.extract_create_contract_trc10_transfer(
+                                &persist_storage_adapter,
+                                &transaction,
+                                result.contract_address.as_ref().unwrap(),
+                            ) {
+                                Ok(Some(trc10_change)) => {
+                                    result.trc10_changes.push(trc10_change);
+                                    debug!("Added TRC-10 transfer change for CreateSmartContract");
+                                }
+                                Ok(None) => {
+                                    // No TRC-10 transfer needed (call_token_value <= 0 or TRC-10 disabled)
+                                }
+                                Err(e) => {
+                                    warn!("Failed to extract TRC-10 transfer for CreateSmartContract: {}", e);
+                                    // Continue - contract was created, but TRC-10 transfer wasn't emitted
+                                }
                             }
                         }
 
@@ -1382,7 +1411,7 @@ impl crate::backend::backend_server::Backend for BackendService {
             .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
 
         // Convert protobuf types to execution types
-        let _transaction = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+        let _transaction = match self.convert_protobuf_transaction(req.transaction.as_ref(), 0) {
             Ok(tx) => tx,
             Err(e) => {
                 error!("Failed to convert transaction: {}", e);
@@ -1414,7 +1443,7 @@ impl crate::backend::backend_server::Backend for BackendService {
 
         // Estimate energy using the database-specific storage adapter
         // Convert protobuf types to execution types (for estimate_energy, we don't need tx_kind)
-        let (transaction_only, _) = match self.convert_protobuf_transaction(req.transaction.as_ref()) {
+        let (transaction_only, _) = match self.convert_protobuf_transaction(req.transaction.as_ref(), 0) {
             Ok((tx, _kind)) => (tx, _kind),
             Err(e) => {
                 error!("Failed to convert transaction: {}", e);

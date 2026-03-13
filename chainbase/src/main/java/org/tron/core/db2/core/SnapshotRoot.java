@@ -239,6 +239,12 @@ public class SnapshotRoot extends AbstractSnapshot<byte[], byte[]> {
     }
   }
 
+  public void invalidateCacheKey(byte[] key) {
+    if (cached()) {
+      cache.invalidate(WrappedByteArray.of(key));
+    }
+  }
+
   private WrappedByteArray getCache(byte[] key) {
     if (cached()) {
       return cache.getIfPresent(WrappedByteArray.of(key));

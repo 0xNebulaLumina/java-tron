@@ -4,7 +4,7 @@
   "caseName": "validate_fail_threshold_zero",
   "caseCategory": "validate_fail",
   "description": "Fail when permission threshold is 0",
-  "generatedAt": "2026-01-14T06:56:40.750Z",
+  "generatedAt": "2026-03-10T11:52:17.958Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

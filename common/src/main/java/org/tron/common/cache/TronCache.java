@@ -41,6 +41,10 @@ public class TronCache<K, V> {
     return this.cache.stats();
   }
 
+  public void invalidate(K k) {
+    this.cache.invalidate(k);
+  }
+
   public void invalidateAll() {
     this.cache.invalidateAll();
   }

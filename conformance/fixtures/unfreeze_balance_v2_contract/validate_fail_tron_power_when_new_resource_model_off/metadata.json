@@ -4,7 +4,7 @@
   "caseName": "validate_fail_tron_power_when_new_resource_model_off",
   "caseCategory": "validate_fail",
   "description": "Fail TRON_POWER unfreeze when ALLOW_NEW_RESOURCE_MODEL = 0",
-  "generatedAt": "2026-01-14T06:56:48.529Z",
+  "generatedAt": "2026-03-10T11:52:26.047Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

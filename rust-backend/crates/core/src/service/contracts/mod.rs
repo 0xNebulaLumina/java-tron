@@ -4,5 +4,6 @@
 pub mod delegation;
 pub mod exchange;
 pub mod freeze;
+pub mod proposal;
 pub mod proto;
 pub mod withdraw;

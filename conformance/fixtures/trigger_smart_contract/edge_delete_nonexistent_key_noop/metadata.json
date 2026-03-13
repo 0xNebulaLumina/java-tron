@@ -4,7 +4,7 @@
   "caseName": "edge_delete_nonexistent_key_noop",
   "caseCategory": "edge",
   "description": "Delete storage key that was never set (should be no-op)",
-  "generatedAt": "2026-01-14T06:57:01.278Z",
+  "generatedAt": "2026-03-10T11:52:38.982Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

@@ -4,7 +4,7 @@
   "caseName": "legacy_happy_path",
   "caseCategory": "happy",
   "description": "Legacy mode (allowSameTokenName=0): Participate in asset issuance using asset name",
-  "generatedAt": "2026-01-14T06:56:53.834Z",
+  "generatedAt": "2026-03-10T11:52:31.108Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

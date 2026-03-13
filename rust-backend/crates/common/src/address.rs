@@ -28,6 +28,31 @@ pub fn to_tron_address(evm_address: &[u8; 20]) -> String {
     base58_encode(&address_bytes)
 }
 
+/// Decode a TRON Base58Check address to its 21-byte raw form (prefix + 20-byte address).
+/// Unlike `from_tron_address`, this does not require the prefix to be 0x41,
+/// supporting both mainnet (0x41) and testnet (0xa0) prefixes.
+pub fn from_tron_base58_to_bytes(base58: &str) -> Result<[u8; 21]> {
+    let decoded = base58_decode(base58)
+        .map_err(|e| anyhow!("Invalid Base58 encoding: {}", e))?;
+
+    if decoded.len() != 25 {
+        return Err(anyhow!("Invalid TRON address length: expected 25 bytes, got {}", decoded.len()));
+    }
+
+    // Split address and checksum
+    let (address_bytes, checksum) = decoded.split_at(21);
+
+    // Verify checksum
+    let expected_checksum = calculate_checksum(address_bytes);
+    if checksum != expected_checksum {
+        return Err(anyhow!("Invalid TRON address checksum"));
+    }
+
+    let mut result = [0u8; 21];
+    result.copy_from_slice(address_bytes);
+    Ok(result)
+}
+
 /// Convert a TRON Base58 address to 20-byte EVM address
 pub fn from_tron_address(tron_address: &str) -> Result<[u8; 20]> {
     // Decode Base58
@@ -191,5 +216,35 @@ mod tests {
         assert!(from_tron_address("").is_err());
         assert!(from_tron_address("invalid").is_err());
         assert!(from_tron_address("TLsV52sRDL79HXGGm9yzwKibb6BeruhUz0").is_err()); // Invalid checksum
+    }
+
+    #[test]
+    fn test_from_tron_base58_to_bytes_mainnet() {
+        // Known mainnet TRON address (0x41 prefix)
+        let known_address = "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy";
+        let raw = from_tron_base58_to_bytes(known_address).unwrap();
+        assert_eq!(raw.len(), 21);
+        assert_eq!(raw[0], 0x41); // Mainnet prefix
+
+        // Verify consistency with from_tron_address
+        let evm_addr = from_tron_address(known_address).unwrap();
+        assert_eq!(&raw[1..], &evm_addr);
+    }
+
+    #[test]
+    fn test_from_tron_base58_to_bytes_roundtrip() {
+        // Build a raw 21-byte address, encode to Base58, then decode back
+        let evm_address = [0x12u8; 20];
+        let base58 = to_tron_address(&evm_address);
+        let raw = from_tron_base58_to_bytes(&base58).unwrap();
+        assert_eq!(raw[0], 0x41);
+        assert_eq!(&raw[1..], &evm_address);
+    }
+
+    #[test]
+    fn test_from_tron_base58_to_bytes_invalid() {
+        assert!(from_tron_base58_to_bytes("").is_err());
+        assert!(from_tron_base58_to_bytes("invalid").is_err());
+        assert!(from_tron_base58_to_bytes("TLsV52sRDL79HXGGm9yzwKibb6BeruhUz0").is_err());
     }
 }

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_negative_limit",
   "caseCategory": "validate_fail",
   "description": "Fail when origin_energy_limit is negative",
-  "generatedAt": "2026-01-14T06:56:44.208Z",
+  "generatedAt": "2026-03-10T11:52:21.674Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
@@ -14,7 +14,7 @@
     "dynamic-properties"
   ],
   "expectedStatus": "VALIDATION_FAILED",
-  "expectedErrorMessage": "contract type error, unexpected type [UpdateEnergyLimitContract]",
+  "expectedErrorMessage": "origin energy limit must be > 0",
   "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049abc",
   "dynamicProperties": {},
   "notes": []

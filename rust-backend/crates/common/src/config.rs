@@ -68,6 +68,11 @@ pub struct ExecutionConfig {
     pub max_cpu_time_of_one_tx: u64,
     /// For TRON parity: suppress EVM-style coinbase/miner payouts (default: false for parity)
     pub evm_eth_coinbase_compat: bool,
+    /// Skip precompile address collision check for CREATE opcode (java-tron parity).
+    /// Java's VMActuator doesn't check if CREATE-derived addresses collide with precompile addresses.
+    /// This is extremely unlikely to happen in practice, but we gate the check for strict parity.
+    /// Default: true (skip the check to match Java behavior)
+    pub skip_precompile_create_collision_check: bool,
     /// TRON fee handling configuration
     pub fees: ExecutionFeeConfig,
     /// Remote execution feature flags
@@ -148,11 +153,20 @@ pub struct RemoteExecutionConfig {
     /// Creates new accounts with proper fee charging and blackhole handling
     /// Default: false for safe rollout - falls back to Java embedded execution when disabled
     pub account_create_enabled: bool,
-    /// Enable full delegation reward computation in WithdrawBalance
-    /// When true: Computes delegation rewards from DelegationStore (MortgageService.withdrawReward)
-    /// When false: Uses only Account.allowance (Phase 1 behavior)
-    /// Default: false for safe rollout
+    /// DEPRECATED: Delegation reward is now always computed when CHANGE_DELEGATION is enabled,
+    /// matching Java's MortgageService.withdrawReward() which self-gates on allowChangeDelegation().
+    /// This field is kept for backward config compatibility but has no effect.
+    #[serde(default)]
     pub delegation_reward_enabled: bool,
+
+    /// Genesis guard representative addresses (Base58-encoded TRON addresses).
+    /// These addresses are blocked from WithdrawBalance operations, matching Java's
+    /// `CommonParameter.getInstance().getGenesisBlock().getWitnesses()` check.
+    ///
+    /// When empty (default), falls back to hardcoded mainnet/testnet genesis witness lists.
+    /// Set this for custom/private networks with different genesis witnesses.
+    #[serde(default)]
+    pub genesis_guard_representatives_base58: Vec<String>,
 
     // === Phase 0.3: Write Consistency Model ===
     //
@@ -406,6 +420,64 @@ pub struct RemoteExecutionConfig {
     ///           MarketPairPriceToOrderStore, AccountStore, DynamicPropertiesStore
     /// Default: false for safe rollout
     pub market_cancel_order_enabled: bool,
+
+    /// Strict market index parity mode
+    ///
+    /// Java's MarketCancelOrderActuator throws ItemNotFoundException when these are missing:
+    /// - MarketAccountStore.get(owner) during updateOrderState()
+    /// - MarketPairPriceToOrderStore.get(pairPriceKey) in the cancel actuator
+    /// - Neighbor orders referenced by prev/next pointers during linked-list removal
+    ///
+    /// Rust's default behavior is more permissive (treats missing entries as optional and continues).
+    ///
+    /// When enabled:
+    /// - Missing MarketAccountOrder for an active order cancel → error
+    /// - Missing MarketOrderIdList for the order's pairPriceKey → error
+    /// - Missing neighbor orders (when prev/next is non-empty) → error
+    ///
+    /// Default: false for backward compatibility (defensive recovery)
+    /// Set to true for strict Java parity
+    pub market_strict_index_parity: bool,
+
+    // === Dynamic Property Strictness (Task 5 parity) ===
+    //
+    // Java's DynamicPropertiesStore throws IllegalArgumentException when keys are missing,
+    // but the store initialization catches these and saves defaults. In practice, a properly
+    // initialized store always has these keys.
+    //
+    // Rust defaults to safe fallback values for robustness, but this can mask configuration
+    // issues or cause subtle divergence in edge cases.
+    //
+    // When strict mode is enabled, Rust will return errors when required dynamic properties
+    // are missing, matching Java's "throw when missing" behavior.
+
+    /// Strict dynamic property mode for Java parity
+    ///
+    /// When enabled, getters for critical dynamic properties will return errors when keys
+    /// are missing, rather than using default values. This matches Java's behavior and helps
+    /// catch configuration issues early.
+    ///
+    /// Affected properties for AssetIssueContract:
+    /// - ASSET_ISSUE_FEE
+    /// - TOKEN_ID_NUM
+    /// - ALLOW_SAME_TOKEN_NAME
+    /// - ONE_DAY_NET_LIMIT
+    /// - MIN_FROZEN_SUPPLY_TIME, MAX_FROZEN_SUPPLY_TIME, MAX_FROZEN_SUPPLY_NUMBER
+    ///
+    /// Default: false for backward compatibility (uses safe defaults)
+    /// Set to true for conformance testing or strict Java parity
+    pub strict_dynamic_properties: bool,
+
+    /// Genesis block timestamp in milliseconds since epoch.
+    /// Used to compute headSlot for bandwidth resource windows:
+    ///   headSlot = (block_timestamp_ms - genesis_block_timestamp) / 3000
+    /// Default: 1529891469000 (TRON mainnet genesis block timestamp)
+    #[serde(default = "default_genesis_block_timestamp")]
+    pub genesis_block_timestamp: i64,
+}
+
+fn default_genesis_block_timestamp() -> i64 {
+    1529891469000 // TRON mainnet genesis block timestamp (ms)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -464,6 +536,7 @@ impl Default for ExecutionConfig {
             bandwidth_limit: 5000,
             max_cpu_time_of_one_tx: 80,
             evm_eth_coinbase_compat: false, // Default off for TRON parity
+            skip_precompile_create_collision_check: true, // Default true for TRON parity (Java doesn't have this check)
             fees: ExecutionFeeConfig::default(),
             remote: RemoteExecutionConfig::default(),
         }
@@ -511,6 +584,7 @@ impl Config {
         builder = builder.set_default("execution.bandwidth_limit", 5000u64)?;
         builder = builder.set_default("execution.max_cpu_time_of_one_tx", 80u64)?;
         builder = builder.set_default("execution.evm_eth_coinbase_compat", false)?;
+        builder = builder.set_default("execution.skip_precompile_create_collision_check", true)?;
         
         // Fee configuration defaults
         builder = builder.set_default("execution.fees.mode", "burn")?;
@@ -579,6 +653,9 @@ impl Config {
         builder = builder.set_default("execution.remote.market_sell_asset_enabled", false)?;
         builder = builder.set_default("execution.remote.market_cancel_order_enabled", false)?;
 
+        // Genesis block timestamp for headSlot computation
+        builder = builder.set_default("execution.remote.genesis_block_timestamp", 1529891469000i64)?;
+
         let config = builder.build()?;
         config.try_deserialize()
     }
@@ -603,7 +680,8 @@ impl Default for RemoteExecutionConfig {
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
             vote_witness_seed_old_from_account: true, // Default true to match embedded semantics
             account_create_enabled: false, // Default false for safe rollout
-            delegation_reward_enabled: false, // Default false for safe rollout
+            delegation_reward_enabled: false, // Deprecated: delegation reward is always computed
+            genesis_guard_representatives_base58: Vec::new(), // Empty = use hardcoded fallback
             // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
             rust_persist_enabled: false,
             // Phase 2.A: Proposal contracts (16/17/18)
@@ -637,6 +715,11 @@ impl Default for RemoteExecutionConfig {
             // Phase 2.G: Market (DEX) contracts (52/53)
             market_sell_asset_enabled: false, // Default false for safe rollout
             market_cancel_order_enabled: false, // Default false for safe rollout
+            market_strict_index_parity: false, // Default false for backward compatibility (defensive recovery)
+            // Task 5: Dynamic property strictness
+            strict_dynamic_properties: false, // Default false for backward compatibility
+            // Genesis block timestamp for headSlot computation
+            genesis_block_timestamp: default_genesis_block_timestamp(),
         }
     }
 } 

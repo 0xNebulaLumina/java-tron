@@ -1,0 +1,21 @@
+{
+  "contractType": "CLEAR_ABI_CONTRACT",
+  "contractTypeNum": 48,
+  "caseName": "validate_fail_invalid_protobuf_bytes",
+  "caseCategory": "validate_fail",
+  "description": "Fail when contract parameter contains invalid/truncated protobuf bytes",
+  "generatedAt": "2026-03-10T11:52:21.671Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 11,
+  "blockTimestamp": 1003000,
+  "databasesTouched": [
+    "account",
+    "contract",
+    "abi",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "VALIDATION_FAILED",
+  "expectedErrorMessage": "While parsing a protocol message, the input ended unexpectedly in the middle of a field.  This could mean either that the input has been truncated or that an embedded message misreported its own length.",
+  "dynamicProperties": {},
+  "notes": []
+}

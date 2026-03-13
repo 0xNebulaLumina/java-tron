@@ -4,7 +4,7 @@
   "caseName": "happy_path_issue_asset_v1",
   "caseCategory": "happy",
   "description": "V1 mode issuance: writes to both asset-issue and asset-issue-v2, v2 precision forced to 0",
-  "generatedAt": "2026-01-14T06:56:41.954Z",
+  "generatedAt": "2026-03-10T11:52:19.338Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

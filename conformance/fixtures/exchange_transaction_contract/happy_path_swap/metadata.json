@@ -4,7 +4,7 @@
   "caseName": "happy_path_swap",
   "caseCategory": "happy",
   "description": "Execute a token swap on an exchange",
-  "generatedAt": "2026-01-14T06:56:46.420Z",
+  "generatedAt": "2026-03-10T11:52:23.971Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
