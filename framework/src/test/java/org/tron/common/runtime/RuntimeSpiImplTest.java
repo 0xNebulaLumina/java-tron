@@ -2,8 +2,8 @@ package org.tron.common.runtime;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
@@ -17,13 +17,20 @@ import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.AssetIssueCapsule;
+import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.TransactionContext;
+import org.tron.core.execution.reporting.PreStateSnapshotRegistry;
 import org.tron.core.execution.spi.ExecutionMode;
 import org.tron.core.execution.spi.ExecutionProgramResult;
 import org.tron.core.execution.spi.ExecutionSPI;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
+import org.tron.core.store.StoreFactory;
 import org.tron.protos.Protocol.AccountType;
+import org.tron.protos.Protocol.Transaction.Contract.ContractType;
+import org.tron.protos.contract.BalanceContract.FreezeBalanceContract;
+import org.tron.protos.contract.BalanceContract.UnfreezeBalanceContract;
+import org.tron.protos.contract.Common.ResourceCode;
 
 /**
  * Test class for RuntimeSpiImpl to verify ExecutionSPI integration and TRC-10 changes application.
@@ -73,6 +80,8 @@ public class RuntimeSpiImplTest extends BaseTest {
 
   @After
   public void cleanup() {
+    PreStateSnapshotRegistry.clearForCurrentTransaction();
+
     // Clean up test data
     byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
     dbManager.getAccountStore().delete(ownerAddress);
@@ -437,5 +446,110 @@ public class RuntimeSpiImplTest extends BaseTest {
     // Test that default execution mode is EMBEDDED
     ExecutionMode defaultMode = ExecutionMode.getDefault();
     assertEquals("Default execution mode should be EMBEDDED", ExecutionMode.EMBEDDED, defaultMode);
+  }
+
+  @Test
+  public void testCapturePreStateSnapshotZerosV1UnfreezeExpireTimeForParity() throws Exception {
+    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
+    long frozenAmount = 1_000_000_000L;
+    long expireTimeMs = 1_530_160_422_000L;
+
+    AccountCapsule ownerAccount = dbManager.getAccountStore().get(ownerAddress);
+    ownerAccount.setFrozenForBandwidth(frozenAmount, expireTimeMs);
+    dbManager.getAccountStore().put(ownerAddress, ownerAccount);
+
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setFreezeChanges(singletonFreezeChange(
+        ownerAddress,
+        ExecutionSPI.FreezeLedgerChange.Resource.BANDWIDTH,
+        0L,
+        0L,
+        false));
+
+    UnfreezeBalanceContract contract = UnfreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerAddress))
+        .setResource(ResourceCode.BANDWIDTH)
+        .build();
+    TransactionContext context = buildContext(contract, ContractType.UnfreezeBalanceContract);
+
+    invokeCapturePreStateSnapshot(result, context);
+
+    PreStateSnapshotRegistry.FreezeSnapshot snapshot =
+        PreStateSnapshotRegistry.getFreeze(ownerAddress, "BANDWIDTH", null);
+    assertNotNull("Freeze snapshot should be captured", snapshot);
+    assertEquals("Old amount should still reflect the live account state", frozenAmount,
+        snapshot.getAmount());
+    assertEquals("V1 unfreeze expire time should match embedded journal parity", 0L,
+        snapshot.getExpireTimeMs());
+  }
+
+  @Test
+  public void testCapturePreStateSnapshotKeepsExpireTimeForV1Freeze() throws Exception {
+    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
+    long frozenAmount = 1_000_000_000L;
+    long expireTimeMs = 1_530_160_422_000L;
+
+    AccountCapsule ownerAccount = dbManager.getAccountStore().get(ownerAddress);
+    ownerAccount.setFrozenForBandwidth(frozenAmount, expireTimeMs);
+    dbManager.getAccountStore().put(ownerAddress, ownerAccount);
+
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setFreezeChanges(singletonFreezeChange(
+        ownerAddress,
+        ExecutionSPI.FreezeLedgerChange.Resource.BANDWIDTH,
+        frozenAmount + 1_000_000L,
+        expireTimeMs + 86_400_000L,
+        false));
+
+    FreezeBalanceContract contract = FreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ownerAddress))
+        .setFrozenBalance(1_000_000L)
+        .setFrozenDuration(3)
+        .build();
+    TransactionContext context = buildContext(contract, ContractType.FreezeBalanceContract);
+
+    invokeCapturePreStateSnapshot(result, context);
+
+    PreStateSnapshotRegistry.FreezeSnapshot snapshot =
+        PreStateSnapshotRegistry.getFreeze(ownerAddress, "BANDWIDTH", null);
+    assertNotNull("Freeze snapshot should be captured", snapshot);
+    assertEquals("Old amount should still reflect the live account state", frozenAmount,
+        snapshot.getAmount());
+    assertEquals("Non-unfreeze contracts should preserve the live expire time", expireTimeMs,
+        snapshot.getExpireTimeMs());
+  }
+
+  private List<ExecutionSPI.FreezeLedgerChange> singletonFreezeChange(
+      byte[] ownerAddress,
+      ExecutionSPI.FreezeLedgerChange.Resource resource,
+      long amount,
+      long expirationMs,
+      boolean v2Model) {
+    List<ExecutionSPI.FreezeLedgerChange> freezeChanges = new ArrayList<>();
+    freezeChanges.add(new ExecutionSPI.FreezeLedgerChange(
+        ownerAddress, resource, amount, expirationMs, v2Model));
+    return freezeChanges;
+  }
+
+  private TransactionContext buildContext(com.google.protobuf.Message contract, ContractType type) {
+    return new TransactionContext(
+        null,
+        new TransactionCapsule(contract, type),
+        StoreFactory.getInstance(),
+        false,
+        false);
+  }
+
+  private void invokeCapturePreStateSnapshot(ExecutionProgramResult result,
+                                             TransactionContext context) throws Exception {
+    RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
+    java.lang.reflect.Method method = RuntimeSpiImpl.class.getDeclaredMethod(
+        "capturePreStateSnapshot",
+        ExecutionProgramResult.class,
+        TransactionContext.class);
+    method.setAccessible(true);
+
+    PreStateSnapshotRegistry.initializeForCurrentTransaction();
+    method.invoke(runtimeSpi, result, context);
   }
 }

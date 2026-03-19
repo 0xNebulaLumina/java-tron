@@ -1510,6 +1510,13 @@ public class RuntimeSpiImpl implements Runtime {
             }
           }
 
+          // Match embedded execution reporting: UnfreezeBalanceActuator records V1 unfreeze
+          // journal entries with zeroed expire times, even when the account still carries
+          // a historical V1 expiration in its pre-state.
+          if (!freezeChange.isV2Model() && isV1UnfreezeContract(context)) {
+            oldExpireTimeMs = 0L;
+          }
+
           // Note: recipient is not provided by FreezeLedgerChange; use self-freeze (null recipient)
           PreStateSnapshotRegistry.captureFreeze(
               ownerAddress, freezeChange.getResource().name(), null, oldAmount, oldExpireTimeMs);
@@ -1707,6 +1714,21 @@ public class RuntimeSpiImpl implements Runtime {
 
     } catch (Exception e) {
       logger.error("Phase B mirror: Failed to initialize mirror: {}", e.getMessage(), e);
+    }
+  }
+
+  private boolean isV1UnfreezeContract(TransactionContext context) {
+    if (context == null || context.getTrxCap() == null) {
+      return false;
+    }
+
+    try {
+      return context.getTrxCap().getInstance().getRawData().getContractCount() > 0
+          && context.getTrxCap().getInstance().getRawData().getContract(0).getType()
+          == org.tron.protos.Protocol.Transaction.Contract.ContractType.UnfreezeBalanceContract;
+    } catch (Exception e) {
+      logger.debug("Failed to inspect contract type for freeze snapshot parity: {}", e.getMessage());
+      return false;
     }
   }
 
