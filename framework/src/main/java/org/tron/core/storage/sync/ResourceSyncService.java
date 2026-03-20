@@ -1,5 +1,7 @@
 package org.tron.core.storage.sync;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -9,7 +11,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
-import java.nio.charset.StandardCharsets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,7 @@ import org.tron.core.db.TransactionContext;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.AssetIssueStore;
 import org.tron.core.store.AssetIssueV2Store;
+import org.tron.core.store.DelegationStore;
 import org.tron.core.store.DynamicPropertiesStore;
 import org.tron.core.storage.spi.StorageMode;
 import org.tron.core.storage.spi.StorageSPI;
@@ -46,6 +48,7 @@ public class ResourceSyncService {
   private static final String PROPERTIES_DB = "properties"; 
   private static final String ASSET_ISSUE_DB = "asset-issue";
   private static final String ASSET_ISSUE_V2_DB = "asset-issue-v2";
+  private static final String DELEGATION_DB = "delegation";
   
   // Configuration property keys
   private static final String SYNC_ENABLED_PROPERTY = "remote.resource.sync.enabled";
@@ -75,6 +78,9 @@ public class ResourceSyncService {
   
   @Autowired
   private AssetIssueV2Store assetIssueV2Store;
+
+  @Autowired
+  private DelegationStore delegationStore;
   
   // Thread pool for async operations
   private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
@@ -143,6 +149,31 @@ public class ResourceSyncService {
                                   Set<byte[]> dirtyDynamicKeys,
                                   Set<byte[]> dirtyAssetIssueV1Keys,
                                   Set<byte[]> dirtyAssetIssueV2Keys) {
+    flushResourceDeltas(
+        ctx,
+        dirtyAccounts,
+        dirtyDynamicKeys,
+        dirtyAssetIssueV1Keys,
+        dirtyAssetIssueV2Keys,
+        Collections.emptySet());
+  }
+
+  /**
+   * Flush resource deltas for the given dirty keys to remote storage.
+   *
+   * @param ctx the transaction context
+   * @param dirtyAccounts set of dirty account addresses
+   * @param dirtyDynamicKeys set of dirty dynamic property keys
+   * @param dirtyAssetIssueV1Keys set of dirty asset issue V1 keys
+   * @param dirtyAssetIssueV2Keys set of dirty asset issue V2 keys
+   * @param dirtyDelegationKeys set of dirty delegation store keys
+   */
+  public void flushResourceDeltas(TransactionContext ctx,
+                                  Set<byte[]> dirtyAccounts,
+                                  Set<byte[]> dirtyDynamicKeys,
+                                  Set<byte[]> dirtyAssetIssueV1Keys,
+                                  Set<byte[]> dirtyAssetIssueV2Keys,
+                                  Set<byte[]> dirtyDelegationKeys) {
     
     if (!isEnabled()) {
       logger.trace("Resource sync is disabled, skipping flush");
@@ -150,8 +181,7 @@ public class ResourceSyncService {
     }
     
     if (circuitBreakerOpen && isInFailureWindow()) {
-      logger.debug("Resource sync circuit breaker is open, skipping flush");
-      return;
+      throw new IllegalStateException("Resource sync circuit breaker is open");
     }
     
     long startTime = System.currentTimeMillis();
@@ -160,8 +190,7 @@ public class ResourceSyncService {
     try {
       StorageSPI storageSPI = getStorageSPI();
       if (storageSPI == null) {
-        logger.warn("StorageSPI not available for resource sync");
-        return;
+        throw new IllegalStateException("StorageSPI not available for resource sync");
       }
       
       boolean debugEnabled = getBooleanProperty(SYNC_DEBUG_PROPERTY, DEFAULT_SYNC_DEBUG);
@@ -208,8 +237,21 @@ public class ResourceSyncService {
               })
               .collect(Collectors.toList());
 
-          logger.info("ResourceSync pre-exec flush: accounts={}, dynamic_keys={}, assetV1={}, assetV2={}, includes_blackhole={}, blackhole={}",
+          java.util.List<String> delegationKeysPretty = dirtyDelegationKeys.stream()
+              .map(k -> {
+                try {
+                  String s = new String(k, StandardCharsets.UTF_8);
+                  boolean ascii = s.chars().allMatch(ch -> ch >= 32 && ch <= 126);
+                  return ascii ? s : org.tron.common.utils.ByteArray.toHexString(k);
+                } catch (Exception e) {
+                  return org.tron.common.utils.ByteArray.toHexString(k);
+                }
+              })
+              .collect(Collectors.toList());
+
+          logger.info("ResourceSync pre-exec flush: accounts={}, dynamic_keys={}, assetV1={}, assetV2={}, delegation_keys={}, includes_blackhole={}, blackhole={}",
               dirtyAccountsB58.size(), dirtyDynamicKeys.size(), dirtyAssetIssueV1Keys.size(), dirtyAssetIssueV2Keys.size(),
+              dirtyDelegationKeys.size(),
               includesBlackhole, blackholeBase58);
           if (!dirtyAccountsB58.isEmpty()) {
             logger.info("ResourceSync pre-exec flush accounts: {}", String.join(", ", dirtyAccountsB58));
@@ -217,12 +259,15 @@ public class ResourceSyncService {
           if (!dynamicKeysPretty.isEmpty()) {
             logger.info("ResourceSync pre-exec flush dynamic keys: {}", String.join(", ", dynamicKeysPretty));
           }
+          if (!delegationKeysPretty.isEmpty()) {
+            logger.info("ResourceSync pre-exec flush delegation keys: {}", String.join(", ", delegationKeysPretty));
+          }
         } catch (Exception logEx) {
           logger.debug("Failed to compose ResourceSync visibility logs: {}", logEx.getMessage());
         }
       }
       
-      // Build batches in the correct order: asset issues -> accounts -> dynamic props
+      // Build batches in the correct order: asset issues -> delegation -> accounts -> dynamic props
       CompletableFuture<Void> flushFuture = CompletableFuture.completedFuture(null);
       
       // 1. Flush asset issue V1 changes
@@ -247,10 +292,24 @@ public class ResourceSyncService {
         }
       }
       
-      // 3. Flush account changes
+      // 3. Flush delegation changes
+      if (!dirtyDelegationKeys.isEmpty()) {
+        Map<byte[], byte[]> delegationBatch = buildDelegationBatch(dirtyDelegationKeys);
+        if (!delegationBatch.isEmpty()) {
+          flushFuture = flushFuture.thenCompose(v -> storageSPI.batchWrite(DELEGATION_DB, delegationBatch));
+          if (debugEnabled) {
+            logger.debug("Batched {} delegation changes", delegationBatch.size());
+          }
+        }
+      }
+
+      // 4. Flush account changes
       if (!dirtyAccounts.isEmpty()) {
         Map<byte[], byte[]> accountBatch = buildAccountBatch(dirtyAccounts);
         if (!accountBatch.isEmpty()) {
+          if (debugEnabled) {
+            logAccountBatchDetails(ctx, accountBatch);
+          }
           flushFuture = flushFuture.thenCompose(v -> storageSPI.batchWrite(ACCOUNT_DB, accountBatch));
           if (debugEnabled) {
             logger.debug("Batched {} account changes", accountBatch.size());
@@ -258,7 +317,7 @@ public class ResourceSyncService {
         }
       }
       
-      // 4. Flush dynamic property changes
+      // 5. Flush dynamic property changes
       if (!dirtyDynamicKeys.isEmpty()) {
         Map<byte[], byte[]> dynamicBatch = buildDynamicPropertiesBatch(dirtyDynamicKeys);
         if (!dynamicBatch.isEmpty()) {
@@ -275,7 +334,7 @@ public class ResourceSyncService {
       // Optional confirmation reads
       if (confirmEnabled) {
         performConfirmationReads(storageSPI, dirtyAccounts, dirtyDynamicKeys, 
-                                dirtyAssetIssueV1Keys, dirtyAssetIssueV2Keys);
+                                dirtyAssetIssueV1Keys, dirtyAssetIssueV2Keys, dirtyDelegationKeys);
       }
       
       // Reset circuit breaker on success
@@ -303,6 +362,7 @@ public class ResourceSyncService {
       }
       
       logger.error("Failed to flush resource deltas (failure count: {})", failures, e);
+      throw new IllegalStateException("Failed to flush resource deltas", e);
     }
   }
   
@@ -350,6 +410,56 @@ public class ResourceSyncService {
     
     return batch;
   }
+
+  /**
+   * Log exact account payloads before they are flushed to remote storage.
+   */
+  private void logAccountBatchDetails(TransactionContext ctx, Map<byte[], byte[]> accountBatch) {
+    if (accountBatch.isEmpty()) {
+      return;
+    }
+
+    String txId = (ctx != null && ctx.getTrxCap() != null)
+        ? org.tron.common.utils.ByteArray.toHexString(ctx.getTrxCap().getTransactionId().getBytes())
+        : "unknown";
+
+    accountBatch.entrySet().stream()
+        .sorted(java.util.Comparator.comparing(
+            entry -> org.tron.common.utils.ByteArray.toHexString(entry.getKey())))
+        .forEach(entry -> {
+          byte[] address = entry.getKey();
+          byte[] value = entry.getValue();
+          String addressHex = org.tron.common.utils.ByteArray.toHexString(address);
+          String addressBase58 = org.tron.common.utils.StringUtil.encode58Check(address);
+
+          try {
+            AccountCapsule account = new AccountCapsule(value);
+            logger.info(
+                "ResourceSync account batch entry: tx={}, address={}, address_hex={}, "
+                    + "value_len={}, balance={}, allowance={}, latest_withdraw_time={}, "
+                    + "latest_operation_time={}, value_hex={}",
+                txId,
+                addressBase58,
+                addressHex,
+                value.length,
+                account.getBalance(),
+                account.getAllowance(),
+                account.getLatestWithdrawTime(),
+                account.getLatestOperationTime(),
+                org.tron.common.utils.ByteArray.toHexString(value));
+          } catch (Exception e) {
+            logger.warn(
+                "Failed to decode synced account batch entry: tx={}, address={}, "
+                    + "address_hex={}, value_len={}, value_hex={}",
+                txId,
+                addressBase58,
+                addressHex,
+                value != null ? value.length : -1,
+                org.tron.common.utils.ByteArray.toHexString(value),
+                e);
+          }
+        });
+  }
   
   /**
    * Build batch of dynamic property changes.
@@ -369,6 +479,27 @@ public class ResourceSyncService {
       }
     }
     
+    return batch;
+  }
+
+  /**
+   * Build batch of delegation store changes.
+   */
+  private Map<byte[], byte[]> buildDelegationBatch(Set<byte[]> dirtyKeys) {
+    Map<byte[], byte[]> batch = new HashMap<>();
+
+    for (byte[] key : dirtyKeys) {
+      try {
+        BytesCapsule value = delegationStore.get(key);
+        if (value != null) {
+          batch.put(key, value.getData());
+        }
+      } catch (Exception e) {
+        logger.warn("Failed to read delegation key for sync: {}",
+            org.tron.common.utils.ByteArray.toHexString(key), e);
+      }
+    }
+
     return batch;
   }
   
@@ -421,7 +552,8 @@ public class ResourceSyncService {
                                        Set<byte[]> dirtyAccounts,
                                        Set<byte[]> dirtyDynamicKeys,
                                        Set<byte[]> dirtyAssetIssueV1Keys,
-                                       Set<byte[]> dirtyAssetIssueV2Keys) {
+                                       Set<byte[]> dirtyAssetIssueV2Keys,
+                                       Set<byte[]> dirtyDelegationKeys) {
     try {
       int confirmed = 0, missed = 0;
       
@@ -462,6 +594,28 @@ public class ResourceSyncService {
         } catch (Exception e) {
           logger.debug("Confirmation check failed for dynamic property: {}", 
                        org.tron.common.utils.ByteArray.toHexString(key), e);
+        }
+      }
+
+      // Check a few delegation keys
+      checked = 0;
+      for (byte[] key : dirtyDelegationKeys) {
+        if (checked++ >= 3) {
+          break;
+        }
+
+        try {
+          byte[] remoteValue = storageSPI.get(DELEGATION_DB, key).get();
+          if (remoteValue != null) {
+            confirmed++;
+          } else {
+            missed++;
+            logger.debug("Confirmation miss for delegation key: {}",
+                org.tron.common.utils.ByteArray.toHexString(key));
+          }
+        } catch (Exception e) {
+          logger.debug("Confirmation check failed for delegation key: {}",
+              org.tron.common.utils.ByteArray.toHexString(key), e);
         }
       }
       

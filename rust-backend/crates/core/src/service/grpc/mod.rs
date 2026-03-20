@@ -9,17 +9,84 @@ use self::aext::parse_pre_execution_aext;
 use self::conversion::*;
 use super::BackendService;
 use crate::backend::*;
+use prost::Message;
 use std::collections::HashMap;
+use std::env;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, warn};
 use tron_backend_common::{to_tron_address, HealthStatus};
+use tron_backend_execution::protocol::Account as ProtoAccount;
 use tron_backend_execution::{
     EvmStateStore, ExecutionModule, ExecutionWriteBuffer, TouchedKey, TronExecutionContext,
     TronTransaction,
 };
+
+fn debug_account_filters() -> Vec<Vec<u8>> {
+    env::var("TRON_BACKEND_DEBUG_ACCOUNT_HEX")
+        .ok()
+        .into_iter()
+        .flat_map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|entry| !entry.is_empty())
+        .filter_map(|entry| {
+            let normalized = entry.trim_start_matches("0x");
+            match hex::decode(normalized) {
+                Ok(bytes) => Some(bytes),
+                Err(err) => {
+                    warn!(
+                        "Ignoring invalid TRON_BACKEND_DEBUG_ACCOUNT_HEX entry '{}': {}",
+                        entry, err
+                    );
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+fn decode_account_write(value: &[u8]) -> Option<ProtoAccount> {
+    match ProtoAccount::decode(value) {
+        Ok(account) => Some(account),
+        Err(err) => {
+            warn!(
+                "Failed to decode account payload during batch-write debug: {}",
+                err
+            );
+            None
+        }
+    }
+}
+
+fn log_filtered_account_batch_write(stage: &str, key: &[u8], value: &[u8]) {
+    if let Some(account) = decode_account_write(value) {
+        info!(
+            "Filtered account batch write {}: key_hex={}, address_hex={}, balance={}, allowance={}, latest_withdraw_time={}, latest_opration_time={}, value_len={}",
+            stage,
+            hex::encode(key),
+            hex::encode(&account.address),
+            account.balance,
+            account.allowance,
+            account.latest_withdraw_time,
+            account.latest_opration_time,
+            value.len()
+        );
+    } else {
+        info!(
+            "Filtered account batch write {}: key_hex={}, undecodable payload, value_len={}",
+            stage,
+            hex::encode(key),
+            value.len()
+        );
+    }
+}
+
 #[tonic::async_trait]
 impl crate::backend::backend_server::Backend for BackendService {
     type IteratorStream = std::pin::Pin<
@@ -223,8 +290,95 @@ impl crate::backend::backend_server::Backend for BackendService {
             })
             .collect();
 
+        let debug_filters = if req.database == "account" {
+            debug_account_filters()
+        } else {
+            Vec::new()
+        };
+        let filtered_debug_ops: Vec<(i32, Vec<u8>, Vec<u8>)> = if debug_filters.is_empty() {
+            Vec::new()
+        } else {
+            operations
+                .iter()
+                .filter(|op| {
+                    debug_filters
+                        .iter()
+                        .any(|filter| filter.as_slice() == op.key.as_slice())
+                })
+                .map(|op| (op.r#type, op.key.clone(), op.value.clone()))
+                .collect()
+        };
+
+        for (op_type, key, value) in &filtered_debug_ops {
+            match *op_type {
+                0 => log_filtered_account_batch_write("request", key, value),
+                1 => info!(
+                    "Filtered account batch delete request: key_hex={}",
+                    hex::encode(key)
+                ),
+                other => warn!(
+                    "Filtered account batch write request has unknown op type {} for key {}",
+                    other,
+                    hex::encode(key)
+                ),
+            }
+        }
+
         match engine.batch_write(&req.database, &operations) {
             Ok(()) => {
+                for (op_type, key, value) in &filtered_debug_ops {
+                    match *op_type {
+                        0 => match engine.get(&req.database, key) {
+                            Ok(Some(stored)) => {
+                                log_filtered_account_batch_write("readback", key, &stored);
+                                if stored != *value {
+                                    error!(
+                                        "Filtered account batch write readback mismatch: key_hex={}, expected_len={}, actual_len={}",
+                                        hex::encode(key),
+                                        value.len(),
+                                        stored.len()
+                                    );
+                                }
+                            }
+                            Ok(None) => {
+                                error!(
+                                    "Filtered account batch write missing on readback: key_hex={}",
+                                    hex::encode(key)
+                                );
+                            }
+                            Err(err) => {
+                                error!(
+                                    "Filtered account batch write readback failed: key_hex={}, error={}",
+                                    hex::encode(key),
+                                    err
+                                );
+                            }
+                        },
+                        1 => match engine.get(&req.database, key) {
+                            Ok(Some(_)) => {
+                                error!(
+                                    "Filtered account batch delete still present after readback: key_hex={}",
+                                    hex::encode(key)
+                                );
+                            }
+                            Ok(None) => {
+                                info!(
+                                    "Filtered account batch delete confirmed: key_hex={}",
+                                    hex::encode(key)
+                                );
+                            }
+                            Err(err) => {
+                                error!(
+                                    "Filtered account batch delete readback failed: key_hex={}, error={}",
+                                    hex::encode(key),
+                                    err
+                                );
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+
                 let response = BatchWriteResponse {
                     success: true,
                     error_message: String::new(),

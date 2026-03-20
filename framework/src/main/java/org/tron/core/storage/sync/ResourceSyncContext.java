@@ -225,9 +225,12 @@ public class ResourceSyncContext {
                      syncData.dirtyAssetIssueV2Keys.size());
       }
       
+    } catch (RuntimeException e) {
+      logger.error("Failed to flush ResourceSyncContext", e);
+      throw e;
     } catch (Exception e) {
       logger.error("Failed to flush ResourceSyncContext", e);
-      // Don't throw - this shouldn't abort transaction execution
+      throw new RuntimeException("Failed to flush ResourceSyncContext", e);
     }
   }
   
