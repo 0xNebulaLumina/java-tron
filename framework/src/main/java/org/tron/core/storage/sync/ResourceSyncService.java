@@ -64,6 +64,7 @@ public class ResourceSyncService {
   // Error handling
   private static final int FAILURE_THRESHOLD = 10;
   private static final long FAILURE_WINDOW_MS = 60000; // 1 minute
+  private static final long HALF_OPEN_PROBE_INTERVAL_MS = 5000; // 5 seconds
   
   private static volatile ResourceSyncService instance;
   
@@ -94,6 +95,7 @@ public class ResourceSyncService {
   private final AtomicLong errorCount = new AtomicLong(0);
   private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
   private volatile long lastFailureTime = 0;
+  private final AtomicLong lastProbeTime = new AtomicLong(0);
   private volatile boolean circuitBreakerOpen = false;
 
   private volatile StorageSPI storageSPI;
@@ -180,8 +182,25 @@ public class ResourceSyncService {
       return;
     }
     
-    if (circuitBreakerOpen && isInFailureWindow()) {
-      throw new IllegalStateException("Resource sync circuit breaker is open");
+    if (circuitBreakerOpen) {
+      if (isInFailureWindow()) {
+        // Half-open: allow one probe per interval via CAS
+        long now = System.currentTimeMillis();
+        long prev = lastProbeTime.get();
+        if (now - prev < HALF_OPEN_PROBE_INTERVAL_MS
+            || !lastProbeTime.compareAndSet(prev, now)) {
+          throw new IllegalStateException("Resource sync circuit breaker is open");
+        }
+        logger.info("Circuit breaker half-open: allowing probe attempt");
+      } else {
+        // Window expired: allow one probe to close the breaker
+        long now = System.currentTimeMillis();
+        long prev = lastProbeTime.get();
+        if (!lastProbeTime.compareAndSet(prev, now)) {
+          throw new IllegalStateException("Resource sync circuit breaker is open (post-window probe)");
+        }
+        logger.info("Circuit breaker post-window: allowing recovery probe");
+      }
     }
     
     long startTime = System.currentTimeMillis();
@@ -249,18 +268,18 @@ public class ResourceSyncService {
               })
               .collect(Collectors.toList());
 
-          logger.info("ResourceSync pre-exec flush: accounts={}, dynamic_keys={}, assetV1={}, assetV2={}, delegation_keys={}, includes_blackhole={}, blackhole={}",
+          logger.debug("ResourceSync pre-exec flush: accounts={}, dynamic_keys={}, assetV1={}, assetV2={}, delegation_keys={}, includes_blackhole={}, blackhole={}",
               dirtyAccountsB58.size(), dirtyDynamicKeys.size(), dirtyAssetIssueV1Keys.size(), dirtyAssetIssueV2Keys.size(),
               dirtyDelegationKeys.size(),
               includesBlackhole, blackholeBase58);
           if (!dirtyAccountsB58.isEmpty()) {
-            logger.info("ResourceSync pre-exec flush accounts: {}", String.join(", ", dirtyAccountsB58));
+            logger.debug("ResourceSync pre-exec flush accounts: {}", String.join(", ", dirtyAccountsB58));
           }
           if (!dynamicKeysPretty.isEmpty()) {
-            logger.info("ResourceSync pre-exec flush dynamic keys: {}", String.join(", ", dynamicKeysPretty));
+            logger.debug("ResourceSync pre-exec flush dynamic keys: {}", String.join(", ", dynamicKeysPretty));
           }
           if (!delegationKeysPretty.isEmpty()) {
-            logger.info("ResourceSync pre-exec flush delegation keys: {}", String.join(", ", delegationKeysPretty));
+            logger.debug("ResourceSync pre-exec flush delegation keys: {}", String.join(", ", delegationKeysPretty));
           }
         } catch (Exception logEx) {
           logger.debug("Failed to compose ResourceSync visibility logs: {}", logEx.getMessage());
@@ -340,6 +359,7 @@ public class ResourceSyncService {
       // Reset circuit breaker on success
       consecutiveFailures.set(0);
       circuitBreakerOpen = false;
+      lastProbeTime.set(0);
       
       long duration = System.currentTimeMillis() - startTime;
       if (debugEnabled) {
@@ -358,6 +378,7 @@ public class ResourceSyncService {
       
       if (failures >= FAILURE_THRESHOLD) {
         circuitBreakerOpen = true;
+        lastProbeTime.set(0);
         logger.warn("Resource sync circuit breaker opened after {} consecutive failures", failures);
       }
       
@@ -434,10 +455,10 @@ public class ResourceSyncService {
 
           try {
             AccountCapsule account = new AccountCapsule(value);
-            logger.info(
+            logger.debug(
                 "ResourceSync account batch entry: tx={}, address={}, address_hex={}, "
                     + "value_len={}, balance={}, allowance={}, latest_withdraw_time={}, "
-                    + "latest_operation_time={}, value_hex={}",
+                    + "latest_operation_time={}",
                 txId,
                 addressBase58,
                 addressHex,
@@ -445,8 +466,7 @@ public class ResourceSyncService {
                 account.getBalance(),
                 account.getAllowance(),
                 account.getLatestWithdrawTime(),
-                account.getLatestOperationTime(),
-                org.tron.common.utils.ByteArray.toHexString(value));
+                account.getLatestOperationTime());
           } catch (Exception e) {
             logger.warn(
                 "Failed to decode synced account batch entry: tx={}, address={}, "

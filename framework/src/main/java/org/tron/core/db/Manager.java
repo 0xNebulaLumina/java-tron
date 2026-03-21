@@ -2112,7 +2112,8 @@ public class Manager {
   }
 
   private static byte[] buildDelegationRewardKey(long cycle, byte[] address) {
-    return (cycle + "-" + Hex.toHexString(address) + "-reward").getBytes(StandardCharsets.UTF_8);
+    // Use platform default charset to match DelegationStore.buildRewardKey() encoding
+    return (cycle + "-" + Hex.toHexString(address) + "-reward").getBytes();
   }
 
   private static void addDirtyKey(Set<byte[]> dirtyKeys, byte[] key) {
