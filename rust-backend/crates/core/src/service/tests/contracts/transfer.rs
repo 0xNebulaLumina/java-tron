@@ -1,9 +1,11 @@
 //! TransferContract tests: validation edge cases for Java parity.
 
 use super::super::super::*;
-use super::common::{make_from_raw, new_test_context, new_test_service_with_system_enabled, seed_dynamic_properties};
+use super::common::{
+    make_from_raw, new_test_context, new_test_service_with_system_enabled, seed_dynamic_properties,
+};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
 use tron_backend_storage::StorageEngine;
 
 /// Helper to create a 21-byte TRON address with given prefix
@@ -300,7 +302,11 @@ fn test_transfer_normal_succeeds() {
     );
 
     let result = service.execute_transfer_contract(&mut storage_adapter, &tx, &new_test_context());
-    assert!(result.is_ok(), "Normal transfer should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Normal transfer should succeed: {:?}",
+        result.err()
+    );
 
     let exec_result = result.unwrap();
     assert!(exec_result.success);
@@ -409,7 +415,7 @@ fn test_transfer_no_owner_account_rejected() {
 /// Java reference values computed from ResourceProcessor.increase() with
 /// PRECISION=1_000_000 and DEFAULT_WINDOW_SIZE=28800.
 mod bandwidth_tests {
-    use tron_backend_execution::{ResourceTracker, BandwidthPath, BandwidthParams, AccountAext};
+    use tron_backend_execution::{AccountAext, BandwidthParams, BandwidthPath, ResourceTracker};
 
     const WINDOW: i64 = 28800;
 
@@ -417,7 +423,10 @@ mod bandwidth_tests {
     fn test_increase_no_prior_usage() {
         // First usage: last_usage=0, last_time=0, usage=100
         let result = ResourceTracker::increase(0, 100, 0, 1000, WINDOW);
-        assert_eq!(result, 100, "First usage with no history should return usage");
+        assert_eq!(
+            result, 100,
+            "First usage with no history should return usage"
+        );
     }
 
     #[test]
@@ -431,7 +440,10 @@ mod bandwidth_tests {
     fn test_increase_full_window_expired() {
         // Time delta >= window: all previous usage fully expired
         let result = ResourceTracker::increase(1000, 50, 0, WINDOW + 1, WINDOW);
-        assert_eq!(result, 50, "After full window expiry, only new usage remains");
+        assert_eq!(
+            result, 50,
+            "After full window expiry, only new usage remains"
+        );
     }
 
     #[test]
@@ -443,7 +455,10 @@ mod bandwidth_tests {
         // decayed = Math.round(34723 * 0.5) = Math.round(17361.5) = 17362
         // total = 17362, getUsage = 17362 * 28800 / 1000000 = 500025600 / 1000000 = 500
         let result = ResourceTracker::increase(1000, 0, 0, 14400, WINDOW);
-        assert_eq!(result, 500, "Half-window decay should match Java ResourceProcessor");
+        assert_eq!(
+            result, 500,
+            "Half-window decay should match Java ResourceProcessor"
+        );
     }
 
     #[test]
@@ -547,7 +562,11 @@ mod bandwidth_tests {
         };
 
         let result = ResourceTracker::track_bandwidth_v2(&params).unwrap();
-        assert_eq!(result.path, BandwidthPath::Fee, "Should fall back to FEE when global limit exceeded");
+        assert_eq!(
+            result.path,
+            BandwidthPath::Fee,
+            "Should fall back to FEE when global limit exceeded"
+        );
         assert_eq!(result.fee_amount, 1000, "Fee = 100 bytes * 10 SUN/byte");
     }
 
@@ -613,7 +632,10 @@ mod bandwidth_tests {
 
         // Verify it differs from the old incorrect formula
         let old_slot = block_ts / 3000; // Without genesis offset
-        assert_ne!(head_slot, old_slot as i64, "Genesis-offset headSlot differs from raw division");
+        assert_ne!(
+            head_slot, old_slot as i64,
+            "Genesis-offset headSlot differs from raw division"
+        );
     }
 }
 
@@ -652,7 +674,11 @@ fn test_transfer_no_extra_flat_fee_charged() {
     );
 
     let result = service.execute_transfer_contract(&mut storage_adapter, &tx, &new_test_context());
-    assert!(result.is_ok(), "Transfer should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Transfer should succeed: {:?}",
+        result.err()
+    );
 
     // Verify sender was only debited by `amount` (no additional fee)
     let sender_account = storage_adapter.get_account(&owner_addr).unwrap().unwrap();

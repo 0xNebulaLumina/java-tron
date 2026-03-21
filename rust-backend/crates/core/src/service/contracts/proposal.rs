@@ -226,8 +226,8 @@ pub fn validate_proposal_parameter(
     code: i64,
     value: i64,
 ) -> Result<(), String> {
-    let proposal_type = ProposalType::from_code(code)
-        .ok_or_else(|| format!("Does not support code : {}", code))?;
+    let proposal_type =
+        ProposalType::from_code(code).ok_or_else(|| format!("Does not support code : {}", code))?;
 
     match proposal_type {
         ProposalType::MAINTENANCE_TIME_INTERVAL => {
@@ -311,9 +311,7 @@ pub fn validate_proposal_parameter(
 
         ProposalType::ALLOW_SAME_TOKEN_NAME => {
             if value != 1 {
-                return Err(
-                    "This value[ALLOW_SAME_TOKEN_NAME] is only allowed to be 1".to_string(),
-                );
+                return Err("This value[ALLOW_SAME_TOKEN_NAME] is only allowed to be 1".to_string());
             }
         }
 
@@ -390,9 +388,7 @@ pub fn validate_proposal_parameter(
                 return Err("Bad chain parameter id: ALLOW_ADAPTIVE_ENERGY".to_string());
             }
             if value != 1 {
-                return Err(
-                    "This value[ALLOW_ADAPTIVE_ENERGY] is only allowed to be 1".to_string(),
-                );
+                return Err("This value[ALLOW_ADAPTIVE_ENERGY] is only allowed to be 1".to_string());
             }
         }
 
@@ -477,7 +473,7 @@ pub fn validate_proposal_parameter(
             }
             if value != 1 {
                 return Err(
-                    "This value[ALLOW_TVM_SOLIDITY_059] is only allowed to be 1".to_string(),
+                    "This value[ALLOW_TVM_SOLIDITY_059] is only allowed to be 1".to_string()
                 );
             }
             let allow_creation = storage_adapter
@@ -587,9 +583,7 @@ pub fn validate_proposal_parameter(
                 .fork_controller_pass(VERSION_4_0_1)
                 .map_err(|e| format!("Failed fork check: {}", e))?
             {
-                return Err(
-                    "Bad chain parameter id [ALLOW_SHIELDED_TRC20_TRANSACTION]".to_string(),
-                );
+                return Err("Bad chain parameter id [ALLOW_SHIELDED_TRC20_TRANSACTION]".to_string());
             }
             if value != 1 && value != 0 {
                 return Err(
@@ -818,9 +812,7 @@ pub fn validate_proposal_parameter(
                 .fork_controller_pass(VERSION_4_3)
                 .map_err(|e| format!("Failed fork check: {}", e))?
             {
-                return Err(
-                    "Bad chain parameter id [ALLOW_ACCOUNT_ASSET_OPTIMIZATION]".to_string(),
-                );
+                return Err("Bad chain parameter id [ALLOW_ACCOUNT_ASSET_OPTIMIZATION]".to_string());
             }
             if value != 1 {
                 return Err(
@@ -1131,7 +1123,8 @@ pub fn validate_proposal_parameter(
                 .map_err(|e| format!("Failed to get ALLOW_ENERGY_ADJUSTMENT: {}", e))?;
             if allow_energy_adjustment == 1 {
                 return Err(
-                    "[ALLOW_ENERGY_ADJUSTMENT] has been valid, no need to propose again".to_string(),
+                    "[ALLOW_ENERGY_ADJUSTMENT] has been valid, no need to propose again"
+                        .to_string(),
                 );
             }
             if value != 1 {

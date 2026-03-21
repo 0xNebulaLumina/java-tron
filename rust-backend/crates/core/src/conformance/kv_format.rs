@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{self, Read, Write, BufWriter};
+use std::io::{self, BufWriter, Read, Write};
 use std::path::Path;
 
 const MAGIC: &[u8; 4] = b"KVDB";
@@ -80,7 +80,9 @@ pub fn read_kv_file(path: &Path) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, KvError> 
         offset += 4;
 
         if offset + key_len > buf.len() {
-            return Err(KvError::InvalidFormat("Key extends past end of file".to_string()));
+            return Err(KvError::InvalidFormat(
+                "Key extends past end of file".to_string(),
+            ));
         }
 
         let key = buf[offset..offset + key_len].to_vec();
@@ -95,7 +97,9 @@ pub fn read_kv_file(path: &Path) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, KvError> 
 
         let value = if val_len > 0 {
             if offset + val_len > buf.len() {
-                return Err(KvError::InvalidFormat("Value extends past end of file".to_string()));
+                return Err(KvError::InvalidFormat(
+                    "Value extends past end of file".to_string(),
+                ));
             }
             let v = buf[offset..offset + val_len].to_vec();
             offset += val_len;

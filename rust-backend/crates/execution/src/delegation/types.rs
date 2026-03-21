@@ -209,16 +209,17 @@ fn deserialize_vote(data: &[u8]) -> Result<DelegationVote> {
                 pos += length as usize;
 
                 // Remove 0x41 prefix if present
-                let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
-                    &addr_bytes[1..]
-                } else if addr_bytes.len() == 20 {
-                    addr_bytes
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "Invalid vote_address length: {}",
-                        addr_bytes.len()
-                    ));
-                };
+                let evm_addr =
+                    if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
+                        &addr_bytes[1..]
+                    } else if addr_bytes.len() == 20 {
+                        addr_bytes
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Invalid vote_address length: {}",
+                            addr_bytes.len()
+                        ));
+                    };
 
                 let mut addr = [0u8; 20];
                 addr.copy_from_slice(evm_addr);

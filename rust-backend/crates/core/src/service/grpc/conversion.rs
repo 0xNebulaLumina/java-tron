@@ -1,17 +1,24 @@
 // Conversion helpers between protobuf and execution types
 // Functions for converting transactions, contexts, and results between Java and Rust formats
 
+use super::super::BackendService;
+use super::address::{add_tron_address_prefix, strip_tron_address_prefix};
+use crate::backend::*;
+use revm_primitives::hex;
 use std::collections::HashMap;
 use tracing::{debug, warn};
-use revm_primitives::hex;
-use tron_backend_execution::{TronContractParameter, TronExecutionContext, TronExecutionResult, TronStateChange, TronTransaction, AccountAext, TouchedKey};
-use crate::backend::*;
-use super::super::BackendService;
-use super::address::{strip_tron_address_prefix, add_tron_address_prefix};
+use tron_backend_execution::{
+    AccountAext, TouchedKey, TronContractParameter, TronExecutionContext, TronExecutionResult,
+    TronStateChange, TronTransaction,
+};
 
 impl BackendService {
     // Helper functions for converting between protobuf and execution types
-    pub(super) fn convert_protobuf_transaction(&self, tx: Option<&crate::backend::TronTransaction>, transaction_bytes_size: i64) -> Result<(TronTransaction, crate::backend::TxKind), String> {
+    pub(super) fn convert_protobuf_transaction(
+        &self,
+        tx: Option<&crate::backend::TronTransaction>,
+        transaction_bytes_size: i64,
+    ) -> Result<(TronTransaction, crate::backend::TxKind), String> {
         let tx = tx.ok_or("Transaction is required")?;
 
         // Log the raw transaction data from Java
@@ -19,7 +26,8 @@ impl BackendService {
                tx.energy_limit, tx.energy_price, tx.data.len(), tx.contract_type, tx.asset_id.len());
 
         // Extract tx_kind first - needed to properly handle contract_type and special-case parsing.
-        let tx_kind = crate::backend::TxKind::try_from(tx.tx_kind).unwrap_or(crate::backend::TxKind::Vm);
+        let tx_kind =
+            crate::backend::TxKind::try_from(tx.tx_kind).unwrap_or(crate::backend::TxKind::Vm);
 
         // Extract contract_type and asset_id from protobuf for TRON system contracts
         // NOTE: AccountCreateContract has enum value 0, which is proto3's default.
@@ -32,7 +40,10 @@ impl BackendService {
                     Some(ct)
                 }
                 Err(e) => {
-                    warn!("Invalid contract type {}: {}, ignoring", tx.contract_type, e);
+                    warn!(
+                        "Invalid contract type {}: {}, ignoring",
+                        tx.contract_type, e
+                    );
                     None
                 }
             }
@@ -78,7 +89,10 @@ impl BackendService {
         let from = match strip_tron_address_prefix(&tx.from) {
             Ok(from_bytes) => revm_primitives::Address::from_slice(from_bytes),
             Err(e) if allow_malformed_from => {
-                debug!("Allowing malformed from address for {:?}: {}", contract_type, e);
+                debug!(
+                    "Allowing malformed from address for {:?}: {}",
+                    contract_type, e
+                );
                 revm_primitives::Address::ZERO
             }
             Err(e) => return Err(e),
@@ -119,7 +133,10 @@ impl BackendService {
                     }
                 }
                 Err(e) if allow_malformed_to => {
-                    debug!("Allowing malformed to address for {:?}: {}", contract_type, e);
+                    debug!(
+                        "Allowing malformed to address for {:?}: {}",
+                        contract_type, e
+                    );
                     // Contract-level validation will check to_raw and return "Invalid toAddress!"
                     None
                 }
@@ -164,7 +181,10 @@ impl BackendService {
             let base_gas = 21000u64; // Basic transaction cost
             let data_gas = tx.data.len() as u64 * 16; // 16 gas per byte of data
             let default_limit = base_gas + data_gas + 100000; // Add buffer for contract execution
-            debug!("Using default gas limit {} for zero energy_limit transaction", default_limit);
+            debug!(
+                "Using default gas limit {} for zero energy_limit transaction",
+                default_limit
+            );
             default_limit
         } else {
             tx.energy_limit as u64
@@ -177,10 +197,13 @@ impl BackendService {
             None
         };
 
-        let contract_parameter = tx.contract_parameter.as_ref().map(|any| TronContractParameter {
-            type_url: any.type_url.clone(),
-            value: any.value.clone(),
-        });
+        let contract_parameter = tx
+            .contract_parameter
+            .as_ref()
+            .map(|any| TronContractParameter {
+                type_url: any.type_url.clone(),
+                value: any.value.clone(),
+            });
 
         let to_raw = if !tx.to.is_empty() {
             Some(tx.to.clone())
@@ -212,17 +235,25 @@ impl BackendService {
             metadata,
         };
 
-        debug!("Transaction kind: {:?}, contract_type: {:?}", tx_kind, transaction.metadata.contract_type);
+        debug!(
+            "Transaction kind: {:?}, contract_type: {:?}",
+            tx_kind, transaction.metadata.contract_type
+        );
 
         Ok((transaction, tx_kind))
     }
 
-    pub(super) fn convert_protobuf_context(&self, ctx: Option<&crate::backend::ExecutionContext>) -> Result<TronExecutionContext, String> {
+    pub(super) fn convert_protobuf_context(
+        &self,
+        ctx: Option<&crate::backend::ExecutionContext>,
+    ) -> Result<TronExecutionContext, String> {
         let ctx = ctx.ok_or("Execution context is required")?;
 
         // Log the raw context data from Java
-        debug!("Raw context from Java - energy_limit: {}, energy_price: {}",
-               ctx.energy_limit, ctx.energy_price);
+        debug!(
+            "Raw context from Java - energy_limit: {}, energy_price: {}",
+            ctx.energy_limit, ctx.energy_price
+        );
 
         // Strip Tron 0x41 prefix from coinbase address if present
         let coinbase_bytes = strip_tron_address_prefix(&ctx.coinbase)?;
@@ -271,7 +302,10 @@ impl BackendService {
         })
     }
 
-    pub(super) fn convert_call_contract_request_to_transaction(&self, req: &crate::backend::CallContractRequest) -> Result<TronTransaction, String> {
+    pub(super) fn convert_call_contract_request_to_transaction(
+        &self,
+        req: &crate::backend::CallContractRequest,
+    ) -> Result<TronTransaction, String> {
         // Convert bytes to Address (strip Tron 0x41 prefix if present)
         let from_bytes = strip_tron_address_prefix(&req.from)?;
         let from = revm_primitives::Address::from_slice(from_bytes);
@@ -311,13 +345,15 @@ impl BackendService {
             execution_result::Status::Revert
         };
 
-        let logs: Vec<LogEntry> = result.logs.iter().map(|log| {
-            LogEntry {
+        let logs: Vec<LogEntry> = result
+            .logs
+            .iter()
+            .map(|log| LogEntry {
                 address: add_tron_address_prefix(&log.address),
                 topics: log.topics().iter().map(|t| t.as_slice().to_vec()).collect(),
                 data: log.data.data.to_vec(),
-            }
-        }).collect();
+            })
+            .collect();
 
         let state_changes: Vec<StateChange> = result.state_changes.iter().map(|change| {
             match change {
@@ -486,38 +522,46 @@ impl BackendService {
         }).collect();
 
         // Convert freeze changes from execution result to protobuf
-        let freeze_changes: Vec<crate::backend::FreezeLedgerChange> = result.freeze_changes.iter().map(|change| {
-            use crate::backend::freeze_ledger_change::Resource;
-            use tron_backend_execution::FreezeLedgerResource;
+        let freeze_changes: Vec<crate::backend::FreezeLedgerChange> = result
+            .freeze_changes
+            .iter()
+            .map(|change| {
+                use crate::backend::freeze_ledger_change::Resource;
+                use tron_backend_execution::FreezeLedgerResource;
 
-            let resource = match change.resource {
-                FreezeLedgerResource::Bandwidth => Resource::Bandwidth,
-                FreezeLedgerResource::Energy => Resource::Energy,
-                FreezeLedgerResource::TronPower => Resource::TronPower,
-            };
+                let resource = match change.resource {
+                    FreezeLedgerResource::Bandwidth => Resource::Bandwidth,
+                    FreezeLedgerResource::Energy => Resource::Energy,
+                    FreezeLedgerResource::TronPower => Resource::TronPower,
+                };
 
-            crate::backend::FreezeLedgerChange {
-                owner_address: add_tron_address_prefix(&change.owner_address),
-                resource: resource as i32,
-                amount: change.amount,
-                expiration_ms: change.expiration_ms,
-                v2_model: change.v2_model,
-            }
-        }).collect();
+                crate::backend::FreezeLedgerChange {
+                    owner_address: add_tron_address_prefix(&change.owner_address),
+                    resource: resource as i32,
+                    amount: change.amount,
+                    expiration_ms: change.expiration_ms,
+                    v2_model: change.v2_model,
+                }
+            })
+            .collect();
 
         // Convert global resource totals changes from execution result to protobuf
-        let global_resource_changes: Vec<crate::backend::GlobalResourceTotalsChange> = result.global_resource_changes.iter().map(|change| {
-            crate::backend::GlobalResourceTotalsChange {
+        let global_resource_changes: Vec<crate::backend::GlobalResourceTotalsChange> = result
+            .global_resource_changes
+            .iter()
+            .map(|change| crate::backend::GlobalResourceTotalsChange {
                 total_net_weight: change.total_net_weight,
                 total_net_limit: change.total_net_limit,
                 total_energy_weight: change.total_energy_weight,
                 total_energy_limit: change.total_energy_limit,
-            }
-        }).collect();
+            })
+            .collect();
 
         // Convert TRC-10 changes from execution result to protobuf (Phase 2)
-        let trc10_changes: Vec<crate::backend::Trc10Change> = result.trc10_changes.iter().map(|change| {
-            match change {
+        let trc10_changes: Vec<crate::backend::Trc10Change> = result
+            .trc10_changes
+            .iter()
+            .map(|change| match change {
                 tron_backend_execution::Trc10Change::AssetIssued(issued) => {
                     crate::backend::Trc10Change {
                         kind: Some(crate::backend::trc10_change::Kind::AssetIssued(
@@ -538,10 +582,10 @@ impl BackendService {
                                 public_free_asset_net_usage: issued.public_free_asset_net_usage,
                                 public_latest_free_net_time: issued.public_latest_free_net_time,
                                 token_id: issued.token_id.clone().unwrap_or_default(),
-                            }
-                        ))
+                            },
+                        )),
                     }
-                },
+                }
                 tron_backend_execution::Trc10Change::AssetTransferred(transferred) => {
                     crate::backend::Trc10Change {
                         kind: Some(crate::backend::trc10_change::Kind::AssetTransferred(
@@ -551,39 +595,48 @@ impl BackendService {
                                 asset_name: transferred.asset_name.clone(),
                                 token_id: transferred.token_id.clone().unwrap_or_default(),
                                 amount: transferred.amount,
-                            }
-                        ))
+                            },
+                        )),
                     }
                 }
-            }
-        }).collect();
+            })
+            .collect();
 
         // Convert VoteChange from execution result to protobuf (Phase 2: Account.votes update)
-        let vote_changes: Vec<crate::backend::VoteChange> = result.vote_changes.iter().map(|change| {
-            crate::backend::VoteChange {
+        let vote_changes: Vec<crate::backend::VoteChange> = result
+            .vote_changes
+            .iter()
+            .map(|change| crate::backend::VoteChange {
                 owner_address: add_tron_address_prefix(&change.owner_address),
-                votes: change.votes.iter().map(|v| crate::backend::Vote {
-                    vote_address: add_tron_address_prefix(&v.vote_address),
-                    vote_count: v.vote_count as i64,
-                }).collect(),
-            }
-        }).collect();
+                votes: change
+                    .votes
+                    .iter()
+                    .map(|v| crate::backend::Vote {
+                        vote_address: add_tron_address_prefix(&v.vote_address),
+                        vote_count: v.vote_count as i64,
+                    })
+                    .collect(),
+            })
+            .collect();
 
         // Convert WithdrawChange from execution result to protobuf (WithdrawBalanceContract sidecar)
-        let withdraw_changes: Vec<crate::backend::WithdrawChange> = result.withdraw_changes.iter().map(|change| {
-            crate::backend::WithdrawChange {
+        let withdraw_changes: Vec<crate::backend::WithdrawChange> = result
+            .withdraw_changes
+            .iter()
+            .map(|change| crate::backend::WithdrawChange {
                 owner_address: add_tron_address_prefix(&change.owner_address),
                 amount: change.amount,
                 latest_withdraw_time: change.latest_withdraw_time,
-            }
-        }).collect();
+            })
+            .collect();
 
         let error_message = result.error.unwrap_or_default();
 
         // Phase 2.I L2: Convert contract_address to TRON 21-byte format if present
-        let contract_address_bytes = result.contract_address.map(|addr| {
-            add_tron_address_prefix(&addr)
-        }).unwrap_or_default();
+        let contract_address_bytes = result
+            .contract_address
+            .map(|addr| add_tron_address_prefix(&addr))
+            .unwrap_or_default();
 
         ExecuteTransactionResponse {
             result: Some(ExecutionResult {
@@ -595,11 +648,11 @@ impl BackendService {
                 logs,
                 error_message: error_message.clone(),
                 bandwidth_used: result.bandwidth_used as i64,
-                resource_usage: vec![], // Not implemented yet
-                freeze_changes, // Converted from TronExecutionResult
+                resource_usage: vec![],  // Not implemented yet
+                freeze_changes,          // Converted from TronExecutionResult
                 global_resource_changes, // Converted from TronExecutionResult
-                trc10_changes, // Phase 2: Converted TRC-10 semantic changes
-                vote_changes, // Phase 2: VoteChange for Account.votes update
+                trc10_changes,           // Phase 2: Converted TRC-10 semantic changes
+                vote_changes,            // Phase 2: VoteChange for Account.votes update
                 withdraw_changes, // WithdrawBalanceContract: allowance/latestWithdrawTime sidecar
                 // Phase 0.4: Receipt passthrough - serialized Protocol.Transaction.Result bytes
                 tron_transaction_result: result.tron_transaction_result.clone().unwrap_or_default(),
@@ -723,12 +776,30 @@ mod tests {
     fn test_convert_protobuf_transaction_allows_empty_from_for_freeze_v2_family() {
         // Test that all freeze-v2 related contracts allow malformed from addresses
         let contract_types = vec![
-            (ContractType::FreezeBalanceV2Contract, tron_backend_execution::TronContractType::FreezeBalanceV2Contract),
-            (ContractType::UnfreezeBalanceV2Contract, tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract),
-            (ContractType::DelegateResourceContract, tron_backend_execution::TronContractType::DelegateResourceContract),
-            (ContractType::UndelegateResourceContract, tron_backend_execution::TronContractType::UndelegateResourceContract),
-            (ContractType::FreezeBalanceContract, tron_backend_execution::TronContractType::FreezeBalanceContract),
-            (ContractType::UnfreezeBalanceContract, tron_backend_execution::TronContractType::UnfreezeBalanceContract),
+            (
+                ContractType::FreezeBalanceV2Contract,
+                tron_backend_execution::TronContractType::FreezeBalanceV2Contract,
+            ),
+            (
+                ContractType::UnfreezeBalanceV2Contract,
+                tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract,
+            ),
+            (
+                ContractType::DelegateResourceContract,
+                tron_backend_execution::TronContractType::DelegateResourceContract,
+            ),
+            (
+                ContractType::UndelegateResourceContract,
+                tron_backend_execution::TronContractType::UndelegateResourceContract,
+            ),
+            (
+                ContractType::FreezeBalanceContract,
+                tron_backend_execution::TronContractType::FreezeBalanceContract,
+            ),
+            (
+                ContractType::UnfreezeBalanceContract,
+                tron_backend_execution::TronContractType::UnfreezeBalanceContract,
+            ),
         ];
 
         for (proto_ct, expected_ct) in contract_types {
@@ -746,7 +817,8 @@ mod tests {
             assert!(
                 result.is_ok(),
                 "Contract type {:?} should allow empty from, but got error: {:?}",
-                expected_ct, result.err()
+                expected_ct,
+                result.err()
             );
             let (transaction, _) = result.unwrap();
             assert_eq!(transaction.from, revm_primitives::Address::ZERO);

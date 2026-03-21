@@ -1,11 +1,14 @@
+pub mod address;
 pub mod config;
-pub mod module;
 pub mod error;
 pub mod metrics;
-pub mod address;
+pub mod module;
 
-pub use config::{Config, StorageConfig, ExecutionConfig, ExecutionFeeConfig, RemoteExecutionConfig, GenesisConfig, GenesisAccount};
-pub use module::{Module, ModuleManager, ModuleHealth, HealthStatus};
+pub use address::{from_tron_address, from_tron_base58_to_bytes, to_tron_address};
+pub use config::{
+    Config, ExecutionConfig, ExecutionFeeConfig, GenesisAccount, GenesisConfig,
+    RemoteExecutionConfig, StorageConfig,
+};
 pub use error::{BackendError, BackendResult};
 pub use metrics::Metrics;
-pub use address::{to_tron_address, from_tron_address, from_tron_base58_to_bytes};
+pub use module::{HealthStatus, Module, ModuleHealth, ModuleManager};

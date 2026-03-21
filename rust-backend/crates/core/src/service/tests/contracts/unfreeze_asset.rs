@@ -89,14 +89,10 @@ fn seed_account_with_frozen_supply(
 
 /// Build a standard TxMetadata with contract_parameter containing the contract bytes.
 /// This mirrors Java's behavior where the contract bytes come from contract_parameter.value.
-fn make_metadata_with_contract(
-    owner_tron: &[u8],
-) -> TxMetadata {
+fn make_metadata_with_contract(owner_tron: &[u8]) -> TxMetadata {
     let contract_bytes = build_unfreeze_asset_contract_data(owner_tron);
     TxMetadata {
-        contract_type: Some(
-            tron_backend_execution::TronContractType::UnfreezeAssetContract,
-        ),
+        contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
         from_raw: Some(owner_tron.to_vec()),
         contract_parameter: Some(tron_backend_execution::TronContractParameter {
             type_url: "type.googleapis.com/protocol.UnfreezeAssetContract".to_string(),
@@ -131,9 +127,7 @@ fn test_unfreeze_asset_wrong_type_url() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
             contract_parameter: Some(tron_backend_execution::TronContractParameter {
                 type_url: "type.googleapis.com/protocol.WrongContract".to_string(),
@@ -178,9 +172,7 @@ fn test_unfreeze_asset_correct_type_url_with_prefix() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
             contract_parameter: Some(tron_backend_execution::TronContractParameter {
                 type_url: "type.googleapis.com/protocol.UnfreezeAssetContract".to_string(),
@@ -231,9 +223,7 @@ fn test_unfreeze_asset_invalid_address_empty_from_proto() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: None,
             ..Default::default()
         },
@@ -270,9 +260,7 @@ fn test_unfreeze_asset_invalid_address_wrong_length_in_proto() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(make_from_raw(&owner)),
             ..Default::default()
         },
@@ -309,9 +297,7 @@ fn test_unfreeze_asset_invalid_address_wrong_prefix_in_proto() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(make_from_raw(&owner)),
             ..Default::default()
         },
@@ -360,9 +346,7 @@ fn test_unfreeze_asset_owner_from_proto_preferred_over_from_raw() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(make_from_raw(&different_addr)), // Points to different address
             contract_parameter: Some(tron_backend_execution::TronContractParameter {
                 type_url: "type.googleapis.com/protocol.UnfreezeAssetContract".to_string(),
@@ -411,9 +395,7 @@ fn test_unfreeze_asset_account_not_exist() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
             ..Default::default()
         },
@@ -464,9 +446,7 @@ fn test_unfreeze_asset_no_frozen_supply() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
             ..Default::default()
         },
@@ -504,7 +484,7 @@ fn test_unfreeze_asset_no_asset_issued_name_legacy_mode() {
         &owner,
         1_000_000,
         vec![(500, 1000)],
-        b"",        // Empty asset_issued_name
+        b"", // Empty asset_issued_name
         b"1000001",
     );
 
@@ -517,9 +497,7 @@ fn test_unfreeze_asset_no_asset_issued_name_legacy_mode() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
             ..Default::default()
         },
@@ -531,7 +509,10 @@ fn test_unfreeze_asset_no_asset_issued_name_legacy_mode() {
         &new_test_context(),
     );
     assert!(result.is_err());
-    assert_eq!(result.err().unwrap(), "this account has not issued any asset");
+    assert_eq!(
+        result.err().unwrap(),
+        "this account has not issued any asset"
+    );
 }
 
 #[test]
@@ -566,9 +547,7 @@ fn test_unfreeze_asset_no_asset_issued_id_new_mode() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
             ..Default::default()
         },
@@ -580,7 +559,10 @@ fn test_unfreeze_asset_no_asset_issued_id_new_mode() {
         &new_test_context(),
     );
     assert!(result.is_err());
-    assert_eq!(result.err().unwrap(), "this account has not issued any asset");
+    assert_eq!(
+        result.err().unwrap(),
+        "this account has not issued any asset"
+    );
 }
 
 // =============================================================================
@@ -596,7 +578,11 @@ fn test_unfreeze_asset_not_time_yet() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"latest_block_header_timestamp", &500i64.to_be_bytes())
+        .put(
+            "properties",
+            b"latest_block_header_timestamp",
+            &500i64.to_be_bytes(),
+        )
         .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_unfreeze_asset_enabled();
@@ -623,9 +609,7 @@ fn test_unfreeze_asset_not_time_yet() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
             ..Default::default()
         },
@@ -637,7 +621,10 @@ fn test_unfreeze_asset_not_time_yet() {
         &new_test_context(),
     );
     assert!(result.is_err());
-    assert_eq!(result.err().unwrap(), "It's not time to unfreeze asset supply");
+    assert_eq!(
+        result.err().unwrap(),
+        "It's not time to unfreeze asset supply"
+    );
 }
 
 // =============================================================================
@@ -653,7 +640,11 @@ fn test_unfreeze_asset_happy_path_allow_same_token_name_1() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"latest_block_header_timestamp", &1500i64.to_be_bytes())
+        .put(
+            "properties",
+            b"latest_block_header_timestamp",
+            &1500i64.to_be_bytes(),
+        )
         .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_unfreeze_asset_enabled();
@@ -674,7 +665,9 @@ fn test_unfreeze_asset_happy_path_allow_same_token_name_1() {
     // Seed initial TRC-10 balance
     let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
     account_proto.asset_v2.insert("1000001".to_string(), 100);
-    storage_adapter.put_account_proto(&owner, &account_proto).unwrap();
+    storage_adapter
+        .put_account_proto(&owner, &account_proto)
+        .unwrap();
 
     let transaction = TronTransaction {
         from: owner,
@@ -716,7 +709,11 @@ fn test_unfreeze_asset_happy_path_all_expired() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"latest_block_header_timestamp", &5000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"latest_block_header_timestamp",
+            &5000i64.to_be_bytes(),
+        )
         .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_unfreeze_asset_enabled();
@@ -766,7 +763,11 @@ fn test_unfreeze_asset_happy_path_allow_same_token_name_0() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"latest_block_header_timestamp", &1500i64.to_be_bytes())
+        .put(
+            "properties",
+            b"latest_block_header_timestamp",
+            &1500i64.to_be_bytes(),
+        )
         .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_unfreeze_asset_enabled();
@@ -787,13 +788,17 @@ fn test_unfreeze_asset_happy_path_allow_same_token_name_0() {
     let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
     account_proto.asset.insert("TEST".to_string(), 100);
     account_proto.asset_v2.insert("1000001".to_string(), 100);
-    storage_adapter.put_account_proto(&owner, &account_proto).unwrap();
+    storage_adapter
+        .put_account_proto(&owner, &account_proto)
+        .unwrap();
 
     // Create asset issue record (needed in legacy mode for name→tokenId mapping)
     let mut asset_issue = tron_backend_execution::protocol::AssetIssueContractData::default();
     asset_issue.id = "1000001".to_string();
     asset_issue.owner_address = owner_tron.clone();
-    storage_adapter.put_asset_issue(b"TEST", &asset_issue, false).unwrap();
+    storage_adapter
+        .put_asset_issue(b"TEST", &asset_issue, false)
+        .unwrap();
 
     let transaction = TronTransaction {
         from: owner,
@@ -830,7 +835,11 @@ fn test_unfreeze_asset_no_asset_issue_lookup_when_allow_same_token_name_1() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"latest_block_header_timestamp", &5000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"latest_block_header_timestamp",
+            &5000i64.to_be_bytes(),
+        )
         .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_unfreeze_asset_enabled();
@@ -898,9 +907,7 @@ fn test_unfreeze_asset_type_error_before_address_error() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UnfreezeAssetContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: None,
             contract_parameter: Some(tron_backend_execution::TronContractParameter {
                 type_url: "type.googleapis.com/protocol.WrongContract".to_string(),
@@ -917,7 +924,11 @@ fn test_unfreeze_asset_type_error_before_address_error() {
     );
     assert!(result.is_err());
     assert!(
-        result.as_ref().err().unwrap().contains("contract type error"),
+        result
+            .as_ref()
+            .err()
+            .unwrap()
+            .contains("contract type error"),
         "Expected type error to come before address error, but got: {}",
         result.err().unwrap()
     );
@@ -933,7 +944,11 @@ fn test_unfreeze_asset_expire_time_equals_now() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"latest_block_header_timestamp",
+            &1000i64.to_be_bytes(),
+        )
         .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_unfreeze_asset_enabled();
@@ -995,7 +1010,11 @@ fn test_unfreeze_asset_wrapping_add_for_summation() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"latest_block_header_timestamp", &5000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"latest_block_header_timestamp",
+            &5000i64.to_be_bytes(),
+        )
         .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_unfreeze_asset_enabled();
@@ -1018,7 +1037,9 @@ fn test_unfreeze_asset_wrapping_add_for_summation() {
     // Seed initial TRC-10 balance of 0
     let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
     account_proto.asset_v2.insert("1000001".to_string(), 0);
-    storage_adapter.put_account_proto(&owner, &account_proto).unwrap();
+    storage_adapter
+        .put_account_proto(&owner, &account_proto)
+        .unwrap();
 
     let transaction = TronTransaction {
         from: owner,

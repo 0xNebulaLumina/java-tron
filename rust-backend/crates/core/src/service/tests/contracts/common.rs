@@ -1,10 +1,10 @@
 //! Common helpers for contract tests.
 
 use super::super::super::*;
-use tron_backend_execution::{TronExecutionContext, TxMetadata};
-use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
-use tron_backend_storage::StorageEngine;
 use revm_primitives::{Address, U256};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
+use tron_backend_execution::{TronExecutionContext, TxMetadata};
+use tron_backend_storage::StorageEngine;
 
 /// Helper function for tests to encode varint
 pub fn encode_varint(buf: &mut Vec<u8>, mut value: u64) {
@@ -24,8 +24,16 @@ pub fn encode_varint(buf: &mut Vec<u8>, mut value: u64) {
 /// Seed required dynamic properties for tests.
 /// Many system contracts check for ALLOW_MULTI_SIGN.
 pub fn seed_dynamic_properties(storage_engine: &StorageEngine) {
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
 }
 
 /// Create a TRON-format from_raw (21 bytes: 0x41 prefix + 20-byte address)

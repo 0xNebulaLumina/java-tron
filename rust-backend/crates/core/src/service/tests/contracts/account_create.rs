@@ -2,9 +2,9 @@
 
 use super::super::super::*;
 use super::common::{encode_varint, new_test_context, seed_dynamic_properties};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
-use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
 use tron_backend_storage::StorageEngine;
 
 /// Helper function to create BackendService with account_create_enabled
@@ -96,7 +96,11 @@ fn test_account_create_reject_wrong_prefix_owner_address() {
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     // Verify prefix is detected as mainnet
-    assert_eq!(storage_adapter.address_prefix(), 0x41, "Should detect mainnet prefix");
+    assert_eq!(
+        storage_adapter.address_prefix(),
+        0x41,
+        "Should detect mainnet prefix"
+    );
 
     // Set up owner account with mainnet prefix
     let owner_address = Address::from([0x11u8; 20]);
@@ -117,7 +121,8 @@ fn test_account_create_reject_wrong_prefix_owner_address() {
     // Build contract with TESTNET prefix (0xa0) for owner - should be rejected
     let wrong_prefix_owner = make_tron_address_21(0xa0, [0x11u8; 20]);
     let target_address = make_tron_address_21(0x41, [0x22u8; 20]);
-    let contract_data = build_account_create_contract_data(&wrong_prefix_owner, &target_address, None);
+    let contract_data =
+        build_account_create_contract_data(&wrong_prefix_owner, &target_address, None);
 
     let transaction = TronTransaction {
         from: owner_address,
@@ -133,7 +138,11 @@ fn test_account_create_reject_wrong_prefix_owner_address() {
         },
     };
 
-    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_account_create_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
 
     assert!(result.is_err(), "Should reject wrong prefix owner address");
     assert_eq!(result.err().unwrap(), "Invalid ownerAddress");
@@ -171,7 +180,8 @@ fn test_account_create_reject_wrong_prefix_target_address() {
     // Build contract with correct owner but TESTNET prefix (0xa0) for target
     let correct_owner = make_tron_address_21(0x41, [0x11u8; 20]);
     let wrong_prefix_target = make_tron_address_21(0xa0, [0x22u8; 20]);
-    let contract_data = build_account_create_contract_data(&correct_owner, &wrong_prefix_target, None);
+    let contract_data =
+        build_account_create_contract_data(&correct_owner, &wrong_prefix_target, None);
 
     let transaction = TronTransaction {
         from: owner_address,
@@ -187,7 +197,11 @@ fn test_account_create_reject_wrong_prefix_target_address() {
         },
     };
 
-    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_account_create_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
 
     assert!(result.is_err(), "Should reject wrong prefix target address");
     assert_eq!(result.err().unwrap(), "Invalid account address");
@@ -239,7 +253,11 @@ fn test_account_create_reject_wrong_length_owner_address() {
         },
     };
 
-    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_account_create_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
 
     assert!(result.is_err(), "Should reject 20-byte owner address");
     assert_eq!(result.err().unwrap(), "Invalid ownerAddress");
@@ -291,7 +309,11 @@ fn test_account_create_reject_wrong_length_target_address() {
         },
     };
 
-    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_account_create_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
 
     assert!(result.is_err(), "Should reject 22-byte target address");
     assert_eq!(result.err().unwrap(), "Invalid account address");
@@ -357,15 +379,26 @@ fn test_account_create_type_normal_default() {
         },
     };
 
-    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_ok(), "Account create should succeed: {:?}", result.err());
+    let result = service.execute_account_create_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_ok(),
+        "Account create should succeed: {:?}",
+        result.err()
+    );
 
     // Verify the created account has type = 0 (Normal)
     let target_address = Address::from([0x22u8; 20]);
     let target_proto = storage_adapter.get_account_proto(&target_address).unwrap();
     assert!(target_proto.is_some(), "Target account should exist");
     let proto = target_proto.unwrap();
-    assert_eq!(proto.r#type, 0, "Account type should be Normal (0) by default");
+    assert_eq!(
+        proto.r#type, 0,
+        "Account type should be Normal (0) by default"
+    );
 }
 
 #[test]
@@ -423,8 +456,16 @@ fn test_account_create_type_contract_persisted() {
         },
     };
 
-    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_ok(), "Account create with type=Contract should succeed: {:?}", result.err());
+    let result = service.execute_account_create_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_ok(),
+        "Account create with type=Contract should succeed: {:?}",
+        result.err()
+    );
 
     // Verify the created account has type = 1 (Contract)
     let target_address = Address::from([0x33u8; 20]);
@@ -507,12 +548,23 @@ fn test_account_create_bandwidth_path_free_net() {
         },
     };
 
-    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_ok(), "Account create should succeed: {:?}", result.err());
+    let result = service.execute_account_create_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_ok(),
+        "Account create should succeed: {:?}",
+        result.err()
+    );
     let exec_result = result.unwrap();
 
     // Verify AEXT tracking happened
-    assert!(exec_result.aext_map.contains_key(&owner_address), "AEXT map should contain owner");
+    assert!(
+        exec_result.aext_map.contains_key(&owner_address),
+        "AEXT map should contain owner"
+    );
     let (before_aext, after_aext) = &exec_result.aext_map[&owner_address];
 
     // With large free_net_limit and small tx size, should use FREE_NET path
@@ -581,7 +633,10 @@ fn test_account_create_fee_fallback_updates_total_cost() {
 
     // Check initial TOTAL_CREATE_ACCOUNT_COST
     let initial_cost = storage_adapter.get_total_create_account_cost().unwrap();
-    assert_eq!(initial_cost, 0, "Initial TOTAL_CREATE_ACCOUNT_COST should be 0");
+    assert_eq!(
+        initial_cost, 0,
+        "Initial TOTAL_CREATE_ACCOUNT_COST should be 0"
+    );
 
     let service = new_test_service_with_account_create_and_aext();
 
@@ -603,8 +658,16 @@ fn test_account_create_fee_fallback_updates_total_cost() {
         },
     };
 
-    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_ok(), "Account create should succeed: {:?}", result.err());
+    let result = service.execute_account_create_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_ok(),
+        "Account create should succeed: {:?}",
+        result.err()
+    );
 
     // Verify TOTAL_CREATE_ACCOUNT_COST was incremented
     let final_cost = storage_adapter.get_total_create_account_cost().unwrap();
@@ -670,8 +733,16 @@ fn test_account_create_receipt_contains_fee() {
         },
     };
 
-    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_ok(), "Account create should succeed: {:?}", result.err());
+    let result = service.execute_account_create_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_ok(),
+        "Account create should succeed: {:?}",
+        result.err()
+    );
     let exec_result = result.unwrap();
 
     // Verify receipt passthrough is present and contains fee
@@ -681,12 +752,18 @@ fn test_account_create_receipt_contains_fee() {
     );
 
     let receipt_bytes = exec_result.tron_transaction_result.unwrap();
-    assert!(!receipt_bytes.is_empty(), "Receipt bytes should not be empty");
+    assert!(
+        !receipt_bytes.is_empty(),
+        "Receipt bytes should not be empty"
+    );
 
     // Parse the receipt to verify fee field
     // Field 1 in Transaction.Result is 'fee' (int64, wire type 0 = varint)
     // The receipt should start with tag 0x08 (field 1, wire type 0)
-    assert_eq!(receipt_bytes[0], 0x08, "Receipt should start with fee field tag");
+    assert_eq!(
+        receipt_bytes[0], 0x08,
+        "Receipt should start with fee field tag"
+    );
 }
 
 #[test]
@@ -773,19 +850,30 @@ fn test_account_create_insufficient_bandwidth_and_balance() {
         },
     };
 
-    let result = service.execute_account_create_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_account_create_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
 
     // Should fail with the Java-parity error message
-    assert!(result.is_err(), "Should fail when bandwidth and balance are both insufficient");
+    assert!(
+        result.is_err(),
+        "Should fail when bandwidth and balance are both insufficient"
+    );
     let error_msg = result.err().unwrap();
 
     // Verify error message matches Java format
     assert!(
-        error_msg.contains("has insufficient bandwidth") && error_msg.contains("and balance") && error_msg.contains("to create new account"),
-        "Error should match Java format: got '{}'", error_msg
+        error_msg.contains("has insufficient bandwidth")
+            && error_msg.contains("and balance")
+            && error_msg.contains("to create new account"),
+        "Error should match Java format: got '{}'",
+        error_msg
     );
     assert!(
         error_msg.contains(&format!("{}", owner_balance)),
-        "Error should include owner balance: got '{}'", error_msg
+        "Error should include owner balance: got '{}'",
+        error_msg
     );
 }

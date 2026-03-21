@@ -3,12 +3,12 @@
 //! Provides a HashMap-backed storage implementation for testing and local execution.
 //! This implementation doesn't persist to disk and is suitable for unit tests.
 
+use super::traits::EvmStateStore;
+use super::types::{AccountAext, FreezeRecord};
+use anyhow::Result;
+use revm::primitives::{AccountInfo, Address, Bytecode, U256};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use anyhow::Result;
-use revm::primitives::{AccountInfo, Bytecode, Address, U256};
-use super::traits::EvmStateStore;
-use super::types::{FreezeRecord, AccountAext};
 
 /// In-memory implementation of EVM state store for testing and local execution.
 /// Provides a HashMap-backed storage that doesn't persist to disk.
@@ -45,17 +45,35 @@ impl InMemoryEvmStateStore {
     }
 
     /// Get freeze record for an address and resource
-    pub fn get_freeze_record(&self, address: &Address, resource: u8) -> Result<Option<FreezeRecord>> {
-        Ok(self.freeze_records.read().unwrap().get(&(*address, resource)).cloned())
+    pub fn get_freeze_record(
+        &self,
+        address: &Address,
+        resource: u8,
+    ) -> Result<Option<FreezeRecord>> {
+        Ok(self
+            .freeze_records
+            .read()
+            .unwrap()
+            .get(&(*address, resource))
+            .cloned())
     }
 
     /// Set freeze record for an address and resource
-    pub fn set_freeze_record(&self, address: &Address, resource: u8, frozen_amount: u64, expiration_timestamp: i64) -> Result<()> {
+    pub fn set_freeze_record(
+        &self,
+        address: &Address,
+        resource: u8,
+        frozen_amount: u64,
+        expiration_timestamp: i64,
+    ) -> Result<()> {
         let record = FreezeRecord {
             frozen_amount,
             expiration_timestamp,
         };
-        self.freeze_records.write().unwrap().insert((*address, resource), record);
+        self.freeze_records
+            .write()
+            .unwrap()
+            .insert((*address, resource), record);
         Ok(())
     }
 
@@ -75,11 +93,14 @@ impl InMemoryEvmStateStore {
         for resource in [BANDWIDTH, ENERGY, TRON_POWER] {
             if let Some(record) = self.get_freeze_record(address, resource)? {
                 let amount = record.frozen_amount;
-                total = total.checked_add(amount)
-                    .ok_or_else(|| anyhow::anyhow!(
+                total = total.checked_add(amount).ok_or_else(|| {
+                    anyhow::anyhow!(
                         "Tron power overflow when adding resource {} amount {} to total {}",
-                        resource, amount, total
-                    ))?;
+                        resource,
+                        amount,
+                        total
+                    )
+                })?;
 
                 // Track per-resource amounts for logging
                 match resource {
@@ -132,7 +153,13 @@ impl InMemoryEvmStateStore {
 
     /// **Preferred name**: Store freeze record (upsert semantics, aligns with `put_witness`).
     /// Delegates to `set_freeze_record`. Use this method in new code.
-    pub fn put_freeze_record(&self, address: &Address, resource: u8, frozen_amount: u64, expiration_timestamp: i64) -> Result<()> {
+    pub fn put_freeze_record(
+        &self,
+        address: &Address,
+        resource: u8,
+        frozen_amount: u64,
+        expiration_timestamp: i64,
+    ) -> Result<()> {
         self.set_freeze_record(address, resource, frozen_amount, expiration_timestamp)
     }
 
@@ -153,7 +180,11 @@ impl EvmStateStore for InMemoryEvmStateStore {
     }
 
     fn get_storage(&self, address: &Address, key: &U256) -> Result<U256> {
-        Ok(self.storage.get(&(*address, *key)).copied().unwrap_or(U256::ZERO))
+        Ok(self
+            .storage
+            .get(&(*address, *key))
+            .copied()
+            .unwrap_or(U256::ZERO))
     }
 
     fn set_account(&mut self, address: Address, account: AccountInfo) -> Result<()> {

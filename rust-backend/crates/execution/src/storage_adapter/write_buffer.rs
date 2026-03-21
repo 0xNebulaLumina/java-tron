@@ -41,8 +41,8 @@
 
 use anyhow::Result;
 use std::collections::{BTreeMap, HashMap};
-use tron_backend_storage::StorageEngine;
 use tracing::{debug, trace};
+use tron_backend_storage::StorageEngine;
 
 use super::db_names;
 
@@ -100,7 +100,12 @@ impl ExecutionWriteBuffer {
     /// * `key` - The key to write
     /// * `value` - The value to write
     pub fn put(&mut self, db: &str, key: Vec<u8>, value: Vec<u8>) {
-        trace!("Buffer put: db={}, key_len={}, value_len={}", db, key.len(), value.len());
+        trace!(
+            "Buffer put: db={}, key_len={}, value_len={}",
+            db,
+            key.len(),
+            value.len()
+        );
 
         let db_ops = self.operations.entry(db.to_string()).or_default();
 
@@ -118,7 +123,9 @@ impl ExecutionWriteBuffer {
             });
         } else {
             // Update existing touched key to reflect latest operation type
-            if let Some(tk) = self.touched_keys_order.iter_mut()
+            if let Some(tk) = self
+                .touched_keys_order
+                .iter_mut()
                 .find(|tk| tk.db == db && tk.key == key)
             {
                 tk.is_delete = false;
@@ -150,7 +157,9 @@ impl ExecutionWriteBuffer {
             });
         } else {
             // Update existing touched key to reflect latest operation type
-            if let Some(tk) = self.touched_keys_order.iter_mut()
+            if let Some(tk) = self
+                .touched_keys_order
+                .iter_mut()
                 .find(|tk| tk.db == db && tk.key == key)
             {
                 tk.is_delete = true;
@@ -282,7 +291,9 @@ impl ExecutionWriteBuffer {
                     });
                 } else {
                     // Update existing touched key
-                    if let Some(tk) = self.touched_keys_order.iter_mut()
+                    if let Some(tk) = self
+                        .touched_keys_order
+                        .iter_mut()
                         .find(|tk| tk.db == db && tk.key == key)
                     {
                         tk.is_delete = is_delete;

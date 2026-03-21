@@ -1,9 +1,9 @@
 use super::super::*;
+use revm_primitives::{Address, Bytes, U256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use revm_primitives::{Address, U256, Bytes};
-use tron_backend_execution::{TronTransaction, TronExecutionContext, TxMetadata};
+use tron_backend_execution::{TronExecutionContext, TronTransaction, TxMetadata};
 
 // Mock storage adapter for testing
 struct MockStorageAdapter {
@@ -53,8 +53,8 @@ async fn test_non_vm_transaction_execution() {
         from: sender_address,
         to: Some(recipient_address),
         value: U256::from(100000u64), // 100K SUN transfer
-        data: Bytes::new(), // No data = non-VM transaction
-        gas_limit: 0, // Non-VM transactions don't use gas
+        data: Bytes::new(),           // No data = non-VM transaction
+        gas_limit: 0,                 // Non-VM transactions don't use gas
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {

@@ -93,9 +93,7 @@ fn make_transaction_with_bytes_size(
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UpdateSettingContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UpdateSettingContract),
             contract_parameter: Some(tron_backend_execution::TronContractParameter {
                 type_url: "type.googleapis.com/protocol.UpdateSettingContract".to_string(),
                 value: contract_bytes,
@@ -169,9 +167,7 @@ fn test_type_url_mismatch() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UpdateSettingContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UpdateSettingContract),
             contract_parameter: Some(tron_backend_execution::TronContractParameter {
                 type_url: "type.googleapis.com/protocol.TransferContract".to_string(),
                 value: data,
@@ -212,9 +208,7 @@ fn test_invalid_owner_address_empty() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UpdateSettingContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UpdateSettingContract),
             contract_parameter: Some(tron_backend_execution::TronContractParameter {
                 type_url: "type.googleapis.com/protocol.UpdateSettingContract".to_string(),
                 value: data,
@@ -422,7 +416,8 @@ fn test_happy_path_update_percent() {
     let owner_addr = Address::from_slice(&owner[1..]);
     // Simulate production: Java sends exact bytes size via gRPC
     let java_bytes_size: i64 = 250;
-    let tx = make_transaction_with_bytes_size(owner_addr, owner.clone(), data, Some(java_bytes_size));
+    let tx =
+        make_transaction_with_bytes_size(owner_addr, owner.clone(), data, Some(java_bytes_size));
     let ctx = new_test_context();
     let result = service.execute_non_vm_contract(&mut adapter, &tx, &ctx);
     assert!(result.is_ok(), "Expected success, got: {:?}", result.err());
@@ -575,7 +570,8 @@ fn test_bandwidth_uses_java_computed_bytes_size() {
     let owner_addr = Address::from_slice(&owner[1..]);
     // Simulate Java-computed bytes size: 216 (clearRet serialized) + 64 (MAX_RESULT_SIZE_IN_TX) = 280
     let java_bytes_size: i64 = 280;
-    let tx = make_transaction_with_bytes_size(owner_addr, owner.clone(), data, Some(java_bytes_size));
+    let tx =
+        make_transaction_with_bytes_size(owner_addr, owner.clone(), data, Some(java_bytes_size));
     let ctx = new_test_context();
     let result = service.execute_non_vm_contract(&mut adapter, &tx, &ctx);
     assert!(result.is_ok(), "Expected success, got: {:?}", result.err());
@@ -676,9 +672,7 @@ fn test_parse_empty_data() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(
-                tron_backend_execution::TronContractType::UpdateSettingContract,
-            ),
+            contract_type: Some(tron_backend_execution::TronContractType::UpdateSettingContract),
             contract_parameter: Some(tron_backend_execution::TronContractParameter {
                 type_url: "type.googleapis.com/protocol.UpdateSettingContract".to_string(),
                 value: vec![],

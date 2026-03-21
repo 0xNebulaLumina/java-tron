@@ -1,12 +1,12 @@
 use anyhow::Result;
+use async_trait::async_trait;
+use parking_lot::RwLock;
+use prost::Message;
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tracing::info;
-use async_trait::async_trait;
-use prost::Message;
 
-use tron_backend_common::{Module, ModuleHealth, ExecutionConfig};
+use tron_backend_common::{ExecutionConfig, Module, ModuleHealth};
 
 // Include generated protobuf code for Witness
 pub mod protocol {
@@ -14,14 +14,23 @@ pub mod protocol {
 }
 
 // Re-export key types for external use
-pub use tron_evm::{TronContractParameter, TronContractType, TronEvm, TronExecutionContext, TronExecutionResult, TronStateChange, TronTransaction, TxMetadata, FreezeLedgerChange, FreezeLedgerResource, GlobalResourceTotalsChange, Trc10Change, Trc10AssetIssued, Trc10AssetTransferred, VoteChange, VoteEntry, WithdrawChange};
 pub use precompiles::TronPrecompiles;
-pub use storage_adapter::{EvmStateStore, InMemoryEvmStateStore, EngineBackedEvmStateStore, EvmStateDatabase, StateChangeRecord, WitnessInfo, FreezeRecord, VotesRecord, Vote, AccountAext, ResourceTracker, BandwidthPath, BandwidthParams, BandwidthResult, ExecutionWriteBuffer, WriteOp, TouchedKey};
+pub use storage_adapter::{
+    AccountAext, BandwidthParams, BandwidthPath, BandwidthResult, EngineBackedEvmStateStore,
+    EvmStateDatabase, EvmStateStore, ExecutionWriteBuffer, FreezeRecord, InMemoryEvmStateStore,
+    ResourceTracker, StateChangeRecord, TouchedKey, Vote, VotesRecord, WitnessInfo, WriteOp,
+};
+pub use tron_evm::{
+    FreezeLedgerChange, FreezeLedgerResource, GlobalResourceTotalsChange, Trc10AssetIssued,
+    Trc10AssetTransferred, Trc10Change, TronContractParameter, TronContractType, TronEvm,
+    TronExecutionContext, TronExecutionResult, TronStateChange, TronTransaction, TxMetadata,
+    VoteChange, VoteEntry, WithdrawChange,
+};
 
-mod tron_evm;
+pub mod delegation;
 mod precompiles;
 mod storage_adapter;
-pub mod delegation;
+mod tron_evm;
 
 pub struct ExecutionModule {
     config: ExecutionConfig,
@@ -121,7 +130,8 @@ impl ExecutionModule {
             adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
         }
 
-        let database = EvmStateDatabase::new_with_persist(storage, self.config.remote.rust_persist_enabled);
+        let database =
+            EvmStateDatabase::new_with_persist(storage, self.config.remote.rust_persist_enabled);
         let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
         // Use the new state tracking method
         evm.execute_transaction_with_state_tracking(&adjusted_tx, context)
@@ -209,9 +219,10 @@ impl ExecutionModule {
         }
 
         // 9) Derive CreateSmartContract address (txid + owner) and ensure it doesn't exist.
-        if let (Some(txid), owner_address) =
-            (context.transaction_id, create_contract.owner_address.as_slice())
-        {
+        if let (Some(txid), owner_address) = (
+            context.transaction_id,
+            create_contract.owner_address.as_slice(),
+        ) {
             if owner_address.len() == 21 {
                 let mut combined = Vec::with_capacity(32 + owner_address.len());
                 combined.extend_from_slice(txid.as_slice());
@@ -222,8 +233,10 @@ impl ExecutionModule {
 
                 if storage.get_account(&derived_address)?.is_some() {
                     let prefix = storage.tron_address_prefix()?;
-                    let base58 =
-                        crate::storage_adapter::utils::to_tron_address_with_prefix(&derived_address, prefix);
+                    let base58 = crate::storage_adapter::utils::to_tron_address_with_prefix(
+                        &derived_address,
+                        prefix,
+                    );
                     return Err(anyhow::anyhow!(
                         "Trying to create a contract with existing contract address: {}",
                         base58
@@ -612,7 +625,8 @@ impl<S: EvmStateStore + 'static> ExecutionModuleWithStorage<S> {
         // For now, we'll create a new storage adapter for each transaction
         // In a real implementation, we'd need to handle concurrent access properly
         let storage = InMemoryEvmStateStore::new(); // Placeholder
-        self.module.execute_transaction_with_storage(storage, tx, context)
+        self.module
+            .execute_transaction_with_storage(storage, tx, context)
     }
 
     pub fn call_contract(
@@ -630,7 +644,8 @@ impl<S: EvmStateStore + 'static> ExecutionModuleWithStorage<S> {
         context: &TronExecutionContext,
     ) -> Result<u64> {
         let storage = InMemoryEvmStateStore::new(); // Placeholder
-        self.module.estimate_energy_with_storage(storage, tx, context)
+        self.module
+            .estimate_energy_with_storage(storage, tx, context)
     }
 }
 
@@ -646,16 +661,16 @@ impl Module for ExecutionModule {
 
     async fn init(&mut self) -> Result<()> {
         info!("Initializing execution module");
-        
+
         // Validate configuration
         if self.config.energy_limit == 0 {
             return Err(anyhow::anyhow!("Energy limit must be greater than 0"));
         }
-        
+
         if self.config.bandwidth_limit == 0 {
             return Err(anyhow::anyhow!("Bandwidth limit must be greater than 0"));
         }
-        
+
         self.initialized = true;
         info!("Execution module initialized successfully");
         Ok(())
@@ -666,15 +681,15 @@ impl Module for ExecutionModule {
         if !self.initialized {
             return Err(anyhow::anyhow!("Module not initialized"));
         }
-        
+
         // Test EVM creation with dummy storage
         let storage = InMemoryEvmStateStore::new();
-        let spec_id = storage
-            .tvm_spec_id()?
-            .unwrap_or_else(|| TronEvm::<EvmStateDatabase<InMemoryEvmStateStore>>::spec_id_from_config(&self.config));
+        let spec_id = storage.tvm_spec_id()?.unwrap_or_else(|| {
+            TronEvm::<EvmStateDatabase<InMemoryEvmStateStore>>::spec_id_from_config(&self.config)
+        });
         let database = EvmStateDatabase::new(storage);
         let _evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
-        
+
         info!("Execution module started successfully");
         Ok(())
     }
@@ -690,11 +705,12 @@ impl Module for ExecutionModule {
         if !self.initialized {
             return ModuleHealth::unhealthy("Module not initialized");
         }
-        
+
         // Test EVM creation
         let storage = InMemoryEvmStateStore::new();
         let database = EvmStateDatabase::new(storage);
-        let spec_id = TronEvm::<EvmStateDatabase<InMemoryEvmStateStore>>::spec_id_from_config(&self.config);
+        let spec_id =
+            TronEvm::<EvmStateDatabase<InMemoryEvmStateStore>>::spec_id_from_config(&self.config);
         match TronEvm::new_with_spec_id(database, &self.config, spec_id) {
             Ok(_) => ModuleHealth::healthy(),
             Err(e) => ModuleHealth::unhealthy(&format!("EVM creation failed: {}", e)),
@@ -703,12 +719,18 @@ impl Module for ExecutionModule {
 
     fn metrics(&self) -> HashMap<String, f64> {
         let mut metrics = HashMap::new();
-        metrics.insert("initialized".to_string(), if self.initialized { 1.0 } else { 0.0 });
+        metrics.insert(
+            "initialized".to_string(),
+            if self.initialized { 1.0 } else { 0.0 },
+        );
         metrics.insert("energy_limit".to_string(), self.config.energy_limit as f64);
-        metrics.insert("bandwidth_limit".to_string(), self.config.bandwidth_limit as f64);
+        metrics.insert(
+            "bandwidth_limit".to_string(),
+            self.config.bandwidth_limit as f64,
+        );
         metrics
     }
-    
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -717,13 +739,16 @@ impl Module for ExecutionModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use revm_primitives::{Address, U256, Bytes};
+    use revm_primitives::{Address, Bytes, U256};
 
     #[test]
     fn test_coinbase_suppression_config() {
         // Test that default config suppresses coinbase payouts
         let config = ExecutionConfig::default();
-        assert_eq!(config.evm_eth_coinbase_compat, false, "Default config should suppress coinbase payouts for TRON parity");
+        assert_eq!(
+            config.evm_eth_coinbase_compat, false,
+            "Default config should suppress coinbase payouts for TRON parity"
+        );
     }
 
     #[test]
@@ -749,7 +774,7 @@ mod tests {
             from,
             to: Some(to),
             value: U256::from(1000000), // 1 TRX in SUN
-            data: Bytes::new(), // Empty data = non-VM
+            data: Bytes::new(),         // Empty data = non-VM
             gas_limit: 21000,
             gas_price: U256::ZERO, // Should be 0 for TRON parity
             nonce: 1,
@@ -757,9 +782,19 @@ mod tests {
         };
 
         // Verify transaction structure for non-VM characteristics
-        assert!(transaction.data.is_empty(), "Non-VM transaction should have empty data");
-        assert_eq!(transaction.gas_price, U256::ZERO, "TRON mode should use gas_price = 0");
-        assert!(transaction.to.is_some(), "Transfer transaction should have a 'to' address");
+        assert!(
+            transaction.data.is_empty(),
+            "Non-VM transaction should have empty data"
+        );
+        assert_eq!(
+            transaction.gas_price,
+            U256::ZERO,
+            "TRON mode should use gas_price = 0"
+        );
+        assert!(
+            transaction.to.is_some(),
+            "Transfer transaction should have a 'to' address"
+        );
     }
 
     #[test]
@@ -779,8 +814,15 @@ mod tests {
         };
 
         // Verify transaction structure for VM characteristics
-        assert!(!transaction.data.is_empty(), "VM transaction should have data");
-        assert_eq!(transaction.gas_price, U256::ZERO, "TRON mode should use gas_price = 0 even for VM");
+        assert!(
+            !transaction.data.is_empty(),
+            "VM transaction should have data"
+        );
+        assert_eq!(
+            transaction.gas_price,
+            U256::ZERO,
+            "TRON mode should use gas_price = 0 even for VM"
+        );
     }
 
     #[test]
@@ -789,11 +831,26 @@ mod tests {
 
         // Test default fee configuration
         let fee_config = ExecutionFeeConfig::default();
-        assert_eq!(fee_config.mode, "burn", "Default fee mode should be 'burn' for TRON parity");
-        assert_eq!(fee_config.support_black_hole_optimization, true, "Should support blackhole optimization by default");
-        assert_eq!(fee_config.blackhole_address_base58, "", "Blackhole address should be empty by default");
-        assert_eq!(fee_config.experimental_vm_blackhole_credit, false, "VM blackhole credit should be disabled by default");
-        assert_eq!(fee_config.non_vm_blackhole_credit_flat, None, "Non-VM flat fee should be None by default");
+        assert_eq!(
+            fee_config.mode, "burn",
+            "Default fee mode should be 'burn' for TRON parity"
+        );
+        assert_eq!(
+            fee_config.support_black_hole_optimization, true,
+            "Should support blackhole optimization by default"
+        );
+        assert_eq!(
+            fee_config.blackhole_address_base58, "",
+            "Blackhole address should be empty by default"
+        );
+        assert_eq!(
+            fee_config.experimental_vm_blackhole_credit, false,
+            "VM blackhole credit should be disabled by default"
+        );
+        assert_eq!(
+            fee_config.non_vm_blackhole_credit_flat, None,
+            "Non-VM flat fee should be None by default"
+        );
     }
 
     #[test]
@@ -802,10 +859,16 @@ mod tests {
 
         // Verify that ExecutionConfig includes fee configuration
         assert_eq!(config.fees.mode, "burn");
-        assert_eq!(config.evm_eth_coinbase_compat, false, "Coinbase compat should be off by default");
+        assert_eq!(
+            config.evm_eth_coinbase_compat, false,
+            "Coinbase compat should be off by default"
+        );
 
         // Test that both Phase 1 and Phase 2 configurations work together
-        assert_eq!(config.fees.experimental_vm_blackhole_credit, false, "Phase 2 experimental features should be off");
+        assert_eq!(
+            config.fees.experimental_vm_blackhole_credit, false,
+            "Phase 2 experimental features should be off"
+        );
     }
 
     #[test]
@@ -839,7 +902,7 @@ mod tests {
 mod trigger_smart_contract_tests {
     use super::*;
     use prost::Message;
-    use revm_primitives::{Address, U256, Bytes};
+    use revm_primitives::{Address, Bytes, U256};
 
     /// Helper: build a TriggerSmartContract proto and serialize it.
     fn make_trigger_proto(
@@ -1084,7 +1147,7 @@ mod trigger_smart_contract_tests {
 mod witness_tests {
     use super::*;
     use crate::storage_adapter::{InMemoryEvmStateStore, WitnessInfo};
-    use revm_primitives::{Address, U256, Bytes};
+    use revm_primitives::{Address, Bytes, U256};
 
     /// Test contract type parsing and metadata extraction
     #[test]
@@ -1095,7 +1158,8 @@ mod witness_tests {
         assert_eq!(TronContractType::VoteWitnessContract as i32, 4);
 
         // Test TryFrom implementation
-        let contract_type: TronContractType = TronContractType::try_from(5).expect("Should parse WitnessCreateContract");
+        let contract_type: TronContractType =
+            TronContractType::try_from(5).expect("Should parse WitnessCreateContract");
         assert_eq!(contract_type, TronContractType::WitnessCreateContract);
     }
 
@@ -1119,15 +1183,27 @@ mod witness_tests {
         };
 
         // Verify system contract characteristics
-        assert!(transaction.to.is_none(), "System contracts should have no 'to' address");
-        assert_eq!(transaction.metadata.contract_type, Some(TronContractType::WitnessCreateContract));
-        assert!(!transaction.data.is_empty(), "WitnessCreate should have URL data");
+        assert!(
+            transaction.to.is_none(),
+            "System contracts should have no 'to' address"
+        );
+        assert_eq!(
+            transaction.metadata.contract_type,
+            Some(TronContractType::WitnessCreateContract)
+        );
+        assert!(
+            !transaction.data.is_empty(),
+            "WitnessCreate should have URL data"
+        );
     }
 
     /// Test WitnessInfo serialization roundtrip
     #[test]
     fn test_witness_info_serialization() {
-        let address = Address::from_slice(&[0x41, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56]);
+        let address = Address::from_slice(&[
+            0x41, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
+            0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56,
+        ]);
         let witness_info = WitnessInfo {
             address,
             url: "https://test-witness.com".to_string(),
@@ -1136,10 +1212,14 @@ mod witness_tests {
 
         // Test serialization
         let serialized = witness_info.serialize();
-        assert!(!serialized.is_empty(), "Serialized data should not be empty");
+        assert!(
+            !serialized.is_empty(),
+            "Serialized data should not be empty"
+        );
 
         // Test deserialization
-        let deserialized = WitnessInfo::deserialize(&serialized).expect("Deserialization should succeed");
+        let deserialized =
+            WitnessInfo::deserialize(&serialized).expect("Deserialization should succeed");
         assert_eq!(deserialized.address, witness_info.address);
         assert_eq!(deserialized.url, witness_info.url);
         assert_eq!(deserialized.vote_count, witness_info.vote_count);
@@ -1160,7 +1240,8 @@ mod witness_tests {
 
         // Test serialization/deserialization roundtrip
         let serialized = witness_info.serialize();
-        let deserialized = WitnessInfo::deserialize(&serialized).expect("Should deserialize successfully");
+        let deserialized =
+            WitnessInfo::deserialize(&serialized).expect("Should deserialize successfully");
 
         assert_eq!(deserialized.address, witness_info.address);
         assert_eq!(deserialized.url, witness_info.url);
@@ -1192,7 +1273,10 @@ mod witness_tests {
         let module = ExecutionModule::new(config);
 
         // Create witness owner address (TRON format with 0x41 prefix)
-        let owner_address = Address::from_slice(&[0x41, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56]);
+        let owner_address = Address::from_slice(&[
+            0x41, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
+            0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56,
+        ]);
 
         // Create WitnessCreate transaction
         let transaction = TronTransaction {
@@ -1217,8 +1301,8 @@ mod witness_tests {
             block_coinbase: Address::ZERO,
             block_difficulty: U256::ZERO,
             block_gas_limit: 30000000,
-            chain_id: 2494104990, // TRON mainnet chain ID
-            energy_price: 420, // Default TRON energy price
+            chain_id: 2494104990,  // TRON mainnet chain ID
+            energy_price: 420,     // Default TRON energy price
             bandwidth_price: 1000, // Default TRON bandwidth price
             transaction_id: None,
         };
@@ -1232,12 +1316,21 @@ mod witness_tests {
             Ok(execution_result) => {
                 // Verify execution completed
                 // System contracts consume 0 energy in TRON parity mode
-                assert_eq!(execution_result.energy_used, 0, "WitnessCreate should use 0 energy");
-                println!("WitnessCreate executed successfully, energy used (expected 0): {}", execution_result.energy_used);
+                assert_eq!(
+                    execution_result.energy_used, 0,
+                    "WitnessCreate should use 0 energy"
+                );
+                println!(
+                    "WitnessCreate executed successfully, energy used (expected 0): {}",
+                    execution_result.energy_used
+                );
             }
             Err(e) => {
                 // Log error for debugging, but don't fail test if it's a validation error
-                println!("WitnessCreate execution error (expected during unit test): {}", e);
+                println!(
+                    "WitnessCreate execution error (expected during unit test): {}",
+                    e
+                );
             }
         }
     }
@@ -1253,7 +1346,7 @@ mod witness_tests {
             "https://witness.com",
             "http://witness.org",
             "witness.net",
-            "",  // Empty URL should be allowed
+            "", // Empty URL should be allowed
         ];
 
         for url in valid_urls {
@@ -1264,14 +1357,20 @@ mod witness_tests {
         // Test balance requirements (would be done through dynamic properties in real implementation)
         let expected_upgrade_cost = 9999000000u64; // 9,999 TRX in SUN
         assert!(expected_upgrade_cost > 0, "Upgrade cost should be positive");
-        assert_eq!(expected_upgrade_cost, 9999000000, "Should match mainnet upgrade cost");
+        assert_eq!(
+            expected_upgrade_cost, 9999000000,
+            "Should match mainnet upgrade cost"
+        );
     }
 
     /// Test state change generation for WitnessCreate
     #[test]
     fn test_witness_create_state_changes() {
         let _owner_address = Address::from_slice(&[0x41; 20]);
-        let _blackhole_address = Address::from_slice(&[0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
+        let _blackhole_address = Address::from_slice(&[
+            0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+        ]);
         let upgrade_cost = 9999000000u64; // 9,999 TRX in SUN
 
         // Expected state changes for WitnessCreate:
@@ -1281,18 +1380,28 @@ mod witness_tests {
 
         let expected_changes = vec![
             // Owner balance change
-            ("owner_balance_before".to_string(), format!("{}", 10000000000u64)), // 10,000 TRX
-            ("owner_balance_after".to_string(), format!("{}", 1000000u64)),      // 1 TRX remaining
+            (
+                "owner_balance_before".to_string(),
+                format!("{}", 10000000000u64),
+            ), // 10,000 TRX
+            ("owner_balance_after".to_string(), format!("{}", 1000000u64)), // 1 TRX remaining
             // Owner metadata change
             ("owner_is_witness_before".to_string(), "false".to_string()),
             ("owner_is_witness_after".to_string(), "true".to_string()),
         ];
 
         // Verify expected change structure
-        assert_eq!(expected_changes.len(), 4, "Should have 4 state changes for burn mode");
+        assert_eq!(
+            expected_changes.len(),
+            4,
+            "Should have 4 state changes for burn mode"
+        );
 
         // In blackhole mode, would have additional blackhole balance change
-        let blackhole_change = ("blackhole_balance_increase".to_string(), format!("{}", upgrade_cost));
+        let blackhole_change = (
+            "blackhole_balance_increase".to_string(),
+            format!("{}", upgrade_cost),
+        );
         println!("Blackhole change would be: {:?}", blackhole_change);
     }
 
@@ -1302,7 +1411,7 @@ mod witness_tests {
         addr[0] = 0x41; // TRON address prefix
 
         let copy_len = std::cmp::min(suffix.len(), 19);
-        addr[1..1+copy_len].copy_from_slice(&suffix[..copy_len]);
+        addr[1..1 + copy_len].copy_from_slice(&suffix[..copy_len]);
 
         Address::from_slice(&addr)
     }
@@ -1334,10 +1443,22 @@ mod witness_tests {
 
         // Test default feature flags
         let remote_config = RemoteExecutionConfig::default();
-        assert_eq!(remote_config.system_enabled, true, "System contracts should be enabled by default");
-        assert_eq!(remote_config.witness_create_enabled, true, "WitnessCreate should be enabled by default");
-        assert_eq!(remote_config.witness_update_enabled, true, "WitnessUpdate should be disabled by default");
-        assert_eq!(remote_config.vote_witness_enabled, false, "VoteWitness should be disabled by default");
+        assert_eq!(
+            remote_config.system_enabled, true,
+            "System contracts should be enabled by default"
+        );
+        assert_eq!(
+            remote_config.witness_create_enabled, true,
+            "WitnessCreate should be enabled by default"
+        );
+        assert_eq!(
+            remote_config.witness_update_enabled, true,
+            "WitnessUpdate should be disabled by default"
+        );
+        assert_eq!(
+            remote_config.vote_witness_enabled, false,
+            "VoteWitness should be disabled by default"
+        );
 
         // Test disabled configuration
         let disabled_config = RemoteExecutionConfig {
@@ -1348,4 +1469,4 @@ mod witness_tests {
         assert_eq!(disabled_config.system_enabled, false);
         assert_eq!(disabled_config.witness_create_enabled, false);
     }
-} 
+}

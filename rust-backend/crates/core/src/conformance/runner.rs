@@ -11,16 +11,15 @@ use std::path::{Path, PathBuf};
 use crate::backend::ExecuteTransactionRequest;
 use crate::conformance::kv_format::{compare_kv_data, read_kv_file, KvDiff};
 use crate::conformance::metadata::FixtureMetadata;
-use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
-use tron_backend_storage::StorageEngine;
-use tron_backend_execution::{
-    EngineBackedEvmStateStore, ExecutionModule, TronTransaction, TronExecutionContext,
-    EvmStateStore, TronContractType, TxMetadata, ExecutionWriteBuffer,
-    TronContractParameter,
-};
-use std::sync::{Arc, Mutex};
-use revm_primitives::{hex, Address, B256, Bytes, U256};
 use crate::BackendService;
+use revm_primitives::{hex, Address, Bytes, B256, U256};
+use std::sync::{Arc, Mutex};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
+use tron_backend_execution::{
+    EngineBackedEvmStateStore, EvmStateStore, ExecutionModule, ExecutionWriteBuffer,
+    TronContractParameter, TronContractType, TronExecutionContext, TronTransaction, TxMetadata,
+};
+use tron_backend_storage::StorageEngine;
 
 /// Result of running a conformance test
 #[derive(Debug)]
@@ -177,8 +176,8 @@ impl ConformanceRunner {
             return Err("request.pb not found".to_string());
         }
 
-        let bytes = fs::read(&request_path)
-            .map_err(|e| format!("Failed to read request.pb: {}", e))?;
+        let bytes =
+            fs::read(&request_path).map_err(|e| format!("Failed to read request.pb: {}", e))?;
 
         use prost::Message;
         ExecuteTransactionRequest::decode(bytes.as_slice())
@@ -285,7 +284,8 @@ impl ConformanceRunner {
         for (db_name, kv_map) in pre_state {
             let canonical_db_name = Self::canonical_db_name(db_name);
             for (key, value) in kv_map {
-                storage_engine.put(canonical_db_name, key, value)
+                storage_engine
+                    .put(canonical_db_name, key, value)
                     .map_err(|e| format!("Failed to write to {}: {:?}", db_name, e))?;
             }
         }
@@ -308,7 +308,8 @@ impl ConformanceRunner {
             let batch_size = 1000i32;
 
             loop {
-                let entries = storage_engine.get_next(canonical_db_name, &start_key, batch_size)
+                let entries = storage_engine
+                    .get_next(canonical_db_name, &start_key, batch_size)
                     .map_err(|e| format!("Failed to iterate {}: {:?}", db_name, e))?;
 
                 if entries.is_empty() {
@@ -342,8 +343,12 @@ impl ConformanceRunner {
 
     /// Convert protobuf request to internal transaction format.
     /// This is a simplified version for conformance testing.
-    fn convert_request_to_transaction(request: &ExecuteTransactionRequest) -> Result<TronTransaction, String> {
-        let tx = request.transaction.as_ref()
+    fn convert_request_to_transaction(
+        request: &ExecuteTransactionRequest,
+    ) -> Result<TronTransaction, String> {
+        let tx = request
+            .transaction
+            .as_ref()
             .ok_or("Transaction is required")?;
 
         // Parse contract type early so we can handle special validation fixtures where
@@ -419,8 +424,12 @@ impl ConformanceRunner {
         let to = if tx.to.is_empty() {
             None
         } else {
-            let allow_malformed_to =
-                matches!(contract_type, Some(TronContractType::TransferContract) | Some(TronContractType::TransferAssetContract) | Some(TronContractType::TriggerSmartContract));
+            let allow_malformed_to = matches!(
+                contract_type,
+                Some(TronContractType::TransferContract)
+                    | Some(TronContractType::TransferAssetContract)
+                    | Some(TronContractType::TriggerSmartContract)
+            );
 
             let (to_bytes, to_is_valid) = if tx.to.len() == 21 {
                 if tx.to[0] == 0x41 || tx.to[0] == 0xa0 {
@@ -472,17 +481,27 @@ impl ConformanceRunner {
             to,
             value,
             data: Bytes::from(tx.data.clone()),
-            gas_limit: if tx.energy_limit == 0 { 100000 } else { tx.energy_limit as u64 },
+            gas_limit: if tx.energy_limit == 0 {
+                100000
+            } else {
+                tx.energy_limit as u64
+            },
             gas_price: U256::ZERO, // TRON mode uses gas_price = 0
             nonce: tx.nonce as u64,
             metadata: TxMetadata {
                 contract_type,
                 asset_id,
                 from_raw: Some(tx.from.clone()),
-                to_raw: if tx.to.is_empty() { None } else { Some(tx.to.clone()) },
-                contract_parameter: tx.contract_parameter.as_ref().map(|any| TronContractParameter {
-                    type_url: any.type_url.clone(),
-                    value: any.value.clone(),
+                to_raw: if tx.to.is_empty() {
+                    None
+                } else {
+                    Some(tx.to.clone())
+                },
+                contract_parameter: tx.contract_parameter.as_ref().map(|any| {
+                    TronContractParameter {
+                        type_url: any.type_url.clone(),
+                        value: any.value.clone(),
+                    }
                 }),
                 transaction_bytes_size: if request.transaction_bytes_size > 0 {
                     Some(request.transaction_bytes_size)
@@ -494,20 +513,25 @@ impl ConformanceRunner {
     }
 
     /// Convert protobuf context to internal execution context.
-    fn convert_request_to_context(request: &ExecuteTransactionRequest) -> Result<TronExecutionContext, String> {
-        let ctx = request.context.as_ref()
+    fn convert_request_to_context(
+        request: &ExecuteTransactionRequest,
+    ) -> Result<TronExecutionContext, String> {
+        let ctx = request
+            .context
+            .as_ref()
             .ok_or("Execution context is required")?;
 
         // Parse coinbase (strip 0x41 prefix if present)
-        let block_coinbase = if ctx.coinbase.len() == 21 && (ctx.coinbase[0] == 0x41 || ctx.coinbase[0] == 0xa0) {
-            Address::from_slice(&ctx.coinbase[1..])
-        } else if ctx.coinbase.len() == 20 {
-            Address::from_slice(&ctx.coinbase)
-        } else if ctx.coinbase.is_empty() {
-            Address::ZERO
-        } else {
-            return Err(format!("Invalid coinbase length: {}", ctx.coinbase.len()));
-        };
+        let block_coinbase =
+            if ctx.coinbase.len() == 21 && (ctx.coinbase[0] == 0x41 || ctx.coinbase[0] == 0xa0) {
+                Address::from_slice(&ctx.coinbase[1..])
+            } else if ctx.coinbase.len() == 20 {
+                Address::from_slice(&ctx.coinbase)
+            } else if ctx.coinbase.is_empty() {
+                Address::ZERO
+            } else {
+                return Err(format!("Invalid coinbase length: {}", ctx.coinbase.len()));
+            };
 
         let transaction_id = if ctx.transaction_id.is_empty() {
             None
@@ -560,12 +584,18 @@ impl ConformanceRunner {
 
         let expected_dir = fixture.path.join("expected");
         if !expected_dir.exists() {
-            return ConformanceResult::failure(metadata, "expected directory not found".to_string());
+            return ConformanceResult::failure(
+                metadata,
+                "expected directory not found".to_string(),
+            );
         }
 
         let post_db_dir = expected_dir.join("post_db");
         if !post_db_dir.exists() {
-            return ConformanceResult::failure(metadata, "expected/post_db directory not found".to_string());
+            return ConformanceResult::failure(
+                metadata,
+                "expected/post_db directory not found".to_string(),
+            );
         }
 
         for db_name in metadata.databases_touched.iter() {
@@ -590,7 +620,10 @@ impl ConformanceRunner {
         let request = match self.load_request(fixture) {
             Ok(r) => r,
             Err(e) => {
-                return ConformanceResult::failure(metadata, format!("Failed to load request: {}", e));
+                return ConformanceResult::failure(
+                    metadata,
+                    format!("Failed to load request: {}", e),
+                );
             }
         };
 
@@ -598,7 +631,10 @@ impl ConformanceRunner {
         let pre_state = match self.load_pre_state(fixture) {
             Ok(s) => s,
             Err(e) => {
-                return ConformanceResult::failure(metadata, format!("Failed to load pre-state: {}", e));
+                return ConformanceResult::failure(
+                    metadata,
+                    format!("Failed to load pre-state: {}", e),
+                );
             }
         };
 
@@ -606,7 +642,10 @@ impl ConformanceRunner {
         let expected_state = match self.load_expected_state(fixture) {
             Ok(s) => s,
             Err(e) => {
-                return ConformanceResult::failure(metadata, format!("Failed to load expected state: {}", e));
+                return ConformanceResult::failure(
+                    metadata,
+                    format!("Failed to load expected state: {}", e),
+                );
             }
         };
 
@@ -614,7 +653,10 @@ impl ConformanceRunner {
         let temp_dir = match tempfile::tempdir() {
             Ok(d) => d,
             Err(e) => {
-                return ConformanceResult::failure(metadata, format!("Failed to create temp dir: {}", e));
+                return ConformanceResult::failure(
+                    metadata,
+                    format!("Failed to create temp dir: {}", e),
+                );
             }
         };
 
@@ -622,7 +664,10 @@ impl ConformanceRunner {
         let storage_engine = match StorageEngine::new(temp_dir.path()) {
             Ok(e) => e,
             Err(e) => {
-                return ConformanceResult::failure(metadata, format!("Failed to create storage engine: {:?}", e));
+                return ConformanceResult::failure(
+                    metadata,
+                    format!("Failed to create storage engine: {:?}", e),
+                );
             }
         };
 
@@ -644,7 +689,10 @@ impl ConformanceRunner {
         let transaction = match Self::convert_request_to_transaction(&request) {
             Ok(tx) => tx,
             Err(e) => {
-                return ConformanceResult::failure(metadata, format!("Failed to convert request: {}", e));
+                return ConformanceResult::failure(
+                    metadata,
+                    format!("Failed to convert request: {}", e),
+                );
             }
         };
 
@@ -652,7 +700,10 @@ impl ConformanceRunner {
         let context = match Self::convert_request_to_context(&request) {
             Ok(ctx) => ctx,
             Err(e) => {
-                return ConformanceResult::failure(metadata, format!("Failed to convert context: {}", e));
+                return ConformanceResult::failure(
+                    metadata,
+                    format!("Failed to convert context: {}", e),
+                );
             }
         };
 
@@ -666,42 +717,50 @@ impl ConformanceRunner {
         // Execute transaction using the same dispatch logic as the real backend.
         // Use buffered writes: accumulate all writes in memory, only commit on success.
         // This ensures NON_VM failures do not persist partial writes.
-        let execution_result: Result<tron_backend_execution::TronExecutionResult, String> = match tx_kind {
-            crate::backend::TxKind::NonVm => {
-                // Create storage adapter with a write buffer for atomic commit/rollback
-                let (mut storage_adapter, _write_buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
+        let execution_result: Result<tron_backend_execution::TronExecutionResult, String> =
+            match tx_kind {
+                crate::backend::TxKind::NonVm => {
+                    // Create storage adapter with a write buffer for atomic commit/rollback
+                    let (mut storage_adapter, _write_buffer) =
+                        EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
 
-                // Configure fork thresholds for conformance testing.
-                // Default: set block_num_for_energy_limit = 0 so the fork gate passes
-                // (fixtures use low block numbers like 11).
-                // For the "fork_not_enabled" case, read the threshold from metadata.dynamicProperties.
-                let energy_limit_fork_threshold = metadata.dynamic_properties
-                    .get("blockNumForEnergyLimit")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
-                storage_adapter.set_block_num_for_energy_limit(energy_limit_fork_threshold);
+                    // Configure fork thresholds for conformance testing.
+                    // Default: set block_num_for_energy_limit = 0 so the fork gate passes
+                    // (fixtures use low block numbers like 11).
+                    // For the "fork_not_enabled" case, read the threshold from metadata.dynamicProperties.
+                    let energy_limit_fork_threshold = metadata
+                        .dynamic_properties
+                        .get("blockNumForEnergyLimit")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    storage_adapter.set_block_num_for_energy_limit(energy_limit_fork_threshold);
 
-                let result = backend_service.execute_non_vm_contract(&mut storage_adapter, &transaction, &context);
+                    let result = backend_service.execute_non_vm_contract(
+                        &mut storage_adapter,
+                        &transaction,
+                        &context,
+                    );
 
-                // Commit only on success; on failure drop buffer (rollback).
-                if let Ok(ref r) = result {
-                    if r.success {
-                        if let Err(e) = storage_adapter.commit_buffer() {
-                            return ConformanceResult::failure(
-                                metadata,
-                                format!("Failed to commit write buffer: {}", e),
-                            );
+                    // Commit only on success; on failure drop buffer (rollback).
+                    if let Ok(ref r) = result {
+                        if r.success {
+                            if let Err(e) = storage_adapter.commit_buffer() {
+                                return ConformanceResult::failure(
+                                    metadata,
+                                    format!("Failed to commit write buffer: {}", e),
+                                );
+                            }
                         }
                     }
-                }
 
-                result
-            }
-            crate::backend::TxKind::Vm => {
-                (|| -> Result<tron_backend_execution::TronExecutionResult, String> {
-                    // Create storage adapter with write buffer for atomic commit/rollback
-                    let (storage_adapter, write_buffer) = EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
-                    let mut result = execution_module
+                    result
+                }
+                crate::backend::TxKind::Vm => {
+                    (|| -> Result<tron_backend_execution::TronExecutionResult, String> {
+                        // Create storage adapter with write buffer for atomic commit/rollback
+                        let (storage_adapter, write_buffer) =
+                            EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
+                        let mut result = execution_module
                         .execute_transaction_with_storage(storage_adapter, &transaction, &context)
                         .map_err(|e| {
                             let msg = format!("VM execution error: {}", e);
@@ -719,94 +778,93 @@ impl ConformanceRunner {
                             }
                         })?;
 
-                    // Post-processing for conformance: persist VM side effects to the isolated DB.
-                    // This mirrors java-tron's fee + metadata persistence behavior.
-                    // Use a separate buffer for post-processing operations
-                    let (mut post_storage_adapter, post_write_buffer) =
-                        EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
+                        // Post-processing for conformance: persist VM side effects to the isolated DB.
+                        // This mirrors java-tron's fee + metadata persistence behavior.
+                        // Use a separate buffer for post-processing operations
+                        let (mut post_storage_adapter, post_write_buffer) =
+                            EngineBackedEvmStateStore::new_with_buffer(storage_engine.clone());
 
-                    // Map invalid opcode errors for CreateSmartContract to java-tron's message format.
-                    if !result.success
-                        && transaction.metadata.contract_type
-                            == Some(tron_backend_execution::TronContractType::CreateSmartContract)
-                    {
-                        if let Some(ref err) = result.error {
-                            if err.contains("OpcodeNotFound") {
-                                use prost::Message;
-                                use tron_backend_execution::protocol::CreateSmartContract;
-                                if let Ok(create_contract) =
-                                    CreateSmartContract::decode(transaction.data.as_ref())
-                                {
-                                    if let Some(new_contract) = create_contract.new_contract {
-                                        if let Some(opcode) = new_contract.bytecode.first() {
-                                            result.error = Some(format!(
-                                                "Invalid operation code: opCode[{:02x}];",
-                                                opcode
-                                            ));
+                        // Map invalid opcode errors for CreateSmartContract to java-tron's message format.
+                        if !result.success
+                            && transaction.metadata.contract_type
+                                == Some(
+                                    tron_backend_execution::TronContractType::CreateSmartContract,
+                                )
+                        {
+                            if let Some(ref err) = result.error {
+                                if err.contains("OpcodeNotFound") {
+                                    use prost::Message;
+                                    use tron_backend_execution::protocol::CreateSmartContract;
+                                    if let Ok(create_contract) =
+                                        CreateSmartContract::decode(transaction.data.as_ref())
+                                    {
+                                        if let Some(new_contract) = create_contract.new_contract {
+                                            if let Some(opcode) = new_contract.bytecode.first() {
+                                                result.error = Some(format!(
+                                                    "Invalid operation code: opCode[{:02x}];",
+                                                    opcode
+                                                ));
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // Persist SmartContract metadata + ABI after successful CreateSmartContract.
-                    //
-                    // IMPORTANT: use the *same* EVM write buffer so code_hash can be computed
-                    // from the uncommitted runtime code in CodeStore (matches java-tron).
-                    if transaction.metadata.contract_type
-                        == Some(tron_backend_execution::TronContractType::CreateSmartContract)
-                        && result.success
-                    {
-                        if let Some(created_address) = result.contract_address.as_ref() {
-                            let mut metadata_adapter =
-                                EngineBackedEvmStateStore::new(storage_engine.clone());
-                            metadata_adapter.set_write_buffer(write_buffer.clone());
-                            backend_service
-                                .persist_smart_contract_metadata(
-                                    &mut metadata_adapter,
-                                    &transaction,
-                                    &context,
-                                    created_address,
-                                )
-                                .map_err(|e| {
-                                    format!(
-                                        "Failed to persist SmartContract metadata: {}",
-                                        e
+                        // Persist SmartContract metadata + ABI after successful CreateSmartContract.
+                        //
+                        // IMPORTANT: use the *same* EVM write buffer so code_hash can be computed
+                        // from the uncommitted runtime code in CodeStore (matches java-tron).
+                        if transaction.metadata.contract_type
+                            == Some(tron_backend_execution::TronContractType::CreateSmartContract)
+                            && result.success
+                        {
+                            if let Some(created_address) = result.contract_address.as_ref() {
+                                let mut metadata_adapter =
+                                    EngineBackedEvmStateStore::new(storage_engine.clone());
+                                metadata_adapter.set_write_buffer(write_buffer.clone());
+                                backend_service
+                                    .persist_smart_contract_metadata(
+                                        &mut metadata_adapter,
+                                        &transaction,
+                                        &context,
+                                        created_address,
                                     )
-                                })?;
+                                    .map_err(|e| {
+                                        format!("Failed to persist SmartContract metadata: {}", e)
+                                    })?;
+                            }
                         }
-                    }
 
-                    // Commit policy:
-                    // - VM state changes are only committed on SUCCESS (EVM revert must not persist).
-                    // - Post-processing (energy fee) must be committed even on REVERT for fixture parity.
-                    if result.success {
-                        write_buffer
-                            .lock()
-                            .map_err(|e| format!("Lock poisoned: {}", e))?
-                            .commit(&storage_engine)
-                            .map_err(|e| format!("Failed to commit EVM write buffer: {}", e))?;
-                    }
+                        // Commit policy:
+                        // - VM state changes are only committed on SUCCESS (EVM revert must not persist).
+                        // - Post-processing (energy fee) must be committed even on REVERT for fixture parity.
+                        if result.success {
+                            write_buffer
+                                .lock()
+                                .map_err(|e| format!("Lock poisoned: {}", e))?
+                                .commit(&storage_engine)
+                                .map_err(|e| format!("Failed to commit EVM write buffer: {}", e))?;
+                        }
 
-                    // Apply VM energy fee after committing EVM state on SUCCESS so balance deltas
-                    // (e.g., contract creation call_value transfer) are visible when charging fees.
-                    post_storage_adapter
-                        .apply_vm_energy_fee(
-                            &transaction.from,
-                            result.energy_used,
-                            context.energy_price,
-                        )
-                        .map_err(|e| format!("Failed to apply VM energy fee: {}", e))?;
+                        // Apply VM energy fee after committing EVM state on SUCCESS so balance deltas
+                        // (e.g., contract creation call_value transfer) are visible when charging fees.
+                        post_storage_adapter
+                            .apply_vm_energy_fee(
+                                &transaction.from,
+                                result.energy_used,
+                                context.energy_price,
+                            )
+                            .map_err(|e| format!("Failed to apply VM energy fee: {}", e))?;
 
-                    post_storage_adapter
-                        .commit_buffer()
-                        .map_err(|e| format!("Failed to commit post-processing buffer: {}", e))?;
+                        post_storage_adapter.commit_buffer().map_err(|e| {
+                            format!("Failed to commit post-processing buffer: {}", e)
+                        })?;
 
-                    Ok(result)
-                })()
-            }
-        };
+                        Ok(result)
+                    })()
+                }
+            };
 
         // Check execution result
         let execution_status = match &execution_result {
@@ -821,15 +879,20 @@ impl ConformanceRunner {
         };
 
         // Dump actual post-state (even for failure cases) and compare against fixture oracle.
-        let actual_state = match self.dump_storage_state(&storage_engine, &metadata.databases_touched) {
-            Ok(s) => s,
-            Err(e) => {
-                return ConformanceResult::failure(metadata, format!("Failed to dump post-state: {}", e));
-            }
-        };
+        let actual_state =
+            match self.dump_storage_state(&storage_engine, &metadata.databases_touched) {
+                Ok(s) => s,
+                Err(e) => {
+                    return ConformanceResult::failure(
+                        metadata,
+                        format!("Failed to dump post-state: {}", e),
+                    );
+                }
+            };
 
         // Compare states
-        let db_diffs = self.compare_states(&expected_state, &actual_state, &metadata.databases_touched);
+        let db_diffs =
+            self.compare_states(&expected_state, &actual_state, &metadata.databases_touched);
         let state_ok = db_diffs.is_empty();
 
         // Check execution outcome vs expected status.
@@ -855,7 +918,10 @@ impl ConformanceRunner {
                 Err(_) => {}
                 Ok(_) => {
                     status_ok = false;
-                    status_error = Some(format!("Expected {} but execution succeeded", metadata.expected_status));
+                    status_error = Some(format!(
+                        "Expected {} but execution succeeded",
+                        metadata.expected_status
+                    ));
                 }
             }
 
@@ -882,7 +948,10 @@ impl ConformanceRunner {
                     Err(_) => {}
                     Ok(_) => {
                         status_ok = false;
-                        status_error = Some(format!("Expected {} but execution succeeded", metadata.expected_status));
+                        status_error = Some(format!(
+                            "Expected {} but execution succeeded",
+                            metadata.expected_status
+                        ));
                     }
                 }
             }
@@ -957,13 +1026,19 @@ impl ConformanceRunner {
         // Check expected directory
         let expected_dir = fixture.path.join("expected");
         if !expected_dir.exists() {
-            return ConformanceResult::failure(metadata, "expected directory not found".to_string());
+            return ConformanceResult::failure(
+                metadata,
+                "expected directory not found".to_string(),
+            );
         }
 
         // Check expected/post_db directory
         let post_db_dir = expected_dir.join("post_db");
         if !post_db_dir.exists() {
-            return ConformanceResult::failure(metadata, "expected/post_db directory not found".to_string());
+            return ConformanceResult::failure(
+                metadata,
+                "expected/post_db directory not found".to_string(),
+            );
         }
 
         // Validate all databases are present in pre_db
@@ -1001,19 +1076,13 @@ impl ConformanceRunner {
     /// Run all discovered fixtures with actual execution.
     pub fn run_all(&self) -> Vec<ConformanceResult> {
         let fixtures = self.discover_fixtures();
-        fixtures
-            .iter()
-            .map(|f| self.run_fixture(f))
-            .collect()
+        fixtures.iter().map(|f| self.run_fixture(f)).collect()
     }
 
     /// Validate all discovered fixtures (structure only, no execution).
     pub fn validate_all(&self) -> Vec<ConformanceResult> {
         let fixtures = self.discover_fixtures();
-        fixtures
-            .iter()
-            .map(|f| self.validate_fixture(f))
-            .collect()
+        fixtures.iter().map(|f| self.validate_fixture(f)).collect()
     }
 
     /// Print a summary of results.
@@ -1022,7 +1091,12 @@ impl ConformanceRunner {
         let failed = results.len() - passed;
 
         println!("\n=== Conformance Test Results ===");
-        println!("Total: {} | Passed: {} | Failed: {}", results.len(), passed, failed);
+        println!(
+            "Total: {} | Passed: {} | Failed: {}",
+            results.len(),
+            passed,
+            failed
+        );
         println!();
 
         for result in results {
@@ -1032,7 +1106,10 @@ impl ConformanceRunner {
         if failed > 0 {
             println!("\n=== Failed Tests ===");
             for result in results.iter().filter(|r| !r.passed) {
-                println!("\n{}/{}:", result.metadata.contract_type, result.metadata.case_name);
+                println!(
+                    "\n{}/{}:",
+                    result.metadata.contract_type, result.metadata.case_name
+                );
                 if let Some(ref err) = result.error {
                     println!("  Error: {}", err);
                 }
@@ -1045,7 +1122,8 @@ impl ConformanceRunner {
                         println!("    - {}", hex::encode(key));
                     }
                     for m in &diff.modified {
-                        println!("    ~ {} (expected {} bytes, got {} bytes)",
+                        println!(
+                            "    ~ {} (expected {} bytes, got {} bytes)",
                             hex::encode(&m.key),
                             m.expected.len(),
                             m.actual.len()
@@ -1099,16 +1177,15 @@ mod tests {
         // Create account.kv in pre_db
         let mut kv_data = BTreeMap::new();
         kv_data.insert(vec![0x01], vec![0xAA]);
-        crate::conformance::kv_format::write_kv_file(
-            &dir.join("pre_db/account.kv"),
-            &kv_data,
-        ).unwrap();
+        crate::conformance::kv_format::write_kv_file(&dir.join("pre_db/account.kv"), &kv_data)
+            .unwrap();
 
         // Create account.kv in expected/post_db (required since databasesTouched includes "account")
         crate::conformance::kv_format::write_kv_file(
             &dir.join("expected/post_db/account.kv"),
             &kv_data,
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1139,7 +1216,11 @@ mod tests {
         let fixtures = runner.discover_fixtures();
 
         let result = runner.validate_fixture(&fixtures[0]);
-        assert!(result.passed, "Fixture should pass validation: {:?}", result.error);
+        assert!(
+            result.passed,
+            "Fixture should pass validation: {:?}",
+            result.error
+        );
     }
 
     /// Integration test that runs against real fixtures if they exist.
@@ -1168,7 +1249,8 @@ mod tests {
             "../../../../conformance/fixtures",
         ];
 
-        let fixtures_dir = possible_paths.iter()
+        let fixtures_dir = possible_paths
+            .iter()
             .map(|p| std::path::PathBuf::from(p))
             .find(|p| p.exists() && p.is_dir());
 
@@ -1210,13 +1292,17 @@ mod tests {
     /// Test that the conversion helpers work correctly
     #[test]
     fn test_convert_request_to_transaction() {
-        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+        use crate::backend::{
+            ExecuteTransactionRequest, ExecutionContext, TronTransaction as ProtoTx,
+        };
 
         // Create a minimal request
         let mut proto_tx = ProtoTx::default();
         // Use 21-byte TRON address with 0x41 prefix
-        proto_tx.from = vec![0x41, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
-                              0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14];
+        proto_tx.from = vec![
+            0x41, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
+        ];
         proto_tx.value = vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x42, 0x40]; // 1000000 in big-endian
         proto_tx.energy_limit = 100000;
         proto_tx.contract_type = 16; // ProposalCreateContract
@@ -1241,7 +1327,9 @@ mod tests {
 
     #[test]
     fn test_convert_request_to_transaction_allows_empty_from_for_account_permission_update() {
-        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+        use crate::backend::{
+            ExecuteTransactionRequest, ExecutionContext, TronTransaction as ProtoTx,
+        };
 
         let mut proto_tx = ProtoTx::default();
         proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
@@ -1267,7 +1355,9 @@ mod tests {
 
     #[test]
     fn test_convert_request_to_transaction_allows_empty_from_for_witness_create() {
-        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+        use crate::backend::{
+            ExecuteTransactionRequest, ExecutionContext, TronTransaction as ProtoTx,
+        };
 
         let mut proto_tx = ProtoTx::default();
         proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
@@ -1293,7 +1383,9 @@ mod tests {
 
     #[test]
     fn test_convert_request_to_transaction_allows_empty_from_for_witness_update() {
-        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+        use crate::backend::{
+            ExecuteTransactionRequest, ExecutionContext, TronTransaction as ProtoTx,
+        };
 
         let mut proto_tx = ProtoTx::default();
         proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
@@ -1319,7 +1411,9 @@ mod tests {
 
     #[test]
     fn test_convert_request_to_transaction_allows_empty_from_for_market_sell_asset() {
-        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+        use crate::backend::{
+            ExecuteTransactionRequest, ExecutionContext, TronTransaction as ProtoTx,
+        };
 
         let mut proto_tx = ProtoTx::default();
         proto_tx.from = vec![]; // Invalid/empty for ownerAddress validation fixtures
@@ -1345,7 +1439,9 @@ mod tests {
 
     #[test]
     fn test_convert_request_to_context() {
-        use crate::backend::{ExecuteTransactionRequest, TronTransaction as ProtoTx, ExecutionContext};
+        use crate::backend::{
+            ExecuteTransactionRequest, ExecutionContext, TronTransaction as ProtoTx,
+        };
 
         let request = ExecuteTransactionRequest {
             transaction: Some(ProtoTx::default()),

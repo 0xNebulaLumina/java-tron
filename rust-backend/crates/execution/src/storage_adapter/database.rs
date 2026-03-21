@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
-use revm_primitives::{Address, U256, B256, Bytecode, Account, AccountInfo};
+use super::{utils::keccak256, EvmStateStore, StateChangeRecord};
 use revm::{Database, DatabaseCommit};
+use revm_primitives::{Account, AccountInfo, Address, Bytecode, B256, U256};
+use std::collections::{HashMap, HashSet};
 use tron_backend_common::to_tron_address;
-use super::{EvmStateStore, StateChangeRecord, utils::keccak256};
 
 /// Snapshot hook callback for capturing modified accounts
 pub type SnapshotHook = Box<dyn Fn(&HashSet<Address>) + Send + Sync>;
@@ -33,7 +33,10 @@ pub struct EvmStateDatabase<S: EvmStateStore> {
     // Track detailed state changes with old and new values
     state_change_records: Vec<StateChangeRecord>,
     // Snapshots for revert support
-    snapshots: Vec<(HashMap<Address, Option<Account>>, HashMap<Address, HashMap<U256, U256>>)>,
+    snapshots: Vec<(
+        HashMap<Address, Option<Account>>,
+        HashMap<Address, HashMap<U256, U256>>,
+    )>,
     // Track modified accounts for shadow verification
     modified_accounts: HashSet<Address>,
     // Snapshot hooks for state comparison
@@ -104,13 +107,16 @@ impl<S: EvmStateStore> EvmStateDatabase<S> {
         }
         self.persist_enabled = enabled;
     }
-    
+
     pub fn snapshot(&mut self) -> U256 {
         let snapshot_id = U256::from(self.snapshots.len());
-        self.snapshots.push((self.account_snapshots.clone(), self.storage_snapshots.clone()));
+        self.snapshots.push((
+            self.account_snapshots.clone(),
+            self.storage_snapshots.clone(),
+        ));
         snapshot_id
     }
-    
+
     pub fn revert(&mut self, snapshot_id: U256) -> bool {
         let id = snapshot_id.to::<usize>();
         if id < self.snapshots.len() {
@@ -149,7 +155,7 @@ impl<S: EvmStateStore> EvmStateDatabase<S> {
     /// Add a snapshot hook for capturing modified accounts
     pub fn add_snapshot_hook<F>(&mut self, hook: F)
     where
-        F: Fn(&HashSet<Address>) + Send + Sync + 'static
+        F: Fn(&HashSet<Address>) + Send + Sync + 'static,
     {
         self.snapshot_hooks.push(Box::new(hook));
     }
@@ -242,7 +248,7 @@ impl<S: EvmStateStore> Database for EvmStateDatabase<S> {
             }
             None => None,
         };
-        
+
         self.account_cache.insert(address, final_result.clone());
         Ok(final_result)
     }
@@ -318,7 +324,9 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
 
             // Get old account info for comparison using comprehensive fallback pattern
             let was_nonexistent_in_snapshots = self.account_snapshots.get(&address) == Some(&None);
-            let old_account_info = self.account_snapshots.get(&address)
+            let old_account_info = self
+                .account_snapshots
+                .get(&address)
                 .and_then(|acc_opt| acc_opt.as_ref())
                 .map(|acc| acc.info.clone())
                 .or_else(|| {
@@ -360,21 +368,20 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
 
             let account_changed = match &old_account_info {
                 Some(old_info) => {
-                    old_info.balance != new_account_info.balance ||
-                    old_info.nonce != new_account_info.nonce ||
-                    old_info.code_hash != new_account_info.code_hash ||
-                    old_info.code != new_account_info.code
-                },
+                    old_info.balance != new_account_info.balance
+                        || old_info.nonce != new_account_info.nonce
+                        || old_info.code_hash != new_account_info.code_hash
+                        || old_info.code != new_account_info.code
+                }
                 None => true, // New account
             } || was_nonexistent_in_snapshots; // Force account creation tracking
-            
+
             // **ENHANCED FIX: Always track account creation, even with zero balance**
             // This ensures that bandwidth processing in Java can find the account
-            let force_track_creation = is_account_creation && (
-                new_account_info.balance > revm::primitives::U256::ZERO ||
-                new_account_info.nonce > 0 ||
-                new_account_info.code.is_some()
-            );
+            let force_track_creation = is_account_creation
+                && (new_account_info.balance > revm::primitives::U256::ZERO
+                    || new_account_info.nonce > 0
+                    || new_account_info.code.is_some());
 
             // Record account change if there was a change or if we're forcing account creation tracking
             if account_changed || force_track_creation {
@@ -384,11 +391,11 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
                                  address, address_tron, new_account_info.balance, force_track_creation);
                 } else {
                     tracing::debug!("Recording account modification for address {:?} - old balance: {:?}, new balance: {}", 
-                                  address, 
+                                  address,
                                   old_account_info.as_ref().map(|info| info.balance),
                                   new_account_info.balance);
                 }
-                
+
                 // If the account did not exist at the start (tracked in snapshots),
                 // do not emit a synthetic zeroed old_account; leave it as None to signal creation.
                 let old_account_to_record = if was_nonexistent_in_snapshots {
@@ -397,11 +404,12 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
                     old_account_info.clone()
                 };
 
-                self.state_change_records.push(StateChangeRecord::AccountChange {
-                    address,
-                    old_account: old_account_to_record,
-                    new_account: Some(new_account_info.clone()),
-                });
+                self.state_change_records
+                    .push(StateChangeRecord::AccountChange {
+                        address,
+                        old_account: old_account_to_record,
+                        new_account: Some(new_account_info.clone()),
+                    });
             }
 
             // Phase 0.3: Only persist account changes if persist_enabled is true
@@ -440,17 +448,19 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
             }
 
             // Update the account snapshots (keep existing in-memory tracking)
-            self.account_snapshots.insert(address, Some(account.clone()));
+            self.account_snapshots
+                .insert(address, Some(account.clone()));
 
             // Handle self-destruct
             if account.is_selfdestructed() {
                 // Record account deletion
                 if old_account_info.is_some() {
-                    self.state_change_records.push(StateChangeRecord::AccountChange {
-                        address,
-                        old_account: old_account_info,
-                        new_account: None, // Account deleted
-                    });
+                    self.state_change_records
+                        .push(StateChangeRecord::AccountChange {
+                            address,
+                            old_account: old_account_info,
+                            new_account: None, // Account deleted
+                        });
                 }
 
                 // Phase 0.3: Only persist account deletion if persist_enabled is true
@@ -466,42 +476,59 @@ impl<S: EvmStateStore> DatabaseCommit for EvmStateDatabase<S> {
             }
 
             // Clone storage before iterating to avoid borrow checker issues
-            let new_values: HashMap<U256, U256> = account.storage.iter()
+            let new_values: HashMap<U256, U256> = account
+                .storage
+                .iter()
                 .map(|(k, slot)| (*k, slot.present_value))
                 .collect();
 
             // Store storage changes and track detailed state changes
             for (key, new_value) in new_values {
                 // Get the old value before updating
-                let old_value = self.storage_snapshots
+                let old_value = self
+                    .storage_snapshots
                     .get(&address)
                     .and_then(|storage| storage.get(&key))
                     .copied()
                     .unwrap_or_else(|| {
                         // If not in our changes, try to get from storage cache
-                        self.storage_cache.get(&(address, key)).copied()
+                        self.storage_cache
+                            .get(&(address, key))
+                            .copied()
                             .unwrap_or_else(|| {
                                 // If not in cache, try to load from storage
-                                self.storage.get_storage(&address, &key).unwrap_or(U256::ZERO)
+                                self.storage
+                                    .get_storage(&address, &key)
+                                    .unwrap_or(U256::ZERO)
                             })
                     });
 
                 // Only record the change if the value actually changed
                 if old_value != new_value {
-                    self.state_change_records.push(StateChangeRecord::StorageChange {
-                        address,
-                        key,
-                        old_value,
-                        new_value,
-                    });
+                    self.state_change_records
+                        .push(StateChangeRecord::StorageChange {
+                            address,
+                            key,
+                            old_value,
+                            new_value,
+                        });
 
                     // Phase 0.3: Only persist storage changes if persist_enabled is true
                     if self.persist_enabled {
                         if let Err(e) = self.storage.set_storage(address, key, new_value) {
-                            tracing::error!("Failed to persist storage change for {:?}[{:?}]: {}", address, key, e);
+                            tracing::error!(
+                                "Failed to persist storage change for {:?}[{:?}]: {}",
+                                address,
+                                key,
+                                e
+                            );
                         } else {
-                            tracing::debug!("Successfully persisted storage change for {:?}[{:?}] = {:?}",
-                                           address, key, new_value);
+                            tracing::debug!(
+                                "Successfully persisted storage change for {:?}[{:?}] = {:?}",
+                                address,
+                                key,
+                                new_value
+                            );
                         }
                     }
                 }

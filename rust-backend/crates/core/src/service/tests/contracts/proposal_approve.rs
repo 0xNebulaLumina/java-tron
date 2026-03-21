@@ -118,9 +118,16 @@ fn test_proposal_approve_missing_contract_parameter_fails() {
         service.execute_proposal_approve_contract(&mut storage_adapter, &transaction, &context);
 
     // Should fail with "No contract!" (Java parity)
-    assert!(result.is_err(), "Should fail when contract_parameter is missing");
+    assert!(
+        result.is_err(),
+        "Should fail when contract_parameter is missing"
+    );
     let err = result.unwrap_err();
-    assert_eq!(err, "No contract!", "Error should be 'No contract!': {}", err);
+    assert_eq!(
+        err, "No contract!",
+        "Error should be 'No contract!': {}",
+        err
+    );
 }
 
 /// Test that removing an approval removes only the FIRST occurrence (Java parity).
@@ -172,7 +179,9 @@ fn test_proposal_approve_remove_first_occurrence_only() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     // Create owner as witness
     let owner_witness = tron_backend_execution::WitnessInfo::new(
@@ -289,7 +298,9 @@ fn test_proposal_approve_add_approval_happy_path() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     let owner_witness = tron_backend_execution::WitnessInfo::new(
         owner_address,
@@ -336,14 +347,25 @@ fn test_proposal_approve_add_approval_happy_path() {
     let result =
         service.execute_proposal_approve_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_ok(), "Add approval should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Add approval should succeed: {:?}",
+        result.err()
+    );
     let execution_result = result.unwrap();
     assert!(execution_result.success, "Execution should be successful");
 
     // Verify approval was added
     let updated_proposal = storage_adapter.get_proposal(1).unwrap().unwrap();
-    assert_eq!(updated_proposal.approvals.len(), 1, "Should have 1 approval");
-    assert_eq!(updated_proposal.approvals[0], owner_tron, "Approval should be owner");
+    assert_eq!(
+        updated_proposal.approvals.len(),
+        1,
+        "Should have 1 approval"
+    );
+    assert_eq!(
+        updated_proposal.approvals[0], owner_tron,
+        "Approval should be owner"
+    );
 }
 
 /// Test validation: cannot remove approval that doesn't exist
@@ -380,7 +402,9 @@ fn test_proposal_approve_remove_not_approved_fails() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
     let owner_witness = tron_backend_execution::WitnessInfo::new(
         owner_address,
         "http://witness.example.com".to_string(),
@@ -465,7 +489,9 @@ fn test_proposal_approve_repeat_approval_fails() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
     let owner_witness = tron_backend_execution::WitnessInfo::new(
         owner_address,
         "http://witness.example.com".to_string(),
@@ -553,7 +579,9 @@ fn test_proposal_approve_preserves_unknown_protobuf_fields() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
     let owner_witness = tron_backend_execution::WitnessInfo::new(
         owner_address,
         "http://witness.example.com".to_string(),
@@ -592,7 +620,9 @@ fn test_proposal_approve_preserves_unknown_protobuf_fields() {
     proposal_bytes.extend_from_slice(unknown_data);
 
     // Store the proposal with unknown field
-    storage_adapter.put_proposal_raw(1, proposal_bytes.clone()).unwrap();
+    storage_adapter
+        .put_proposal_raw(1, proposal_bytes.clone())
+        .unwrap();
 
     // Now add an approval
     let contract_data = build_proposal_approve_contract(&owner_tron, 1, true);
@@ -617,14 +647,26 @@ fn test_proposal_approve_preserves_unknown_protobuf_fields() {
     let result =
         service.execute_proposal_approve_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_ok(), "Add approval should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Add approval should succeed: {:?}",
+        result.err()
+    );
 
     // Retrieve the raw bytes and verify unknown field is preserved
-    let (updated_proposal, updated_bytes) = storage_adapter.get_proposal_with_raw(1).unwrap().unwrap();
+    let (updated_proposal, updated_bytes) =
+        storage_adapter.get_proposal_with_raw(1).unwrap().unwrap();
 
     // Verify approval was added
-    assert_eq!(updated_proposal.approvals.len(), 1, "Should have 1 approval");
-    assert_eq!(updated_proposal.approvals[0], owner_tron, "Approval should be owner");
+    assert_eq!(
+        updated_proposal.approvals.len(),
+        1,
+        "Should have 1 approval"
+    );
+    assert_eq!(
+        updated_proposal.approvals[0], owner_tron,
+        "Approval should be owner"
+    );
 
     // Verify unknown field 99 is still present in the raw bytes
     // We search for the pattern: field 99 tag (0xF8 0x06 for varint encoding of (99 << 3) | 2)

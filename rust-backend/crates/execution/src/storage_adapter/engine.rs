@@ -13,17 +13,17 @@
 //!
 //! See planning/fast_do.todo.md for the full implementation plan.
 
+use super::db_names;
+use super::traits::EvmStateStore;
+use super::types::{AccountAext, FreezeRecord, VotesRecord, WitnessInfo};
+use super::utils::{keccak256, to_tron_address};
+use super::write_buffer::{ExecutionWriteBuffer, WriteOp};
 use anyhow::Result;
 use prost::Message;
-use revm::primitives::{AccountInfo, Bytecode, Address, U256};
-use tron_backend_storage::StorageEngine;
-use super::traits::EvmStateStore;
-use super::types::{WitnessInfo, VotesRecord, FreezeRecord, AccountAext};
-use super::utils::{keccak256, to_tron_address};
-use super::db_names;
-use super::write_buffer::{ExecutionWriteBuffer, WriteOp};
+use revm::primitives::{AccountInfo, Address, Bytecode, U256};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use tron_backend_storage::StorageEngine;
 
 // Import the generated TRON protocol types
 use crate::protocol::{Account as ProtoAccount, AccountType as ProtoAccountType};
@@ -75,7 +75,9 @@ impl EngineBackedEvmStateStore {
     /// When the buffer is set, all write operations go to the buffer instead
     /// of directly to storage. Call `commit_buffer()` after successful execution
     /// to persist all changes atomically.
-    pub fn new_with_buffer(storage_engine: StorageEngine) -> (Self, Arc<Mutex<ExecutionWriteBuffer>>) {
+    pub fn new_with_buffer(
+        storage_engine: StorageEngine,
+    ) -> (Self, Arc<Mutex<ExecutionWriteBuffer>>) {
         let address_prefix = Self::detect_address_prefix(&storage_engine);
         let buffer = Arc::new(Mutex::new(ExecutionWriteBuffer::new()));
         let store = Self {
@@ -119,7 +121,10 @@ impl EngineBackedEvmStateStore {
     /// Returns an error if no buffer is attached or if the commit fails.
     pub fn commit_buffer(&mut self) -> Result<()> {
         if let Some(buffer) = &self.write_buffer {
-            buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?.commit(&self.storage_engine)?;
+            buffer
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?
+                .commit(&self.storage_engine)?;
             Ok(())
         } else {
             Err(anyhow::anyhow!("No write buffer attached"))
@@ -132,7 +137,10 @@ impl EngineBackedEvmStateStore {
     /// Otherwise, it goes directly to the storage engine.
     fn buffered_put(&self, db: &str, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         if let Some(buffer) = &self.write_buffer {
-            buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?.put(db, key, value);
+            buffer
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?
+                .put(db, key, value);
             Ok(())
         } else {
             self.storage_engine.put(db, &key, &value)
@@ -145,7 +153,9 @@ impl EngineBackedEvmStateStore {
     /// provide read-your-writes semantics within a transaction.
     fn buffered_get(&self, db: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
         if let Some(buffer) = &self.write_buffer {
-            let guard = buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+            let guard = buffer
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
             if let Some(ops) = guard.get_operations(db) {
                 if let Some(op) = ops.get(key) {
                     return match op {
@@ -180,7 +190,9 @@ impl EngineBackedEvmStateStore {
         }
 
         if let Some(buffer) = &self.write_buffer {
-            let guard = buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+            let guard = buffer
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
             if let Some(ops) = guard.get_operations(db) {
                 for (key, op) in ops {
                     if !key.starts_with(prefix) {
@@ -214,7 +226,10 @@ impl EngineBackedEvmStateStore {
     /// Otherwise, it goes directly to the storage engine.
     fn buffered_delete(&self, db: &str, key: Vec<u8>) -> Result<()> {
         if let Some(buffer) = &self.write_buffer {
-            buffer.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?.delete(db, key);
+            buffer
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?
+                .delete(db, key);
             Ok(())
         } else {
             self.storage_engine.delete(db, &key)
@@ -355,7 +370,7 @@ impl EngineBackedEvmStateStore {
 
         let mut composed_key = Vec::with_capacity(32);
         composed_key.extend_from_slice(&addr_hash.as_slice()[0..16]); // First 16 bytes of address hash
-        composed_key.extend_from_slice(&storage_key_bytes[16..32]);   // Last 16 bytes of storage key
+        composed_key.extend_from_slice(&storage_key_bytes[16..32]); // Last 16 bytes of storage key
         composed_key
     }
 
@@ -549,7 +564,11 @@ impl EngineBackedEvmStateStore {
         self.rewrite_account_asset_v2(&data, prev_order.as_deref())
     }
 
-    fn rewrite_account_asset_v2(&self, data: &[u8], prev_order: Option<&[String]>) -> Result<Vec<u8>> {
+    fn rewrite_account_asset_v2(
+        &self,
+        data: &[u8],
+        prev_order: Option<&[String]>,
+    ) -> Result<Vec<u8>> {
         // Account.assetV2 field number in protocol.tron.proto is 56.
         const ACCOUNT_ASSET_V2_FIELD_NUMBER: u64 = 56;
 
@@ -558,7 +577,8 @@ impl EngineBackedEvmStateStore {
             return Ok(data.to_vec());
         }
 
-        let desired_order = self.merge_asset_v2_order(prev_order, &current_order, &entries_by_key)?;
+        let desired_order =
+            self.merge_asset_v2_order(prev_order, &current_order, &entries_by_key)?;
 
         let mut out = Vec::with_capacity(data.len() + 8);
         let mut pos = 0usize;
@@ -893,27 +913,33 @@ impl EngineBackedEvmStateStore {
             }
         }
 
-        Err(anyhow::anyhow!("Unexpected end of data while reading varint"))
+        Err(anyhow::anyhow!(
+            "Unexpected end of data while reading varint"
+        ))
     }
 
     /// Skip a field in protobuf data
     fn skip_field(&self, data: &[u8], pos: usize, wire_type: u64) -> Result<usize> {
         match wire_type {
-            0 => { // Varint
+            0 => {
+                // Varint
                 let (_, new_pos) = self.read_varint(data, pos)?;
                 Ok(new_pos)
-            },
-            1 => { // 64-bit
+            }
+            1 => {
+                // 64-bit
                 Ok(pos + 8)
-            },
-            2 => { // Length-delimited
+            }
+            2 => {
+                // Length-delimited
                 let (length, new_pos) = self.read_varint(data, pos)?;
                 Ok(new_pos + length as usize)
-            },
-            5 => { // 32-bit
+            }
+            5 => {
+                // 32-bit
                 Ok(pos + 4)
-            },
-            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type))
+            }
+            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type)),
         }
     }
 
@@ -921,19 +947,21 @@ impl EngineBackedEvmStateStore {
     /// Default value for witness creation cost in SUN
     pub fn get_account_upgrade_cost(&self) -> Result<u64> {
         let key = b"ACCOUNT_UPGRADE_COST";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let cost = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(cost)
                 } else {
                     // Use default value for AccountUpgradeCost
                     Ok(9999000000) // 9999 TRX in SUN (default from TRON)
                 }
-            },
+            }
             None => {
                 // Use default value for AccountUpgradeCost
                 Ok(9999000000) // 9999 TRX in SUN (default from TRON)
@@ -946,19 +974,21 @@ impl EngineBackedEvmStateStore {
     /// Java reference: DynamicPropertiesStore.java:1554, 1568
     pub fn get_asset_issue_fee(&self) -> Result<u64> {
         let key = b"ASSET_ISSUE_FEE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let fee = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(fee)
                 } else {
                     // Use default value for AssetIssueFee
                     Ok(1024000000) // 1024 TRX in SUN (default from TRON mainnet)
                 }
-            },
+            }
             None => {
                 // Use default value for AssetIssueFee
                 Ok(1024000000) // 1024 TRX in SUN (default from TRON mainnet)
@@ -972,21 +1002,26 @@ impl EngineBackedEvmStateStore {
     /// Default value: 1_000_000 SUN (1 TRX)
     pub fn get_create_new_account_fee_in_system_contract(&self) -> Result<u64> {
         let key = b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let fee = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
-                    tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT from DB: {} SUN", fee);
+                    tracing::debug!(
+                        "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT from DB: {} SUN",
+                        fee
+                    );
                     Ok(fee)
                 } else {
                     // Use default value if data is too short
                     tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT has invalid length, using default 1000000 SUN");
                     Ok(1_000_000) // 1 TRX in SUN (default from TRON)
                 }
-            },
+            }
             None => {
                 // Use default value if not found
                 tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT not found, using default 1000000 SUN");
@@ -1001,11 +1036,13 @@ impl EngineBackedEvmStateStore {
     /// Default value: 1 (no multiplier)
     pub fn get_create_new_account_bandwidth_rate(&self) -> Result<i64> {
         let key = b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) if data.len() >= 8 => {
                 let rate = i64::from_be_bytes([
-                    data[0], data[1], data[2], data[3],
-                    data[4], data[5], data[6], data[7],
+                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                 ]);
                 tracing::debug!("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE from DB: {}", rate);
                 Ok(rate)
@@ -1023,11 +1060,13 @@ impl EngineBackedEvmStateStore {
     /// Default value: 100_000 SUN (0.1 TRX)
     pub fn get_create_account_fee(&self) -> Result<u64> {
         let key = b"CREATE_ACCOUNT_FEE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) if data.len() >= 8 => {
                 let fee = u64::from_be_bytes([
-                    data[0], data[1], data[2], data[3],
-                    data[4], data[5], data[6], data[7],
+                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                 ]);
                 tracing::debug!("CREATE_ACCOUNT_FEE from DB: {} SUN", fee);
                 Ok(fee)
@@ -1047,8 +1086,7 @@ impl EngineBackedEvmStateStore {
         let key = b"TOTAL_CREATE_ACCOUNT_COST";
         match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
-                data[0], data[1], data[2], data[3],
-                data[4], data[5], data[6], data[7],
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
             ])),
             _ => Ok(0),
         }
@@ -1075,7 +1113,11 @@ impl EngineBackedEvmStateStore {
             key.to_vec(),
             new_value.to_be_bytes().to_vec(),
         )?;
-        tracing::debug!("TOTAL_CREATE_ACCOUNT_COST updated: {} -> {}", current, new_value);
+        tracing::debug!(
+            "TOTAL_CREATE_ACCOUNT_COST updated: {} -> {}",
+            current,
+            new_value
+        );
         Ok(())
     }
 
@@ -1084,14 +1126,16 @@ impl EngineBackedEvmStateStore {
     /// Java throws `IllegalArgumentException("not found ALLOW_MULTI_SIGN")` if missing.
     pub fn get_allow_multi_sign(&self) -> Result<bool> {
         let key = b"ALLOW_MULTI_SIGN";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 // Java stores dynamic properties as big-endian i64.
                 // Java: getAllowMultiSign() != 1 is "not allowed", so we need strict == 1 check.
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(val == 1)
                 } else if !data.is_empty() {
@@ -1101,7 +1145,7 @@ impl EngineBackedEvmStateStore {
                     // Empty data treated as missing for strict parity
                     Err(anyhow::anyhow!("not found ALLOW_MULTI_SIGN"))
                 }
-            },
+            }
             None => {
                 // Java throws IllegalArgumentException when key is missing
                 Err(anyhow::anyhow!("not found ALLOW_MULTI_SIGN"))
@@ -1115,10 +1159,9 @@ impl EngineBackedEvmStateStore {
     /// "7fff1fc0033e0000000000000000000000000000000000000000000000000000" when missing.
     pub fn get_active_default_operations(&self) -> Result<Vec<u8>> {
         const DEFAULT_ACTIVE_DEFAULT_OPERATIONS: [u8; 32] = [
-            0x7f, 0xff, 0x1f, 0xc0, 0x03, 0x3e, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x7f, 0xff, 0x1f, 0xc0, 0x03, 0x3e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
         ];
 
         let key = b"ACTIVE_DEFAULT_OPERATIONS";
@@ -1134,12 +1177,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 when missing/invalid.
     pub fn get_forbid_transfer_to_contract(&self) -> Result<u64> {
         let key = b"FORBID_TRANSFER_TO_CONTRACT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if !data.is_empty() {
                     Ok(data[0] as u64)
@@ -1157,12 +1202,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 when missing/invalid.
     pub fn get_allow_tvm_compatible_evm(&self) -> Result<u64> {
         let key = b"ALLOW_TVM_COMPATIBLE_EVM";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if !data.is_empty() {
                     Ok(data[0] as u64)
@@ -1183,14 +1230,16 @@ impl EngineBackedEvmStateStore {
     pub fn support_black_hole_optimization(&self) -> Result<bool> {
         // Parity key with java-tron DynamicPropertiesStore
         let key = b"ALLOW_BLACKHOLE_OPTIMIZATION";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 // Java writes a long; interpret big-endian i64 when length >= 8.
                 // Java: supportBlackHoleOptimization() checks value == 1 (strict).
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(val == 1)
                 } else if !data.is_empty() {
@@ -1200,7 +1249,7 @@ impl EngineBackedEvmStateStore {
                     // Empty value → treat as disabled (credit blackhole)
                     Ok(false)
                 }
-            },
+            }
             None => {
                 // Absent key → default to disabled (credit blackhole) for early heights
                 Ok(false)
@@ -1216,8 +1265,7 @@ impl EngineBackedEvmStateStore {
         let key = b"TOTAL_CREATE_WITNESS_FEE";
         match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
-                data[0], data[1], data[2], data[3],
-                data[4], data[5], data[6], data[7],
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
             ])),
             Some(_) => Ok(0),
             None => Ok(0),
@@ -1253,8 +1301,7 @@ impl EngineBackedEvmStateStore {
         let key = b"BURN_TRX_AMOUNT";
         match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
-                data[0], data[1], data[2], data[3],
-                data[4], data[5], data[6], data[7],
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
             ])),
             Some(_) => Ok(0),
             None => Ok(0),
@@ -1289,12 +1336,14 @@ impl EngineBackedEvmStateStore {
     /// Default: true (enabled)
     pub fn support_allow_new_resource_model(&self) -> Result<bool> {
         let key = b"ALLOW_NEW_RESOURCE_MODEL";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(val != 0)
                 } else if !data.is_empty() {
@@ -1302,7 +1351,7 @@ impl EngineBackedEvmStateStore {
                 } else {
                     Ok(true) // Default enabled
                 }
-            },
+            }
             None => {
                 Ok(true) // Default enabled
             }
@@ -1314,12 +1363,14 @@ impl EngineBackedEvmStateStore {
     /// Default: false (no delay)
     pub fn support_unfreeze_delay(&self) -> Result<bool> {
         let key = b"UNFREEZE_DELAY_DAYS";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(val > 0)
                 } else if !data.is_empty() {
@@ -1327,7 +1378,7 @@ impl EngineBackedEvmStateStore {
                 } else {
                     Ok(false) // Default no delay
                 }
-            },
+            }
             None => {
                 Ok(false) // Default no delay
             }
@@ -1339,12 +1390,14 @@ impl EngineBackedEvmStateStore {
     /// Returns the configured unfreeze delay in days, or 0 when missing/invalid.
     pub fn get_unfreeze_delay_days(&self) -> Result<i64> {
         let key = b"UNFREEZE_DELAY_DAYS";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if !data.is_empty() {
                     Ok(data[0] as i64)
@@ -1365,12 +1418,14 @@ impl EngineBackedEvmStateStore {
     pub fn get_max_delegate_lock_period(&self) -> Result<i64> {
         const DEFAULT_MAX_DELEGATE_LOCK_PERIOD: i64 = 86400; // DELEGATE_PERIOD / BLOCK_PRODUCED_INTERVAL
         let key = b"MAX_DELEGATE_LOCK_PERIOD";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if !data.is_empty() {
                     Ok(data[0] as i64)
@@ -1397,7 +1452,10 @@ impl EngineBackedEvmStateStore {
     ///   to match java-tron's AccountStore.getBlackhole() behavior.
     pub fn get_blackhole_address(&self) -> Result<Option<Address>> {
         let key = b"BLACK_HOLE_ADDRESS";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 20 {
                     let mut addr_bytes = [0u8; 20];
@@ -1407,7 +1465,7 @@ impl EngineBackedEvmStateStore {
                     // Invalid or empty value: fall back to default for the detected network prefix
                     Ok(Some(self.get_blackhole_address_evm()))
                 }
-            },
+            }
             None => {
                 // Not configured in dynamic properties - use sane network default for prefix
                 Ok(Some(self.get_blackhole_address_evm()))
@@ -1424,18 +1482,23 @@ impl EngineBackedEvmStateStore {
     pub fn get_latest_block_header_timestamp(&self) -> Result<i64> {
         // Java stores this as lowercase key "latest_block_header_timestamp"
         let key = b"latest_block_header_timestamp";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
-                    tracing::warn!("LATEST_BLOCK_HEADER_TIMESTAMP has invalid length: {}", data.len());
+                    tracing::warn!(
+                        "LATEST_BLOCK_HEADER_TIMESTAMP has invalid length: {}",
+                        data.len()
+                    );
                     Ok(0)
                 }
-            },
+            }
             None => {
                 tracing::debug!("LATEST_BLOCK_HEADER_TIMESTAMP not found, returning 0");
                 Ok(0)
@@ -1449,12 +1512,14 @@ impl EngineBackedEvmStateStore {
     /// When missing or invalid, return 0 and allow callers to fall back to context values.
     pub fn get_energy_fee(&self) -> Result<u64> {
         let key = b"ENERGY_FEE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     if val > 0 {
                         Ok(val as u64)
@@ -1542,7 +1607,10 @@ impl EngineBackedEvmStateStore {
     /// FROZEN_PERIOD = 86,400,000 ms (24 hours in ms)
     pub fn get_witness_allowance_frozen_time(&self) -> Result<i64> {
         let key = b"WITNESS_ALLOWANCE_FROZEN_TIME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 match data.len() {
                     len if len >= 8 => Ok(i64::from_be_bytes([
@@ -1559,7 +1627,7 @@ impl EngineBackedEvmStateStore {
                         Ok(1)
                     }
                 }
-            },
+            }
             None => {
                 tracing::debug!("WITNESS_ALLOWANCE_FROZEN_TIME not found, returning default 1 day");
                 Ok(1) // Default: 1 day
@@ -1739,18 +1807,20 @@ impl EngineBackedEvmStateStore {
     /// Default: 5000 bytes per transaction
     pub fn get_free_net_limit(&self) -> Result<i64> {
         let key = b"FREE_NET_LIMIT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(5000) // Default
                 }
-            },
-            None => Ok(5000) // Default
+            }
+            None => Ok(5000), // Default
         }
     }
 
@@ -1758,18 +1828,20 @@ impl EngineBackedEvmStateStore {
     /// Default: 14_400_000_000 bytes
     pub fn get_public_net_limit(&self) -> Result<i64> {
         let key = b"PUBLIC_NET_LIMIT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(14_400_000_000) // Default
                 }
-            },
-            None => Ok(14_400_000_000) // Default
+            }
+            None => Ok(14_400_000_000), // Default
         }
     }
 
@@ -1777,18 +1849,20 @@ impl EngineBackedEvmStateStore {
     /// Default: 0
     pub fn get_public_net_usage(&self) -> Result<i64> {
         let key = b"PUBLIC_NET_USAGE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
                 }
-            },
-            None => Ok(0)
+            }
+            None => Ok(0),
         }
     }
 
@@ -1796,7 +1870,11 @@ impl EngineBackedEvmStateStore {
     pub fn set_public_net_usage(&self, value: i64) -> Result<()> {
         let key = b"PUBLIC_NET_USAGE";
         let data = value.to_be_bytes();
-        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            data.to_vec(),
+        )?;
         Ok(())
     }
 
@@ -1804,18 +1882,20 @@ impl EngineBackedEvmStateStore {
     /// Default: 0
     pub fn get_public_net_time(&self) -> Result<i64> {
         let key = b"PUBLIC_NET_TIME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
                 }
-            },
-            None => Ok(0)
+            }
+            None => Ok(0),
         }
     }
 
@@ -1823,7 +1903,11 @@ impl EngineBackedEvmStateStore {
     pub fn set_public_net_time(&self, value: i64) -> Result<()> {
         let key = b"PUBLIC_NET_TIME";
         let data = value.to_be_bytes();
-        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            data.to_vec(),
+        )?;
         Ok(())
     }
 
@@ -1831,14 +1915,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 10 SUN/byte
     pub fn get_transaction_fee(&self) -> Result<i64> {
         let key = b"TRANSACTION_FEE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
-            Some(data) if data.len() >= 8 => {
-                Ok(i64::from_be_bytes([
-                    data[0], data[1], data[2], data[3],
-                    data[4], data[5], data[6], data[7],
-                ]))
-            }
-            _ => Ok(10) // Default: 10 SUN per byte
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ])),
+            _ => Ok(10), // Default: 10 SUN per byte
         }
     }
 
@@ -1850,14 +1934,13 @@ impl EngineBackedEvmStateStore {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
                 }
-            },
-            None => Ok(0)
+            }
+            None => Ok(0),
         }
     }
 
@@ -1869,14 +1952,13 @@ impl EngineBackedEvmStateStore {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(43_200_000_000) // Default
                 }
-            },
-            None => Ok(43_200_000_000) // Default
+            }
+            None => Ok(43_200_000_000), // Default
         }
     }
 
@@ -1887,7 +1969,8 @@ impl EngineBackedEvmStateStore {
             return Ok(());
         }
         let current = self.get_total_net_weight()?;
-        let mut new_value = current.checked_add(delta)
+        let mut new_value = current
+            .checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_net_weight"))?;
         // Java parity: DynamicPropertiesStore.addTotalNetWeight() clamps to max(0, ...) when allowNewReward()
         if self.allow_new_reward().unwrap_or(false) {
@@ -1895,7 +1978,11 @@ impl EngineBackedEvmStateStore {
         }
         let key = b"TOTAL_NET_WEIGHT";
         let data = new_value.to_be_bytes();
-        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            data.to_vec(),
+        )?;
         Ok(())
     }
 
@@ -1907,14 +1994,13 @@ impl EngineBackedEvmStateStore {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
                 }
-            },
-            None => Ok(0)
+            }
+            None => Ok(0),
         }
     }
 
@@ -1925,7 +2011,8 @@ impl EngineBackedEvmStateStore {
             return Ok(());
         }
         let current = self.get_total_energy_weight()?;
-        let mut new_value = current.checked_add(delta)
+        let mut new_value = current
+            .checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_energy_weight"))?;
         // Java parity: DynamicPropertiesStore.addTotalEnergyWeight() clamps to max(0, ...) when allowNewReward()
         if self.allow_new_reward().unwrap_or(false) {
@@ -1933,7 +2020,11 @@ impl EngineBackedEvmStateStore {
         }
         let key = b"TOTAL_ENERGY_WEIGHT";
         let data = new_value.to_be_bytes();
-        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            data.to_vec(),
+        )?;
         Ok(())
     }
 
@@ -1941,18 +2032,20 @@ impl EngineBackedEvmStateStore {
     /// Default: 0
     pub fn get_total_tron_power_weight(&self) -> Result<i64> {
         let key = b"TOTAL_TRON_POWER_WEIGHT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
                 }
-            },
-            None => Ok(0)
+            }
+            None => Ok(0),
         }
     }
 
@@ -1963,7 +2056,8 @@ impl EngineBackedEvmStateStore {
             return Ok(());
         }
         let current = self.get_total_tron_power_weight()?;
-        let mut new_value = current.checked_add(delta)
+        let mut new_value = current
+            .checked_add(delta)
             .ok_or_else(|| anyhow::anyhow!("Overflow in add_total_tron_power_weight"))?;
         // Java parity: DynamicPropertiesStore.addTotalTronPowerWeight() clamps to max(0, ...) when allowNewReward()
         if self.allow_new_reward().unwrap_or(false) {
@@ -1971,7 +2065,11 @@ impl EngineBackedEvmStateStore {
         }
         let key = b"TOTAL_TRON_POWER_WEIGHT";
         let data = new_value.to_be_bytes();
-        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            data.to_vec(),
+        )?;
         Ok(())
     }
 
@@ -1980,12 +2078,14 @@ impl EngineBackedEvmStateStore {
     /// Default: false
     pub fn support_allow_cancel_all_unfreeze_v2(&self) -> Result<bool> {
         let key = b"ALLOW_CANCEL_ALL_UNFREEZE_V2";
-        let allow_cancel = match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        let allow_cancel = match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     val == 1
                 } else if !data.is_empty() {
@@ -1993,7 +2093,7 @@ impl EngineBackedEvmStateStore {
                 } else {
                     false
                 }
-            },
+            }
             None => false, // Default disabled
         };
 
@@ -2008,12 +2108,14 @@ impl EngineBackedEvmStateStore {
     /// Default: false
     pub fn support_dr(&self) -> Result<bool> {
         let key = b"ALLOW_DELEGATE_RESOURCE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(val > 0)
                 } else if !data.is_empty() {
@@ -2021,8 +2123,8 @@ impl EngineBackedEvmStateStore {
                 } else {
                     Ok(false)
                 }
-            },
-            None => Ok(false) // Default disabled
+            }
+            None => Ok(false), // Default disabled
         }
     }
 
@@ -2034,13 +2136,12 @@ impl EngineBackedEvmStateStore {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(50_000_000_000) // Default (mainnet early default)
                 }
-            },
+            }
             None => Ok(50_000_000_000), // Default
         }
     }
@@ -2063,7 +2164,8 @@ impl EngineBackedEvmStateStore {
             if kv.key.len() == 22 && kv.key[21] == BANDWIDTH_RESOURCE {
                 // Deserialize freeze record
                 let record = FreezeRecord::deserialize(&kv.value)?;
-                total_sun = total_sun.checked_add(record.frozen_amount as u128)
+                total_sun = total_sun
+                    .checked_add(record.frozen_amount as u128)
                     .ok_or_else(|| anyhow::anyhow!("Overflow computing total net weight"))?;
             }
         }
@@ -2071,7 +2173,11 @@ impl EngineBackedEvmStateStore {
         // Convert to weight: integer division by TRX_PRECISION
         let weight = (total_sun / TRX_PRECISION) as i64;
 
-        tracing::debug!("Computed total net weight: {} (from {} SUN)", weight, total_sun);
+        tracing::debug!(
+            "Computed total net weight: {} (from {} SUN)",
+            weight,
+            total_sun
+        );
         Ok(weight)
     }
 
@@ -2093,7 +2199,8 @@ impl EngineBackedEvmStateStore {
             if kv.key.len() == 22 && kv.key[21] == ENERGY_RESOURCE {
                 // Deserialize freeze record
                 let record = FreezeRecord::deserialize(&kv.value)?;
-                total_sun = total_sun.checked_add(record.frozen_amount as u128)
+                total_sun = total_sun
+                    .checked_add(record.frozen_amount as u128)
                     .ok_or_else(|| anyhow::anyhow!("Overflow computing total energy weight"))?;
             }
         }
@@ -2101,7 +2208,11 @@ impl EngineBackedEvmStateStore {
         // Convert to weight: integer division by TRX_PRECISION
         let weight = (total_sun / TRX_PRECISION) as i64;
 
-        tracing::debug!("Computed total energy weight: {} (from {} SUN)", weight, total_sun);
+        tracing::debug!(
+            "Computed total energy weight: {} (from {} SUN)",
+            weight,
+            total_sun
+        );
         Ok(weight)
     }
 
@@ -2109,8 +2220,11 @@ impl EngineBackedEvmStateStore {
     /// Uses dual-decoder: tries protobuf first (Java format), falls back to legacy custom format
     pub fn get_witness(&self, address: &Address) -> Result<Option<WitnessInfo>> {
         let key = self.witness_key(address);
-        tracing::debug!("Getting witness for address {:?}, key: {}",
-                       address, hex::encode(&key));
+        tracing::debug!(
+            "Getting witness for address {:?}, key: {}",
+            address,
+            hex::encode(&key)
+        );
 
         match self.storage_engine.get(self.witness_database(), &key)? {
             Some(data) => {
@@ -2119,16 +2233,19 @@ impl EngineBackedEvmStateStore {
                 // Step 1: Try protobuf decode (Java-compatible format)
                 match WitnessInfo::deserialize(&data) {
                     Ok(witness) => {
-                        tracing::debug!("Decoded witness as Protocol.Witness (protobuf) - URL: {}, votes: {}",
-                                       witness.url, witness.vote_count);
+                        tracing::debug!(
+                            "Decoded witness as Protocol.Witness (protobuf) - URL: {}, votes: {}",
+                            witness.url,
+                            witness.vote_count
+                        );
                         return Ok(Some(witness));
-                    },
+                    }
                     Err(e) => {
                         tracing::debug!("Protobuf decode failed ({}), trying legacy format", e);
                         Ok(None)
                     }
                 }
-            },
+            }
             None => {
                 tracing::debug!("No witness found for address {:?}", address);
                 Ok(None)
@@ -2143,8 +2260,13 @@ impl EngineBackedEvmStateStore {
         // Use protobuf encoding for Java compatibility, with the detected network prefix.
         let data = witness.serialize_with_prefix(self.address_prefix);
 
-        tracing::debug!("Storing witness (protobuf format) for address {:?}, key: {}, URL: {}, votes: {}",
-                       witness.address, hex::encode(&key), witness.url, witness.vote_count);
+        tracing::debug!(
+            "Storing witness (protobuf format) for address {:?}, key: {}, URL: {}, votes: {}",
+            witness.address,
+            hex::encode(&key),
+            witness.url,
+            witness.vote_count
+        );
 
         self.buffered_put(self.witness_database(), key, data)?;
         Ok(())
@@ -2158,8 +2280,8 @@ impl EngineBackedEvmStateStore {
     /// `witnessCapsule.setUrl(...)` and re-persists the capsule, leaving every
     /// other field intact.
     pub fn update_witness_url(&self, address: &Address, new_url: &str) -> Result<()> {
-        use prost::Message;
         use crate::protocol::Witness;
+        use prost::Message;
 
         let key = self.witness_key(address);
 
@@ -2199,24 +2321,30 @@ impl EngineBackedEvmStateStore {
     /// Get votes record for an address
     pub fn get_votes(&self, address: &Address) -> Result<Option<VotesRecord>> {
         let key = self.votes_key(address);
-        tracing::debug!("Getting votes for address {:?}, key: {}",
-                       address, hex::encode(&key));
+        tracing::debug!(
+            "Getting votes for address {:?}, key: {}",
+            address,
+            hex::encode(&key)
+        );
 
         match self.storage_engine.get(self.votes_database(), &key)? {
             Some(data) => {
                 tracing::debug!("Found votes data, length: {}", data.len());
                 match VotesRecord::deserialize(&data) {
                     Ok(votes) => {
-                        tracing::debug!("Successfully deserialized votes - old_votes: {}, new_votes: {}",
-                                       votes.old_votes.len(), votes.new_votes.len());
+                        tracing::debug!(
+                            "Successfully deserialized votes - old_votes: {}, new_votes: {}",
+                            votes.old_votes.len(),
+                            votes.new_votes.len()
+                        );
                         Ok(Some(votes))
-                    },
+                    }
                     Err(e) => {
                         tracing::error!("Failed to deserialize votes data: {}", e);
                         Ok(None) // Return None instead of error for corrupted data
                     }
                 }
-            },
+            }
             None => {
                 tracing::debug!("No votes found for address {:?}", address);
                 Ok(None)
@@ -2229,8 +2357,13 @@ impl EngineBackedEvmStateStore {
         let key = self.votes_key(&address);
         let data = votes.serialize_with_prefix(self.address_prefix);
 
-        tracing::debug!("Storing votes for address {:?}, key: {}, old_votes: {}, new_votes: {}",
-                       address, hex::encode(&key), votes.old_votes.len(), votes.new_votes.len());
+        tracing::debug!(
+            "Storing votes for address {:?}, key: {}, old_votes: {}, new_votes: {}",
+            address,
+            hex::encode(&key),
+            votes.old_votes.len(),
+            votes.new_votes.len()
+        );
 
         self.buffered_put(self.votes_database(), key, data)?;
         Ok(())
@@ -2249,26 +2382,42 @@ impl EngineBackedEvmStateStore {
     pub fn get_account_votes_list(&self, address: &Address) -> Result<Vec<(Address, u64)>> {
         let key = self.account_key(address);
         let address_tron = to_tron_address(address);
-        tracing::debug!("Getting account votes list for address {:?} (tron: {}), key: {}",
-                       address, address_tron, hex::encode(&key));
+        tracing::debug!(
+            "Getting account votes list for address {:?} (tron: {}), key: {}",
+            address,
+            address_tron,
+            hex::encode(&key)
+        );
 
         match self.storage_engine.get(self.account_database(), &key)? {
             Some(data) => {
-                tracing::debug!("Found account data for votes extraction, length: {}", data.len());
+                tracing::debug!(
+                    "Found account data for votes extraction, length: {}",
+                    data.len()
+                );
                 match self.extract_votes_from_account_protobuf(&data) {
                     Ok(votes) => {
-                        tracing::info!("Extracted {} votes from Account.votes field for {}",
-                                      votes.len(), address_tron);
+                        tracing::info!(
+                            "Extracted {} votes from Account.votes field for {}",
+                            votes.len(),
+                            address_tron
+                        );
                         Ok(votes)
-                    },
+                    }
                     Err(e) => {
-                        tracing::warn!("Failed to extract votes from Account protobuf: {}, returning empty", e);
+                        tracing::warn!(
+                            "Failed to extract votes from Account protobuf: {}, returning empty",
+                            e
+                        );
                         Ok(Vec::new())
                     }
                 }
-            },
+            }
             None => {
-                tracing::debug!("No account found for address {:?}, returning empty votes list", address);
+                tracing::debug!(
+                    "No account found for address {:?}, returning empty votes list",
+                    address
+                );
                 Ok(Vec::new())
             }
         }
@@ -2304,7 +2453,7 @@ impl EngineBackedEvmStateStore {
                 match self.parse_vote_message(vote_data) {
                     Ok((vote_address, vote_count)) => {
                         votes.push((vote_address, vote_count));
-                    },
+                    }
                     Err(e) => {
                         tracing::warn!("Failed to parse Vote message: {}, skipping", e);
                     }
@@ -2349,28 +2498,36 @@ impl EngineBackedEvmStateStore {
                     pos += length as usize;
 
                     // Remove TRON address prefix if present (21-byte Tron → 20-byte EVM)
-                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
+                    let evm_addr = if addr_bytes.len() == 21
+                        && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0)
+                    {
                         &addr_bytes[1..]
                     } else if addr_bytes.len() == 20 {
                         addr_bytes
                     } else {
-                        return Err(anyhow::anyhow!("Invalid vote_address length: {}", addr_bytes.len()));
+                        return Err(anyhow::anyhow!(
+                            "Invalid vote_address length: {}",
+                            addr_bytes.len()
+                        ));
                     };
 
                     if evm_addr.len() != 20 {
-                        return Err(anyhow::anyhow!("Invalid EVM address length: {}", evm_addr.len()));
+                        return Err(anyhow::anyhow!(
+                            "Invalid EVM address length: {}",
+                            evm_addr.len()
+                        ));
                     }
 
                     let mut addr = [0u8; 20];
                     addr.copy_from_slice(evm_addr);
                     vote_address = Some(Address::from(addr));
-                },
+                }
                 (2, 0) => {
                     // vote_count (varint)
                     let (count, new_pos) = self.read_varint(data, pos)?;
                     pos = new_pos;
                     vote_count = Some(count);
-                },
+                }
                 _ => {
                     // Skip unknown fields
                     pos = self.skip_field(data, pos, wire_type)?;
@@ -2385,18 +2542,29 @@ impl EngineBackedEvmStateStore {
 
     /// Get freeze record for an address and resource type
     /// resource: 0=BANDWIDTH, 1=ENERGY, 2=TRON_POWER
-    pub fn get_freeze_record(&self, address: &Address, resource: u8) -> Result<Option<FreezeRecord>> {
+    pub fn get_freeze_record(
+        &self,
+        address: &Address,
+        resource: u8,
+    ) -> Result<Option<FreezeRecord>> {
         let key = self.freeze_record_key(address, resource);
-        tracing::debug!("Getting freeze record for address {:?}, resource {}, key: {}",
-                       address, resource, hex::encode(&key));
+        tracing::debug!(
+            "Getting freeze record for address {:?}, resource {}, key: {}",
+            address,
+            resource,
+            hex::encode(&key)
+        );
 
         match self.buffered_get(self.freeze_records_database(), &key)? {
             Some(data) => {
                 let record = FreezeRecord::deserialize(&data)?;
-                tracing::debug!("Found freeze record: amount={}, expiration={}",
-                               record.frozen_amount, record.expiration_timestamp);
+                tracing::debug!(
+                    "Found freeze record: amount={}, expiration={}",
+                    record.frozen_amount,
+                    record.expiration_timestamp
+                );
                 Ok(Some(record))
-            },
+            }
             None => {
                 tracing::debug!("No freeze record found");
                 Ok(None)
@@ -2405,7 +2573,12 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Store freeze record for an address and resource type
-    pub fn set_freeze_record(&self, address: Address, resource: u8, record: &FreezeRecord) -> Result<()> {
+    pub fn set_freeze_record(
+        &self,
+        address: Address,
+        resource: u8,
+        record: &FreezeRecord,
+    ) -> Result<()> {
         let key = self.freeze_record_key(&address, resource);
         let data = record.serialize();
 
@@ -2418,12 +2591,21 @@ impl EngineBackedEvmStateStore {
 
     /// Add to existing freeze amount (convenience method)
     /// If no record exists, creates a new one
-    pub fn add_freeze_amount(&self, address: Address, resource: u8, amount: u64, expiration: i64) -> Result<()> {
-        let mut record = self.get_freeze_record(&address, resource)?
+    pub fn add_freeze_amount(
+        &self,
+        address: Address,
+        resource: u8,
+        amount: u64,
+        expiration: i64,
+    ) -> Result<()> {
+        let mut record = self
+            .get_freeze_record(&address, resource)?
             .unwrap_or(FreezeRecord::new(0, 0));
 
         // Add to frozen amount
-        record.frozen_amount = record.frozen_amount.checked_add(amount)
+        record.frozen_amount = record
+            .frozen_amount
+            .checked_add(amount)
             .ok_or_else(|| anyhow::anyhow!("Freeze amount overflow"))?;
 
         // Update expiration to later of existing or new
@@ -2437,8 +2619,12 @@ impl EngineBackedEvmStateStore {
     pub fn remove_freeze_record(&self, address: &Address, resource: u8) -> Result<()> {
         let key = self.freeze_record_key(address, resource);
 
-        tracing::debug!("Removing freeze record for address {:?}, resource {}, key: {}",
-                       address, resource, hex::encode(&key));
+        tracing::debug!(
+            "Removing freeze record for address {:?}, resource {}, key: {}",
+            address,
+            resource,
+            hex::encode(&key)
+        );
 
         self.buffered_delete(self.freeze_records_database(), key)?;
         Ok(())
@@ -2463,7 +2649,8 @@ impl EngineBackedEvmStateStore {
             if value < 0 {
                 return Err(anyhow::anyhow!("Negative {} total: {}", label, value));
             }
-            u64::try_from(value).map_err(|_| anyhow::anyhow!("{} exceeds u64::MAX: {}", label, value))
+            u64::try_from(value)
+                .map_err(|_| anyhow::anyhow!("{} exceeds u64::MAX: {}", label, value))
         }
 
         const TRON_POWER: i32 = crate::protocol::ResourceCode::TronPower as i32;
@@ -2514,7 +2701,11 @@ impl EngineBackedEvmStateStore {
                 // FreezeV2 balances for BANDWIDTH/ENERGY (exclude TRON_POWER).
                 for frozen_v2 in &account.frozen_v2 {
                     if frozen_v2.r#type != TRON_POWER {
-                        add_non_negative_i64(&mut tron_power, frozen_v2.amount, "frozen_v2_amount")?;
+                        add_non_negative_i64(
+                            &mut tron_power,
+                            frozen_v2.amount,
+                            "frozen_v2_amount",
+                        )?;
                     }
                 }
 
@@ -2548,22 +2739,29 @@ impl EngineBackedEvmStateStore {
                             "tron_power_frozen_balance",
                         )?;
                         tmp.checked_add(tron_power_frozen_v2_balance)
-                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing tron power frozen totals"))?
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("Overflow while summing tron power frozen totals")
+                            })?
                     };
 
                     let old_tron_power = account.old_tron_power;
                     let all_tron_power = if old_tron_power == -1 {
                         tp_frozen_total
                     } else if old_tron_power == 0 {
-                        tron_power
-                            .checked_add(tp_frozen_total)
-                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing all_tron_power"))?
+                        tron_power.checked_add(tp_frozen_total).ok_or_else(|| {
+                            anyhow::anyhow!("Overflow while summing all_tron_power")
+                        })?
                     } else if old_tron_power > 0 {
                         (old_tron_power as i128)
                             .checked_add(tp_frozen_total)
-                            .ok_or_else(|| anyhow::anyhow!("Overflow while summing all_tron_power"))?
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("Overflow while summing all_tron_power")
+                            })?
                     } else {
-                        return Err(anyhow::anyhow!("Invalid old_tron_power: {}", old_tron_power));
+                        return Err(anyhow::anyhow!(
+                            "Invalid old_tron_power: {}",
+                            old_tron_power
+                        ));
                     };
 
                     to_u64_checked(all_tron_power, "all_tron_power")?
@@ -2690,10 +2888,16 @@ impl EngineBackedEvmStateStore {
     /// Get account AEXT (resource tracking fields) for an address
     pub fn get_account_aext(&self, address: &Address) -> Result<Option<AccountAext>> {
         let key = self.account_aext_key(address);
-        tracing::debug!("Getting account AEXT for address {:?}, key: {}",
-                       address, hex::encode(&key));
+        tracing::debug!(
+            "Getting account AEXT for address {:?}, key: {}",
+            address,
+            hex::encode(&key)
+        );
 
-        match self.storage_engine.get(self.account_aext_database(), &key)? {
+        match self
+            .storage_engine
+            .get(self.account_aext_database(), &key)?
+        {
             Some(data) => {
                 tracing::debug!("Found account AEXT data, length: {}", data.len());
                 match AccountAext::deserialize(&data) {
@@ -2701,13 +2905,16 @@ impl EngineBackedEvmStateStore {
                         tracing::debug!("Successfully deserialized account AEXT - net_usage: {}, free_net_usage: {}, net_window: {}",
                                        aext.net_usage, aext.free_net_usage, aext.net_window_size);
                         Ok(Some(aext))
-                    },
+                    }
                     Err(e) => {
-                        tracing::warn!("Failed to deserialize account AEXT data: {}, returning None", e);
+                        tracing::warn!(
+                            "Failed to deserialize account AEXT data: {}, returning None",
+                            e
+                        );
                         Ok(None)
                     }
                 }
-            },
+            }
             None => {
                 tracing::debug!("No account AEXT found for address {:?}", address);
                 Ok(None)
@@ -2787,7 +2994,12 @@ impl EngineBackedEvmStateStore {
 
     /// **Preferred name**: Store freeze record (upsert semantics, aligns with `put_witness`).
     /// Delegates to `set_freeze_record`. Use this method in new code.
-    pub fn put_freeze_record(&self, address: Address, resource: u8, record: &FreezeRecord) -> Result<()> {
+    pub fn put_freeze_record(
+        &self,
+        address: Address,
+        resource: u8,
+        record: &FreezeRecord,
+    ) -> Result<()> {
         self.set_freeze_record(address, resource, record)
     }
 
@@ -2824,12 +3036,14 @@ impl EngineBackedEvmStateStore {
     pub fn allow_change_delegation(&self) -> Result<bool> {
         // java-tron stores this flag under the "CHANGE_DELEGATION" dynamic property key.
         let key = b"CHANGE_DELEGATION";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(val == 1)
                 } else if !data.is_empty() {
@@ -2849,12 +3063,14 @@ impl EngineBackedEvmStateStore {
     /// Java reference: DynamicPropertiesStore.getCurrentCycleNumber()
     pub fn get_current_cycle_number(&self) -> Result<i64> {
         let key = b"CURRENT_CYCLE_NUMBER";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     tracing::warn!("CURRENT_CYCLE_NUMBER has invalid length: {}", data.len());
@@ -2873,12 +3089,14 @@ impl EngineBackedEvmStateStore {
     /// Returns Long.MAX_VALUE if not set (meaning old algorithm always used)
     pub fn get_new_reward_algorithm_effective_cycle(&self) -> Result<i64> {
         let key = b"NEW_REWARD_ALGORITHM_EFFECTIVE_CYCLE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     // Default to Long.MAX_VALUE (old algorithm always)
@@ -2898,12 +3116,14 @@ impl EngineBackedEvmStateStore {
     /// Returns the raw value (0 or 1 typically). Defaults to 0 if not found.
     pub fn get_allow_new_reward(&self) -> Result<i64> {
         let key = b"ALLOW_NEW_REWARD";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     tracing::warn!("ALLOW_NEW_REWARD has invalid length: {}", data.len());
@@ -2929,15 +3149,20 @@ impl EngineBackedEvmStateStore {
     /// Returns the raw value (0 or 1 typically). Defaults to 0 if not found.
     pub fn get_allow_delegate_optimization(&self) -> Result<i64> {
         let key = b"ALLOW_DELEGATE_OPTIMIZATION";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
-                    tracing::warn!("ALLOW_DELEGATE_OPTIMIZATION has invalid length: {}", data.len());
+                    tracing::warn!(
+                        "ALLOW_DELEGATE_OPTIMIZATION has invalid length: {}",
+                        data.len()
+                    );
                     Ok(0)
                 }
             }
@@ -2969,8 +3194,7 @@ impl EngineBackedEvmStateStore {
             Some(data) => {
                 if data.len() >= 8 {
                     let cycle = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!("delegation begin_cycle for {:?}: {}", address, cycle);
                     Ok(cycle)
@@ -2980,7 +3204,10 @@ impl EngineBackedEvmStateStore {
                 }
             }
             None => {
-                tracing::debug!("delegation begin_cycle not found for {:?}, returning 0", address);
+                tracing::debug!(
+                    "delegation begin_cycle not found for {:?}, returning 0",
+                    address
+                );
                 Ok(0)
             }
         }
@@ -2998,8 +3225,7 @@ impl EngineBackedEvmStateStore {
             Some(data) => {
                 if data.len() >= 8 {
                     let cycle = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!("delegation end_cycle for {:?}: {}", address, cycle);
                     Ok(cycle)
@@ -3009,7 +3235,10 @@ impl EngineBackedEvmStateStore {
                 }
             }
             None => {
-                tracing::debug!("delegation end_cycle not found for {:?}, returning REMARK", address);
+                tracing::debug!(
+                    "delegation end_cycle not found for {:?}, returning REMARK",
+                    address
+                );
                 Ok(DELEGATION_STORE_REMARK)
             }
         }
@@ -3028,26 +3257,32 @@ impl EngineBackedEvmStateStore {
         let key = delegation_account_vote_key(cycle, &tron_addr);
 
         match self.storage_engine.get(self.delegation_database(), &key)? {
-            Some(data) => {
-                match AccountVoteSnapshot::deserialize(&data) {
-                    Ok(snapshot) => {
-                        tracing::debug!(
-                            "delegation account_vote for {:?} cycle {}: {} votes",
-                            address, cycle, snapshot.votes.len()
-                        );
-                        Ok(Some(snapshot))
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to deserialize account_vote for {:?} cycle {}: {}",
-                            address, cycle, e
-                        );
-                        Ok(None)
-                    }
+            Some(data) => match AccountVoteSnapshot::deserialize(&data) {
+                Ok(snapshot) => {
+                    tracing::debug!(
+                        "delegation account_vote for {:?} cycle {}: {} votes",
+                        address,
+                        cycle,
+                        snapshot.votes.len()
+                    );
+                    Ok(Some(snapshot))
                 }
-            }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to deserialize account_vote for {:?} cycle {}: {}",
+                        address,
+                        cycle,
+                        e
+                    );
+                    Ok(None)
+                }
+            },
             None => {
-                tracing::debug!("delegation account_vote not found for {:?} cycle {}", address, cycle);
+                tracing::debug!(
+                    "delegation account_vote not found for {:?} cycle {}",
+                    address,
+                    cycle
+                );
                 Ok(None)
             }
         }
@@ -3065,12 +3300,13 @@ impl EngineBackedEvmStateStore {
             Some(data) => {
                 if data.len() >= 8 {
                     let reward = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!(
                         "delegation reward for {:?} cycle {}: {}",
-                        witness_address, cycle, reward
+                        witness_address,
+                        cycle,
+                        reward
                     );
                     Ok(reward)
                 } else {
@@ -3084,7 +3320,11 @@ impl EngineBackedEvmStateStore {
     /// Get total witness vote count for a cycle.
     /// Java reference: DelegationStore.getWitnessVote()
     /// Returns REMARK (-1) if not found.
-    pub fn get_delegation_witness_vote(&self, cycle: i64, witness_address: &Address) -> Result<i64> {
+    pub fn get_delegation_witness_vote(
+        &self,
+        cycle: i64,
+        witness_address: &Address,
+    ) -> Result<i64> {
         use crate::delegation::{delegation_witness_vote_key, DELEGATION_STORE_REMARK};
         let tron_addr = self.delegation_address_key(witness_address);
         let key = delegation_witness_vote_key(cycle, &tron_addr);
@@ -3093,12 +3333,13 @@ impl EngineBackedEvmStateStore {
             Some(data) => {
                 if data.len() >= 8 {
                     let vote = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!(
                         "delegation witness_vote for {:?} cycle {}: {}",
-                        witness_address, cycle, vote
+                        witness_address,
+                        cycle,
+                        vote
                     );
                     Ok(vote)
                 } else {
@@ -3129,7 +3370,9 @@ impl EngineBackedEvmStateStore {
                 let vi = BigInt::from_signed_bytes_be(&data);
                 tracing::debug!(
                     "delegation witness_vi for {:?} cycle {}: {}",
-                    witness_address, cycle, vi
+                    witness_address,
+                    cycle,
+                    vi
                 );
                 Ok(vi)
             }
@@ -3151,7 +3394,9 @@ impl EngineBackedEvmStateStore {
                     let brokerage = i32::from_be_bytes([data[0], data[1], data[2], data[3]]);
                     tracing::debug!(
                         "delegation brokerage for {:?} cycle {}: {}%",
-                        witness_address, cycle, brokerage
+                        witness_address,
+                        cycle,
+                        brokerage
                     );
                     Ok(brokerage)
                 } else {
@@ -3172,7 +3417,11 @@ impl EngineBackedEvmStateStore {
         let key = delegation_begin_cycle_key(&tron_addr);
         let data = cycle.to_be_bytes();
 
-        tracing::debug!("Setting delegation begin_cycle for {:?}: {}", address, cycle);
+        tracing::debug!(
+            "Setting delegation begin_cycle for {:?}: {}",
+            address,
+            cycle
+        );
         self.buffered_put(self.delegation_database(), key, data.to_vec())?;
         Ok(())
     }
@@ -3205,7 +3454,9 @@ impl EngineBackedEvmStateStore {
 
         tracing::debug!(
             "Setting delegation account_vote for {:?} cycle {}: {} votes",
-            address, cycle, snapshot.votes.len()
+            address,
+            cycle,
+            snapshot.votes.len()
         );
         self.buffered_put(self.delegation_database(), key, data)?;
         Ok(())
@@ -3228,7 +3479,9 @@ impl EngineBackedEvmStateStore {
 
         tracing::debug!(
             "Setting delegation account_vote (raw) for {:?} cycle {}: {} bytes",
-            address, cycle, raw_account_bytes.len()
+            address,
+            cycle,
+            raw_account_bytes.len()
         );
         self.buffered_put(self.delegation_database(), key, raw_account_bytes)?;
         Ok(())
@@ -3254,7 +3507,8 @@ impl EngineBackedEvmStateStore {
 
         tracing::debug!(
             "Got {} delegation votes from account {:?}",
-            votes.len(), address
+            votes.len(),
+            address
         );
         Ok(votes)
     }
@@ -3263,7 +3517,12 @@ impl EngineBackedEvmStateStore {
     /// Java reference: DelegationStore.setBrokerage(cycle, address, brokerage)
     /// The brokerage is stored as a 4-byte big-endian integer.
     /// For UpdateBrokerageContract, cycle is always -1 (REMARK).
-    pub fn set_delegation_brokerage(&self, cycle: i64, address: &Address, brokerage: i32) -> Result<()> {
+    pub fn set_delegation_brokerage(
+        &self,
+        cycle: i64,
+        address: &Address,
+        brokerage: i32,
+    ) -> Result<()> {
         use crate::delegation::delegation_brokerage_key;
         let tron_addr = self.delegation_address_key(address);
         let key = delegation_brokerage_key(cycle, &tron_addr);
@@ -3271,7 +3530,9 @@ impl EngineBackedEvmStateStore {
 
         tracing::debug!(
             "Setting delegation brokerage for {:?} cycle {}: {}%",
-            address, cycle, brokerage
+            address,
+            cycle,
+            brokerage
         );
         self.buffered_put(self.delegation_database(), key, data.to_vec())?;
         Ok(())
@@ -3300,7 +3561,11 @@ impl EngineBackedEvmStateStore {
     pub fn get_proposal(&self, proposal_id: i64) -> Result<Option<crate::protocol::Proposal>> {
         use crate::protocol::Proposal;
         let key = self.proposal_key(proposal_id);
-        tracing::debug!("Getting proposal {}, key: {}", proposal_id, hex::encode(&key));
+        tracing::debug!(
+            "Getting proposal {}, key: {}",
+            proposal_id,
+            hex::encode(&key)
+        );
 
         match self.storage_engine.get(self.proposal_database(), &key)? {
             Some(data) => {
@@ -3331,10 +3596,17 @@ impl EngineBackedEvmStateStore {
 
     /// Get proposal by ID with raw bytes
     /// Returns both the decoded Proposal and the raw bytes (for surgical updates that preserve unknown fields)
-    pub fn get_proposal_with_raw(&self, proposal_id: i64) -> Result<Option<(crate::protocol::Proposal, Vec<u8>)>> {
+    pub fn get_proposal_with_raw(
+        &self,
+        proposal_id: i64,
+    ) -> Result<Option<(crate::protocol::Proposal, Vec<u8>)>> {
         use crate::protocol::Proposal;
         let key = self.proposal_key(proposal_id);
-        tracing::debug!("Getting proposal with raw {}, key: {}", proposal_id, hex::encode(&key));
+        tracing::debug!(
+            "Getting proposal with raw {}, key: {}",
+            proposal_id,
+            hex::encode(&key)
+        );
 
         match self.storage_engine.get(self.proposal_database(), &key)? {
             Some(data) => {
@@ -3394,7 +3666,8 @@ impl EngineBackedEvmStateStore {
             let field_start = pos;
 
             // Read field header (tag)
-            let (field_header, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+            let (field_header, bytes_read) = self
+                .read_varint_from_slice(&raw_bytes[pos..])
                 .map_err(|e| anyhow::anyhow!("Failed to read field header: {}", e))?;
             pos += bytes_read;
 
@@ -3405,7 +3678,8 @@ impl EngineBackedEvmStateStore {
             let field_end = match wire_type {
                 0 => {
                     // Varint - skip the varint value
-                    let (_, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                    let (_, bytes_read) = self
+                        .read_varint_from_slice(&raw_bytes[pos..])
                         .map_err(|e| anyhow::anyhow!("Failed to read varint: {}", e))?;
                     pos + bytes_read
                 }
@@ -3415,7 +3689,8 @@ impl EngineBackedEvmStateStore {
                 }
                 2 => {
                     // Length-delimited
-                    let (length, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                    let (length, bytes_read) = self
+                        .read_varint_from_slice(&raw_bytes[pos..])
                         .map_err(|e| anyhow::anyhow!("Failed to read length: {}", e))?;
                     pos + bytes_read + length as usize
                 }
@@ -3475,7 +3750,8 @@ impl EngineBackedEvmStateStore {
             let field_start = pos;
 
             // Read field header (tag)
-            let (field_header, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+            let (field_header, bytes_read) = self
+                .read_varint_from_slice(&raw_bytes[pos..])
                 .map_err(|e| anyhow::anyhow!("Failed to read field header: {}", e))?;
             pos += bytes_read;
 
@@ -3486,7 +3762,8 @@ impl EngineBackedEvmStateStore {
             let field_end = match wire_type {
                 0 => {
                     // Varint - skip the varint value
-                    let (_, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                    let (_, bytes_read) = self
+                        .read_varint_from_slice(&raw_bytes[pos..])
                         .map_err(|e| anyhow::anyhow!("Failed to read varint: {}", e))?;
                     pos + bytes_read
                 }
@@ -3496,7 +3773,8 @@ impl EngineBackedEvmStateStore {
                 }
                 2 => {
                     // Length-delimited
-                    let (length, bytes_read) = self.read_varint_from_slice(&raw_bytes[pos..])
+                    let (length, bytes_read) = self
+                        .read_varint_from_slice(&raw_bytes[pos..])
                         .map_err(|e| anyhow::anyhow!("Failed to read length: {}", e))?;
                     pos + bytes_read + length as usize
                 }
@@ -3618,11 +3896,8 @@ impl EngineBackedEvmStateStore {
 
         // Field 3: parameters (map<int64,int64>) - entries are encoded in ascending key order.
         if !proposal.parameters.is_empty() {
-            let mut entries: Vec<(i64, i64)> = proposal
-                .parameters
-                .iter()
-                .map(|(k, v)| (*k, *v))
-                .collect();
+            let mut entries: Vec<(i64, i64)> =
+                proposal.parameters.iter().map(|(k, v)| (*k, *v)).collect();
             entries.sort_by_key(|(k, _)| *k);
 
             for (key, value) in entries {
@@ -3687,12 +3962,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found
     pub fn get_latest_proposal_num(&self) -> Result<i64> {
         let key = b"LATEST_PROPOSAL_NUM";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let num = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!("LATEST_PROPOSAL_NUM: {}", num);
                     Ok(num)
@@ -3713,7 +3990,11 @@ impl EngineBackedEvmStateStore {
         let key = b"LATEST_PROPOSAL_NUM";
         let data = num.to_be_bytes();
         tracing::debug!("Setting LATEST_PROPOSAL_NUM to {}", num);
-        self.buffered_put(self.dynamic_properties_database(), key.to_vec(), data.to_vec())?;
+        self.buffered_put(
+            self.dynamic_properties_database(),
+            key.to_vec(),
+            data.to_vec(),
+        )?;
         Ok(())
     }
 
@@ -3722,12 +4003,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found
     pub fn get_next_maintenance_time(&self) -> Result<i64> {
         let key = b"NEXT_MAINTENANCE_TIME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let time = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!("NEXT_MAINTENANCE_TIME: {}", time);
                     Ok(time)
@@ -3748,17 +4031,22 @@ impl EngineBackedEvmStateStore {
     /// Default: 21600000 (6 hours) if not found
     pub fn get_maintenance_time_interval(&self) -> Result<i64> {
         let key = b"MAINTENANCE_TIME_INTERVAL";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let interval = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!("MAINTENANCE_TIME_INTERVAL: {}", interval);
                     Ok(interval)
                 } else {
-                    tracing::warn!("MAINTENANCE_TIME_INTERVAL has invalid length: {}", data.len());
+                    tracing::warn!(
+                        "MAINTENANCE_TIME_INTERVAL has invalid length: {}",
+                        data.len()
+                    );
                     Ok(21600000) // 6 hours in milliseconds
                 }
             }
@@ -3779,12 +4067,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_remove_the_power_of_the_gr(&self) -> Result<i64> {
         let key = b"REMOVE_THE_POWER_OF_THE_GR";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -3831,16 +4121,28 @@ impl EngineBackedEvmStateStore {
     /// Returns true if the account ID is already taken
     pub fn has_account_id(&self, account_id: &[u8]) -> Result<bool> {
         let key = self.account_id_key(account_id);
-        tracing::debug!("Checking if account_id exists: {:?} -> key: {}",
-                       String::from_utf8_lossy(account_id), hex::encode(&key));
+        tracing::debug!(
+            "Checking if account_id exists: {:?} -> key: {}",
+            String::from_utf8_lossy(account_id),
+            hex::encode(&key)
+        );
 
-        match self.storage_engine.get(self.account_id_index_database(), &key)? {
+        match self
+            .storage_engine
+            .get(self.account_id_index_database(), &key)?
+        {
             Some(_) => {
-                tracing::debug!("Account ID {} already exists", String::from_utf8_lossy(account_id));
+                tracing::debug!(
+                    "Account ID {} already exists",
+                    String::from_utf8_lossy(account_id)
+                );
                 Ok(true)
             }
             None => {
-                tracing::debug!("Account ID {} does not exist", String::from_utf8_lossy(account_id));
+                tracing::debug!(
+                    "Account ID {} does not exist",
+                    String::from_utf8_lossy(account_id)
+                );
                 Ok(false)
             }
         }
@@ -3850,16 +4152,25 @@ impl EngineBackedEvmStateStore {
     /// Returns the 21-byte TRON address (with 0x41 prefix)
     pub fn get_address_by_account_id(&self, account_id: &[u8]) -> Result<Option<Vec<u8>>> {
         let key = self.account_id_key(account_id);
-        tracing::debug!("Getting address for account_id: {:?} -> key: {}",
-                       String::from_utf8_lossy(account_id), hex::encode(&key));
+        tracing::debug!(
+            "Getting address for account_id: {:?} -> key: {}",
+            String::from_utf8_lossy(account_id),
+            hex::encode(&key)
+        );
 
-        match self.storage_engine.get(self.account_id_index_database(), &key)? {
+        match self
+            .storage_engine
+            .get(self.account_id_index_database(), &key)?
+        {
             Some(data) => {
-                tracing::debug!("Found address for account_id {}: {}",
-                               String::from_utf8_lossy(account_id), hex::encode(&data));
+                tracing::debug!(
+                    "Found address for account_id {}: {}",
+                    String::from_utf8_lossy(account_id),
+                    hex::encode(&data)
+                );
                 Ok(Some(data))
             }
-            None => Ok(None)
+            None => Ok(None),
         }
     }
 
@@ -3867,8 +4178,12 @@ impl EngineBackedEvmStateStore {
     /// address should be the 21-byte TRON address (with 0x41 prefix)
     pub fn put_account_id_index(&self, account_id: &[u8], address: &[u8]) -> Result<()> {
         let key = self.account_id_key(account_id);
-        tracing::debug!("Storing account_id index: {:?} -> {} (key: {})",
-                       String::from_utf8_lossy(account_id), hex::encode(address), hex::encode(&key));
+        tracing::debug!(
+            "Storing account_id index: {:?} -> {} (key: {})",
+            String::from_utf8_lossy(account_id),
+            hex::encode(address),
+            hex::encode(&key)
+        );
 
         self.buffered_put(self.account_id_index_database(), key, address.to_vec())?;
         Ok(())
@@ -3892,7 +4207,10 @@ impl EngineBackedEvmStateStore {
     /// - Truncates to low 32 bits (equivalent to taking last 4 bytes for len >= 4)
     pub fn get_total_sign_num(&self) -> Result<i64> {
         let key = b"TOTAL_SIGN_NUM";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 // Match Java's ByteArray.toInt(byte[] b) exactly:
                 // return ArrayUtils.isEmpty(b) ? 0 : new BigInteger(1, b).intValue();
@@ -3903,7 +4221,12 @@ impl EngineBackedEvmStateStore {
                     // BigInteger(1, b).intValue() returns low 32 bits of unsigned big-endian.
                     // For len >= 4, this is equivalent to taking the last 4 bytes.
                     let start = data.len() - 4;
-                    let last_4 = [data[start], data[start + 1], data[start + 2], data[start + 3]];
+                    let last_4 = [
+                        data[start],
+                        data[start + 1],
+                        data[start + 2],
+                        data[start + 3],
+                    ];
                     // Interpret as unsigned u32, cast to i32 for signed semantics, then to i64
                     let unsigned_val = u32::from_be_bytes(last_4);
                     (unsigned_val as i32) as i64
@@ -3930,18 +4253,23 @@ impl EngineBackedEvmStateStore {
     /// Java throws `IllegalArgumentException("not found UPDATE_ACCOUNT_PERMISSION_FEE")` if missing.
     pub fn get_update_account_permission_fee(&self) -> Result<i64> {
         let key = b"UPDATE_ACCOUNT_PERMISSION_FEE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let value = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!("UPDATE_ACCOUNT_PERMISSION_FEE: {}", value);
                     Ok(value)
                 } else {
                     // Invalid length treated as missing for strict parity
-                    tracing::warn!("UPDATE_ACCOUNT_PERMISSION_FEE has invalid length: {}", data.len());
+                    tracing::warn!(
+                        "UPDATE_ACCOUNT_PERMISSION_FEE has invalid length: {}",
+                        data.len()
+                    );
                     Err(anyhow::anyhow!("not found UPDATE_ACCOUNT_PERMISSION_FEE"))
                 }
             }
@@ -3957,7 +4285,10 @@ impl EngineBackedEvmStateStore {
     /// Java throws `IllegalArgumentException("not found AVAILABLE_CONTRACT_TYPE")` if missing.
     pub fn get_available_contract_type(&self) -> Result<Vec<u8>> {
         let key = b"AVAILABLE_CONTRACT_TYPE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 tracing::debug!("AVAILABLE_CONTRACT_TYPE: {} bytes", data.len());
                 Ok(data)
@@ -3976,16 +4307,12 @@ impl EngineBackedEvmStateStore {
         // Testnet default (config-test.conf genesis): 27WtBq2KoSy5v8VnVZBZHHJcDuWNiSgjbE3
         match self.address_prefix {
             0xa0 => [
-                0xa0,
-                0x55, 0x9c, 0xcf, 0x55, 0xfa, 0xdf, 0xfd, 0xf8,
-                0x14, 0xa4, 0x2a, 0xff, 0x33, 0x1d, 0xe9, 0x68,
-                0x8c, 0x13, 0x26, 0x12,
+                0xa0, 0x55, 0x9c, 0xcf, 0x55, 0xfa, 0xdf, 0xfd, 0xf8, 0x14, 0xa4, 0x2a, 0xff, 0x33,
+                0x1d, 0xe9, 0x68, 0x8c, 0x13, 0x26, 0x12,
             ],
             _ => [
-                0x41,
-                0x77, 0x94, 0x4d, 0x19, 0xc0, 0x52, 0xb7, 0x3e,
-                0xe2, 0x28, 0x68, 0x23, 0xaa, 0x83, 0xf8, 0x13,
-                0x8c, 0xb7, 0x03, 0x2f,
+                0x41, 0x77, 0x94, 0x4d, 0x19, 0xc0, 0x52, 0xb7, 0x3e, 0xe2, 0x28, 0x68, 0x23, 0xaa,
+                0x83, 0xf8, 0x13, 0x8c, 0xb7, 0x03, 0x2f,
             ],
         }
     }
@@ -4014,10 +4341,19 @@ impl EngineBackedEvmStateStore {
     /// Get a smart contract by its address
     /// Returns the SmartContract protobuf if found
     /// Key: 21-byte TRON address (0x41 prefix + 20 bytes)
-    pub fn get_smart_contract(&self, contract_address: &[u8]) -> Result<Option<crate::protocol::SmartContract>> {
-        tracing::debug!("Getting smart contract for address: {}", hex::encode(contract_address));
+    pub fn get_smart_contract(
+        &self,
+        contract_address: &[u8],
+    ) -> Result<Option<crate::protocol::SmartContract>> {
+        tracing::debug!(
+            "Getting smart contract for address: {}",
+            hex::encode(contract_address)
+        );
 
-        match self.storage_engine.get(self.contract_database(), contract_address)? {
+        match self
+            .storage_engine
+            .get(self.contract_database(), contract_address)?
+        {
             Some(data) => {
                 tracing::debug!("Found contract data, length: {}", data.len());
                 // Deserialize using prost
@@ -4034,7 +4370,10 @@ impl EngineBackedEvmStateStore {
                 }
             }
             None => {
-                tracing::debug!("Smart contract not found for address: {}", hex::encode(contract_address));
+                tracing::debug!(
+                    "Smart contract not found for address: {}",
+                    hex::encode(contract_address)
+                );
                 Ok(None)
             }
         }
@@ -4044,12 +4383,18 @@ impl EngineBackedEvmStateStore {
     /// Key: contract address (21-byte TRON address)
     pub fn put_smart_contract(&self, contract: &crate::protocol::SmartContract) -> Result<()> {
         let key = &contract.contract_address;
-        tracing::debug!("Storing smart contract at address: {}, consume_percent: {}, origin_energy_limit: {}",
-                       hex::encode(key), contract.consume_user_resource_percent, contract.origin_energy_limit);
+        tracing::debug!(
+            "Storing smart contract at address: {}, consume_percent: {}, origin_energy_limit: {}",
+            hex::encode(key),
+            contract.consume_user_resource_percent,
+            contract.origin_energy_limit
+        );
 
         // Serialize using prost
         let mut buf = Vec::new();
-        contract.encode(&mut buf).map_err(|e| anyhow::anyhow!("Failed to encode SmartContract: {}", e))?;
+        contract
+            .encode(&mut buf)
+            .map_err(|e| anyhow::anyhow!("Failed to encode SmartContract: {}", e))?;
 
         self.buffered_put(self.contract_database(), key.clone(), buf)?;
         Ok(())
@@ -4057,7 +4402,10 @@ impl EngineBackedEvmStateStore {
 
     /// Check if a smart contract exists
     pub fn has_smart_contract(&self, contract_address: &[u8]) -> Result<bool> {
-        match self.storage_engine.get(self.contract_database(), contract_address)? {
+        match self
+            .storage_engine
+            .get(self.contract_database(), contract_address)?
+        {
             Some(_) => Ok(true),
             None => Ok(false),
         }
@@ -4066,16 +4414,28 @@ impl EngineBackedEvmStateStore {
     /// Get ABI for a contract
     /// Returns the SmartContract.ABI protobuf if found
     /// Key: contract address (21-byte TRON address)
-    pub fn get_abi(&self, contract_address: &[u8]) -> Result<Option<crate::protocol::smart_contract::Abi>> {
-        tracing::debug!("Getting ABI for contract: {}", hex::encode(contract_address));
+    pub fn get_abi(
+        &self,
+        contract_address: &[u8],
+    ) -> Result<Option<crate::protocol::smart_contract::Abi>> {
+        tracing::debug!(
+            "Getting ABI for contract: {}",
+            hex::encode(contract_address)
+        );
 
-        match self.storage_engine.get(self.abi_database(), contract_address)? {
+        match self
+            .storage_engine
+            .get(self.abi_database(), contract_address)?
+        {
             Some(data) => {
                 tracing::debug!("Found ABI data, length: {}", data.len());
                 // Deserialize using prost
                 match crate::protocol::smart_contract::Abi::decode(&data[..]) {
                     Ok(abi) => {
-                        tracing::debug!("Successfully deserialized ABI - entries: {}", abi.entrys.len());
+                        tracing::debug!(
+                            "Successfully deserialized ABI - entries: {}",
+                            abi.entrys.len()
+                        );
                         Ok(Some(abi))
                     }
                     Err(e) => {
@@ -4085,7 +4445,10 @@ impl EngineBackedEvmStateStore {
                 }
             }
             None => {
-                tracing::debug!("ABI not found for contract: {}", hex::encode(contract_address));
+                tracing::debug!(
+                    "ABI not found for contract: {}",
+                    hex::encode(contract_address)
+                );
                 Ok(None)
             }
         }
@@ -4093,13 +4456,21 @@ impl EngineBackedEvmStateStore {
 
     /// Store ABI for a contract
     /// Key: contract address (21-byte TRON address)
-    pub fn put_abi(&self, contract_address: &[u8], abi: &crate::protocol::smart_contract::Abi) -> Result<()> {
-        tracing::debug!("Storing ABI for contract: {}, entries: {}",
-                       hex::encode(contract_address), abi.entrys.len());
+    pub fn put_abi(
+        &self,
+        contract_address: &[u8],
+        abi: &crate::protocol::smart_contract::Abi,
+    ) -> Result<()> {
+        tracing::debug!(
+            "Storing ABI for contract: {}, entries: {}",
+            hex::encode(contract_address),
+            abi.entrys.len()
+        );
 
         // Serialize using prost
         let mut buf = Vec::new();
-        abi.encode(&mut buf).map_err(|e| anyhow::anyhow!("Failed to encode ABI: {}", e))?;
+        abi.encode(&mut buf)
+            .map_err(|e| anyhow::anyhow!("Failed to encode ABI: {}", e))?;
 
         self.buffered_put(self.abi_database(), contract_address.to_vec(), buf)?;
         Ok(())
@@ -4108,7 +4479,10 @@ impl EngineBackedEvmStateStore {
     /// Clear ABI for a contract (write default empty ABI)
     /// This is used by ClearABIContract (type 48)
     pub fn clear_abi(&self, contract_address: &[u8]) -> Result<()> {
-        tracing::debug!("Clearing ABI for contract: {}", hex::encode(contract_address));
+        tracing::debug!(
+            "Clearing ABI for contract: {}",
+            hex::encode(contract_address)
+        );
 
         // Create default empty ABI
         let default_abi = crate::protocol::smart_contract::Abi::default();
@@ -4225,11 +4599,7 @@ impl EngineBackedEvmStateStore {
             dr.expire_time_for_energy = expire_time;
         }
 
-        self.buffered_put(
-            self.delegated_resource_database(),
-            key,
-            dr.encode_to_vec(),
-        )?;
+        self.buffered_put(self.delegated_resource_database(), key, dr.encode_to_vec())?;
 
         Ok(())
     }
@@ -4237,7 +4607,11 @@ impl EngineBackedEvmStateStore {
     /// Update DelegatedResourceAccountIndex for V1 delegation (FreezeBalanceContract delegation).
     ///
     /// Java oracle: FreezeBalanceActuator#delegateResource when supportAllowDelegateOptimization == false.
-    pub fn delegate_resource_account_index_v1(&self, owner: &Address, receiver: &Address) -> Result<()> {
+    pub fn delegate_resource_account_index_v1(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+    ) -> Result<()> {
         let owner_tron = self.to_tron_address_21(owner).to_vec();
         let receiver_tron = self.to_tron_address_21(receiver).to_vec();
 
@@ -4247,7 +4621,9 @@ impl EngineBackedEvmStateStore {
             .buffered_get(self.delegated_resource_account_index_database(), &owner_key)?
         {
             Some(data) => crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
-                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?,
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e)
+                })?,
             None => crate::protocol::DelegatedResourceAccountIndex {
                 account: owner_tron.clone(),
                 from_accounts: Vec::new(),
@@ -4268,11 +4644,14 @@ impl EngineBackedEvmStateStore {
 
         // Receiver index: add owner to from_accounts.
         let receiver_key = receiver_tron.clone();
-        let mut receiver_index = match self
-            .buffered_get(self.delegated_resource_account_index_database(), &receiver_key)?
-        {
+        let mut receiver_index = match self.buffered_get(
+            self.delegated_resource_account_index_database(),
+            &receiver_key,
+        )? {
             Some(data) => crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
-                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?,
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e)
+                })?,
             None => crate::protocol::DelegatedResourceAccountIndex {
                 account: receiver_tron.clone(),
                 from_accounts: Vec::new(),
@@ -4281,7 +4660,11 @@ impl EngineBackedEvmStateStore {
             },
         };
 
-        if !receiver_index.from_accounts.iter().any(|a| a == &owner_tron) {
+        if !receiver_index
+            .from_accounts
+            .iter()
+            .any(|a| a == &owner_tron)
+        {
             receiver_index.from_accounts.push(owner_tron);
         }
 
@@ -4320,17 +4703,23 @@ impl EngineBackedEvmStateStore {
     /// Remove DelegatedResourceAccountIndex entries for V1 delegation (UnfreezeBalanceContract).
     ///
     /// Java oracle: UnfreezeBalanceActuator#execute when supportAllowDelegateOptimization == false.
-    pub fn undelegate_resource_account_index_v1(&self, owner: &Address, receiver: &Address) -> Result<()> {
+    pub fn undelegate_resource_account_index_v1(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+    ) -> Result<()> {
         let owner_tron = self.to_tron_address_21(owner).to_vec();
         let receiver_tron = self.to_tron_address_21(receiver).to_vec();
 
         // Owner index: remove receiver from to_accounts.
         let owner_key = owner_tron.clone();
-        if let Some(data) = self
-            .buffered_get(self.delegated_resource_account_index_database(), &owner_key)?
+        if let Some(data) =
+            self.buffered_get(self.delegated_resource_account_index_database(), &owner_key)?
         {
             let mut owner_index = crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
-                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e)
+                })?;
             owner_index.to_accounts.retain(|a| a != &receiver_tron);
             self.buffered_put(
                 self.delegated_resource_account_index_database(),
@@ -4341,11 +4730,14 @@ impl EngineBackedEvmStateStore {
 
         // Receiver index: remove owner from from_accounts.
         let receiver_key = receiver_tron.clone();
-        if let Some(data) = self
-            .buffered_get(self.delegated_resource_account_index_database(), &receiver_key)?
-        {
-            let mut receiver_index = crate::protocol::DelegatedResourceAccountIndex::decode(&data[..])
-                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?;
+        if let Some(data) = self.buffered_get(
+            self.delegated_resource_account_index_database(),
+            &receiver_key,
+        )? {
+            let mut receiver_index =
+                crate::protocol::DelegatedResourceAccountIndex::decode(&data[..]).map_err(|e| {
+                    anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e)
+                })?;
             receiver_index.from_accounts.retain(|a| a != &owner_tron);
             self.buffered_put(
                 self.delegated_resource_account_index_database(),
@@ -4372,10 +4764,9 @@ impl EngineBackedEvmStateStore {
         let tron_addr = self.to_tron_address_21(address).to_vec();
 
         // Check if legacy index exists for this address
-        let index_data = match self.buffered_get(
-            self.delegated_resource_account_index_database(),
-            &tron_addr,
-        )? {
+        let index_data = match self
+            .buffered_get(self.delegated_resource_account_index_database(), &tron_addr)?
+        {
             Some(data) => data,
             None => {
                 // No legacy data - either already converted or never had delegation
@@ -4384,7 +4775,9 @@ impl EngineBackedEvmStateStore {
         };
 
         let index = crate::protocol::DelegatedResourceAccountIndex::decode(&index_data[..])
-            .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to decode DelegatedResourceAccountIndex: {}", e)
+            })?;
 
         // Convert to_accounts list: for each target, use index+1 as timestamp to preserve order
         for (i, to_account) in index.to_accounts.iter().enumerate() {
@@ -4399,10 +4792,7 @@ impl EngineBackedEvmStateStore {
         }
 
         // Delete the legacy key after successful conversion
-        self.buffered_delete(
-            self.delegated_resource_account_index_database(),
-            tron_addr,
-        )?;
+        self.buffered_delete(self.delegated_resource_account_index_database(), tron_addr)?;
 
         Ok(())
     }
@@ -4531,15 +4921,20 @@ impl EngineBackedEvmStateStore {
         self.unlock_expired_delegated_resource(owner, receiver, now)?;
 
         let key = self.delegated_resource_key_v2(owner, receiver, lock);
-        tracing::debug!("Delegating resource: from={}, to={}, is_bw={}, balance={}, lock={}, expire={}",
-                       hex::encode(owner), hex::encode(receiver), is_bandwidth, balance, lock, expire_time);
+        tracing::debug!(
+            "Delegating resource: from={}, to={}, is_bw={}, balance={}, lock={}, expire={}",
+            hex::encode(owner),
+            hex::encode(receiver),
+            is_bandwidth,
+            balance,
+            lock,
+            expire_time
+        );
 
         // Get or create DelegatedResource
         let mut dr = match self.buffered_get(self.delegated_resource_database(), &key)? {
-            Some(data) => {
-                crate::protocol::DelegatedResource::decode(&data[..])
-                    .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?
-            }
+            Some(data) => crate::protocol::DelegatedResource::decode(&data[..])
+                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource: {}", e))?,
             None => {
                 // Create new record
                 crate::protocol::DelegatedResource {
@@ -4570,25 +4965,38 @@ impl EngineBackedEvmStateStore {
 
     /// Java parity: `DelegatedResourceStore.unLockExpireResource(from, to, now)`
     /// Moves expired balances from the lock record (0x02) to the unlock record (0x01).
-    pub fn unlock_expired_delegated_resource(&self, from: &Address, to: &Address, now: i64) -> Result<()> {
+    pub fn unlock_expired_delegated_resource(
+        &self,
+        from: &Address,
+        to: &Address,
+        now: i64,
+    ) -> Result<()> {
         let lock_key = self.delegated_resource_key_v2(from, to, true);
         let unlock_key = self.delegated_resource_key_v2(from, to, false);
 
-        let Some(lock_data) = self.buffered_get(self.delegated_resource_database(), &lock_key)? else {
+        let Some(lock_data) = self.buffered_get(self.delegated_resource_database(), &lock_key)?
+        else {
             return Ok(());
         };
 
         let mut lock_resource = crate::protocol::DelegatedResource::decode(&lock_data[..])
-            .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource lock record: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to decode DelegatedResource lock record: {}", e)
+            })?;
 
         // If neither resource has expired, no-op.
-        if lock_resource.expire_time_for_energy >= now && lock_resource.expire_time_for_bandwidth >= now {
+        if lock_resource.expire_time_for_energy >= now
+            && lock_resource.expire_time_for_bandwidth >= now
+        {
             return Ok(());
         }
 
-        let mut unlock_resource = match self.buffered_get(self.delegated_resource_database(), &unlock_key)? {
-            Some(data) => crate::protocol::DelegatedResource::decode(&data[..])
-                .map_err(|e| anyhow::anyhow!("Failed to decode DelegatedResource unlock record: {}", e))?,
+        let mut unlock_resource = match self
+            .buffered_get(self.delegated_resource_database(), &unlock_key)?
+        {
+            Some(data) => crate::protocol::DelegatedResource::decode(&data[..]).map_err(|e| {
+                anyhow::anyhow!("Failed to decode DelegatedResource unlock record: {}", e)
+            })?,
             None => crate::protocol::DelegatedResource {
                 from: self.to_tron_address_21(from).to_vec(),
                 to: self.to_tron_address_21(to).to_vec(),
@@ -4607,13 +5015,16 @@ impl EngineBackedEvmStateStore {
         }
 
         if lock_resource.expire_time_for_bandwidth < now {
-            unlock_resource.frozen_balance_for_bandwidth += lock_resource.frozen_balance_for_bandwidth;
+            unlock_resource.frozen_balance_for_bandwidth +=
+                lock_resource.frozen_balance_for_bandwidth;
             unlock_resource.expire_time_for_bandwidth = 0;
             lock_resource.frozen_balance_for_bandwidth = 0;
             lock_resource.expire_time_for_bandwidth = 0;
         }
 
-        if lock_resource.frozen_balance_for_bandwidth == 0 && lock_resource.frozen_balance_for_energy == 0 {
+        if lock_resource.frozen_balance_for_bandwidth == 0
+            && lock_resource.frozen_balance_for_energy == 0
+        {
             self.buffered_delete(self.delegated_resource_database(), lock_key)?;
         } else {
             self.buffered_put(
@@ -4645,11 +5056,17 @@ impl EngineBackedEvmStateStore {
         self.unlock_expired_delegated_resource(owner, receiver, now)?;
 
         let key = self.delegated_resource_key_v2(owner, receiver, false);
-        tracing::debug!("Undelegating resource: from={}, to={}, is_bw={}, balance={}",
-                       hex::encode(owner), hex::encode(receiver), is_bandwidth, balance);
+        tracing::debug!(
+            "Undelegating resource: from={}, to={}, is_bw={}, balance={}",
+            hex::encode(owner),
+            hex::encode(receiver),
+            is_bandwidth,
+            balance
+        );
 
         // Get existing DelegatedResource
-        let data = self.buffered_get(self.delegated_resource_database(), &key)?
+        let data = self
+            .buffered_get(self.delegated_resource_database(), &key)?
             .ok_or_else(|| anyhow::anyhow!("DelegatedResource not found"))?;
 
         let mut dr = crate::protocol::DelegatedResource::decode(&data[..])
@@ -4731,8 +5148,10 @@ impl EngineBackedEvmStateStore {
         let owner_tron = self.to_tron_address_21(owner);
         let receiver_tron = self.to_tron_address_21(receiver);
 
-        let from_key = delegated_resource_account_index::create_db_key_v2_from(&owner_tron, &receiver_tron);
-        let to_key = delegated_resource_account_index::create_db_key_v2_to(&owner_tron, &receiver_tron);
+        let from_key =
+            delegated_resource_account_index::create_db_key_v2_from(&owner_tron, &receiver_tron);
+        let to_key =
+            delegated_resource_account_index::create_db_key_v2_to(&owner_tron, &receiver_tron);
 
         let to_index = crate::protocol::DelegatedResourceAccountIndex {
             account: receiver_tron.to_vec(),
@@ -4763,14 +5182,20 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Remove DelegatedResourceAccountIndex entries for a delegation (unDelegateV2).
-    pub fn undelegate_resource_account_index(&self, owner: &Address, receiver: &Address) -> Result<()> {
+    pub fn undelegate_resource_account_index(
+        &self,
+        owner: &Address,
+        receiver: &Address,
+    ) -> Result<()> {
         use super::key_helpers::delegated_resource_account_index;
 
         let owner_tron = self.to_tron_address_21(owner);
         let receiver_tron = self.to_tron_address_21(receiver);
 
-        let from_key = delegated_resource_account_index::create_db_key_v2_from(&owner_tron, &receiver_tron);
-        let to_key = delegated_resource_account_index::create_db_key_v2_to(&owner_tron, &receiver_tron);
+        let from_key =
+            delegated_resource_account_index::create_db_key_v2_from(&owner_tron, &receiver_tron);
+        let to_key =
+            delegated_resource_account_index::create_db_key_v2_to(&owner_tron, &receiver_tron);
 
         self.buffered_delete(self.delegated_resource_account_index_database(), from_key)?;
         self.buffered_delete(self.delegated_resource_account_index_database(), to_key)?;
@@ -4787,17 +5212,22 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 (not enabled)
     pub fn get_allow_tvm_constantinople(&self) -> Result<i64> {
         let key = b"ALLOW_TVM_CONSTANTINOPLE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let value = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!("ALLOW_TVM_CONSTANTINOPLE: {}", value);
                     Ok(value)
                 } else {
-                    tracing::warn!("ALLOW_TVM_CONSTANTINOPLE has invalid length: {}", data.len());
+                    tracing::warn!(
+                        "ALLOW_TVM_CONSTANTINOPLE has invalid length: {}",
+                        data.len()
+                    );
                     Ok(0)
                 }
             }
@@ -4813,12 +5243,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 (not enabled)
     pub fn get_allow_tvm_solidity059(&self) -> Result<i64> {
         let key = b"ALLOW_TVM_SOLIDITY_059";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let value = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!("ALLOW_TVM_SOLIDITY_059: {}", value);
                     Ok(value)
@@ -4839,17 +5271,22 @@ impl EngineBackedEvmStateStore {
     /// Default: 0
     pub fn get_latest_block_header_number(&self) -> Result<i64> {
         let key = b"LATEST_BLOCK_HEADER_NUMBER";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let value = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     tracing::debug!("LATEST_BLOCK_HEADER_NUMBER: {}", value);
                     Ok(value)
                 } else {
-                    tracing::warn!("LATEST_BLOCK_HEADER_NUMBER has invalid length: {}", data.len());
+                    tracing::warn!(
+                        "LATEST_BLOCK_HEADER_NUMBER has invalid length: {}",
+                        data.len()
+                    );
                     Ok(0)
                 }
             }
@@ -4880,8 +5317,12 @@ impl EngineBackedEvmStateStore {
         let block_num = self.get_latest_block_header_number()?;
         let threshold = self.get_block_num_for_energy_limit();
         let enabled = block_num >= threshold;
-        tracing::debug!("checkForEnergyLimit: block_num={}, threshold={}, enabled={}",
-                       block_num, threshold, enabled);
+        tracing::debug!(
+            "checkForEnergyLimit: block_num={}, threshold={}, enabled={}",
+            block_num,
+            threshold,
+            enabled
+        );
         Ok(enabled)
     }
 
@@ -4894,12 +5335,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_creation_of_contracts(&self) -> Result<i64> {
         let key = b"ALLOW_CREATION_OF_CONTRACTS";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -4914,12 +5357,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_delegate_resource(&self) -> Result<i64> {
         let key = b"ALLOW_DELEGATE_RESOURCE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -4934,12 +5379,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_tvm_transfer_trc10(&self) -> Result<i64> {
         let key = b"ALLOW_TVM_TRANSFER_TRC10";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -4954,12 +5401,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_change_delegation(&self) -> Result<i64> {
         let key = b"CHANGE_DELEGATION";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -4974,12 +5423,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_market_transaction(&self) -> Result<i64> {
         let key = b"ALLOW_MARKET_TRANSACTION";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5001,12 +5452,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_tvm_london(&self) -> Result<i64> {
         let key = b"ALLOW_TVM_LONDON";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5021,12 +5474,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_higher_limit_for_max_cpu_time_of_one_tx(&self) -> Result<i64> {
         let key = b"ALLOW_HIGHER_LIMIT_FOR_MAX_CPU_TIME_OF_ONE_TX";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5041,12 +5496,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_old_reward_opt(&self) -> Result<i64> {
         let key = b"ALLOW_OLD_REWARD_OPT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5068,12 +5525,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_energy_adjustment(&self) -> Result<i64> {
         let key = b"ALLOW_ENERGY_ADJUSTMENT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5088,12 +5547,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_strict_math(&self) -> Result<i64> {
         let key = b"ALLOW_STRICT_MATH";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5115,12 +5576,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_consensus_logic_optimization(&self) -> Result<i64> {
         let key = b"CONSENSUS_LOGIC_OPTIMIZATION";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5135,12 +5598,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_tvm_cancun(&self) -> Result<i64> {
         let key = b"ALLOW_TVM_CANCUN";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5155,12 +5620,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_tvm_blob(&self) -> Result<i64> {
         let key = b"ALLOW_TVM_BLOB";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5184,12 +5651,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_allow_tvm_vote(&self) -> Result<i64> {
         let key = b"ALLOW_TVM_VOTE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5204,18 +5673,18 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 if not found.
     pub fn get_latest_version(&self) -> Result<i64> {
         let key = b"LATEST_VERSION";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if data.len() >= 4 {
                     // Handle 4-byte int format
-                    Ok(i32::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                    ]) as i64)
+                    Ok(i32::from_be_bytes([data[0], data[1], data[2], data[3]]) as i64)
                 } else {
                     Ok(0)
                 }
@@ -5229,7 +5698,8 @@ impl EngineBackedEvmStateStore {
     /// Returns None if not found.
     pub fn stats_by_version(&self, version: i32) -> Result<Option<Vec<u8>>> {
         let key = format!("FORK_CONTROLLER_VERSION_{}", version);
-        self.storage_engine.get(self.dynamic_properties_database(), key.as_bytes())
+        self.storage_engine
+            .get(self.dynamic_properties_database(), key.as_bytes())
     }
 
     /// Check if a fork version has passed (simplified fork controller).
@@ -5309,19 +5779,29 @@ impl EvmStateStore for EngineBackedEvmStateStore {
         let key = self.account_key(address);
         // Convert to Tron format address for debugging consistency with Java logs
         let address_tron = to_tron_address(address);
-        tracing::info!("Getting account for address {:?} (tron: {}), key: {}", 
-                      address, address_tron, hex::encode(&key));
+        tracing::info!(
+            "Getting account for address {:?} (tron: {}), key: {}",
+            address,
+            address_tron,
+            hex::encode(&key)
+        );
 
         match self.buffered_get(self.account_database(), &key)? {
             Some(data) => {
-                tracing::debug!("Found account data, length: {}, first 32 bytes: {}",
-                               data.len(), hex::encode(&data[..std::cmp::min(32, data.len())]));
+                tracing::debug!(
+                    "Found account data, length: {}, first 32 bytes: {}",
+                    data.len(),
+                    hex::encode(&data[..std::cmp::min(32, data.len())])
+                );
                 match self.deserialize_account(&data) {
                     Ok(account) => {
-                        tracing::info!("Successfully deserialized account - balance: {}, nonce: {}",
-                                      account.balance, account.nonce);
+                        tracing::info!(
+                            "Successfully deserialized account - balance: {}, nonce: {}",
+                            account.balance,
+                            account.nonce
+                        );
                         Ok(Some(account))
-                    },
+                    }
                     Err(e) => {
                         tracing::error!("Failed to deserialize account data: {}", e);
                         // Provide default account as fallback
@@ -5333,17 +5813,24 @@ impl EvmStateStore for EngineBackedEvmStateStore {
                             code_hash: keccak256(&[]),
                             code: None,
                         };
-                        tracing::warn!("Providing default account due to deserialization error, balance: {}", default_balance);
+                        tracing::warn!(
+                            "Providing default account due to deserialization error, balance: {}",
+                            default_balance
+                        );
                         Ok(Some(default_account))
                     }
                 }
-            },
+            }
             None => {
-                tracing::info!("No account data found for address {:?} with key {} - account does not exist", address, hex::encode(&key));
+                tracing::info!(
+                    "No account data found for address {:?} with key {} - account does not exist",
+                    address,
+                    hex::encode(&key)
+                );
                 // Return None to indicate account doesn't exist
                 // This allows the Database implementation to handle account creation properly
                 Ok(None)
-            },
+            }
         }
     }
 
@@ -5378,11 +5865,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
         let existing_data = self.buffered_get(self.account_database(), &key)?;
 
         // Serialize using the update method that preserves existing fields
-        let data = self.serialize_account_update(
-            &address,
-            &account,
-            existing_data.as_deref(),
-        );
+        let data = self.serialize_account_update(&address, &account, existing_data.as_deref());
 
         tracing::info!(
             "Setting account for address {:?} (tron: {}), balance: {}, key: {}, data_len: {}, existing: {}",
@@ -5403,10 +5886,16 @@ impl EvmStateStore for EngineBackedEvmStateStore {
                 if read_data == data {
                     tracing::debug!("Verified account write for {} - data matches", address_tron);
                 } else {
-                    tracing::error!("Account write verification failed for {} - data mismatch!", address_tron);
+                    tracing::error!(
+                        "Account write verification failed for {} - data mismatch!",
+                        address_tron
+                    );
                 }
             } else {
-                tracing::error!("Account write verification failed for {} - could not read back!", address_tron);
+                tracing::error!(
+                    "Account write verification failed for {} - could not read back!",
+                    address_tron
+                );
             }
         }
 
@@ -5462,12 +5951,14 @@ impl EvmStateStore for EngineBackedEvmStateStore {
         use revm::primitives::SpecId;
 
         let read_flag = |key: &[u8]| -> Result<Option<i64>> {
-            match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+            match self
+                .storage_engine
+                .get(self.dynamic_properties_database(), key)?
+            {
                 Some(data) => {
                     if data.len() >= 8 {
                         Ok(Some(i64::from_be_bytes([
-                            data[0], data[1], data[2], data[3],
-                            data[4], data[5], data[6], data[7],
+                            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                         ])))
                     } else if !data.is_empty() {
                         Ok(Some(data[0] as i64))
@@ -5520,8 +6011,7 @@ impl EvmStateStore for EngineBackedEvmStateStore {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(Some(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ])))
                 } else if !data.is_empty() {
                     Ok(Some(data[0] as i64))
@@ -5579,19 +6069,21 @@ impl EngineBackedEvmStateStore {
         // Note: java-tron stores this under a key with a leading space:
         //   private static final byte[] ALLOW_SAME_TOKEN_NAME = " ALLOW_SAME_TOKEN_NAME".getBytes();
         let key = b" ALLOW_SAME_TOKEN_NAME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(val)
                 } else {
                     Ok(0) // Default disabled (legacy mode)
                 }
-            },
-            None => Ok(0) // Default disabled (legacy mode)
+            }
+            None => Ok(0), // Default disabled (legacy mode)
         }
     }
 
@@ -5603,12 +6095,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 1_000_000 to match mainnet genesis (first issued token becomes 1_000_001).
     pub fn get_token_id_num(&self) -> Result<i64> {
         let key = b"TOKEN_ID_NUM";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(1_000_000)
@@ -5633,19 +6127,21 @@ impl EngineBackedEvmStateStore {
     /// Default: 57_600_000_000 (matches Java DynamicPropertiesStore initialization)
     pub fn get_one_day_net_limit(&self) -> Result<i64> {
         let key = b"ONE_DAY_NET_LIMIT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(val)
                 } else {
                     Ok(57_600_000_000) // Java DynamicPropertiesStore default
                 }
-            },
-            None => Ok(57_600_000_000) // Java DynamicPropertiesStore default
+            }
+            None => Ok(57_600_000_000), // Java DynamicPropertiesStore default
         }
     }
 
@@ -5655,15 +6151,19 @@ impl EngineBackedEvmStateStore {
     /// Default: 3 (DynamicPropertiesStore initialization).
     pub fn get_max_frozen_time(&self) -> Result<i64> {
         let key = b"MAX_FROZEN_TIME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if data.len() >= 4 {
-                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                    Ok(i64::from(i32::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                    ])))
                 } else {
                     Ok(3)
                 }
@@ -5678,15 +6178,19 @@ impl EngineBackedEvmStateStore {
     /// Default: 3 (DynamicPropertiesStore initialization).
     pub fn get_min_frozen_time(&self) -> Result<i64> {
         let key = b"MIN_FROZEN_TIME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if data.len() >= 4 {
-                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                    Ok(i64::from(i32::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                    ])))
                 } else {
                     Ok(3)
                 }
@@ -5701,15 +6205,19 @@ impl EngineBackedEvmStateStore {
     /// Default: 10 (DynamicPropertiesStore initialization).
     pub fn get_max_frozen_supply_number(&self) -> Result<i64> {
         let key = b"MAX_FROZEN_SUPPLY_NUMBER";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if data.len() >= 4 {
-                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                    Ok(i64::from(i32::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                    ])))
                 } else {
                     Ok(10)
                 }
@@ -5724,15 +6232,19 @@ impl EngineBackedEvmStateStore {
     /// Default: 3652 (DynamicPropertiesStore initialization).
     pub fn get_max_frozen_supply_time(&self) -> Result<i64> {
         let key = b"MAX_FROZEN_SUPPLY_TIME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if data.len() >= 4 {
-                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                    Ok(i64::from(i32::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                    ])))
                 } else {
                     Ok(3652)
                 }
@@ -5747,15 +6259,19 @@ impl EngineBackedEvmStateStore {
     /// Default: 1 (DynamicPropertiesStore initialization).
     pub fn get_min_frozen_supply_time(&self) -> Result<i64> {
         let key = b"MIN_FROZEN_SUPPLY_TIME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if data.len() >= 4 {
-                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                    Ok(i64::from(i32::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                    ])))
                 } else {
                     Ok(1)
                 }
@@ -5775,18 +6291,20 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found ASSET_ISSUE_FEE"
     pub fn get_asset_issue_fee_strict(&self) -> Result<u64> {
         let key = b"ASSET_ISSUE_FEE";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let fee = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(fee)
                 } else {
                     Err(anyhow::anyhow!("not found ASSET_ISSUE_FEE"))
                 }
-            },
+            }
             None => Err(anyhow::anyhow!("not found ASSET_ISSUE_FEE")),
         }
     }
@@ -5795,18 +6313,20 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found ALLOW_SAME_TOKEN_NAME"
     pub fn get_allow_same_token_name_strict(&self) -> Result<i64> {
         let key = b" ALLOW_SAME_TOKEN_NAME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(val)
                 } else {
                     Err(anyhow::anyhow!("not found ALLOW_SAME_TOKEN_NAME"))
                 }
-            },
+            }
             None => Err(anyhow::anyhow!("not found ALLOW_SAME_TOKEN_NAME")),
         }
     }
@@ -5817,12 +6337,14 @@ impl EngineBackedEvmStateStore {
     /// Default: 0 (disabled)
     pub fn get_allow_asset_optimization(&self) -> Result<i64> {
         let key = b"ALLOW_ASSET_OPTIMIZATION";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0) // Default disabled
@@ -5842,19 +6364,25 @@ impl EngineBackedEvmStateStore {
     /// Java: AccountAssetStore.getBalance(account, key)
     /// Key format: address + tokenId bytes
     /// Value format: i64 balance as big-endian 8 bytes
-    pub fn get_asset_balance_from_asset_store(&self, address: &Address, token_id: &[u8]) -> Result<i64> {
+    pub fn get_asset_balance_from_asset_store(
+        &self,
+        address: &Address,
+        token_id: &[u8],
+    ) -> Result<i64> {
         // Build key: address (21 bytes TRON format) + tokenId
         let mut key = Vec::with_capacity(21 + token_id.len());
         key.push(0x41u8); // TRON mainnet prefix
         key.extend_from_slice(address.as_slice());
         key.extend_from_slice(token_id);
 
-        match self.storage_engine.get(self.account_asset_database(), &key)? {
+        match self
+            .storage_engine
+            .get(self.account_asset_database(), &key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Ok(0)
@@ -5926,12 +6454,14 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found TOKEN_ID_NUM"
     pub fn get_token_id_num_strict(&self) -> Result<i64> {
         let key = b"TOKEN_ID_NUM";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     Err(anyhow::anyhow!("not found TOKEN_ID_NUM"))
@@ -5945,18 +6475,20 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found ONE_DAY_NET_LIMIT"
     pub fn get_one_day_net_limit_strict(&self) -> Result<i64> {
         let key = b"ONE_DAY_NET_LIMIT";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7]
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     Ok(val)
                 } else {
                     Err(anyhow::anyhow!("not found ONE_DAY_NET_LIMIT"))
                 }
-            },
+            }
             None => Err(anyhow::anyhow!("not found ONE_DAY_NET_LIMIT")),
         }
     }
@@ -5965,15 +6497,19 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found MAX_FROZEN_SUPPLY_NUMBER"
     pub fn get_max_frozen_supply_number_strict(&self) -> Result<i64> {
         let key = b"MAX_FROZEN_SUPPLY_NUMBER";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if data.len() >= 4 {
-                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                    Ok(i64::from(i32::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                    ])))
                 } else {
                     Err(anyhow::anyhow!("not found MAX_FROZEN_SUPPLY_NUMBER"))
                 }
@@ -5986,15 +6522,19 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found MAX_FROZEN_SUPPLY_TIME"
     pub fn get_max_frozen_supply_time_strict(&self) -> Result<i64> {
         let key = b"MAX_FROZEN_SUPPLY_TIME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if data.len() >= 4 {
-                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                    Ok(i64::from(i32::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                    ])))
                 } else {
                     Err(anyhow::anyhow!("not found MAX_FROZEN_SUPPLY_TIME"))
                 }
@@ -6007,15 +6547,19 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found MIN_FROZEN_SUPPLY_TIME"
     pub fn get_min_frozen_supply_time_strict(&self) -> Result<i64> {
         let key = b"MIN_FROZEN_SUPPLY_TIME";
-        match self.storage_engine.get(self.dynamic_properties_database(), key)? {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else if data.len() >= 4 {
-                    Ok(i64::from(i32::from_be_bytes([data[0], data[1], data[2], data[3]])))
+                    Ok(i64::from(i32::from_be_bytes([
+                        data[0], data[1], data[2], data[3],
+                    ])))
                 } else {
                     Err(anyhow::anyhow!("not found MIN_FROZEN_SUPPLY_TIME"))
                 }
@@ -6025,7 +6569,11 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Get asset issue by key (asset name or asset id depending on allowSameTokenName)
-    pub fn get_asset_issue(&self, key: &[u8], allow_same_token_name: i64) -> Result<Option<crate::protocol::AssetIssueContractData>> {
+    pub fn get_asset_issue(
+        &self,
+        key: &[u8],
+        allow_same_token_name: i64,
+    ) -> Result<Option<crate::protocol::AssetIssueContractData>> {
         let db = if allow_same_token_name == 0 {
             self.asset_issue_database()
         } else {
@@ -6033,21 +6581,27 @@ impl EngineBackedEvmStateStore {
         };
 
         match self.storage_engine.get(db, key)? {
-            Some(data) => {
-                match crate::protocol::AssetIssueContractData::decode(&data[..]) {
-                    Ok(asset_issue) => Ok(Some(asset_issue)),
-                    Err(e) => {
-                        tracing::warn!("Failed to decode AssetIssueContractData: {}", e);
-                        Err(anyhow::anyhow!("Failed to decode AssetIssueContractData: {}", e))
-                    }
+            Some(data) => match crate::protocol::AssetIssueContractData::decode(&data[..]) {
+                Ok(asset_issue) => Ok(Some(asset_issue)),
+                Err(e) => {
+                    tracing::warn!("Failed to decode AssetIssueContractData: {}", e);
+                    Err(anyhow::anyhow!(
+                        "Failed to decode AssetIssueContractData: {}",
+                        e
+                    ))
                 }
             },
-            None => Ok(None)
+            None => Ok(None),
         }
     }
 
     /// Put asset issue by key
-    pub fn put_asset_issue(&mut self, key: &[u8], asset_issue: &crate::protocol::AssetIssueContractData, v2_store: bool) -> Result<()> {
+    pub fn put_asset_issue(
+        &mut self,
+        key: &[u8],
+        asset_issue: &crate::protocol::AssetIssueContractData,
+        v2_store: bool,
+    ) -> Result<()> {
         use prost::Message;
 
         let db = if v2_store {
@@ -6105,14 +6659,27 @@ impl EngineBackedEvmStateStore {
 
     /// Get exchange by ID from specific store
     /// v2_store=true uses "exchange-v2", v2_store=false uses "exchange"
-    pub fn get_exchange_from_store(&self, exchange_id: i64, v2_store: bool) -> Result<Option<crate::protocol::Exchange>> {
+    pub fn get_exchange_from_store(
+        &self,
+        exchange_id: i64,
+        v2_store: bool,
+    ) -> Result<Option<crate::protocol::Exchange>> {
         use crate::protocol::Exchange;
         use prost::Message;
 
         let key = self.exchange_key(exchange_id);
-        let db = if v2_store { self.exchange_v2_database() } else { self.exchange_database() };
+        let db = if v2_store {
+            self.exchange_v2_database()
+        } else {
+            self.exchange_database()
+        };
 
-        tracing::debug!("Getting exchange {} from {}, key: {}", exchange_id, db, hex::encode(&key));
+        tracing::debug!(
+            "Getting exchange {} from {}, key: {}",
+            exchange_id,
+            db,
+            hex::encode(&key)
+        );
 
         match self.storage_engine.get(db, &key)? {
             Some(data) => {
@@ -6129,13 +6696,13 @@ impl EngineBackedEvmStateStore {
                             exchange.second_token_balance
                         );
                         Ok(Some(exchange))
-                    },
+                    }
                     Err(e) => {
                         tracing::error!("Failed to decode exchange {}: {}", exchange_id, e);
                         Err(anyhow::anyhow!("Failed to decode exchange: {}", e))
                     }
                 }
-            },
+            }
             None => {
                 tracing::debug!("Exchange {} not found in {}", exchange_id, db);
                 Ok(None)
@@ -6150,11 +6717,19 @@ impl EngineBackedEvmStateStore {
 
     /// Store exchange to specific store
     /// v2_store=true uses "exchange-v2", v2_store=false uses "exchange"
-    pub fn put_exchange_to_store(&mut self, exchange: &crate::protocol::Exchange, v2_store: bool) -> Result<()> {
+    pub fn put_exchange_to_store(
+        &mut self,
+        exchange: &crate::protocol::Exchange,
+        v2_store: bool,
+    ) -> Result<()> {
         use prost::Message;
 
         let key = self.exchange_key(exchange.exchange_id);
-        let db = if v2_store { self.exchange_v2_database() } else { self.exchange_database() };
+        let db = if v2_store {
+            self.exchange_v2_database()
+        } else {
+            self.exchange_database()
+        };
         let data = exchange.encode_to_vec();
 
         tracing::debug!(
@@ -6233,7 +6808,11 @@ impl EngineBackedEvmStateStore {
     /// - allowSameTokenName == 1: read from v2 store (token ids)
     ///
     /// Java reference: Commons.getExchangeStoreFinal() in chainbase/src/main/java/org/tron/common/utils/Commons.java
-    pub fn get_exchange_routed(&self, exchange_id: i64, allow_same_token_name: i64) -> Result<Option<crate::protocol::Exchange>> {
+    pub fn get_exchange_routed(
+        &self,
+        exchange_id: i64,
+        allow_same_token_name: i64,
+    ) -> Result<Option<crate::protocol::Exchange>> {
         let v2_store = allow_same_token_name != 0;
         self.get_exchange_from_store(exchange_id, v2_store)
     }
@@ -6246,7 +6825,11 @@ impl EngineBackedEvmStateStore {
     /// Check if exchange exists in specific store
     pub fn has_exchange_in_store(&self, exchange_id: i64, v2_store: bool) -> Result<bool> {
         let key = self.exchange_key(exchange_id);
-        let db = if v2_store { self.exchange_v2_database() } else { self.exchange_database() };
+        let db = if v2_store {
+            self.exchange_v2_database()
+        } else {
+            self.exchange_database()
+        };
         match self.storage_engine.get(db, &key)? {
             Some(_) => Ok(true),
             None => Ok(false),
@@ -6269,7 +6852,7 @@ impl EngineBackedEvmStateStore {
                     tracing::warn!("LATEST_EXCHANGE_NUM has invalid length: {}", data.len());
                     Ok(0)
                 }
-            },
+            }
             None => {
                 tracing::debug!("LATEST_EXCHANGE_NUM not found, returning 0");
                 Ok(0)
@@ -6301,7 +6884,7 @@ impl EngineBackedEvmStateStore {
                     tracing::warn!("EXCHANGE_BALANCE_LIMIT has invalid length: {}", data.len());
                     Ok(1_000_000_000_000_000i64) // Default
                 }
-            },
+            }
             None => {
                 tracing::debug!("EXCHANGE_BALANCE_LIMIT not found, returning default");
                 Ok(1_000_000_000_000_000i64) // Default: 1 quadrillion
@@ -6326,7 +6909,7 @@ impl EngineBackedEvmStateStore {
                     // Java default: 1024_000_000L (1024 TRX in SUN)
                     Ok(1024_000_000i64)
                 }
-            },
+            }
             None => {
                 tracing::debug!("EXCHANGE_CREATE_FEE not found, returning default");
                 // Java default: 1024_000_000L (1024 TRX in SUN)
@@ -6359,7 +6942,12 @@ impl EngineBackedEvmStateStore {
     /// - allowSameTokenName == 1: reads from account.asset_v2 (token ids)
     ///
     /// Java reference: AccountCapsule.assetBalanceEnoughV2()
-    pub fn get_asset_balance_routed(&self, address: &Address, asset_key: &[u8], allow_same_token_name: i64) -> Result<i64> {
+    pub fn get_asset_balance_routed(
+        &self,
+        address: &Address,
+        asset_key: &[u8],
+        allow_same_token_name: i64,
+    ) -> Result<i64> {
         if let Some(account) = self.get_account_proto(address)? {
             let key_str = String::from_utf8_lossy(asset_key).to_string();
 
@@ -6379,8 +6967,14 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Reduce asset amount from an account (V2 format)
-    pub fn reduce_asset_amount_v2(&mut self, address: &Address, token_id: &[u8], amount: i64) -> Result<()> {
-        let mut account = self.get_account_proto(address)?
+    pub fn reduce_asset_amount_v2(
+        &mut self,
+        address: &Address,
+        token_id: &[u8],
+        amount: i64,
+    ) -> Result<()> {
+        let mut account = self
+            .get_account_proto(address)?
             .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
         let token_key = String::from_utf8_lossy(token_id).to_string();
@@ -6396,8 +6990,14 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Add asset amount to an account (V2 format)
-    pub fn add_asset_amount_v2(&mut self, address: &Address, token_id: &[u8], amount: i64) -> Result<()> {
-        let mut account = self.get_account_proto(address)?
+    pub fn add_asset_amount_v2(
+        &mut self,
+        address: &Address,
+        token_id: &[u8],
+        amount: i64,
+    ) -> Result<()> {
+        let mut account = self
+            .get_account_proto(address)?
             .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
         let token_key = String::from_utf8_lossy(token_id).to_string();
@@ -6409,16 +7009,23 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Set/update account from proto
-    pub fn set_account_proto(&mut self, address: &Address, account: &crate::protocol::Account) -> Result<()> {
+    pub fn set_account_proto(
+        &mut self,
+        address: &Address,
+        account: &crate::protocol::Account,
+    ) -> Result<()> {
         self.put_account_proto(address, account)
     }
 
     /// Add balance to an account (for crediting blackhole, etc.)
     pub fn add_balance(&mut self, address: &Address, amount: u64) -> Result<()> {
-        let mut account = self.get_account_proto(address)?
+        let mut account = self
+            .get_account_proto(address)?
             .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
-        account.balance = account.balance.checked_add(amount as i64)
+        account.balance = account
+            .balance
+            .checked_add(amount as i64)
             .ok_or_else(|| anyhow::anyhow!("Balance overflow"))?;
 
         self.set_account_proto(address, &account)?;
@@ -6464,7 +7071,7 @@ impl EngineBackedEvmStateStore {
                 } else {
                     Ok(false)
                 }
-            },
+            }
             None => {
                 tracing::debug!("ALLOW_MARKET_TRANSACTION not found, returning false");
                 Ok(false)
@@ -6484,8 +7091,8 @@ impl EngineBackedEvmStateStore {
                 } else {
                     Ok(0)
                 }
-            },
-            None => Ok(0)
+            }
+            None => Ok(0),
         }
     }
 
@@ -6501,8 +7108,8 @@ impl EngineBackedEvmStateStore {
                 } else {
                     Ok(0)
                 }
-            },
-            None => Ok(0)
+            }
+            None => Ok(0),
         }
     }
 
@@ -6518,26 +7125,33 @@ impl EngineBackedEvmStateStore {
                 } else {
                     Ok(i64::MAX)
                 }
-            },
-            None => Ok(i64::MAX)
+            }
+            None => Ok(i64::MAX),
         }
     }
 
     /// Get a MarketOrder by order ID
     /// Key: order_id bytes (SHA3 hash)
-    pub fn get_market_order(&self, order_id: &[u8]) -> Result<Option<crate::protocol::MarketOrder>> {
+    pub fn get_market_order(
+        &self,
+        order_id: &[u8],
+    ) -> Result<Option<crate::protocol::MarketOrder>> {
         use prost::Message;
         match self.buffered_get(self.market_order_database(), order_id)? {
             Some(data) => {
                 let order = crate::protocol::MarketOrder::decode(data.as_slice())?;
                 Ok(Some(order))
-            },
-            None => Ok(None)
+            }
+            None => Ok(None),
         }
     }
 
     /// Put a MarketOrder
-    pub fn put_market_order(&mut self, order_id: &[u8], order: &crate::protocol::MarketOrder) -> Result<()> {
+    pub fn put_market_order(
+        &mut self,
+        order_id: &[u8],
+        order: &crate::protocol::MarketOrder,
+    ) -> Result<()> {
         use prost::Message;
         let mut buf = Vec::new();
         order.encode(&mut buf)?;
@@ -6552,20 +7166,27 @@ impl EngineBackedEvmStateStore {
 
     /// Get MarketAccountOrder for an account
     /// Key: 21-byte TRON address (with 0x41 prefix)
-    pub fn get_market_account_order(&self, address: &Address) -> Result<Option<crate::protocol::MarketAccountOrder>> {
+    pub fn get_market_account_order(
+        &self,
+        address: &Address,
+    ) -> Result<Option<crate::protocol::MarketAccountOrder>> {
         use prost::Message;
         let key = self.to_tron_address_21(address);
         match self.buffered_get(self.market_account_database(), &key)? {
             Some(data) => {
                 let account_order = crate::protocol::MarketAccountOrder::decode(data.as_slice())?;
                 Ok(Some(account_order))
-            },
-            None => Ok(None)
+            }
+            None => Ok(None),
         }
     }
 
     /// Put MarketAccountOrder for an account
-    pub fn put_market_account_order(&mut self, address: &Address, account_order: &crate::protocol::MarketAccountOrder) -> Result<()> {
+    pub fn put_market_account_order(
+        &mut self,
+        address: &Address,
+        account_order: &crate::protocol::MarketAccountOrder,
+    ) -> Result<()> {
         use prost::Message;
         let key = self.to_tron_address_21(address);
         let mut buf = Vec::new();
@@ -6584,15 +7205,19 @@ impl EngineBackedEvmStateStore {
                 } else {
                     Ok(0)
                 }
-            },
-            None => Ok(0)
+            }
+            None => Ok(0),
         }
     }
 
     /// Set price count for a token pair
     pub fn set_market_pair_price_count(&mut self, pair_key: &[u8], count: i64) -> Result<()> {
         let data = count.to_be_bytes();
-        self.buffered_put(self.market_pair_to_price_database(), pair_key.to_vec(), data.to_vec())?;
+        self.buffered_put(
+            self.market_pair_to_price_database(),
+            pair_key.to_vec(),
+            data.to_vec(),
+        )?;
         Ok(())
     }
 
@@ -6604,40 +7229,58 @@ impl EngineBackedEvmStateStore {
 
     /// Check if a token pair exists
     pub fn has_market_pair(&self, pair_key: &[u8]) -> Result<bool> {
-        Ok(self.buffered_get(self.market_pair_to_price_database(), pair_key)?.is_some())
+        Ok(self
+            .buffered_get(self.market_pair_to_price_database(), pair_key)?
+            .is_some())
     }
 
     /// Get MarketOrderIdList for a price key
     /// Key: createPairPriceKey(sellTokenId, buyTokenId, sellQuantity, buyQuantity) = 54 bytes
-    pub fn get_market_order_id_list(&self, price_key: &[u8]) -> Result<Option<crate::protocol::MarketOrderIdList>> {
+    pub fn get_market_order_id_list(
+        &self,
+        price_key: &[u8],
+    ) -> Result<Option<crate::protocol::MarketOrderIdList>> {
         use prost::Message;
         match self.buffered_get(self.market_pair_price_to_order_database(), price_key)? {
             Some(data) => {
                 let list = crate::protocol::MarketOrderIdList::decode(data.as_slice())?;
                 Ok(Some(list))
-            },
-            None => Ok(None)
+            }
+            None => Ok(None),
         }
     }
 
     /// Put MarketOrderIdList for a price key
-    pub fn put_market_order_id_list(&mut self, price_key: &[u8], list: &crate::protocol::MarketOrderIdList) -> Result<()> {
+    pub fn put_market_order_id_list(
+        &mut self,
+        price_key: &[u8],
+        list: &crate::protocol::MarketOrderIdList,
+    ) -> Result<()> {
         use prost::Message;
         let mut buf = Vec::new();
         list.encode(&mut buf)?;
-        self.buffered_put(self.market_pair_price_to_order_database(), price_key.to_vec(), buf)?;
+        self.buffered_put(
+            self.market_pair_price_to_order_database(),
+            price_key.to_vec(),
+            buf,
+        )?;
         Ok(())
     }
 
     /// Delete MarketOrderIdList for a price key
     pub fn delete_market_order_id_list(&mut self, price_key: &[u8]) -> Result<()> {
-        self.buffered_delete(self.market_pair_price_to_order_database(), price_key.to_vec())?;
+        self.buffered_delete(
+            self.market_pair_price_to_order_database(),
+            price_key.to_vec(),
+        )?;
         Ok(())
     }
 
     /// Check if a price key exists in MarketPairPriceToOrderStore
     pub fn has_market_price_key(&self, price_key: &[u8]) -> Result<bool> {
-        Ok(self.buffered_get(self.market_pair_price_to_order_database(), price_key)?.is_some())
+        Ok(self
+            .buffered_get(self.market_pair_price_to_order_database(), price_key)?
+            .is_some())
     }
 
     /// List all price keys for a given token pair prefix from MarketPairPriceToOrderStore.
@@ -6647,10 +7290,8 @@ impl EngineBackedEvmStateStore {
     /// Java-tron configures a custom comparator for this CF, so callers should
     /// apply TRON's MarketUtils.comparePriceKey ordering when needed.
     pub fn list_market_pair_price_keys(&self, pair_key_prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
-        let entries = self.buffered_prefix_query(
-            self.market_pair_price_to_order_database(),
-            pair_key_prefix,
-        )?;
+        let entries = self
+            .buffered_prefix_query(self.market_pair_price_to_order_database(), pair_key_prefix)?;
         Ok(entries.into_iter().map(|kv| kv.key).collect())
     }
 }

@@ -342,16 +342,13 @@ fn compute_new_reward(
         let contribution = (&delta_vi * &user_vote) / &decimal;
 
         // Convert to i64 (safe for reasonable values)
-        let contribution_i64 = contribution
-            .to_string()
-            .parse::<i64>()
-            .unwrap_or_else(|_| {
-                warn!(
-                    "BigInt conversion overflow for contribution: {}",
-                    contribution
-                );
-                0
-            });
+        let contribution_i64 = contribution.to_string().parse::<i64>().unwrap_or_else(|_| {
+            warn!(
+                "BigInt conversion overflow for contribution: {}",
+                contribution
+            );
+            0
+        });
 
         reward += contribution_i64;
     }
@@ -375,8 +372,7 @@ mod tests {
         let owner = Address::from_slice(&[0x01; 20]);
         let witness = Address::from_slice(&[0x02; 20]);
 
-        let snapshot =
-            AccountVoteSnapshot::new(owner, vec![DelegationVote::new(witness, 500)]);
+        let snapshot = AccountVoteSnapshot::new(owner, vec![DelegationVote::new(witness, 500)]);
 
         assert!(snapshot.has_votes());
         assert_eq!(snapshot.votes.len(), 1);

@@ -2,9 +2,9 @@
 
 use super::super::super::*;
 use super::common::{encode_varint, new_test_context, new_test_service_with_system_enabled};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
-use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
 use tron_backend_storage::StorageEngine;
 
 /// Helper to build AccountPermissionUpdateContract protobuf data
@@ -133,13 +133,35 @@ fn test_account_permission_update_validate_fail_owner_address_empty() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     // Seed required dynamic properties (Java throws if these are missing)
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &100_000_000i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"UPDATE_ACCOUNT_PERMISSION_FEE",
+            &100_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
     // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt), not 8-byte long
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes())
+        .unwrap();
     let available_contract_type = [0xFFu8; 32];
-    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"AVAILABLE_CONTRACT_TYPE",
+            &available_contract_type,
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -163,7 +185,9 @@ fn test_account_permission_update_validate_fail_owner_address_empty() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(tx_from, tx_from_account).unwrap();
+    storage_adapter
+        .set_account(tx_from, tx_from_account)
+        .unwrap();
 
     // AccountPermissionUpdateContract owner_address = "" (field 1, length 0)
     let contract_data = Bytes::from(vec![0x0a, 0x00]);
@@ -177,14 +201,20 @@ fn test_account_permission_update_validate_fail_owner_address_empty() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
             asset_id: None,
             ..Default::default()
         },
     };
 
     let err = service
-        .execute_account_permission_update_contract(&mut storage_adapter, &transaction, &new_test_context())
+        .execute_account_permission_update_contract(
+            &mut storage_adapter,
+            &transaction,
+            &new_test_context(),
+        )
         .unwrap_err();
     assert_eq!(err, "invalidate ownerAddress");
 }
@@ -202,20 +232,44 @@ fn test_account_permission_update_burn_trx_when_blackhole_optimization_enabled()
 
     // Seed dynamic properties
     // ALLOW_MULTI_SIGN = 1 (enable multi-sign)
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
     // ALLOW_BLACKHOLE_OPTIMIZATION = 1 (use burn mode)
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
     // BURN_TRX_AMOUNT = 0 (initial burn amount)
-    storage_engine.put("properties", b"BURN_TRX_AMOUNT", &0i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"BURN_TRX_AMOUNT", &0i64.to_be_bytes())
+        .unwrap();
     // UPDATE_ACCOUNT_PERMISSION_FEE = 100_000_000 (100 TRX)
     let fee: i64 = 100_000_000;
-    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"UPDATE_ACCOUNT_PERMISSION_FEE",
+            &fee.to_be_bytes(),
+        )
+        .unwrap();
     // TOTAL_SIGN_NUM = 5 (max keys per permission)
     // Java stores as 4-byte int (ByteArray.fromInt), not 8-byte long
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes())
+        .unwrap();
     // AVAILABLE_CONTRACT_TYPE - 32 bytes, all bits enabled
     let available_contract_type = [0xFFu8; 32];
-    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"AVAILABLE_CONTRACT_TYPE",
+            &available_contract_type,
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_system_enabled();
@@ -223,12 +277,17 @@ fn test_account_permission_update_burn_trx_when_blackhole_optimization_enabled()
     // Create owner account with sufficient balance
     let owner_address = Address::from([0x11u8; 20]);
     let owner_balance = 200_000_000u64; // 200 TRX
-    storage_adapter.set_account(owner_address, AccountInfo {
-        balance: U256::from(owner_balance),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(owner_balance),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     // Build owner_address in 21-byte TRON format (0x41 prefix)
     let mut owner_tron = vec![0x41u8];
@@ -236,21 +295,21 @@ fn test_account_permission_update_burn_trx_when_blackhole_optimization_enabled()
 
     // Build owner permission (type=0=Owner)
     let owner_permission = build_permission(
-        0,              // Owner type
-        0,              // id
-        "owner",        // name
-        1,              // threshold
-        None,           // no operations for Owner
+        0,                   // Owner type
+        0,                   // id
+        "owner",             // name
+        1,                   // threshold
+        None,                // no operations for Owner
         &[(&owner_tron, 1)], // keys
     );
 
     // Build active permission (type=2=Active)
     let active_permission = build_permission(
-        2,              // Active type
-        2,              // id
-        "active",       // name
-        1,              // threshold
-        Some(&[0u8; 32]), // 32 bytes of operations (all disabled is fine)
+        2,                   // Active type
+        2,                   // id
+        "active",            // name
+        1,                   // threshold
+        Some(&[0u8; 32]),    // 32 bytes of operations (all disabled is fine)
         &[(&owner_tron, 1)], // keys
     );
 
@@ -270,7 +329,9 @@ fn test_account_permission_update_burn_trx_when_blackhole_optimization_enabled()
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
             ..Default::default()
         },
     };
@@ -281,7 +342,11 @@ fn test_account_permission_update_burn_trx_when_blackhole_optimization_enabled()
         &new_test_context(),
     );
 
-    assert!(result.is_ok(), "AccountPermissionUpdate should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "AccountPermissionUpdate should succeed: {:?}",
+        result.err()
+    );
 
     // Verify BURN_TRX_AMOUNT was incremented by the fee
     let burn_amount = storage_adapter.get_burn_trx_amount().unwrap();
@@ -292,7 +357,11 @@ fn test_account_permission_update_burn_trx_when_blackhole_optimization_enabled()
     );
 
     // Verify owner balance was decremented
-    let final_balance = storage_adapter.get_account(&owner_address).unwrap().unwrap().balance;
+    let final_balance = storage_adapter
+        .get_account(&owner_address)
+        .unwrap()
+        .unwrap()
+        .balance;
     assert_eq!(
         final_balance,
         U256::from(owner_balance - fee as u64),
@@ -308,16 +377,40 @@ fn test_account_permission_update_credit_blackhole_when_optimization_disabled() 
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     // Seed dynamic properties
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
     // ALLOW_BLACKHOLE_OPTIMIZATION = 0 (use credit blackhole mode)
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &0i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"BURN_TRX_AMOUNT", &0i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &0i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put("properties", b"BURN_TRX_AMOUNT", &0i64.to_be_bytes())
+        .unwrap();
     let fee: i64 = 100_000_000;
-    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"UPDATE_ACCOUNT_PERMISSION_FEE",
+            &fee.to_be_bytes(),
+        )
+        .unwrap();
     // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes())
+        .unwrap();
     let available_contract_type = [0xFFu8; 32];
-    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"AVAILABLE_CONTRACT_TYPE",
+            &available_contract_type,
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -326,31 +419,42 @@ fn test_account_permission_update_credit_blackhole_when_optimization_disabled() 
 
     // Create blackhole account with initial balance 0
     // The account must exist for add_balance to work
-    storage_adapter.set_account(blackhole_address, AccountInfo {
-        balance: U256::ZERO,
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            blackhole_address,
+            AccountInfo {
+                balance: U256::ZERO,
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     let service = new_test_service_with_system_enabled();
 
     // Create owner account
     let owner_address = Address::from([0x11u8; 20]);
     let owner_balance = 200_000_000u64;
-    storage_adapter.set_account(owner_address, AccountInfo {
-        balance: U256::from(owner_balance),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(owner_balance),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     // Build owner_address in 21-byte TRON format
     let mut owner_tron = vec![0x41u8];
     owner_tron.extend_from_slice(owner_address.as_slice());
 
     let owner_permission = build_permission(0, 0, "owner", 1, None, &[(&owner_tron, 1)]);
-    let active_permission = build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
+    let active_permission =
+        build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
 
     let contract_data = build_account_permission_update_contract_data(
         &owner_tron,
@@ -368,7 +472,9 @@ fn test_account_permission_update_credit_blackhole_when_optimization_disabled() 
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
             ..Default::default()
         },
     };
@@ -379,7 +485,11 @@ fn test_account_permission_update_credit_blackhole_when_optimization_disabled() 
         &new_test_context(),
     );
 
-    assert!(result.is_ok(), "AccountPermissionUpdate should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "AccountPermissionUpdate should succeed: {:?}",
+        result.err()
+    );
 
     // Verify BURN_TRX_AMOUNT was NOT incremented (should remain 0)
     let burn_amount = storage_adapter.get_burn_trx_amount().unwrap();
@@ -390,7 +500,11 @@ fn test_account_permission_update_credit_blackhole_when_optimization_disabled() 
     );
 
     // Verify blackhole account balance was credited by the fee
-    let blackhole_balance = storage_adapter.get_account(&blackhole_address).unwrap().unwrap().balance;
+    let blackhole_balance = storage_adapter
+        .get_account(&blackhole_address)
+        .unwrap()
+        .unwrap()
+        .balance;
     assert_eq!(
         blackhole_balance,
         U256::from(fee as u64),
@@ -409,15 +523,39 @@ fn test_account_permission_update_insufficient_balance_error_message() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     // Seed dynamic properties
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"BURN_TRX_AMOUNT", &0i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put("properties", b"BURN_TRX_AMOUNT", &0i64.to_be_bytes())
+        .unwrap();
     let fee: i64 = 100_000_000; // 100 TRX fee
-    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"UPDATE_ACCOUNT_PERMISSION_FEE",
+            &fee.to_be_bytes(),
+        )
+        .unwrap();
     // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes())
+        .unwrap();
     let available_contract_type = [0xFFu8; 32];
-    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"AVAILABLE_CONTRACT_TYPE",
+            &available_contract_type,
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_system_enabled();
@@ -425,19 +563,25 @@ fn test_account_permission_update_insufficient_balance_error_message() {
     // Create owner account with INSUFFICIENT balance (< fee)
     let owner_address = Address::from([0x22u8; 20]);
     let owner_balance = 50_000_000u64; // Only 50 TRX, but fee is 100 TRX
-    storage_adapter.set_account(owner_address, AccountInfo {
-        balance: U256::from(owner_balance),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(owner_balance),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     // Build owner_address in 21-byte TRON format
     let mut owner_tron = vec![0x41u8];
     owner_tron.extend_from_slice(owner_address.as_slice());
 
     let owner_permission = build_permission(0, 0, "owner", 1, None, &[(&owner_tron, 1)]);
-    let active_permission = build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
+    let active_permission =
+        build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
 
     let contract_data = build_account_permission_update_contract_data(
         &owner_tron,
@@ -455,7 +599,9 @@ fn test_account_permission_update_insufficient_balance_error_message() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
             ..Default::default()
         },
     };
@@ -501,8 +647,10 @@ fn test_account_permission_update_atomicity_with_write_buffer() {
     let mut buffer = ExecutionWriteBuffer::new();
 
     // Simulate permission update writes
-    let owner_address = vec![0x41u8, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
-                             0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22];
+    let owner_address = vec![
+        0x41u8, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+        0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
+    ];
     let updated_account_data = vec![0xAA, 0xBB, 0xCC]; // Mock permission data
 
     // Write permissions to buffer (this is what execute_account_permission_update_contract does)
@@ -519,7 +667,10 @@ fn test_account_permission_update_atomicity_with_write_buffer() {
         // Failure path: drop buffer without commit
         // The buffer is dropped here, discarding all pending writes
         let pending_ops = buffer.operation_count();
-        assert_eq!(pending_ops, 1, "Buffer should have pending writes before drop");
+        assert_eq!(
+            pending_ops, 1,
+            "Buffer should have pending writes before drop"
+        );
 
         // When dropped, these writes are discarded
         drop(buffer);
@@ -543,29 +694,56 @@ fn test_account_permission_update_invalid_contract_type_in_operations() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     // Seed dynamic properties
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
     let fee: i64 = 100_000_000;
-    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"UPDATE_ACCOUNT_PERMISSION_FEE",
+            &fee.to_be_bytes(),
+        )
+        .unwrap();
     // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes())
+        .unwrap();
 
     // Set AVAILABLE_CONTRACT_TYPE with bit 0 UNSET (contract type 0 is not available)
     let mut available_contract_type = [0xFFu8; 32]; // All bits set
     available_contract_type[0] = 0xFE; // Unset bit 0 (contract type 0)
-    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"AVAILABLE_CONTRACT_TYPE",
+            &available_contract_type,
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_system_enabled();
 
     // Create owner account with sufficient balance
     let owner_address = Address::from([0x33u8; 20]);
-    storage_adapter.set_account(owner_address, AccountInfo {
-        balance: U256::from(200_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(200_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     // Build owner_address in 21-byte TRON format
     let mut owner_tron = vec![0x41u8];
@@ -577,11 +755,8 @@ fn test_account_permission_update_invalid_contract_type_in_operations() {
     let mut operations = [0u8; 32];
     operations[0] = 0x01; // Set bit 0 (contract type 0)
 
-    let active_permission = build_permission(
-        2, 2, "active", 1,
-        Some(&operations),
-        &[(&owner_tron, 1)],
-    );
+    let active_permission =
+        build_permission(2, 2, "active", 1, Some(&operations), &[(&owner_tron, 1)]);
 
     let contract_data = build_account_permission_update_contract_data(
         &owner_tron,
@@ -599,7 +774,9 @@ fn test_account_permission_update_invalid_contract_type_in_operations() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
             ..Default::default()
         },
     };
@@ -611,7 +788,10 @@ fn test_account_permission_update_invalid_contract_type_in_operations() {
     );
 
     // Should fail with invalid contract type error
-    assert!(result.is_err(), "Should fail due to invalid contract type in operations");
+    assert!(
+        result.is_err(),
+        "Should fail due to invalid contract type in operations"
+    );
     let error = result.err().unwrap();
     assert!(
         error.contains("isn't a validate ContractType"),
@@ -632,24 +812,45 @@ fn test_account_permission_update_missing_available_contract_type() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     // Seed dynamic properties WITHOUT AVAILABLE_CONTRACT_TYPE
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
     let fee: i64 = 100_000_000;
-    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"UPDATE_ACCOUNT_PERMISSION_FEE",
+            &fee.to_be_bytes(),
+        )
+        .unwrap();
     // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes())
+        .unwrap();
     // NOTE: AVAILABLE_CONTRACT_TYPE is intentionally NOT set
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_system_enabled();
 
     let owner_address = Address::from([0x44u8; 20]);
-    storage_adapter.set_account(owner_address, AccountInfo {
-        balance: U256::from(200_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(200_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     let mut owner_tron = vec![0x41u8];
     owner_tron.extend_from_slice(owner_address.as_slice());
@@ -658,7 +859,8 @@ fn test_account_permission_update_missing_available_contract_type() {
     // Active permission with some operations enabled
     let mut operations = [0u8; 32];
     operations[0] = 0x02; // Enable contract type 1
-    let active_permission = build_permission(2, 2, "active", 1, Some(&operations), &[(&owner_tron, 1)]);
+    let active_permission =
+        build_permission(2, 2, "active", 1, Some(&operations), &[(&owner_tron, 1)]);
 
     let contract_data = build_account_permission_update_contract_data(
         &owner_tron,
@@ -676,7 +878,9 @@ fn test_account_permission_update_missing_available_contract_type() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
             ..Default::default()
         },
     };
@@ -688,7 +892,10 @@ fn test_account_permission_update_missing_available_contract_type() {
     );
 
     // Should fail because AVAILABLE_CONTRACT_TYPE is missing
-    assert!(result.is_err(), "Should fail when AVAILABLE_CONTRACT_TYPE is missing");
+    assert!(
+        result.is_err(),
+        "Should fail when AVAILABLE_CONTRACT_TYPE is missing"
+    );
     let error = result.err().unwrap();
     assert!(
         error.contains("AVAILABLE_CONTRACT_TYPE"),
@@ -703,26 +910,49 @@ fn test_account_permission_update_available_contract_type_too_short() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
     let fee: i64 = 100_000_000;
-    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"UPDATE_ACCOUNT_PERMISSION_FEE",
+            &fee.to_be_bytes(),
+        )
+        .unwrap();
     // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes())
+        .unwrap();
     // AVAILABLE_CONTRACT_TYPE with only 16 bytes (should be 32)
     let short_available = [0xFFu8; 16];
-    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &short_available).unwrap();
+    storage_engine
+        .put("properties", b"AVAILABLE_CONTRACT_TYPE", &short_available)
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_system_enabled();
 
     let owner_address = Address::from([0x55u8; 20]);
-    storage_adapter.set_account(owner_address, AccountInfo {
-        balance: U256::from(200_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(200_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     let mut owner_tron = vec![0x41u8];
     owner_tron.extend_from_slice(owner_address.as_slice());
@@ -730,7 +960,8 @@ fn test_account_permission_update_available_contract_type_too_short() {
     let owner_permission = build_permission(0, 0, "owner", 1, None, &[(&owner_tron, 1)]);
     let mut operations = [0u8; 32];
     operations[0] = 0x02;
-    let active_permission = build_permission(2, 2, "active", 1, Some(&operations), &[(&owner_tron, 1)]);
+    let active_permission =
+        build_permission(2, 2, "active", 1, Some(&operations), &[(&owner_tron, 1)]);
 
     let contract_data = build_account_permission_update_contract_data(
         &owner_tron,
@@ -748,7 +979,9 @@ fn test_account_permission_update_available_contract_type_too_short() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
             ..Default::default()
         },
     };
@@ -760,7 +993,10 @@ fn test_account_permission_update_available_contract_type_too_short() {
     );
 
     // Should fail because AVAILABLE_CONTRACT_TYPE is too short
-    assert!(result.is_err(), "Should fail when AVAILABLE_CONTRACT_TYPE is too short");
+    assert!(
+        result.is_err(),
+        "Should fail when AVAILABLE_CONTRACT_TYPE is too short"
+    );
     let error = result.err().unwrap();
     assert!(
         error.contains("too short") || error.contains("AVAILABLE_CONTRACT_TYPE"),
@@ -776,31 +1012,57 @@ fn test_account_permission_update_missing_allow_multi_sign() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     // Seed dynamic properties WITHOUT ALLOW_MULTI_SIGN
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
     let fee: i64 = 100_000_000;
-    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"UPDATE_ACCOUNT_PERMISSION_FEE",
+            &fee.to_be_bytes(),
+        )
+        .unwrap();
     // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes())
+        .unwrap();
     let available_contract_type = [0xFFu8; 32];
-    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"AVAILABLE_CONTRACT_TYPE",
+            &available_contract_type,
+        )
+        .unwrap();
     // NOTE: ALLOW_MULTI_SIGN is intentionally NOT set
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_system_enabled();
 
     let owner_address = Address::from([0x56u8; 20]);
-    storage_adapter.set_account(owner_address, AccountInfo {
-        balance: U256::from(200_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(200_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     let mut owner_tron = vec![0x41u8];
     owner_tron.extend_from_slice(owner_address.as_slice());
 
     let owner_permission = build_permission(0, 0, "owner", 1, None, &[(&owner_tron, 1)]);
-    let active_permission = build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
+    let active_permission =
+        build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
 
     let contract_data = build_account_permission_update_contract_data(
         &owner_tron,
@@ -818,7 +1080,9 @@ fn test_account_permission_update_missing_allow_multi_sign() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
             ..Default::default()
         },
     };
@@ -830,7 +1094,10 @@ fn test_account_permission_update_missing_allow_multi_sign() {
     );
 
     // Should fail because ALLOW_MULTI_SIGN is missing
-    assert!(result.is_err(), "Should fail when ALLOW_MULTI_SIGN is missing");
+    assert!(
+        result.is_err(),
+        "Should fail when ALLOW_MULTI_SIGN is missing"
+    );
     let error = result.err().unwrap();
     assert!(
         error.contains("not found ALLOW_MULTI_SIGN") || error.contains("ALLOW_MULTI_SIGN"),
@@ -846,30 +1113,56 @@ fn test_account_permission_update_missing_total_sign_num() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     // Seed dynamic properties WITHOUT TOTAL_SIGN_NUM
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
     let fee: i64 = 100_000_000;
-    storage_engine.put("properties", b"UPDATE_ACCOUNT_PERMISSION_FEE", &fee.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"UPDATE_ACCOUNT_PERMISSION_FEE",
+            &fee.to_be_bytes(),
+        )
+        .unwrap();
     let available_contract_type = [0xFFu8; 32];
-    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"AVAILABLE_CONTRACT_TYPE",
+            &available_contract_type,
+        )
+        .unwrap();
     // NOTE: TOTAL_SIGN_NUM is intentionally NOT set
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_system_enabled();
 
     let owner_address = Address::from([0x57u8; 20]);
-    storage_adapter.set_account(owner_address, AccountInfo {
-        balance: U256::from(200_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(200_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     let mut owner_tron = vec![0x41u8];
     owner_tron.extend_from_slice(owner_address.as_slice());
 
     let owner_permission = build_permission(0, 0, "owner", 1, None, &[(&owner_tron, 1)]);
-    let active_permission = build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
+    let active_permission =
+        build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
 
     let contract_data = build_account_permission_update_contract_data(
         &owner_tron,
@@ -887,7 +1180,9 @@ fn test_account_permission_update_missing_total_sign_num() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
             ..Default::default()
         },
     };
@@ -899,7 +1194,10 @@ fn test_account_permission_update_missing_total_sign_num() {
     );
 
     // Should fail because TOTAL_SIGN_NUM is missing
-    assert!(result.is_err(), "Should fail when TOTAL_SIGN_NUM is missing");
+    assert!(
+        result.is_err(),
+        "Should fail when TOTAL_SIGN_NUM is missing"
+    );
     let error = result.err().unwrap();
     assert!(
         error.contains("not found TOTAL_SIGN_NUM") || error.contains("TOTAL_SIGN_NUM"),
@@ -915,30 +1213,52 @@ fn test_account_permission_update_missing_update_account_permission_fee() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     // Seed dynamic properties WITHOUT UPDATE_ACCOUNT_PERMISSION_FEE
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
     // Java stores TOTAL_SIGN_NUM as 4-byte int (ByteArray.fromInt)
-    storage_engine.put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"TOTAL_SIGN_NUM", &5i32.to_be_bytes())
+        .unwrap();
     let available_contract_type = [0xFFu8; 32];
-    storage_engine.put("properties", b"AVAILABLE_CONTRACT_TYPE", &available_contract_type).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"AVAILABLE_CONTRACT_TYPE",
+            &available_contract_type,
+        )
+        .unwrap();
     // NOTE: UPDATE_ACCOUNT_PERMISSION_FEE is intentionally NOT set
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_system_enabled();
 
     let owner_address = Address::from([0x58u8; 20]);
-    storage_adapter.set_account(owner_address, AccountInfo {
-        balance: U256::from(200_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(200_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     let mut owner_tron = vec![0x41u8];
     owner_tron.extend_from_slice(owner_address.as_slice());
 
     let owner_permission = build_permission(0, 0, "owner", 1, None, &[(&owner_tron, 1)]);
-    let active_permission = build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
+    let active_permission =
+        build_permission(2, 2, "active", 1, Some(&[0u8; 32]), &[(&owner_tron, 1)]);
 
     let contract_data = build_account_permission_update_contract_data(
         &owner_tron,
@@ -956,7 +1276,9 @@ fn test_account_permission_update_missing_update_account_permission_fee() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::AccountPermissionUpdateContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
             ..Default::default()
         },
     };
@@ -968,10 +1290,14 @@ fn test_account_permission_update_missing_update_account_permission_fee() {
     );
 
     // Should fail because UPDATE_ACCOUNT_PERMISSION_FEE is missing
-    assert!(result.is_err(), "Should fail when UPDATE_ACCOUNT_PERMISSION_FEE is missing");
+    assert!(
+        result.is_err(),
+        "Should fail when UPDATE_ACCOUNT_PERMISSION_FEE is missing"
+    );
     let error = result.err().unwrap();
     assert!(
-        error.contains("not found UPDATE_ACCOUNT_PERMISSION_FEE") || error.contains("UPDATE_ACCOUNT_PERMISSION_FEE"),
+        error.contains("not found UPDATE_ACCOUNT_PERMISSION_FEE")
+            || error.contains("UPDATE_ACCOUNT_PERMISSION_FEE"),
         "Error should mention UPDATE_ACCOUNT_PERMISSION_FEE: got '{}'",
         error
     );

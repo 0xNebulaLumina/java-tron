@@ -4,9 +4,11 @@
 
 use super::super::super::*;
 use super::common::{encode_varint, make_from_raw, seed_dynamic_properties};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata, TronContractType};
+use tron_backend_execution::{
+    EngineBackedEvmStateStore, TronContractType, TronExecutionContext, TronTransaction, TxMetadata,
+};
 use tron_backend_storage::StorageEngine;
 
 /// Create a BackendService with exchange_create_enabled = true
@@ -77,12 +79,20 @@ fn test_exchange_create_receipt_includes_fee_and_exchange_id() {
     // Set EXCHANGE_CREATE_FEE to known value
     let exchange_create_fee: i64 = 1024_000_000; // 1024 TRX
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &exchange_create_fee.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &exchange_create_fee.to_be_bytes(),
+        )
         .unwrap();
 
     // Set EXCHANGE_BALANCE_LIMIT
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
 
     // Set LATEST_EXCHANGE_NUM = 0
@@ -92,7 +102,11 @@ fn test_exchange_create_receipt_includes_fee_and_exchange_id() {
 
     // Set LATEST_BLOCK_HEADER_TIMESTAMP
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
@@ -100,9 +114,10 @@ fn test_exchange_create_receipt_includes_fee_and_exchange_id() {
     let service = new_test_service_with_exchange_enabled();
 
     // Create owner account with enough balance for fee + TRX deposit
-    let owner = Address::from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12]);
+    let owner = Address::from([
+        0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        0x9a, 0xbc, 0xde, 0xf0, 0x12,
+    ]);
     let initial_balance: u64 = 100_000_000_000; // 100,000 TRX
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -118,12 +133,19 @@ fn test_exchange_create_receipt_includes_fee_and_exchange_id() {
     let token_balance: i64 = 10_000_000;
 
     // Get and update the account proto to add asset_v2 balance
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    account_proto.asset_v2.insert(String::from_utf8_lossy(token_id).to_string(), token_balance);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto
+        .asset_v2
+        .insert(String::from_utf8_lossy(token_id).to_string(), token_balance);
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     // Build transaction: exchange TRX for TRC-10 token
     let trx_deposit: i64 = 1_000_000_000; // 1000 TRX
@@ -172,8 +194,13 @@ fn test_exchange_create_receipt_includes_fee_and_exchange_id() {
     assert!(result.success, "Transaction should succeed");
 
     // Verify receipt bytes
-    let receipt_bytes = result.tron_transaction_result.expect("Receipt should be set");
-    assert!(!receipt_bytes.is_empty(), "Receipt bytes should not be empty");
+    let receipt_bytes = result
+        .tron_transaction_result
+        .expect("Receipt should be set");
+    assert!(
+        !receipt_bytes.is_empty(),
+        "Receipt bytes should not be empty"
+    );
 
     // Parse the receipt protobuf manually to verify fields
     // Field 1: fee (int64, wire type 0 = varint)
@@ -215,9 +242,18 @@ fn test_exchange_create_receipt_includes_fee_and_exchange_id() {
     }
 
     assert!(found_fee, "Receipt should contain fee field (field 1)");
-    assert!(found_exchange_id, "Receipt should contain exchange_id field (field 21)");
-    assert_eq!(fee_value, exchange_create_fee, "Fee should match EXCHANGE_CREATE_FEE");
-    assert_eq!(exchange_id_value, 1, "Exchange ID should be 1 (first exchange)");
+    assert!(
+        found_exchange_id,
+        "Receipt should contain exchange_id field (field 21)"
+    );
+    assert_eq!(
+        fee_value, exchange_create_fee,
+        "Fee should match EXCHANGE_CREATE_FEE"
+    );
+    assert_eq!(
+        exchange_id_value, 1,
+        "Exchange ID should be 1 (first exchange)"
+    );
 }
 
 /// Test: When ALLOW_BLACKHOLE_OPTIMIZATION = true, burn_trx is called
@@ -229,7 +265,11 @@ fn test_exchange_create_burns_fee_when_blackhole_optimization_enabled() {
 
     // Enable blackhole optimization
     storage_engine
-        .put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes())
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
         .unwrap();
 
     // Set ALLOW_SAME_TOKEN_NAME = 1
@@ -240,31 +280,48 @@ fn test_exchange_create_burns_fee_when_blackhole_optimization_enabled() {
     // Set fee and limits
     let exchange_create_fee: i64 = 1024_000_000;
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &exchange_create_fee.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &exchange_create_fee.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     // Initial BURN_TRX_AMOUNT
     let initial_burn: i64 = 0;
     storage_engine
-        .put("properties", b"BURN_TRX_AMOUNT", &initial_burn.to_be_bytes())
+        .put(
+            "properties",
+            b"BURN_TRX_AMOUNT",
+            &initial_burn.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                               0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-                               0x11, 0x22, 0x33, 0x44]);
+    let owner = Address::from([
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x11, 0x22, 0x33, 0x44,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -276,12 +333,19 @@ fn test_exchange_create_burns_fee_when_blackhole_optimization_enabled() {
 
     let token_id = b"1000001";
     // Set account proto with TRC-10 balance
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    account_proto.asset_v2.insert(String::from_utf8_lossy(token_id).to_string(), 10_000_000);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto
+        .asset_v2
+        .insert(String::from_utf8_lossy(token_id).to_string(), 10_000_000);
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     let contract_data = build_exchange_create_contract_data(
         owner,
@@ -341,7 +405,11 @@ fn test_exchange_create_credits_blackhole_when_optimization_disabled() {
 
     // Disable blackhole optimization
     storage_engine
-        .put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &0i64.to_be_bytes())
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &0i64.to_be_bytes(),
+        )
         .unwrap();
 
     storage_engine
@@ -353,16 +421,28 @@ fn test_exchange_create_credits_blackhole_when_optimization_disabled() {
 
     let exchange_create_fee: i64 = 1024_000_000;
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &exchange_create_fee.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &exchange_create_fee.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     // Initial BURN_TRX_AMOUNT
@@ -374,9 +454,10 @@ fn test_exchange_create_credits_blackhole_when_optimization_disabled() {
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11,
-                               0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
-                               0xaa, 0xbb, 0xcc, 0xdd]);
+    let owner = Address::from([
+        0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -387,12 +468,19 @@ fn test_exchange_create_credits_blackhole_when_optimization_disabled() {
     storage_adapter.set_account(owner, owner_account).unwrap();
 
     let token_id = b"1000001";
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    account_proto.asset_v2.insert(String::from_utf8_lossy(token_id).to_string(), 10_000_000);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto
+        .asset_v2
+        .insert(String::from_utf8_lossy(token_id).to_string(), 10_000_000);
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     // Get blackhole address and seed initial balance
     // We need to create the blackhole account first since add_balance requires an existing account
@@ -404,15 +492,12 @@ fn test_exchange_create_credits_blackhole_when_optimization_disabled() {
         address: blackhole_tron,
         ..Default::default()
     };
-    storage_adapter.set_account_proto(&blackhole_addr, &blackhole_account_proto).unwrap();
+    storage_adapter
+        .set_account_proto(&blackhole_addr, &blackhole_account_proto)
+        .unwrap();
 
-    let contract_data = build_exchange_create_contract_data(
-        owner,
-        b"_",
-        1_000_000_000,
-        token_id,
-        5_000_000,
-    );
+    let contract_data =
+        build_exchange_create_contract_data(owner, b"_", 1_000_000_000, token_id, 5_000_000);
 
     let tx = TronTransaction {
         from: owner,
@@ -494,30 +579,47 @@ fn test_exchange_create_legacy_mode_reads_asset_map() {
 
     // Disable asset optimization for this test
     storage_engine
-        .put("properties", b"ALLOW_ASSET_OPTIMIZATION", &0i64.to_be_bytes())
+        .put(
+            "properties",
+            b"ALLOW_ASSET_OPTIMIZATION",
+            &0i64.to_be_bytes(),
+        )
         .unwrap();
 
     let exchange_create_fee: i64 = 1024_000_000;
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &exchange_create_fee.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &exchange_create_fee.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                               0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-                               0x11, 0x22, 0x33, 0x44]);
+    let owner = Address::from([
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x11, 0x22, 0x33, 0x44,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -533,13 +635,21 @@ fn test_exchange_create_legacy_mode_reads_asset_map() {
     let token_balance: i64 = 10_000_000;
 
     // Set account proto with token balance in the LEGACY asset map (not asset_v2)
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
     // Use the legacy 'asset' map instead of 'asset_v2'
-    account_proto.asset.insert(String::from_utf8_lossy(token_name).to_string(), token_balance);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto.asset.insert(
+        String::from_utf8_lossy(token_name).to_string(),
+        token_balance,
+    );
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     // Build transaction with token NAME (not numeric ID)
     let contract_data = build_exchange_create_contract_data(
@@ -613,28 +723,45 @@ fn test_exchange_create_asset_optimization_reads_asset_store() {
 
     // Enable asset optimization
     storage_engine
-        .put("properties", b"ALLOW_ASSET_OPTIMIZATION", &1i64.to_be_bytes())
+        .put(
+            "properties",
+            b"ALLOW_ASSET_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
         .unwrap();
 
     let exchange_create_fee: i64 = 1024_000_000;
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &exchange_create_fee.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &exchange_create_fee.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11,
-                               0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
-                               0xaa, 0xbb, 0xcc, 0xdd]);
+    let owner = Address::from([
+        0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let token_id = b"1000001";
     let token_balance: i64 = 10_000_000;
@@ -664,20 +791,20 @@ fn test_exchange_create_asset_optimization_reads_asset_store() {
 
     // Set account proto WITHOUT the token in asset_v2 map
     // The balance will only be in AccountAssetStore
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
     // Intentionally NOT setting asset_v2 - the balance should come from AccountAssetStore
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
-    let contract_data = build_exchange_create_contract_data(
-        owner,
-        b"_",
-        1_000_000_000,
-        token_id,
-        5_000_000,
-    );
+    let contract_data =
+        build_exchange_create_contract_data(owner, b"_", 1_000_000_000, token_id, 5_000_000);
 
     let tx = TronTransaction {
         from: owner,
@@ -712,10 +839,17 @@ fn test_exchange_create_asset_optimization_reads_asset_store() {
     let result = service.execute_non_vm_contract(&mut storage_adapter, &tx, &context);
 
     // Should succeed - the balance was found in AccountAssetStore
-    assert!(result.is_ok(), "Execute with asset optimization should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Execute with asset optimization should succeed: {:?}",
+        result.err()
+    );
 
     let exec_result = result.unwrap();
-    assert!(exec_result.success, "Transaction should succeed when balance is in AccountAssetStore");
+    assert!(
+        exec_result.success,
+        "Transaction should succeed when balance is in AccountAssetStore"
+    );
 }
 
 /// Test: When EXCHANGE_CREATE_FEE key is missing, default to 1024000000 (1024 TRX)
@@ -756,25 +890,38 @@ fn test_exchange_create_fails_insufficient_balance_for_fee() {
 
     let exchange_create_fee: i64 = 1024_000_000;
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &exchange_create_fee.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &exchange_create_fee.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                               0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-                               0x11, 0x22, 0x33, 0x44]);
+    let owner = Address::from([
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x11, 0x22, 0x33, 0x44,
+    ]);
 
     // Set balance LESS than the fee
     let insufficient_balance: u64 = 500_000_000; // 500 TRX, but fee is 1024 TRX
@@ -786,18 +933,21 @@ fn test_exchange_create_fails_insufficient_balance_for_fee() {
     };
     storage_adapter.set_account(owner, owner_account).unwrap();
 
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = insufficient_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     let contract_data = build_exchange_create_contract_data(
-        owner,
-        b"_", // TRX
+        owner, b"_",      // TRX
         1_000_000, // small deposit
-        b"1000001",
-        1_000_000,
+        b"1000001", 1_000_000,
     );
 
     let tx = TronTransaction {
@@ -852,25 +1002,38 @@ fn test_exchange_create_fails_same_tokens() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &1024_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &1024_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                               0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-                               0x11, 0x22, 0x33, 0x44]);
+    let owner = Address::from([
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x11, 0x22, 0x33, 0x44,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -880,18 +1043,21 @@ fn test_exchange_create_fails_same_tokens() {
     };
     storage_adapter.set_account(owner, owner_account).unwrap();
 
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     // Try to exchange the SAME token (both are "1000001")
     let contract_data = build_exchange_create_contract_data(
-        owner,
-        b"1000001", // same token
-        1_000_000,
-        b"1000001", // same token
+        owner, b"1000001", // same token
+        1_000_000, b"1000001", // same token
         1_000_000,
     );
 
@@ -946,25 +1112,38 @@ fn test_exchange_create_fails_zero_balance() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &1024_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &1024_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                               0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-                               0x11, 0x22, 0x33, 0x44]);
+    let owner = Address::from([
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x11, 0x22, 0x33, 0x44,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -974,19 +1153,22 @@ fn test_exchange_create_fails_zero_balance() {
     };
     storage_adapter.set_account(owner, owner_account).unwrap();
 
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     // Try to create exchange with zero balance for first token
     let contract_data = build_exchange_create_contract_data(
-        owner,
-        b"_", // TRX
+        owner, b"_", // TRX
         0,    // ZERO balance - should fail
-        b"1000001",
-        1_000_000,
+        b"1000001", 1_000_000,
     );
 
     let tx = TronTransaction {
@@ -1040,28 +1222,41 @@ fn test_exchange_create_fails_balance_exceeds_limit() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &1024_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &1024_000_000i64.to_be_bytes(),
+        )
         .unwrap();
 
     // Set a low limit for testing
     let exchange_limit: i64 = 1_000_000; // 1 TRX limit
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &exchange_limit.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &exchange_limit.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                               0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-                               0x11, 0x22, 0x33, 0x44]);
+    let owner = Address::from([
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x11, 0x22, 0x33, 0x44,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -1071,19 +1266,22 @@ fn test_exchange_create_fails_balance_exceeds_limit() {
     };
     storage_adapter.set_account(owner, owner_account).unwrap();
 
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     // Try to create exchange with balance exceeding limit
     let contract_data = build_exchange_create_contract_data(
-        owner,
-        b"_", // TRX
+        owner, b"_",       // TRX
         10_000_000, // 10 TRX - exceeds 1 TRX limit
-        b"1000001",
-        500_000, // under limit
+        b"1000001", 500_000, // under limit
     );
 
     let tx = TronTransaction {
@@ -1116,7 +1314,10 @@ fn test_exchange_create_fails_balance_exceeds_limit() {
 
     let result = service.execute_non_vm_contract(&mut storage_adapter, &tx, &context);
 
-    assert!(result.is_err(), "Should fail when token balance exceeds limit");
+    assert!(
+        result.is_err(),
+        "Should fail when token balance exceeds limit"
+    );
     let err = result.unwrap_err();
     assert!(
         err.contains("token balance must less than"),
@@ -1138,25 +1339,38 @@ fn test_exchange_create_fails_invalid_token_id() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &1024_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &1024_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                               0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-                               0x11, 0x22, 0x33, 0x44]);
+    let owner = Address::from([
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x11, 0x22, 0x33, 0x44,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -1166,11 +1380,16 @@ fn test_exchange_create_fails_invalid_token_id() {
     };
     storage_adapter.set_account(owner, owner_account).unwrap();
 
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     // Use non-numeric token id (should fail when ALLOW_SAME_TOKEN_NAME == 1)
     let contract_data = build_exchange_create_contract_data(
@@ -1234,25 +1453,38 @@ fn test_exchange_create_fails_insufficient_trx_for_deposit() {
 
     let exchange_create_fee: i64 = 1024_000_000; // 1024 TRX
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &exchange_create_fee.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &exchange_create_fee.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                               0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-                               0x11, 0x22, 0x33, 0x44]);
+    let owner = Address::from([
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x11, 0x22, 0x33, 0x44,
+    ]);
 
     // Owner has enough for fee but NOT enough for fee + TRX deposit
     // Fee = 1024 TRX, deposit = 1000 TRX, total needed = 2024 TRX
@@ -1266,18 +1498,25 @@ fn test_exchange_create_fails_insufficient_trx_for_deposit() {
     };
     storage_adapter.set_account(owner, owner_account).unwrap();
 
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
     // Give some TRC-10 balance for the other side
-    account_proto.asset_v2.insert("1000001".to_string(), 10_000_000);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto
+        .asset_v2
+        .insert("1000001".to_string(), 10_000_000);
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     // Try to deposit 1000 TRX (need 1024 + 1000 = 2024 but only have 1500)
     let contract_data = build_exchange_create_contract_data(
         owner,
-        b"_", // TRX
+        b"_",          // TRX
         1_000_000_000, // 1000 TRX deposit
         b"1000001",
         5_000_000,
@@ -1313,7 +1552,10 @@ fn test_exchange_create_fails_insufficient_trx_for_deposit() {
 
     let result = service.execute_non_vm_contract(&mut storage_adapter, &tx, &context);
 
-    assert!(result.is_err(), "Should fail when TRX balance < fee + deposit");
+    assert!(
+        result.is_err(),
+        "Should fail when TRX balance < fee + deposit"
+    );
     let err = result.unwrap_err();
     assert!(
         err.contains("balance is not enough"),
@@ -1334,25 +1576,38 @@ fn test_exchange_create_fails_insufficient_trc10_balance() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &1024_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &1024_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-                               0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-                               0x11, 0x22, 0x33, 0x44]);
+    let owner = Address::from([
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x11, 0x22, 0x33, 0x44,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -1362,13 +1617,20 @@ fn test_exchange_create_fails_insufficient_trc10_balance() {
     };
     storage_adapter.set_account(owner, owner_account).unwrap();
 
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
     // Only 1,000,000 tokens but trying to deposit 5,000,000
-    account_proto.asset_v2.insert("1000001".to_string(), 1_000_000);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto
+        .asset_v2
+        .insert("1000001".to_string(), 1_000_000);
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     // Try to deposit more tokens than we have
     let contract_data = build_exchange_create_contract_data(
@@ -1409,7 +1671,10 @@ fn test_exchange_create_fails_insufficient_trc10_balance() {
 
     let result = service.execute_non_vm_contract(&mut storage_adapter, &tx, &context);
 
-    assert!(result.is_err(), "Should fail when TRC-10 balance is insufficient");
+    assert!(
+        result.is_err(),
+        "Should fail when TRC-10 balance is insufficient"
+    );
     let err = result.unwrap_err();
     assert!(
         err.contains("token balance is not enough"),
@@ -1429,10 +1694,18 @@ fn test_exchange_create_increments_exchange_id() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &1024_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &1024_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
 
     // Start with LATEST_EXCHANGE_NUM = 5 (pretend 5 exchanges already exist)
@@ -1440,16 +1713,21 @@ fn test_exchange_create_increments_exchange_id() {
         .put("properties", b"LATEST_EXCHANGE_NUM", &5i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12]);
+    let owner = Address::from([
+        0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        0x9a, 0xbc, 0xde, 0xf0, 0x12,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -1460,20 +1738,22 @@ fn test_exchange_create_increments_exchange_id() {
     storage_adapter.set_account(owner, owner_account).unwrap();
 
     let token_id = b"1000001";
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    account_proto.asset_v2.insert(String::from_utf8_lossy(token_id).to_string(), 10_000_000);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto
+        .asset_v2
+        .insert(String::from_utf8_lossy(token_id).to_string(), 10_000_000);
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
-    let contract_data = build_exchange_create_contract_data(
-        owner,
-        b"_",
-        1_000_000_000,
-        token_id,
-        5_000_000,
-    );
+    let contract_data =
+        build_exchange_create_contract_data(owner, b"_", 1_000_000_000, token_id, 5_000_000);
 
     let tx = TronTransaction {
         from: owner,
@@ -1510,7 +1790,9 @@ fn test_exchange_create_increments_exchange_id() {
     assert!(result.success, "Transaction should succeed");
 
     // Verify receipt has exchange_id = 6 (previous was 5)
-    let receipt_bytes = result.tron_transaction_result.expect("Receipt should be set");
+    let receipt_bytes = result
+        .tron_transaction_result
+        .expect("Receipt should be set");
     let mut exchange_id_value: i64 = 0;
 
     let mut i = 0;
@@ -1536,11 +1818,17 @@ fn test_exchange_create_increments_exchange_id() {
         }
     }
 
-    assert_eq!(exchange_id_value, 6, "Exchange ID should be 6 (previous was 5)");
+    assert_eq!(
+        exchange_id_value, 6,
+        "Exchange ID should be 6 (previous was 5)"
+    );
 
     // Verify LATEST_EXCHANGE_NUM was updated
     let latest_exchange_num = storage_adapter.get_latest_exchange_num().unwrap();
-    assert_eq!(latest_exchange_num, 6, "LATEST_EXCHANGE_NUM should be updated to 6");
+    assert_eq!(
+        latest_exchange_num, 6,
+        "LATEST_EXCHANGE_NUM should be updated to 6"
+    );
 }
 
 /// Test: Receipt bytes match conformance fixture format
@@ -1563,10 +1851,18 @@ fn test_exchange_create_receipt_matches_conformance_fixture() {
     // Set fee to match conformance fixture (1024 TRX)
     let exchange_create_fee: i64 = 1024_000_000;
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &exchange_create_fee.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &exchange_create_fee.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
 
     // Set LATEST_EXCHANGE_NUM = 0 so first exchange gets ID = 1
@@ -1574,16 +1870,21 @@ fn test_exchange_create_receipt_matches_conformance_fixture() {
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12]);
+    let owner = Address::from([
+        0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        0x9a, 0xbc, 0xde, 0xf0, 0x12,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -1594,12 +1895,19 @@ fn test_exchange_create_receipt_matches_conformance_fixture() {
     storage_adapter.set_account(owner, owner_account).unwrap();
 
     let token_id = b"1000001";
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    account_proto.asset_v2.insert(String::from_utf8_lossy(token_id).to_string(), 10_000_000);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto
+        .asset_v2
+        .insert(String::from_utf8_lossy(token_id).to_string(), 10_000_000);
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     let contract_data = build_exchange_create_contract_data(
         owner,
@@ -1643,7 +1951,9 @@ fn test_exchange_create_receipt_matches_conformance_fixture() {
     let result = result.unwrap();
     assert!(result.success, "Transaction should succeed");
 
-    let receipt_bytes = result.tron_transaction_result.expect("Receipt should be set");
+    let receipt_bytes = result
+        .tron_transaction_result
+        .expect("Receipt should be set");
 
     // Expected conformance fixture bytes:
     // 08 80 80 a4 e8 03 a8 01 01
@@ -1656,13 +1966,11 @@ fn test_exchange_create_receipt_matches_conformance_fixture() {
     // Convert receipt_bytes (Bytes type) to a slice for comparison
     let receipt_slice: &[u8] = &receipt_bytes;
     assert_eq!(
-        receipt_slice,
-        &expected_bytes,
+        receipt_slice, &expected_bytes,
         "Receipt bytes should match conformance fixture.\n\
          Expected: {:02x?}\n\
          Got:      {:02x?}",
-        expected_bytes,
-        receipt_slice
+        expected_bytes, receipt_slice
     );
 }
 
@@ -1684,25 +1992,38 @@ fn test_exchange_create_deducts_owner_trx_balance() {
 
     let exchange_create_fee: i64 = 1024_000_000; // 1024 TRX
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &exchange_create_fee.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &exchange_create_fee.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12]);
+    let owner = Address::from([
+        0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        0x9a, 0xbc, 0xde, 0xf0, 0x12,
+    ]);
     let initial_balance: i64 = 100_000_000_000; // 100,000 TRX
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance as u64),
@@ -1714,12 +2035,19 @@ fn test_exchange_create_deducts_owner_trx_balance() {
 
     let token_id = b"1000001";
     let token_balance: i64 = 10_000_000;
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    account_proto.asset_v2.insert(String::from_utf8_lossy(token_id).to_string(), token_balance);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto
+        .asset_v2
+        .insert(String::from_utf8_lossy(token_id).to_string(), token_balance);
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     let trx_deposit: i64 = 1_000_000_000; // 1000 TRX
     let token_deposit: i64 = 5_000_000;
@@ -1768,15 +2096,10 @@ fn test_exchange_create_deducts_owner_trx_balance() {
     let expected_balance = initial_balance - exchange_create_fee - trx_deposit;
 
     assert_eq!(
-        final_account.balance,
-        expected_balance,
+        final_account.balance, expected_balance,
         "Owner TRX balance should be deducted by fee ({}) + TRX deposit ({})\n\
          Initial: {}, Expected: {}, Got: {}",
-        exchange_create_fee,
-        trx_deposit,
-        initial_balance,
-        expected_balance,
-        final_account.balance
+        exchange_create_fee, trx_deposit, initial_balance, expected_balance, final_account.balance
     );
 }
 
@@ -1792,25 +2115,38 @@ fn test_exchange_create_deducts_owner_trc10_balance() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &1024_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &1024_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12]);
+    let owner = Address::from([
+        0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        0x9a, 0xbc, 0xde, 0xf0, 0x12,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -1823,12 +2159,19 @@ fn test_exchange_create_deducts_owner_trc10_balance() {
     let token_id = b"1000001";
     let token_key = String::from_utf8_lossy(token_id).to_string();
     let initial_token_balance: i64 = 10_000_000;
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    account_proto.asset_v2.insert(token_key.clone(), initial_token_balance);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto
+        .asset_v2
+        .insert(token_key.clone(), initial_token_balance);
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     let token_deposit: i64 = 5_000_000;
 
@@ -1877,14 +2220,10 @@ fn test_exchange_create_deducts_owner_trc10_balance() {
     let expected_token_balance = initial_token_balance - token_deposit;
 
     assert_eq!(
-        final_token_balance,
-        expected_token_balance,
+        final_token_balance, expected_token_balance,
         "Owner TRC-10 balance should be deducted by token deposit ({})\n\
          Initial: {}, Expected: {}, Got: {}",
-        token_deposit,
-        initial_token_balance,
-        expected_token_balance,
-        final_token_balance
+        token_deposit, initial_token_balance, expected_token_balance, final_token_balance
     );
 }
 
@@ -1900,10 +2239,18 @@ fn test_exchange_create_stores_exchange_record() {
         .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &1024_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &1024_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
@@ -1911,16 +2258,21 @@ fn test_exchange_create_stores_exchange_record() {
 
     let create_time: i64 = 1609459200000; // 2021-01-01 00:00:00 UTC
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &create_time.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &create_time.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12]);
+    let owner = Address::from([
+        0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        0x9a, 0xbc, 0xde, 0xf0, 0x12,
+    ]);
     let initial_balance: u64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance),
@@ -1935,12 +2287,20 @@ fn test_exchange_create_stores_exchange_record() {
     let first_token_balance: i64 = 1_000_000_000;
     let second_token_balance: i64 = 5_000_000;
 
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance as i64;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    account_proto.asset_v2.insert(String::from_utf8_lossy(second_token_id).to_string(), 10_000_000);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto.asset_v2.insert(
+        String::from_utf8_lossy(second_token_id).to_string(),
+        10_000_000,
+    );
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     let contract_data = build_exchange_create_contract_data(
         owner,
@@ -1983,17 +2343,37 @@ fn test_exchange_create_stores_exchange_record() {
 
     // Verify exchange record was stored
     let exchange = storage_adapter.get_exchange(1).unwrap();
-    assert!(exchange.is_some(), "Exchange record should exist in ExchangeV2Store");
+    assert!(
+        exchange.is_some(),
+        "Exchange record should exist in ExchangeV2Store"
+    );
 
     let exchange = exchange.unwrap();
     assert_eq!(exchange.exchange_id, 1, "Exchange ID should be 1");
-    assert_eq!(exchange.creator_address, owner_tron, "Creator address should match owner");
+    assert_eq!(
+        exchange.creator_address, owner_tron,
+        "Creator address should match owner"
+    );
     // Note: create_time comes from LATEST_BLOCK_HEADER_TIMESTAMP which may be read at execution time
     // The important thing is that it's set (non-zero in production)
-    assert_eq!(exchange.first_token_id, first_token_id.to_vec(), "First token ID should match");
-    assert_eq!(exchange.first_token_balance, first_token_balance, "First token balance should match");
-    assert_eq!(exchange.second_token_id, second_token_id.to_vec(), "Second token ID should match");
-    assert_eq!(exchange.second_token_balance, second_token_balance, "Second token balance should match");
+    assert_eq!(
+        exchange.first_token_id,
+        first_token_id.to_vec(),
+        "First token ID should match"
+    );
+    assert_eq!(
+        exchange.first_token_balance, first_token_balance,
+        "First token balance should match"
+    );
+    assert_eq!(
+        exchange.second_token_id,
+        second_token_id.to_vec(),
+        "Second token ID should match"
+    );
+    assert_eq!(
+        exchange.second_token_balance, second_token_balance,
+        "Second token balance should match"
+    );
 }
 
 /// Test: Token-to-token exchange (no TRX involved)
@@ -2010,25 +2390,38 @@ fn test_exchange_create_token_to_token() {
 
     let exchange_create_fee: i64 = 1024_000_000;
     storage_engine
-        .put("properties", b"EXCHANGE_CREATE_FEE", &exchange_create_fee.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_CREATE_FEE",
+            &exchange_create_fee.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
-        .put("properties", b"EXCHANGE_BALANCE_LIMIT", &1_000_000_000_000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"EXCHANGE_BALANCE_LIMIT",
+            &1_000_000_000_000i64.to_be_bytes(),
+        )
         .unwrap();
     storage_engine
         .put("properties", b"LATEST_EXCHANGE_NUM", &0i64.to_be_bytes())
         .unwrap();
     storage_engine
-        .put("properties", b"LATEST_BLOCK_HEADER_TIMESTAMP", &1000000i64.to_be_bytes())
+        .put(
+            "properties",
+            b"LATEST_BLOCK_HEADER_TIMESTAMP",
+            &1000000i64.to_be_bytes(),
+        )
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let service = new_test_service_with_exchange_enabled();
 
-    let owner = Address::from([0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a,
-                               0xbc, 0xde, 0xf0, 0x12]);
+    let owner = Address::from([
+        0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        0x9a, 0xbc, 0xde, 0xf0, 0x12,
+    ]);
     let initial_balance: i64 = 100_000_000_000;
     let owner_account = AccountInfo {
         balance: U256::from(initial_balance as u64),
@@ -2047,13 +2440,22 @@ fn test_exchange_create_token_to_token() {
     let first_deposit: i64 = 10_000_000;
     let second_deposit: i64 = 15_000_000;
 
-    let mut account_proto = storage_adapter.get_account_proto(&owner).unwrap().unwrap_or_default();
+    let mut account_proto = storage_adapter
+        .get_account_proto(&owner)
+        .unwrap()
+        .unwrap_or_default();
     account_proto.balance = initial_balance;
     let owner_tron = make_from_raw(&owner);
     account_proto.address = owner_tron.clone();
-    account_proto.asset_v2.insert(first_token_key.clone(), initial_first_token);
-    account_proto.asset_v2.insert(second_token_key.clone(), initial_second_token);
-    storage_adapter.set_account_proto(&owner, &account_proto).unwrap();
+    account_proto
+        .asset_v2
+        .insert(first_token_key.clone(), initial_first_token);
+    account_proto
+        .asset_v2
+        .insert(second_token_key.clone(), initial_second_token);
+    storage_adapter
+        .set_account_proto(&owner, &account_proto)
+        .unwrap();
 
     let contract_data = build_exchange_create_contract_data(
         owner,
@@ -2108,8 +2510,16 @@ fn test_exchange_create_token_to_token() {
     );
 
     // Both token balances should be deducted
-    let final_first_token = final_account.asset_v2.get(&first_token_key).copied().unwrap_or(0);
-    let final_second_token = final_account.asset_v2.get(&second_token_key).copied().unwrap_or(0);
+    let final_first_token = final_account
+        .asset_v2
+        .get(&first_token_key)
+        .copied()
+        .unwrap_or(0);
+    let final_second_token = final_account
+        .asset_v2
+        .get(&second_token_key)
+        .copied()
+        .unwrap_or(0);
 
     assert_eq!(
         final_first_token,

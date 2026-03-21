@@ -1,10 +1,12 @@
 //! WitnessUpdateContract tests.
 
 use super::super::super::*;
-use super::common::{seed_dynamic_properties, make_from_raw};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
-use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
+use super::common::{make_from_raw, seed_dynamic_properties};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
+use tron_backend_execution::{
+    EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata,
+};
 
 #[test]
 fn test_witness_update_contract_happy_path() {
@@ -35,7 +37,9 @@ fn test_witness_update_contract_happy_path() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account.clone()).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account.clone())
+        .is_ok());
 
     // Create initial witness entry with old URL
     let initial_witness = tron_backend_execution::WitnessInfo::new(
@@ -76,19 +80,31 @@ fn test_witness_update_contract_happy_path() {
     };
 
     // Execute the contract
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
 
     // Assert success
-    assert!(result.is_ok(), "Witness update should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Witness update should succeed: {:?}",
+        result.err()
+    );
     let execution_result = result.unwrap();
 
     assert!(execution_result.success, "Execution should be successful");
     assert_eq!(execution_result.energy_used, 0, "Energy used should be 0");
     // WitnessUpdateContract does not emit state changes (matches embedded CSV semantics)
-    assert_eq!(execution_result.state_changes.len(), 0, "Should have no state changes");
+    assert_eq!(
+        execution_result.state_changes.len(),
+        0,
+        "Should have no state changes"
+    );
     assert!(execution_result.logs.is_empty(), "Should have no logs");
     assert!(execution_result.error.is_none(), "Should have no error");
-    assert!(execution_result.bandwidth_used > 0, "Bandwidth should be > 0");
+    assert!(
+        execution_result.bandwidth_used > 0,
+        "Bandwidth should be > 0"
+    );
 
     // Verify witness URL was updated
     let updated_witness = storage_adapter.get_witness(&owner_address).unwrap();
@@ -143,8 +159,11 @@ fn test_witness_update_contract_validations() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(url_test_address, url_test_account).is_ok());
-    let url_test_witness = tron_backend_execution::WitnessInfo::new(url_test_address, "existing-url".to_string(), 0);
+    assert!(storage_adapter
+        .set_account(url_test_address, url_test_account)
+        .is_ok());
+    let url_test_witness =
+        tron_backend_execution::WitnessInfo::new(url_test_address, "existing-url".to_string(), 0);
     assert!(storage_adapter.put_witness(&url_test_witness).is_ok());
 
     // Test 1: Empty URL should fail
@@ -164,9 +183,13 @@ fn test_witness_update_contract_validations() {
         },
     };
 
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &empty_url_tx, &context);
+    let result =
+        service.execute_witness_update_contract(&mut storage_adapter, &empty_url_tx, &context);
     assert!(result.is_err(), "Empty URL should fail");
-    assert!(result.unwrap_err().contains("Invalid url"), "Error should mention 'Invalid url'");
+    assert!(
+        result.unwrap_err().contains("Invalid url"),
+        "Error should mention 'Invalid url'"
+    );
 
     // Test 2: URL too long (>256 bytes) should fail
     let long_url_bytes: Vec<u8> = vec![b'x'; 257];
@@ -186,9 +209,13 @@ fn test_witness_update_contract_validations() {
         },
     };
 
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &long_url_tx, &context);
+    let result =
+        service.execute_witness_update_contract(&mut storage_adapter, &long_url_tx, &context);
     assert!(result.is_err(), "URL >256 bytes should fail");
-    assert!(result.unwrap_err().contains("Invalid url"), "Error should mention 'Invalid url'");
+    assert!(
+        result.unwrap_err().contains("Invalid url"),
+        "Error should mention 'Invalid url'"
+    );
 
     // Test 3: Missing owner account should fail
     let missing_account_tx = TronTransaction {
@@ -207,9 +234,16 @@ fn test_witness_update_contract_validations() {
         },
     };
 
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &missing_account_tx, &context);
+    let result = service.execute_witness_update_contract(
+        &mut storage_adapter,
+        &missing_account_tx,
+        &context,
+    );
     assert!(result.is_err(), "Missing account should fail");
-    assert!(result.unwrap_err().contains("account does not exist"), "Error should mention 'account does not exist'");
+    assert!(
+        result.unwrap_err().contains("account does not exist"),
+        "Error should mention 'account does not exist'"
+    );
 
     // Test 4: Account exists but witness does not exist should fail
     let owner_account = AccountInfo {
@@ -218,7 +252,9 @@ fn test_witness_update_contract_validations() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     let missing_witness_tx = TronTransaction {
         from: owner_address,
@@ -236,9 +272,16 @@ fn test_witness_update_contract_validations() {
         },
     };
 
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &missing_witness_tx, &context);
+    let result = service.execute_witness_update_contract(
+        &mut storage_adapter,
+        &missing_witness_tx,
+        &context,
+    );
     assert!(result.is_err(), "Missing witness should fail");
-    assert!(result.unwrap_err().contains("Witness does not exist"), "Error should mention 'Witness does not exist'");
+    assert!(
+        result.unwrap_err().contains("Witness does not exist"),
+        "Error should mention 'Witness does not exist'"
+    );
 
     // Test 5: Invalid UTF-8 is accepted lossily (matches Java's ByteString#toStringUtf8 behavior)
     let witness = tron_backend_execution::WitnessInfo::new(owner_address, "old-url".to_string(), 0);
@@ -260,9 +303,13 @@ fn test_witness_update_contract_validations() {
         },
     };
 
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &invalid_utf8_tx, &context);
+    let result =
+        service.execute_witness_update_contract(&mut storage_adapter, &invalid_utf8_tx, &context);
     // Invalid UTF-8 is converted lossily with replacement characters, not rejected
-    assert!(result.is_ok(), "Invalid UTF-8 should be accepted with lossy conversion");
+    assert!(
+        result.is_ok(),
+        "Invalid UTF-8 should be accepted with lossy conversion"
+    );
     let execution_result = result.unwrap();
     assert!(execution_result.success, "Execution should succeed");
 }
@@ -297,9 +344,12 @@ fn test_witness_update_tracks_aext_when_enabled() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
-    let witness = tron_backend_execution::WitnessInfo::new(owner_address, "old-url".to_string(), 50);
+    let witness =
+        tron_backend_execution::WitnessInfo::new(owner_address, "old-url".to_string(), 50);
     assert!(storage_adapter.put_witness(&witness).is_ok());
 
     // Create WitnessUpdateContract transaction
@@ -332,21 +382,35 @@ fn test_witness_update_tracks_aext_when_enabled() {
     };
 
     // Execute the contract
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
 
     // Assert success
-    assert!(result.is_ok(), "Witness update with AEXT tracking should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Witness update with AEXT tracking should succeed: {:?}",
+        result.err()
+    );
     let execution_result = result.unwrap();
 
     assert!(execution_result.success, "Execution should be successful");
-    assert!(execution_result.bandwidth_used > 0, "Bandwidth should be > 0");
+    assert!(
+        execution_result.bandwidth_used > 0,
+        "Bandwidth should be > 0"
+    );
 
     // Verify AEXT map contains owner entry
-    assert!(execution_result.aext_map.contains_key(&owner_address), "AEXT map should contain owner");
+    assert!(
+        execution_result.aext_map.contains_key(&owner_address),
+        "AEXT map should contain owner"
+    );
     let (before_aext, after_aext) = &execution_result.aext_map[&owner_address];
 
     // After AEXT should have increased net_usage
-    assert!(after_aext.free_net_usage >= before_aext.free_net_usage, "Net usage should increase or stay same");
+    assert!(
+        after_aext.free_net_usage >= before_aext.free_net_usage,
+        "Net usage should increase or stay same"
+    );
 
     // Verify AEXT was persisted
     let persisted_aext = storage_adapter.get_account_aext(&owner_address).unwrap();
@@ -412,7 +476,9 @@ fn test_witness_update_preserves_all_witness_fields() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     // 3. Execute witness update with new URL
     let new_url = "brand-new-url.example.com";
@@ -444,8 +510,13 @@ fn test_witness_update_preserves_all_witness_fields() {
         transaction_id: None,
     };
 
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "Witness update should succeed: {:?}", result.err());
+    let result =
+        service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(
+        result.is_ok(),
+        "Witness update should succeed: {:?}",
+        result.err()
+    );
     assert!(result.unwrap().success);
 
     // 4. Read back and verify via WitnessInfo (url + vote_count)
@@ -461,20 +532,36 @@ fn test_witness_update_preserves_all_witness_fields() {
     //    (WitnessInfo only surfaces address/url/vote_count, so we decode the full proto)
     let mut raw_key = vec![0x41u8];
     raw_key.extend_from_slice(owner_address.as_slice());
-    let raw_bytes = storage_adapter.raw_get("witness", &raw_key)
+    let raw_bytes = storage_adapter
+        .raw_get("witness", &raw_key)
         .expect("raw_get should not error")
         .expect("raw witness bytes should exist");
 
-    let decoded = Witness::decode(raw_bytes.as_slice())
-        .expect("should decode as Witness proto");
+    let decoded = Witness::decode(raw_bytes.as_slice()).expect("should decode as Witness proto");
 
     assert_eq!(decoded.url, new_url, "proto url should be updated");
-    assert_eq!(decoded.vote_count, 42, "proto vote_count should be preserved");
-    assert_eq!(decoded.pub_key, vec![0xAA, 0xBB, 0xCC], "pub_key should be preserved");
-    assert_eq!(decoded.total_produced, 7, "total_produced should be preserved");
+    assert_eq!(
+        decoded.vote_count, 42,
+        "proto vote_count should be preserved"
+    );
+    assert_eq!(
+        decoded.pub_key,
+        vec![0xAA, 0xBB, 0xCC],
+        "pub_key should be preserved"
+    );
+    assert_eq!(
+        decoded.total_produced, 7,
+        "total_produced should be preserved"
+    );
     assert_eq!(decoded.total_missed, 3, "total_missed should be preserved");
-    assert_eq!(decoded.latest_block_num, 123456, "latest_block_num should be preserved");
-    assert_eq!(decoded.latest_slot_num, 789, "latest_slot_num should be preserved");
+    assert_eq!(
+        decoded.latest_block_num, 123456,
+        "latest_block_num should be preserved"
+    );
+    assert_eq!(
+        decoded.latest_slot_num, 789,
+        "latest_slot_num should be preserved"
+    );
     assert_eq!(decoded.is_jobs, true, "is_jobs should be preserved");
 }
 
@@ -536,7 +623,8 @@ fn test_witness_update_any_type_url_mismatch() {
         transaction_id: None,
     };
 
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_err(), "Mismatched type_url should fail");
     let err_msg = result.unwrap_err();
     assert!(
@@ -617,7 +705,8 @@ fn test_witness_update_any_value_malformed() {
         transaction_id: None,
     };
 
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_err(), "Malformed value should fail");
     let err_msg = result.unwrap_err();
     assert!(
@@ -657,9 +746,12 @@ fn test_witness_update_any_type_url_correct() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
-    let witness = tron_backend_execution::WitnessInfo::new(owner_address, "existing.com".to_string(), 10);
+    let witness =
+        tron_backend_execution::WitnessInfo::new(owner_address, "existing.com".to_string(), 10);
     storage_adapter.put_witness(&witness).unwrap();
 
     let transaction = TronTransaction {
@@ -694,11 +786,19 @@ fn test_witness_update_any_type_url_correct() {
         transaction_id: None,
     };
 
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "Correct type_url should pass: {:?}", result.err());
+    let result =
+        service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(
+        result.is_ok(),
+        "Correct type_url should pass: {:?}",
+        result.err()
+    );
     assert!(result.unwrap().success);
 
-    let updated = storage_adapter.get_witness(&owner_address).unwrap().unwrap();
+    let updated = storage_adapter
+        .get_witness(&owner_address)
+        .unwrap()
+        .unwrap();
     assert_eq!(updated.url, "updated-url.com");
 }
 
@@ -727,7 +827,9 @@ fn test_witness_update_always_writes_even_same_url() {
         latest_slot_num: 50,
         is_jobs: false,
     };
-    storage_engine.put("witness", &tron_addr, &original_witness.encode_to_vec()).unwrap();
+    storage_engine
+        .put("witness", &tron_addr, &original_witness.encode_to_vec())
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -750,7 +852,9 @@ fn test_witness_update_always_writes_even_same_url() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     // Execute update with SAME URL
     let transaction = TronTransaction {
@@ -781,12 +885,20 @@ fn test_witness_update_always_writes_even_same_url() {
         transaction_id: None,
     };
 
-    let result = service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "Same-URL update should succeed: {:?}", result.err());
+    let result =
+        service.execute_witness_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(
+        result.is_ok(),
+        "Same-URL update should succeed: {:?}",
+        result.err()
+    );
     assert!(result.unwrap().success);
 
     // Verify all fields preserved after same-URL write
-    let stored = storage_adapter.get_witness(&owner_address).unwrap().unwrap();
+    let stored = storage_adapter
+        .get_witness(&owner_address)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.url, "same-url.com");
     assert_eq!(stored.vote_count, 10, "vote_count should be preserved");
 }
@@ -824,7 +936,9 @@ fn test_witness_update_crafted_any_url_not_unwrapped() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     let witness = tron_backend_execution::WitnessInfo::new(owner_address, "old.com".to_string(), 0);
     storage_adapter.put_witness(&witness).unwrap();
@@ -877,10 +991,17 @@ fn test_witness_update_crafted_any_url_not_unwrapped() {
     };
 
     let result = service.execute_non_vm_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "Crafted-Any URL should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Crafted-Any URL should succeed: {:?}",
+        result.err()
+    );
 
     // The stored URL should be the full crafted bytes (lossy UTF-8), NOT the unwrapped inner "INNER"
-    let stored = storage_adapter.get_witness(&owner_address).unwrap().unwrap();
+    let stored = storage_adapter
+        .get_witness(&owner_address)
+        .unwrap()
+        .unwrap();
     let expected_url = String::from_utf8_lossy(&crafted_url).to_string();
     assert_eq!(
         stored.url, expected_url,

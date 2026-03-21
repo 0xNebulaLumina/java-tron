@@ -2,19 +2,19 @@
 mod tests {
     // Import all types via crate-level re-exports
     use crate::{
-        EvmStateStore, InMemoryEvmStateStore, EngineBackedEvmStateStore,
-        EvmStateDatabase, WitnessInfo, FreezeRecord, Vote, VotesRecord,
-        AccountAext, StateChangeRecord, ResourceTracker, BandwidthPath,
+        AccountAext, BandwidthPath, EngineBackedEvmStateStore, EvmStateDatabase, EvmStateStore,
+        FreezeRecord, InMemoryEvmStateStore, ResourceTracker, StateChangeRecord, Vote, VotesRecord,
+        WitnessInfo,
     };
     // Import utils functions explicitly
     use crate::storage_adapter::utils::{from_tron_address, to_tron_address};
 
     // Standard library imports
-    use std::sync::{Arc, Mutex};
     use std::collections::{HashMap, HashSet};
+    use std::sync::{Arc, Mutex};
 
     // External crate imports
-    use revm::primitives::{Account, AccountInfo, Bytecode, Address, U256, B256};
+    use revm::primitives::{Account, AccountInfo, Address, Bytecode, B256, U256};
     use revm::DatabaseCommit;
 
     #[test]
@@ -108,19 +108,25 @@ mod tests {
         // Test the specific example provided
         let tron_address = "TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ";
         let expected_evm_hex = "0x0B53CE4AA6F0C2F3C849F11F682702EC99622E2E";
-        
+
         // Convert Tron address to EVM address
         let evm_address = from_tron_address(tron_address).expect("Failed to parse Tron address");
         let actual_evm_hex = format!("0x{}", hex::encode(evm_address.as_slice()).to_uppercase());
-        
-        assert_eq!(actual_evm_hex, expected_evm_hex, 
-                   "EVM address mismatch: expected {}, got {}", expected_evm_hex, actual_evm_hex);
-        
+
+        assert_eq!(
+            actual_evm_hex, expected_evm_hex,
+            "EVM address mismatch: expected {}, got {}",
+            expected_evm_hex, actual_evm_hex
+        );
+
         // Convert EVM address back to Tron address
         let converted_tron_address = to_tron_address(&evm_address);
-        
-        assert_eq!(converted_tron_address, tron_address,
-                   "Tron address mismatch: expected {}, got {}", tron_address, converted_tron_address);
+
+        assert_eq!(
+            converted_tron_address, tron_address,
+            "Tron address mismatch: expected {}, got {}",
+            tron_address, converted_tron_address
+        );
     }
 
     #[test]
@@ -128,12 +134,16 @@ mod tests {
         // Test multiple addresses for round-trip conversion
         let test_cases = vec![
             // Add the specific example
-            ("TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ", "0x0B53CE4AA6F0C2F3C849F11F682702EC99622E2E"),
+            (
+                "TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ",
+                "0x0B53CE4AA6F0C2F3C849F11F682702EC99622E2E",
+            ),
         ];
 
         for (tron_addr, evm_hex) in test_cases {
             // Parse expected EVM address
-            let expected_evm = Address::from_slice(&hex::decode(&evm_hex[2..]).expect("Invalid hex"));
+            let expected_evm =
+                Address::from_slice(&hex::decode(&evm_hex[2..]).expect("Invalid hex"));
 
             // Test Tron -> EVM conversion
             let parsed_evm = from_tron_address(tron_addr).expect("Failed to parse Tron address");
@@ -196,7 +206,9 @@ mod tests {
         let max_length_name = b"ThisIsExactlyThirtyTwoBytesLong!";
         let another_address = Address::from([2u8; 20]);
         assert_eq!(max_length_name.len(), 32);
-        assert!(adapter.set_account_name(another_address, max_length_name).is_ok());
+        assert!(adapter
+            .set_account_name(another_address, max_length_name)
+            .is_ok());
     }
 
     #[test]
@@ -218,7 +230,9 @@ mod tests {
         // Test non-UTF-8 bytes (should store but warn)
         let non_utf8_address = Address::from([2u8; 20]);
         let non_utf8_name = &[0xFF, 0xFE, 0xFD, 0xFC]; // Invalid UTF-8 sequence
-        assert!(adapter.set_account_name(non_utf8_address, non_utf8_name).is_ok());
+        assert!(adapter
+            .set_account_name(non_utf8_address, non_utf8_name)
+            .is_ok());
 
         // Should fail to decode as UTF-8 but the setting should have succeeded
         let result = adapter.get_account_name(&non_utf8_address);
@@ -228,9 +242,10 @@ mod tests {
     #[test]
     fn test_witness_protobuf_encode_decode() {
         // Test protobuf encoding and decoding roundtrip
-        let address = Address::from([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
-                                      0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
-                                      0x12, 0x34, 0x56, 0x78]);
+        let address = Address::from([
+            0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc,
+            0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        ]);
         let witness_info = WitnessInfo {
             address,
             url: "https://test-witness.com".to_string(),
@@ -239,11 +254,14 @@ mod tests {
 
         // Encode as protobuf
         let protobuf_data = witness_info.serialize();
-        assert!(!protobuf_data.is_empty(), "Protobuf data should not be empty");
+        assert!(
+            !protobuf_data.is_empty(),
+            "Protobuf data should not be empty"
+        );
 
         // Decode protobuf
-        let decoded = WitnessInfo::deserialize(&protobuf_data)
-            .expect("Protobuf decode should succeed");
+        let decoded =
+            WitnessInfo::deserialize(&protobuf_data).expect("Protobuf decode should succeed");
 
         assert_eq!(decoded.address, witness_info.address);
         assert_eq!(decoded.url, witness_info.url);
@@ -253,9 +271,10 @@ mod tests {
     #[test]
     fn test_witness_legacy_encode_decode() {
         // Test legacy encoding and decoding roundtrip
-        let address = Address::from([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
-                                      0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
-                                      0x12, 0x34, 0x56, 0x78]);
+        let address = Address::from([
+            0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc,
+            0xde, 0xf0, 0x12, 0x34, 0x56, 0x78,
+        ]);
         let witness_info = WitnessInfo {
             address,
             url: "https://legacy-witness.com".to_string(),
@@ -267,8 +286,7 @@ mod tests {
         assert!(!legacy_data.is_empty(), "Legacy data should not be empty");
 
         // Decode legacy
-        let decoded = WitnessInfo::deserialize(&legacy_data)
-            .expect("Legacy decode should succeed");
+        let decoded = WitnessInfo::deserialize(&legacy_data).expect("Legacy decode should succeed");
 
         assert_eq!(decoded.address, witness_info.address);
         assert_eq!(decoded.url, witness_info.url);
@@ -277,8 +295,8 @@ mod tests {
 
     #[test]
     fn test_witness_protobuf_address_formats() {
-        use prost::Message;
         use crate::protocol::Witness;
+        use prost::Message;
 
         // Test 21-byte TRON address (0x41 prefix)
         let mut tron_addr_21 = vec![0x41];
@@ -297,8 +315,8 @@ mod tests {
         };
         let data_21 = witness_21.encode_to_vec();
 
-        let decoded_21 = WitnessInfo::deserialize(&data_21)
-            .expect("Should decode 21-byte TRON address");
+        let decoded_21 =
+            WitnessInfo::deserialize(&data_21).expect("Should decode 21-byte TRON address");
         assert_eq!(decoded_21.address, Address::from([0x12; 20]));
 
         // Test 20-byte address (no prefix)
@@ -315,15 +333,14 @@ mod tests {
         };
         let data_20 = witness_20.encode_to_vec();
 
-        let decoded_20 = WitnessInfo::deserialize(&data_20)
-            .expect("Should decode 20-byte address");
+        let decoded_20 = WitnessInfo::deserialize(&data_20).expect("Should decode 20-byte address");
         assert_eq!(decoded_20.address, Address::from([0x34; 20]));
     }
 
     #[test]
     fn test_witness_protobuf_negative_vote_count() {
-        use prost::Message;
         use crate::protocol::Witness;
+        use prost::Message;
 
         let witness = Witness {
             address: vec![0x41; 21],
@@ -339,14 +356,16 @@ mod tests {
         let data = witness.encode_to_vec();
 
         // Should fail on negative vote count
-        assert!(WitnessInfo::deserialize(&data).is_err(),
-                "Should reject negative voteCount");
+        assert!(
+            WitnessInfo::deserialize(&data).is_err(),
+            "Should reject negative voteCount"
+        );
     }
 
     #[test]
     fn test_witness_protobuf_invalid_address_length() {
-        use prost::Message;
         use crate::protocol::Witness;
+        use prost::Message;
 
         let witness = Witness {
             address: vec![0x41; 19], // Invalid length
@@ -362,8 +381,10 @@ mod tests {
         let data = witness.encode_to_vec();
 
         // Should fail on invalid address length
-        assert!(WitnessInfo::deserialize(&data).is_err(),
-                "Should reject invalid address length");
+        assert!(
+            WitnessInfo::deserialize(&data).is_err(),
+            "Should reject invalid address length"
+        );
     }
 
     #[test]
@@ -384,8 +405,8 @@ mod tests {
 
         // Legacy roundtrip
         let legacy_data = witness_info.serialize();
-        let decoded_legacy = WitnessInfo::deserialize(&legacy_data)
-            .expect("Should decode empty URL from legacy");
+        let decoded_legacy =
+            WitnessInfo::deserialize(&legacy_data).expect("Should decode empty URL from legacy");
         assert_eq!(decoded_legacy.url, "");
     }
 
@@ -397,10 +418,12 @@ mod tests {
         let address = Address::from([0xab; 20]);
 
         // Set freeze record for BANDWIDTH (resource=0)
-        storage.set_freeze_record(&address, 0, 1_000_000, 1000000000)
+        storage
+            .set_freeze_record(&address, 0, 1_000_000, 1000000000)
             .expect("Should set freeze record");
 
-        let power = storage.get_tron_power_in_sun(&address, false)
+        let power = storage
+            .get_tron_power_in_sun(&address, false)
             .expect("Should compute tron power");
         assert_eq!(power, 1_000_000, "Expected power from bandwidth only");
     }
@@ -411,10 +434,12 @@ mod tests {
         let address = Address::from([0xbc; 20]);
 
         // Set freeze record for ENERGY (resource=1)
-        storage.set_freeze_record(&address, 1, 2_000_000, 1000000000)
+        storage
+            .set_freeze_record(&address, 1, 2_000_000, 1000000000)
             .expect("Should set freeze record");
 
-        let power = storage.get_tron_power_in_sun(&address, false)
+        let power = storage
+            .get_tron_power_in_sun(&address, false)
             .expect("Should compute tron power");
         assert_eq!(power, 2_000_000, "Expected power from energy only");
     }
@@ -425,12 +450,15 @@ mod tests {
         let address = Address::from([0xcd; 20]);
 
         // Set freeze records for both BANDWIDTH and ENERGY
-        storage.set_freeze_record(&address, 0, 1_000_000, 1000000000)
+        storage
+            .set_freeze_record(&address, 0, 1_000_000, 1000000000)
             .expect("Should set bandwidth freeze");
-        storage.set_freeze_record(&address, 1, 2_000_000, 1000000000)
+        storage
+            .set_freeze_record(&address, 1, 2_000_000, 1000000000)
             .expect("Should set energy freeze");
 
-        let power = storage.get_tron_power_in_sun(&address, false)
+        let power = storage
+            .get_tron_power_in_sun(&address, false)
             .expect("Should compute tron power");
         assert_eq!(power, 3_000_000, "Expected sum of bandwidth + energy");
     }
@@ -441,10 +469,12 @@ mod tests {
         let address = Address::from([0xde; 20]);
 
         // Set freeze record for TRON_POWER (resource=2) only
-        storage.set_freeze_record(&address, 2, 500_000, 1000000000)
+        storage
+            .set_freeze_record(&address, 2, 500_000, 1000000000)
             .expect("Should set tron_power freeze");
 
-        let power = storage.get_tron_power_in_sun(&address, false)
+        let power = storage
+            .get_tron_power_in_sun(&address, false)
             .expect("Should compute tron power");
         assert_eq!(power, 500_000, "Expected power from legacy tron_power");
     }
@@ -455,14 +485,18 @@ mod tests {
         let address = Address::from([0xef; 20]);
 
         // Set freeze records for all three resources
-        storage.set_freeze_record(&address, 0, 1_000_000, 1000000000)
+        storage
+            .set_freeze_record(&address, 0, 1_000_000, 1000000000)
             .expect("Should set bandwidth freeze");
-        storage.set_freeze_record(&address, 1, 2_000_000, 1000000000)
+        storage
+            .set_freeze_record(&address, 1, 2_000_000, 1000000000)
             .expect("Should set energy freeze");
-        storage.set_freeze_record(&address, 2, 500_000, 1000000000)
+        storage
+            .set_freeze_record(&address, 2, 500_000, 1000000000)
             .expect("Should set tron_power freeze");
 
-        let power = storage.get_tron_power_in_sun(&address, false)
+        let power = storage
+            .get_tron_power_in_sun(&address, false)
             .expect("Should compute tron power");
         assert_eq!(power, 3_500_000, "Expected sum of all three resources");
     }
@@ -474,16 +508,21 @@ mod tests {
 
         // Set freeze records that would overflow u64
         let near_max = u64::MAX - 100_000;
-        storage.set_freeze_record(&address, 0, near_max, 1000000000)
+        storage
+            .set_freeze_record(&address, 0, near_max, 1000000000)
             .expect("Should set bandwidth freeze");
-        storage.set_freeze_record(&address, 1, 200_000, 1000000000)
+        storage
+            .set_freeze_record(&address, 1, 200_000, 1000000000)
             .expect("Should set energy freeze");
 
         // Should return error due to overflow
         let result = storage.get_tron_power_in_sun(&address, false);
         assert!(result.is_err(), "Expected overflow error");
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("overflow"), "Error should mention overflow");
+        assert!(
+            err_msg.contains("overflow"),
+            "Error should mention overflow"
+        );
     }
 
     #[test]
@@ -492,7 +531,8 @@ mod tests {
         let address = Address::from([0xa1; 20]);
 
         // No freeze records set
-        let power = storage.get_tron_power_in_sun(&address, false)
+        let power = storage
+            .get_tron_power_in_sun(&address, false)
             .expect("Should compute tron power");
         assert_eq!(power, 0, "Expected zero power when no freeze records");
     }
@@ -572,7 +612,7 @@ mod tests {
 
     #[test]
     fn test_resource_tracker_track_bandwidth_free_net_path() {
-        use crate::storage_adapter::{ResourceTracker, AccountAext, BandwidthPath};
+        use crate::storage_adapter::{AccountAext, BandwidthPath, ResourceTracker};
 
         let owner = Address::from([0xab; 20]);
         let current_aext = AccountAext::with_defaults();
@@ -592,14 +632,23 @@ mod tests {
         let (path, before, after) = result.unwrap();
 
         assert_eq!(path, BandwidthPath::FreeNet, "Should use FREE_NET path");
-        assert_eq!(before.free_net_usage, 0, "Before should have zero free_net_usage");
-        assert_eq!(after.free_net_usage, 212, "After should have 212 free_net_usage");
-        assert_eq!(after.latest_consume_free_time, 1000, "Should update consume time");
+        assert_eq!(
+            before.free_net_usage, 0,
+            "Before should have zero free_net_usage"
+        );
+        assert_eq!(
+            after.free_net_usage, 212,
+            "After should have 212 free_net_usage"
+        );
+        assert_eq!(
+            after.latest_consume_free_time, 1000,
+            "Should update consume time"
+        );
     }
 
     #[test]
     fn test_resource_tracker_track_bandwidth_with_existing_usage() {
-        use crate::storage_adapter::{ResourceTracker, AccountAext, BandwidthPath};
+        use crate::storage_adapter::{AccountAext, BandwidthPath, ResourceTracker};
 
         let owner = Address::from([0xcd; 20]);
         let mut current_aext = AccountAext::with_defaults();
@@ -623,14 +672,20 @@ mod tests {
 
         assert_eq!(path, BandwidthPath::FreeNet, "Should use FREE_NET path");
         // Before: recovered from 1000 by half = 500
-        assert_eq!(before.free_net_usage, 500, "Before should have recovered to 500");
+        assert_eq!(
+            before.free_net_usage, 500,
+            "Before should have recovered to 500"
+        );
         // After: 500 + 212 = 712
-        assert_eq!(after.free_net_usage, 712, "After should have 712 free_net_usage");
+        assert_eq!(
+            after.free_net_usage, 712,
+            "After should have 712 free_net_usage"
+        );
     }
 
     #[test]
     fn test_resource_tracker_track_bandwidth_exceeds_limit() {
-        use crate::storage_adapter::{ResourceTracker, AccountAext, BandwidthPath};
+        use crate::storage_adapter::{AccountAext, BandwidthPath, ResourceTracker};
 
         let owner = Address::from([0xef; 20]);
         let mut current_aext = AccountAext::with_defaults();
@@ -653,7 +708,11 @@ mod tests {
         let (path, _before, _after) = result.unwrap();
 
         // Should fall back to FEE when FREE_NET is insufficient
-        assert_eq!(path, BandwidthPath::Fee, "Should use FEE path when limit exceeded");
+        assert_eq!(
+            path,
+            BandwidthPath::Fee,
+            "Should use FEE path when limit exceeded"
+        );
     }
 
     #[test]
@@ -674,8 +733,7 @@ mod tests {
         let serialized = aext.serialize();
         assert_eq!(serialized.len(), 66, "Serialized size should be 66 bytes");
 
-        let deserialized = AccountAext::deserialize(&serialized)
-            .expect("Should deserialize");
+        let deserialized = AccountAext::deserialize(&serialized).expect("Should deserialize");
 
         assert_eq!(deserialized.net_usage, 100);
         assert_eq!(deserialized.free_net_usage, 200);
