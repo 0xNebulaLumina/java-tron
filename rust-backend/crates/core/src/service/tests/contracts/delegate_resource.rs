@@ -8,10 +8,15 @@
 
 use super::super::super::*;
 use super::common::{encode_varint, make_from_raw};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
-use tron_backend_execution::protocol::{Account, account::{AccountResource, FreezeV2}};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
-use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
+use tron_backend_execution::protocol::{
+    account::{AccountResource, FreezeV2},
+    Account,
+};
+use tron_backend_execution::{
+    EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata,
+};
 use tron_backend_storage::StorageEngine;
 
 /// Helper to seed all required dynamic properties for delegate resource tests.
@@ -19,33 +24,75 @@ fn seed_delegate_resource_properties(storage_engine: &StorageEngine) {
     let props_db = "properties";
 
     // Enable delegate resource
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
 
     // Enable unfreeze delay (required for delegate resource)
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
 
     // Set global bandwidth totals (realistic values)
     // total_net_weight = 50B TRX = 50_000_000_000_000_000 SUN
     // total_net_limit = 43_200_000_000 (typical daily limit)
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &50_000_000_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &43_200_000_000i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &50_000_000_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &43_200_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
 
     // Set global energy totals (realistic values)
     // total_energy_weight = 50B TRX = 50_000_000_000_000_000 SUN
     // total_energy_current_limit = 90_000_000_000 (typical)
-    storage_engine.put(props_db, b"TOTAL_ENERGY_WEIGHT", &50_000_000_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_CURRENT_LIMIT", &90_000_000_000i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_WEIGHT",
+            &50_000_000_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_CURRENT_LIMIT",
+            &90_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
 
     // Other required properties
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
 }
 
 /// Helper to set the latest block header timestamp for slot calculation.
 fn set_latest_block_timestamp(storage_engine: &StorageEngine, timestamp_ms: i64) {
     let props_db = "properties";
     // Java parity: stored under lowercase key "latest_block_header_timestamp".
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 }
 
 /// Build DelegateResourceContract protobuf data.
@@ -206,33 +253,73 @@ fn test_delegate_resource_bandwidth_fails_when_usage_exceeds_available() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     let props_db = "properties";
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
 
     // Use 1:1 ratio for easy calculation: netUsage * 1M = scaled usage
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_CURRENT_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_CURRENT_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
 
     // Set timestamp for slot calculation (slot = timestamp_ms / 3000)
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     // Create owner account with frozen V2 and high net_usage
     let owner_account = create_owner_account_with_freeze_v2(
-        100_000_000, // 100 TRX balance (irrelevant for this test)
-        frozen_v2_amount, // 10 TRX frozen for bandwidth
-        0, // BANDWIDTH
-        net_usage, // 8 bandwidth units -> 8M SUN scaled usage -> 8 TRX used
+        100_000_000,         // 100 TRX balance (irrelevant for this test)
+        frozen_v2_amount,    // 10 TRX frozen for bandwidth
+        0,                   // BANDWIDTH
+        net_usage,           // 8 bandwidth units -> 8M SUN scaled usage -> 8 TRX used
         latest_consume_time, // No decay (just consumed)
-        28800, // Default window size
-        0, 0, 28800, // No energy usage
+        28800,               // Default window size
+        0,
+        0,
+        28800, // No energy usage
     );
-    storage_adapter.put_account_proto(&owner_address, &owner_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &owner_account)
+        .unwrap();
 
     // Create EVM account for owner
     let owner_evm = AccountInfo {
@@ -241,25 +328,31 @@ fn test_delegate_resource_bandwidth_fails_when_usage_exceeds_available() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_evm).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_evm)
+        .unwrap();
 
     // Create receiver account
     let receiver_account = create_receiver_account(50_000_000);
-    storage_adapter.put_account_proto(&receiver_address, &receiver_account).unwrap();
+    storage_adapter
+        .put_account_proto(&receiver_address, &receiver_account)
+        .unwrap();
     let receiver_evm = AccountInfo {
         balance: U256::from(50_000_000u64),
         nonce: 0,
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
+    storage_adapter
+        .set_account(receiver_address, receiver_evm)
+        .unwrap();
 
     // Build transaction
     let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
     let proto_data = build_delegate_resource_proto(
-        &owner_raw, // Java parity: owner_address from contract, not from_raw
-        0, // BANDWIDTH
+        &owner_raw,       // Java parity: owner_address from contract, not from_raw
+        0,                // BANDWIDTH
         delegate_balance, // 10 TRX
         &receiver_raw,
         false, // no lock
@@ -297,13 +390,19 @@ fn test_delegate_resource_bandwidth_fails_when_usage_exceeds_available() {
     let service = new_delegate_resource_service();
 
     // Execute - should fail with "available FreezeBandwidthV2 balance" error
-    let result = service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_err(), "Should fail when available balance < delegate balance. Got: {:?}", result);
+    assert!(
+        result.is_err(),
+        "Should fail when available balance < delegate balance. Got: {:?}",
+        result
+    );
     let err_msg = result.unwrap_err();
     assert!(
         err_msg.contains("available FreezeBandwidthV2 balance"),
-        "Expected 'available FreezeBandwidthV2 balance' error, got: {}", err_msg
+        "Expected 'available FreezeBandwidthV2 balance' error, got: {}",
+        err_msg
     );
 }
 
@@ -321,7 +420,7 @@ fn test_delegate_resource_bandwidth_succeeds_when_usage_allows_delegation() {
     let delegate_balance = 5_000_000i64; // Delegate 5 TRX (should fit)
 
     let net_usage = 0; // No usage - all frozen balance is available
-    // Available = 10 TRX - 0 = 10 TRX, so delegating 5 TRX should succeed
+                       // Available = 10 TRX - 0 = 10 TRX, so delegating 5 TRX should succeed
 
     let current_slot = 1000000i64;
     let latest_consume_time = 0i64; // No consumption
@@ -330,16 +429,52 @@ fn test_delegate_resource_bandwidth_succeeds_when_usage_allows_delegation() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     let props_db = "properties";
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_CURRENT_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_CURRENT_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -350,9 +485,13 @@ fn test_delegate_resource_bandwidth_succeeds_when_usage_allows_delegation() {
         net_usage,
         latest_consume_time,
         28800,
-        0, 0, 28800,
+        0,
+        0,
+        28800,
     );
-    storage_adapter.put_account_proto(&owner_address, &owner_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &owner_account)
+        .unwrap();
 
     let owner_evm = AccountInfo {
         balance: U256::from(100_000_000u64),
@@ -360,28 +499,28 @@ fn test_delegate_resource_bandwidth_succeeds_when_usage_allows_delegation() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_evm).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_evm)
+        .unwrap();
 
     let receiver_account = create_receiver_account(50_000_000);
-    storage_adapter.put_account_proto(&receiver_address, &receiver_account).unwrap();
+    storage_adapter
+        .put_account_proto(&receiver_address, &receiver_account)
+        .unwrap();
     let receiver_evm = AccountInfo {
         balance: U256::from(50_000_000u64),
         nonce: 0,
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
+    storage_adapter
+        .set_account(receiver_address, receiver_evm)
+        .unwrap();
 
     let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
-    let proto_data = build_delegate_resource_proto(
-        &owner_raw,
-        0,
-        delegate_balance,
-        &receiver_raw,
-        false,
-        0,
-    );
+    let proto_data =
+        build_delegate_resource_proto(&owner_raw, 0, delegate_balance, &receiver_raw, false, 0);
 
     let transaction = TronTransaction {
         from: owner_address,
@@ -414,9 +553,14 @@ fn test_delegate_resource_bandwidth_succeeds_when_usage_allows_delegation() {
     let service = new_delegate_resource_service();
 
     // Execute - should succeed
-    let result = service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_ok(), "Should succeed when available >= delegate balance. Error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should succeed when available >= delegate balance. Error: {:?}",
+        result.err()
+    );
     let exec_result = result.unwrap();
     assert!(exec_result.success);
     assert_eq!(exec_result.state_changes.len(), 2); // owner + receiver changes
@@ -448,16 +592,52 @@ fn test_delegate_resource_energy_fails_when_usage_exceeds_available() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     let props_db = "properties";
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_CURRENT_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_CURRENT_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -465,12 +645,16 @@ fn test_delegate_resource_energy_fails_when_usage_exceeds_available() {
         100_000_000,
         frozen_v2_amount,
         1, // ENERGY
-        0, 0, 28800, // No net usage
+        0,
+        0,
+        28800, // No net usage
         energy_usage,
         latest_consume_time_for_energy,
         28800,
     );
-    storage_adapter.put_account_proto(&owner_address, &owner_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &owner_account)
+        .unwrap();
 
     let owner_evm = AccountInfo {
         balance: U256::from(100_000_000u64),
@@ -478,17 +662,23 @@ fn test_delegate_resource_energy_fails_when_usage_exceeds_available() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_evm).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_evm)
+        .unwrap();
 
     let receiver_account = create_receiver_account(50_000_000);
-    storage_adapter.put_account_proto(&receiver_address, &receiver_account).unwrap();
+    storage_adapter
+        .put_account_proto(&receiver_address, &receiver_account)
+        .unwrap();
     let receiver_evm = AccountInfo {
         balance: U256::from(50_000_000u64),
         nonce: 0,
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
+    storage_adapter
+        .set_account(receiver_address, receiver_evm)
+        .unwrap();
 
     let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
@@ -532,13 +722,19 @@ fn test_delegate_resource_energy_fails_when_usage_exceeds_available() {
     let service = new_delegate_resource_service();
 
     // Execute - should fail with "available FreezeEnergyV2 balance" error
-    let result = service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_err(), "Should fail when available energy < delegate balance. Got: {:?}", result);
+    assert!(
+        result.is_err(),
+        "Should fail when available energy < delegate balance. Got: {:?}",
+        result
+    );
     let err_msg = result.unwrap_err();
     assert!(
         err_msg.contains("available FreezeEnergyV2 balance"),
-        "Expected 'available FreezeEnergyV2 balance' error, got: {}", err_msg
+        "Expected 'available FreezeEnergyV2 balance' error, got: {}",
+        err_msg
     );
 }
 
@@ -563,16 +759,52 @@ fn test_delegate_resource_energy_succeeds_when_usage_allows_delegation() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     let props_db = "properties";
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_CURRENT_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_CURRENT_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -580,12 +812,16 @@ fn test_delegate_resource_energy_succeeds_when_usage_allows_delegation() {
         100_000_000,
         frozen_v2_amount,
         1, // ENERGY
-        0, 0, 28800, // No net usage
+        0,
+        0,
+        28800, // No net usage
         energy_usage,
         latest_consume_time_for_energy,
         28800,
     );
-    storage_adapter.put_account_proto(&owner_address, &owner_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &owner_account)
+        .unwrap();
 
     let owner_evm = AccountInfo {
         balance: U256::from(100_000_000u64),
@@ -593,17 +829,23 @@ fn test_delegate_resource_energy_succeeds_when_usage_allows_delegation() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_evm).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_evm)
+        .unwrap();
 
     let receiver_account = create_receiver_account(50_000_000);
-    storage_adapter.put_account_proto(&receiver_address, &receiver_account).unwrap();
+    storage_adapter
+        .put_account_proto(&receiver_address, &receiver_account)
+        .unwrap();
     let receiver_evm = AccountInfo {
         balance: U256::from(50_000_000u64),
         nonce: 0,
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
+    storage_adapter
+        .set_account(receiver_address, receiver_evm)
+        .unwrap();
 
     let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
@@ -646,9 +888,14 @@ fn test_delegate_resource_energy_succeeds_when_usage_allows_delegation() {
 
     let service = new_delegate_resource_service();
 
-    let result = service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_ok(), "Should succeed when available energy >= delegate balance. Error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should succeed when available energy >= delegate balance. Error: {:?}",
+        result.err()
+    );
     let exec_result = result.unwrap();
     assert!(exec_result.success);
     assert_eq!(exec_result.state_changes.len(), 2);
@@ -677,16 +924,52 @@ fn test_delegate_resource_with_lock_fails_same_as_without_lock() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     let props_db = "properties";
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_CURRENT_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_CURRENT_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -697,9 +980,13 @@ fn test_delegate_resource_with_lock_fails_same_as_without_lock() {
         net_usage,
         latest_consume_time,
         28800,
-        0, 0, 28800,
+        0,
+        0,
+        28800,
     );
-    storage_adapter.put_account_proto(&owner_address, &owner_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &owner_account)
+        .unwrap();
 
     let owner_evm = AccountInfo {
         balance: U256::from(100_000_000u64),
@@ -707,17 +994,23 @@ fn test_delegate_resource_with_lock_fails_same_as_without_lock() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_evm).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_evm)
+        .unwrap();
 
     let receiver_account = create_receiver_account(50_000_000);
-    storage_adapter.put_account_proto(&receiver_address, &receiver_account).unwrap();
+    storage_adapter
+        .put_account_proto(&receiver_address, &receiver_account)
+        .unwrap();
     let receiver_evm = AccountInfo {
         balance: U256::from(50_000_000u64),
         nonce: 0,
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
+    storage_adapter
+        .set_account(receiver_address, receiver_evm)
+        .unwrap();
 
     let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
@@ -763,13 +1056,18 @@ fn test_delegate_resource_with_lock_fails_same_as_without_lock() {
     let service = new_delegate_resource_service();
 
     // Execute - should fail with same error as without lock
-    let result = service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_err(), "Should fail with lock=true when available balance < delegate balance");
+    assert!(
+        result.is_err(),
+        "Should fail with lock=true when available balance < delegate balance"
+    );
     let err_msg = result.unwrap_err();
     assert!(
         err_msg.contains("available FreezeBandwidthV2 balance"),
-        "Expected 'available FreezeBandwidthV2 balance' error, got: {}", err_msg
+        "Expected 'available FreezeBandwidthV2 balance' error, got: {}",
+        err_msg
     );
 }
 
@@ -791,16 +1089,52 @@ fn test_delegate_resource_with_lock_succeeds_when_available() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     let props_db = "properties";
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_CURRENT_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_CURRENT_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -811,9 +1145,13 @@ fn test_delegate_resource_with_lock_succeeds_when_available() {
         net_usage,
         latest_consume_time,
         28800,
-        0, 0, 28800,
+        0,
+        0,
+        28800,
     );
-    storage_adapter.put_account_proto(&owner_address, &owner_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &owner_account)
+        .unwrap();
 
     let owner_evm = AccountInfo {
         balance: U256::from(100_000_000u64),
@@ -821,17 +1159,23 @@ fn test_delegate_resource_with_lock_succeeds_when_available() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_evm).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_evm)
+        .unwrap();
 
     let receiver_account = create_receiver_account(50_000_000);
-    storage_adapter.put_account_proto(&receiver_address, &receiver_account).unwrap();
+    storage_adapter
+        .put_account_proto(&receiver_address, &receiver_account)
+        .unwrap();
     let receiver_evm = AccountInfo {
         balance: U256::from(50_000_000u64),
         nonce: 0,
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
+    storage_adapter
+        .set_account(receiver_address, receiver_evm)
+        .unwrap();
 
     let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
@@ -874,9 +1218,14 @@ fn test_delegate_resource_with_lock_succeeds_when_available() {
 
     let service = new_delegate_resource_service();
 
-    let result = service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_ok(), "Should succeed with lock=true when available >= delegate balance. Error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should succeed with lock=true when available >= delegate balance. Error: {:?}",
+        result.err()
+    );
     let exec_result = result.unwrap();
     assert!(exec_result.success);
 }
@@ -910,16 +1259,52 @@ fn test_delegate_resource_usage_decay_increases_available() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     let props_db = "properties";
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_CURRENT_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_CURRENT_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -927,13 +1312,17 @@ fn test_delegate_resource_usage_decay_increases_available() {
     let owner_account = create_owner_account_with_freeze_v2(
         100_000_000,
         frozen_v2_amount,
-        0, // BANDWIDTH
-        net_usage, // 8 - but will fully decay since latest_consume_time = 0
+        0,                   // BANDWIDTH
+        net_usage,           // 8 - but will fully decay since latest_consume_time = 0
         latest_consume_time, // 0 - very old, beyond any window
-        28800, // window size (will be normalized if optimized)
-        0, 0, 28800,
+        28800,               // window size (will be normalized if optimized)
+        0,
+        0,
+        28800,
     );
-    storage_adapter.put_account_proto(&owner_address, &owner_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &owner_account)
+        .unwrap();
 
     let owner_evm = AccountInfo {
         balance: U256::from(100_000_000u64),
@@ -941,28 +1330,28 @@ fn test_delegate_resource_usage_decay_increases_available() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_evm).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_evm)
+        .unwrap();
 
     let receiver_account = create_receiver_account(50_000_000);
-    storage_adapter.put_account_proto(&receiver_address, &receiver_account).unwrap();
+    storage_adapter
+        .put_account_proto(&receiver_address, &receiver_account)
+        .unwrap();
     let receiver_evm = AccountInfo {
         balance: U256::from(50_000_000u64),
         nonce: 0,
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
+    storage_adapter
+        .set_account(receiver_address, receiver_evm)
+        .unwrap();
 
     let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
-    let proto_data = build_delegate_resource_proto(
-        &owner_raw,
-        0,
-        delegate_balance,
-        &receiver_raw,
-        false,
-        0,
-    );
+    let proto_data =
+        build_delegate_resource_proto(&owner_raw, 0, delegate_balance, &receiver_raw, false, 0);
 
     let transaction = TronTransaction {
         from: owner_address,
@@ -994,9 +1383,14 @@ fn test_delegate_resource_usage_decay_increases_available() {
 
     let service = new_delegate_resource_service();
 
-    let result = service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_ok(), "Should succeed because usage fully decayed. Error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should succeed because usage fully decayed. Error: {:?}",
+        result.err()
+    );
     let exec_result = result.unwrap();
     assert!(exec_result.success);
 }
@@ -1021,22 +1415,58 @@ fn test_delegate_resource_expired_usage_fully_resets() {
     let window_size = 28800i64; // 24 hours in slots
     let current_slot = 1000000i64;
     let latest_consume_time = 0i64; // Very old, beyond any window
-    // Usage should fully reset to 0, making all 10 TRX available
+                                    // Usage should fully reset to 0, making all 10 TRX available
 
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     let props_db = "properties";
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_ENERGY_CURRENT_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_ENERGY_CURRENT_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -1044,13 +1474,17 @@ fn test_delegate_resource_expired_usage_fully_resets() {
     let owner_account = create_owner_account_with_freeze_v2(
         100_000_000,
         frozen_v2_amount,
-        0, // BANDWIDTH
-        net_usage, // 10 - but will fully decay since latest_consume_time = 0
+        0,                   // BANDWIDTH
+        net_usage,           // 10 - but will fully decay since latest_consume_time = 0
         latest_consume_time, // 0 - very old, beyond any window
         28800,
-        0, 0, 28800,
+        0,
+        0,
+        28800,
     );
-    storage_adapter.put_account_proto(&owner_address, &owner_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &owner_account)
+        .unwrap();
 
     let owner_evm = AccountInfo {
         balance: U256::from(100_000_000u64),
@@ -1058,28 +1492,28 @@ fn test_delegate_resource_expired_usage_fully_resets() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_evm).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_evm)
+        .unwrap();
 
     let receiver_account = create_receiver_account(50_000_000);
-    storage_adapter.put_account_proto(&receiver_address, &receiver_account).unwrap();
+    storage_adapter
+        .put_account_proto(&receiver_address, &receiver_account)
+        .unwrap();
     let receiver_evm = AccountInfo {
         balance: U256::from(50_000_000u64),
         nonce: 0,
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
+    storage_adapter
+        .set_account(receiver_address, receiver_evm)
+        .unwrap();
 
     let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
-    let proto_data = build_delegate_resource_proto(
-        &owner_raw,
-        0,
-        delegate_balance,
-        &receiver_raw,
-        false,
-        0,
-    );
+    let proto_data =
+        build_delegate_resource_proto(&owner_raw, 0, delegate_balance, &receiver_raw, false, 0);
 
     let transaction = TronTransaction {
         from: owner_address,
@@ -1111,9 +1545,14 @@ fn test_delegate_resource_expired_usage_fully_resets() {
 
     let service = new_delegate_resource_service();
 
-    let result = service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_ok(), "Should succeed because expired usage fully resets. Error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should succeed because expired usage fully resets. Error: {:?}",
+        result.err()
+    );
     let exec_result = result.unwrap();
     assert!(exec_result.success);
 }
@@ -1138,14 +1577,38 @@ fn test_delegate_resource_fails_below_minimum() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     let props_db = "properties";
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -1153,10 +1616,16 @@ fn test_delegate_resource_fails_below_minimum() {
         100_000_000,
         frozen_v2_amount,
         0, // BANDWIDTH
-        0, 0, 28800, // No usage
-        0, 0, 28800,
+        0,
+        0,
+        28800, // No usage
+        0,
+        0,
+        28800,
     );
-    storage_adapter.put_account_proto(&owner_address, &owner_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &owner_account)
+        .unwrap();
 
     let owner_evm = AccountInfo {
         balance: U256::from(100_000_000u64),
@@ -1164,28 +1633,28 @@ fn test_delegate_resource_fails_below_minimum() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_evm).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_evm)
+        .unwrap();
 
     let receiver_account = create_receiver_account(50_000_000);
-    storage_adapter.put_account_proto(&receiver_address, &receiver_account).unwrap();
+    storage_adapter
+        .put_account_proto(&receiver_address, &receiver_account)
+        .unwrap();
     let receiver_evm = AccountInfo {
         balance: U256::from(50_000_000u64),
         nonce: 0,
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(receiver_address, receiver_evm).unwrap();
+    storage_adapter
+        .set_account(receiver_address, receiver_evm)
+        .unwrap();
 
     let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&receiver_address);
-    let proto_data = build_delegate_resource_proto(
-        &owner_raw,
-        0,
-        delegate_balance,
-        &receiver_raw,
-        false,
-        0,
-    );
+    let proto_data =
+        build_delegate_resource_proto(&owner_raw, 0, delegate_balance, &receiver_raw, false, 0);
 
     let transaction = TronTransaction {
         from: owner_address,
@@ -1217,13 +1686,15 @@ fn test_delegate_resource_fails_below_minimum() {
 
     let service = new_delegate_resource_service();
 
-    let result = service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
 
     assert!(result.is_err());
     let err_msg = result.unwrap_err();
     assert!(
         err_msg.contains("greater than or equal to 1 TRX"),
-        "Expected minimum amount error, got: {}", err_msg
+        "Expected minimum amount error, got: {}",
+        err_msg
     );
 }
 
@@ -1243,14 +1714,38 @@ fn test_delegate_resource_fails_self_delegation() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     let props_db = "properties";
-    storage_engine.put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_WEIGHT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"TOTAL_NET_LIMIT", &100_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_DELEGATE_RESOURCE", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(props_db, b"UNFREEZE_DELAY_DAYS", &14i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_WEIGHT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"TOTAL_NET_LIMIT",
+            &100_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(props_db, b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
 
     let timestamp_ms = current_slot * 3000;
-    storage_engine.put(props_db, b"latest_block_header_timestamp", &timestamp_ms.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            props_db,
+            b"latest_block_header_timestamp",
+            &timestamp_ms.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -1258,10 +1753,16 @@ fn test_delegate_resource_fails_self_delegation() {
         100_000_000,
         frozen_v2_amount,
         0, // BANDWIDTH
-        0, 0, 28800,
-        0, 0, 28800,
+        0,
+        0,
+        28800,
+        0,
+        0,
+        28800,
     );
-    storage_adapter.put_account_proto(&owner_address, &owner_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &owner_account)
+        .unwrap();
 
     let owner_evm = AccountInfo {
         balance: U256::from(100_000_000u64),
@@ -1269,19 +1770,15 @@ fn test_delegate_resource_fails_self_delegation() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_evm).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_evm)
+        .unwrap();
 
     // Try to delegate to self
     let owner_raw = make_from_raw(&owner_address);
     let receiver_raw = make_from_raw(&owner_address); // Same as owner for self-delegation test
-    let proto_data = build_delegate_resource_proto(
-        &owner_raw,
-        0,
-        delegate_balance,
-        &receiver_raw,
-        false,
-        0,
-    );
+    let proto_data =
+        build_delegate_resource_proto(&owner_raw, 0, delegate_balance, &receiver_raw, false, 0);
 
     let transaction = TronTransaction {
         from: owner_address,
@@ -1313,12 +1810,14 @@ fn test_delegate_resource_fails_self_delegation() {
 
     let service = new_delegate_resource_service();
 
-    let result = service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_delegate_resource_contract(&mut storage_adapter, &transaction, &context);
 
     assert!(result.is_err());
     let err_msg = result.unwrap_err();
     assert!(
         err_msg.contains("must not be the same as ownerAddress"),
-        "Expected self-delegation error, got: {}", err_msg
+        "Expected self-delegation error, got: {}",
+        err_msg
     );
 }

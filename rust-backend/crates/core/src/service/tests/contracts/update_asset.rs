@@ -117,7 +117,9 @@ fn seed_asset_issue(
     asset: &AssetIssueContractData,
     v2_store: bool,
 ) {
-    storage_adapter.put_asset_issue(key, asset, v2_store).unwrap();
+    storage_adapter
+        .put_asset_issue(key, asset, v2_store)
+        .unwrap();
 }
 
 /// Build a standard TxMetadata with contract_parameter for UpdateAssetContract.
@@ -128,13 +130,8 @@ fn make_metadata_with_contract(
     new_limit: i64,
     new_public_limit: i64,
 ) -> TxMetadata {
-    let contract_bytes = build_update_asset_contract_data(
-        owner_tron,
-        description,
-        url,
-        new_limit,
-        new_public_limit,
-    );
+    let contract_bytes =
+        build_update_asset_contract_data(owner_tron, description, url, new_limit, new_public_limit);
     TxMetadata {
         contract_type: Some(tron_backend_execution::TronContractType::UpdateAssetContract),
         from_raw: Some(owner_tron.to_vec()),
@@ -147,11 +144,7 @@ fn make_metadata_with_contract(
 }
 
 /// Create a default AssetIssueContractData for testing.
-fn default_asset_issue(
-    owner_tron: &[u8],
-    name: &[u8],
-    id: &str,
-) -> AssetIssueContractData {
+fn default_asset_issue(owner_tron: &[u8], name: &[u8], id: &str) -> AssetIssueContractData {
     AssetIssueContractData {
         owner_address: owner_tron.to_vec(),
         name: name.to_vec(),
@@ -314,13 +307,8 @@ fn test_update_asset_invalid_owner_address_wrong_prefix() {
     // 21-byte address with wrong prefix
     let mut owner_bad_prefix = vec![0x42u8];
     owner_bad_prefix.extend_from_slice(owner.as_slice());
-    let contract_bytes = build_update_asset_contract_data(
-        &owner_bad_prefix,
-        b"desc",
-        b"https://url.com",
-        100,
-        200,
-    );
+    let contract_bytes =
+        build_update_asset_contract_data(&owner_bad_prefix, b"desc", b"https://url.com", 100, 200);
 
     let transaction = TronTransaction {
         from: owner,
@@ -365,8 +353,7 @@ fn test_update_asset_account_not_exist() {
     let owner = Address::from([1u8; 20]);
     let owner_tron = make_from_raw(&owner);
 
-    let metadata =
-        make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, 200);
+    let metadata = make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, 200);
     let transaction = TronTransaction {
         from: owner,
         to: None,
@@ -402,8 +389,7 @@ fn test_update_asset_no_asset_issued_v2_mode() {
     // Create account WITHOUT asset_issued_id
     seed_account_with_asset_issued(&mut storage_adapter, &owner, 1_000_000, b"", b"");
 
-    let metadata =
-        make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, 200);
+    let metadata = make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, 200);
     let transaction = TronTransaction {
         from: owner,
         to: None,
@@ -435,8 +421,7 @@ fn test_update_asset_no_asset_issued_legacy_mode() {
     // Create account WITHOUT asset_issued_name
     seed_account_with_asset_issued(&mut storage_adapter, &owner, 1_000_000, b"", b"");
 
-    let metadata =
-        make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, 200);
+    let metadata = make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, 200);
     let transaction = TronTransaction {
         from: owner,
         to: None,
@@ -470,16 +455,9 @@ fn test_update_asset_store_not_exist_v2_mode() {
     let owner_tron = make_from_raw(&owner);
 
     // Create account with asset_issued_id but do NOT seed asset in V2 store
-    seed_account_with_asset_issued(
-        &mut storage_adapter,
-        &owner,
-        1_000_000,
-        b"",
-        b"100001",
-    );
+    seed_account_with_asset_issued(&mut storage_adapter, &owner, 1_000_000, b"", b"100001");
 
-    let metadata =
-        make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, 200);
+    let metadata = make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, 200);
     let transaction = TronTransaction {
         from: owner,
         to: None,
@@ -520,8 +498,7 @@ fn test_update_asset_store_not_exist_legacy_mode() {
         b"100001",
     );
 
-    let metadata =
-        make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, 200);
+    let metadata = make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, 200);
     let transaction = TronTransaction {
         from: owner,
         to: None,
@@ -556,13 +533,7 @@ fn test_update_asset_error_precedence_missing_asset_and_invalid_url() {
     let owner_tron = make_from_raw(&owner);
 
     // Account with asset_issued_id set, but NO asset in V2 store
-    seed_account_with_asset_issued(
-        &mut storage_adapter,
-        &owner,
-        1_000_000,
-        b"",
-        b"100001",
-    );
+    seed_account_with_asset_issued(&mut storage_adapter, &owner, 1_000_000, b"", b"100001");
 
     // Empty URL (invalid) — but asset store check should fire first
     let metadata = make_metadata_with_contract(&owner_tron, b"desc", b"", 100, 200);
@@ -712,8 +683,7 @@ fn test_update_asset_invalid_free_asset_net_limit_negative() {
     seed_full_v2_setup(&mut storage_adapter, &owner, &owner_tron);
 
     // new_limit = -1 (negative)
-    let metadata =
-        make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", -1, 200);
+    let metadata = make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", -1, 200);
     let transaction = TronTransaction {
         from: owner,
         to: None,
@@ -797,8 +767,7 @@ fn test_update_asset_invalid_public_free_asset_net_limit() {
     seed_full_v2_setup(&mut storage_adapter, &owner, &owner_tron);
 
     // new_public_limit = -1
-    let metadata =
-        make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, -1);
+    let metadata = make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 100, -1);
     let transaction = TronTransaction {
         from: owner,
         to: None,
@@ -837,13 +806,8 @@ fn test_update_asset_one_day_net_limit_default_matches_java() {
     seed_full_v2_setup(&mut storage_adapter, &owner, &owner_tron);
 
     // 8_640_000_000 < 57_600_000_000 → should pass (would fail with old default)
-    let metadata = make_metadata_with_contract(
-        &owner_tron,
-        b"desc",
-        b"https://url.com",
-        8_640_000_000,
-        200,
-    );
+    let metadata =
+        make_metadata_with_contract(&owner_tron, b"desc", b"https://url.com", 8_640_000_000, 200);
     let transaction = TronTransaction {
         from: owner,
         to: None,
@@ -1029,8 +993,7 @@ fn test_update_asset_empty_description_is_valid() {
     seed_full_v2_setup(&mut storage_adapter, &owner, &owner_tron);
 
     // Empty description (allowed by Java's validAssetDescription)
-    let metadata =
-        make_metadata_with_contract(&owner_tron, b"", b"https://url.com", 100, 200);
+    let metadata = make_metadata_with_contract(&owner_tron, b"", b"https://url.com", 100, 200);
     let transaction = TronTransaction {
         from: owner,
         to: None,
@@ -1047,7 +1010,11 @@ fn test_update_asset_empty_description_is_valid() {
         &transaction,
         &new_test_context(),
     );
-    assert!(result.is_ok(), "Empty description should be valid, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Empty description should be valid, got: {:?}",
+        result.err()
+    );
 }
 
 // =============================================================================

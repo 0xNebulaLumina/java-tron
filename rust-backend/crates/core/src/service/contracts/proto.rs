@@ -102,7 +102,9 @@ pub struct AccountUpdateContractParams {
 
 /// Parse AccountUpdateContract from protobuf bytes
 /// Wire format: field 1 = account_name (bytes), field 2 = owner_address (bytes)
-pub(crate) fn parse_account_update_contract(data: &[u8]) -> Result<AccountUpdateContractParams, String> {
+pub(crate) fn parse_account_update_contract(
+    data: &[u8],
+) -> Result<AccountUpdateContractParams, String> {
     let mut params = AccountUpdateContractParams::default();
     let mut pos = 0;
 
@@ -164,7 +166,10 @@ pub(crate) fn parse_account_update_contract(data: &[u8]) -> Result<AccountUpdate
                 pos += 4;
             }
             _ => {
-                return Err(format!("Unknown wire type {} for field {}", wire_type, field_number));
+                return Err(format!(
+                    "Unknown wire type {} for field {}",
+                    wire_type, field_number
+                ));
             }
         }
     }
@@ -509,7 +514,12 @@ impl TransactionResultBuilder {
     ///
     /// Java parity note: The map always contains all 3 keys (even when value is 0).
     /// Order matches Java HashMap iteration: ENERGY, TRON_POWER, BANDWIDTH
-    pub fn with_cancel_unfreeze_v2_amounts(mut self, bandwidth: i64, energy: i64, tron_power: i64) -> Self {
+    pub fn with_cancel_unfreeze_v2_amounts(
+        mut self,
+        bandwidth: i64,
+        energy: i64,
+        tron_power: i64,
+    ) -> Self {
         // Always include all 3 keys in Java HashMap iteration order:
         // ENERGY, TRON_POWER, BANDWIDTH
         let amounts = vec![
@@ -650,7 +660,7 @@ mod tests {
 
         // Field 1: account_name (tag = (1 << 3) | 2 = 10)
         data.push(10); // tag
-        data.push(8);  // length
+        data.push(8); // length
         data.extend_from_slice(b"TestName");
 
         // Field 2: owner_address (tag = (2 << 3) | 2 = 18)
@@ -677,7 +687,10 @@ mod tests {
         data.extend_from_slice(&[2u8; 20]);
 
         let result = parse_account_update_contract(&data).unwrap();
-        assert!(result.account_name.is_empty(), "Empty name should be allowed");
+        assert!(
+            result.account_name.is_empty(),
+            "Empty name should be allowed"
+        );
         assert_eq!(result.owner_address.len(), 21);
     }
 
@@ -762,7 +775,9 @@ mod tests {
         // Field 14, wire type 2: tag = (14 << 3) | 2 = 114 = 0x72
         assert!(!result.is_empty());
         assert_eq!(result[0], 0x72);
-        assert!(result.windows(asset_issue_id.len()).any(|w| w == asset_issue_id.as_bytes()));
+        assert!(result
+            .windows(asset_issue_id.len())
+            .any(|w| w == asset_issue_id.as_bytes()));
     }
 
     #[test]
@@ -775,8 +790,14 @@ mod tests {
         // Verify all 3 resource types are present
         let bytes_str = String::from_utf8_lossy(&result);
         assert!(bytes_str.contains("ENERGY"), "ENERGY key should be present");
-        assert!(bytes_str.contains("TRON_POWER"), "TRON_POWER key should be present");
-        assert!(bytes_str.contains("BANDWIDTH"), "BANDWIDTH key should be present");
+        assert!(
+            bytes_str.contains("TRON_POWER"),
+            "TRON_POWER key should be present"
+        );
+        assert!(
+            bytes_str.contains("BANDWIDTH"),
+            "BANDWIDTH key should be present"
+        );
     }
 
     #[test]
@@ -788,8 +809,14 @@ mod tests {
 
         let bytes_str = String::from_utf8_lossy(&result);
         assert!(bytes_str.contains("ENERGY"), "ENERGY key should be present");
-        assert!(bytes_str.contains("TRON_POWER"), "TRON_POWER key should be present");
-        assert!(bytes_str.contains("BANDWIDTH"), "BANDWIDTH key should be present");
+        assert!(
+            bytes_str.contains("TRON_POWER"),
+            "TRON_POWER key should be present"
+        );
+        assert!(
+            bytes_str.contains("BANDWIDTH"),
+            "BANDWIDTH key should be present"
+        );
     }
 
     #[test]
@@ -812,8 +839,18 @@ mod tests {
         let e = energy_pos.unwrap();
         let t = tron_power_pos.unwrap();
         let b = bandwidth_pos.unwrap();
-        assert!(e < t, "ENERGY should come before TRON_POWER (got {} vs {})", e, t);
-        assert!(t < b, "TRON_POWER should come before BANDWIDTH (got {} vs {})", t, b);
+        assert!(
+            e < t,
+            "ENERGY should come before TRON_POWER (got {} vs {})",
+            e,
+            t
+        );
+        assert!(
+            t < b,
+            "TRON_POWER should come before BANDWIDTH (got {} vs {})",
+            t,
+            b
+        );
     }
 
     #[test]
@@ -827,7 +864,10 @@ mod tests {
         // Field 27 tag = (27 << 3) | 0 = 216 = 0xD8 0x01
         // If field 27 were present, we'd see 0xD8 0x01 in the bytes
         let has_field_27 = result.windows(2).any(|w| w == [0xD8, 0x01]);
-        assert!(!has_field_27, "Field 27 (withdraw_expire_amount) should not be present when not set");
+        assert!(
+            !has_field_27,
+            "Field 27 (withdraw_expire_amount) should not be present when not set"
+        );
     }
 
     #[test]
@@ -840,7 +880,10 @@ mod tests {
 
         // Field 27 tag = (27 << 3) | 0 = 216 = 0xD8 0x01
         let has_field_27 = result.windows(2).any(|w| w == [0xD8, 0x01]);
-        assert!(has_field_27, "Field 27 (withdraw_expire_amount) should be present when non-zero");
+        assert!(
+            has_field_27,
+            "Field 27 (withdraw_expire_amount) should be present when non-zero"
+        );
     }
 
     #[test]
@@ -848,13 +891,16 @@ mod tests {
         // Verify encoding matches fixture: conformance/fixtures/cancel_all_unfreeze_v2_contract/happy_path/expected/result.pb
         // This is: ENERGY=0, TRON_POWER=0, BANDWIDTH=5000000000 (0x80e497d012 varint)
         let result = TransactionResultBuilder::new()
-            .with_cancel_unfreeze_v2_amounts(5000000000, 0, 0)  // bandwidth=5B, energy=0, tron_power=0
+            .with_cancel_unfreeze_v2_amounts(5000000000, 0, 0) // bandwidth=5B, energy=0, tron_power=0
             .build();
 
         // Expected fixture bytes (without withdraw_expire_amount since it's 0)
         // From: xxd -p conformance/fixtures/cancel_all_unfreeze_v2_contract/happy_path/expected/result.pb
         let expected = hex::decode("e2010a0a06454e455247591000e2010e0a0a54524f4e5f504f5745521000e201110a0942414e4457494454481080e497d012").unwrap();
-        assert_eq!(result, expected, "Encoded bytes should match fixture exactly");
+        assert_eq!(
+            result, expected,
+            "Encoded bytes should match fixture exactly"
+        );
     }
 
     #[test]
@@ -868,6 +914,9 @@ mod tests {
 
         // From: xxd -p conformance/fixtures/cancel_all_unfreeze_v2_contract/edge_all_entries_expired_withdraw_only/expected/result.pb
         let expected = hex::decode("d80180f882ad16e2010a0a06454e455247591000e2010e0a0a54524f4e5f504f5745521000e2010d0a0942414e4457494454481000").unwrap();
-        assert_eq!(result, expected, "Encoded bytes should match fixture exactly");
+        assert_eq!(
+            result, expected,
+            "Encoded bytes should match fixture exactly"
+        );
     }
 }

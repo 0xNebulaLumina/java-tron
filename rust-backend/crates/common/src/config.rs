@@ -86,18 +86,18 @@ pub struct ExecutionFeeConfig {
     /// - "blackhole": Credit fees to designated blackhole address
     /// - "none": No fee handling (useful for testing)
     pub mode: String,
-    
+
     /// Whether black hole optimization is supported (matches java-tron's supportBlackHoleOptimization)
     pub support_black_hole_optimization: bool,
-    
+
     /// Base58-encoded TRON address for blackhole (required if mode = "blackhole")
     pub blackhole_address_base58: String,
-    
+
     /// Experimental: emit synthetic VM blackhole credits (default: false)
     /// When enabled, VM transactions will emit estimated fee credits to blackhole
     /// This is an approximation and should remain off by default
     pub experimental_vm_blackhole_credit: bool,
-    
+
     /// Optional flat fee for non-VM transactions in SUN (when not reading from dynamic properties)
     /// If None, no fee deltas are emitted for non-VM transactions
     pub non_vm_blackhole_credit_flat: Option<u64>,
@@ -199,7 +199,6 @@ pub struct RemoteExecutionConfig {
     // Proposal contracts are governance operations for network parameter changes.
     // They have minimal dependencies (ProposalStore, WitnessStore, DynamicPropertiesStore)
     // and don't require complex Account field mutations, making them ideal first candidates.
-
     /// Enable PROPOSAL_CREATE_CONTRACT (type 16) execution
     /// Creates new proposals with parameters, expiration time, and initial state
     /// Default: false for safe rollout
@@ -223,7 +222,6 @@ pub struct RemoteExecutionConfig {
     //
     // These contracts test the Account codec implementation by modifying
     // account fields like account_id and permissions.
-
     /// Enable SET_ACCOUNT_ID_CONTRACT (type 19) execution
     /// Sets a unique, immutable account ID for an account
     /// Requires: AccountStore (full Account proto read/write), AccountIdIndexStore
@@ -240,7 +238,6 @@ pub struct RemoteExecutionConfig {
     //
     // These contracts modify smart contract metadata fields (consume_user_resource_percent,
     // origin_energy_limit, ABI). They require ContractStore and AbiStore access.
-
     /// Enable UPDATE_SETTING_CONTRACT (type 33) execution
     /// Updates consume_user_resource_percent field of a smart contract
     /// Requires: ContractStore (SmartContract proto read/write), AccountStore (owner validation)
@@ -265,7 +262,6 @@ pub struct RemoteExecutionConfig {
     //
     // UpdateBrokerage allows witnesses to set their commission rate for delegation rewards.
     // The brokerage percentage (0-100) is stored in DelegationStore.
-
     /// Enable UPDATE_BROKERAGE_CONTRACT (type 49) execution
     /// Updates the brokerage (commission rate) for a witness in DelegationStore
     /// Requires: WitnessStore (witness validation), AccountStore (account validation)
@@ -280,7 +276,6 @@ pub struct RemoteExecutionConfig {
     // - DelegateResource (57): Delegate frozen resources to another account
     // - UnDelegateResource (58): Reclaim delegated resources
     // - CancelAllUnfreezeV2 (59): Cancel pending unfreezes and optionally withdraw expired
-
     /// Enable WITHDRAW_EXPIRE_UNFREEZE_CONTRACT (type 56) execution
     /// Withdraws TRX from unfrozenV2 entries whose expiration has passed
     /// Requires: AccountStore (unfrozenV2 list access), DynamicPropertiesStore (timestamp)
@@ -317,7 +312,6 @@ pub struct RemoteExecutionConfig {
     // - ParticipateAssetIssue (9): Participate in a TRC-10 token sale
     // - UnfreezeAsset (14): Unfreeze frozen TRC-10 asset supply
     // - UpdateAsset (15): Update TRC-10 asset metadata (url, description, limits)
-
     /// Enable PARTICIPATE_ASSET_ISSUE_CONTRACT (type 9) execution
     /// Allows users to participate in a TRC-10 token sale by exchanging TRX for tokens
     /// Requires: AccountStore (balance + asset map), AssetIssueStore/V2, DynamicPropertiesStore
@@ -356,7 +350,6 @@ pub struct RemoteExecutionConfig {
     // - ExchangeInject: exchange_inject_another_amount
     // - ExchangeWithdraw: exchange_withdraw_another_amount
     // - ExchangeTransaction: exchange_received_amount
-
     /// Enable EXCHANGE_CREATE_CONTRACT (type 41) execution
     /// Creates a new exchange pair with initial token balances
     /// Fee: getExchangeCreateFee() from DynamicPropertiesStore
@@ -405,7 +398,6 @@ pub struct RemoteExecutionConfig {
     //
     // Note: MarketSellAsset is complex due to order matching with price comparison,
     // linked list management, and MAX_MATCH_NUM limit.
-
     /// Enable MARKET_SELL_ASSET_CONTRACT (type 52) execution
     /// Creates a sell order and matches against existing orders
     /// Fee: getMarketSellFee() from DynamicPropertiesStore
@@ -450,7 +442,6 @@ pub struct RemoteExecutionConfig {
     //
     // When strict mode is enabled, Rust will return errors when required dynamic properties
     // are missing, matching Java's "throw when missing" behavior.
-
     /// Strict dynamic property mode for Java parity
     ///
     /// When enabled, getters for critical dynamic properties will return errors when keys
@@ -514,7 +505,7 @@ impl Default for StorageConfig {
         Self {
             data_dir: "./data".to_string(),
             max_open_files: 1000,
-            cache_size: 128 * 1024 * 1024, // 128MB
+            cache_size: 128 * 1024 * 1024,       // 128MB
             write_buffer_size: 64 * 1024 * 1024, // 64MB
             max_write_buffer_number: 3,
             compression: "lz4".to_string(),
@@ -550,7 +541,7 @@ impl Default for ExecutionFeeConfig {
             support_black_hole_optimization: true, // Match java-tron default
             blackhole_address_base58: String::new(), // Empty by default, required if mode = "blackhole"
             experimental_vm_blackhole_credit: false, // Default off to avoid double-counting
-            non_vm_blackhole_credit_flat: None, // No flat fee emission by default
+            non_vm_blackhole_credit_flat: None,      // No flat fee emission by default
         }
     }
 }
@@ -585,7 +576,7 @@ impl Config {
         builder = builder.set_default("execution.max_cpu_time_of_one_tx", 80u64)?;
         builder = builder.set_default("execution.evm_eth_coinbase_compat", false)?;
         builder = builder.set_default("execution.skip_precompile_create_collision_check", true)?;
-        
+
         // Fee configuration defaults
         builder = builder.set_default("execution.fees.mode", "burn")?;
         builder = builder.set_default("execution.fees.support_black_hole_optimization", true)?;
@@ -608,7 +599,8 @@ impl Config {
         builder = builder.set_default("execution.remote.emit_global_resource_changes", false)?;
         builder = builder.set_default("execution.remote.emit_storage_changes", false)?;
         builder = builder.set_default("execution.remote.accountinfo_aext_mode", "none")?;
-        builder = builder.set_default("execution.remote.vote_witness_seed_old_from_account", true)?;
+        builder =
+            builder.set_default("execution.remote.vote_witness_seed_old_from_account", true)?;
         builder = builder.set_default("execution.remote.account_create_enabled", false)?;
         builder = builder.set_default("execution.remote.delegation_reward_enabled", false)?;
         // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
@@ -622,7 +614,8 @@ impl Config {
 
         // Phase 2.B: Account management contracts (19/46)
         builder = builder.set_default("execution.remote.set_account_id_enabled", false)?;
-        builder = builder.set_default("execution.remote.account_permission_update_enabled", false)?;
+        builder =
+            builder.set_default("execution.remote.account_permission_update_enabled", false)?;
 
         // Phase 2.C: Contract metadata contracts (33/45/48)
         builder = builder.set_default("execution.remote.update_setting_enabled", false)?;
@@ -633,7 +626,8 @@ impl Config {
         builder = builder.set_default("execution.remote.update_brokerage_enabled", false)?;
 
         // Phase 2.D: Resource/Freeze/Delegation contracts (56/57/58/59)
-        builder = builder.set_default("execution.remote.withdraw_expire_unfreeze_enabled", false)?;
+        builder =
+            builder.set_default("execution.remote.withdraw_expire_unfreeze_enabled", false)?;
         builder = builder.set_default("execution.remote.delegate_resource_enabled", false)?;
         builder = builder.set_default("execution.remote.undelegate_resource_enabled", false)?;
         builder = builder.set_default("execution.remote.cancel_all_unfreeze_v2_enabled", false)?;
@@ -654,7 +648,8 @@ impl Config {
         builder = builder.set_default("execution.remote.market_cancel_order_enabled", false)?;
 
         // Genesis block timestamp for headSlot computation
-        builder = builder.set_default("execution.remote.genesis_block_timestamp", 1529891469000i64)?;
+        builder =
+            builder.set_default("execution.remote.genesis_block_timestamp", 1529891469000i64)?;
 
         let config = builder.build()?;
         config.try_deserialize()
@@ -678,35 +673,35 @@ impl Default for RemoteExecutionConfig {
             emit_global_resource_changes: false, // Default false for backward compatibility
             emit_storage_changes: false,
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
-            vote_witness_seed_old_from_account: true, // Default true to match embedded semantics
-            account_create_enabled: false, // Default false for safe rollout
+            vote_witness_seed_old_from_account: true,  // Default true to match embedded semantics
+            account_create_enabled: false,             // Default false for safe rollout
             delegation_reward_enabled: false, // Deprecated: delegation reward is always computed
             genesis_guard_representatives_base58: Vec::new(), // Empty = use hardcoded fallback
             // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
             rust_persist_enabled: false,
             // Phase 2.A: Proposal contracts (16/17/18)
-            proposal_create_enabled: false,  // Default false for safe rollout
+            proposal_create_enabled: false, // Default false for safe rollout
             proposal_approve_enabled: false, // Default false for safe rollout
-            proposal_delete_enabled: false,  // Default false for safe rollout
+            proposal_delete_enabled: false, // Default false for safe rollout
             proposal_expire_time_ms: 259200000, // 3 days in milliseconds
             // Phase 2.B: Account management contracts (19/46)
-            set_account_id_enabled: false,  // Default false for safe rollout
+            set_account_id_enabled: false, // Default false for safe rollout
             account_permission_update_enabled: false, // Default false for safe rollout
             // Phase 2.C: Contract metadata contracts (33/45/48)
             update_setting_enabled: false, // Default false for safe rollout
             update_energy_limit_enabled: false, // Default false for safe rollout
-            clear_abi_enabled: false, // Default false for safe rollout
+            clear_abi_enabled: false,      // Default false for safe rollout
             // Phase 2.C2: UpdateBrokerage contract (49)
             update_brokerage_enabled: false, // Default false for safe rollout
             // Phase 2.D: Resource/Freeze/Delegation contracts (56/57/58/59)
             withdraw_expire_unfreeze_enabled: false, // Default false for safe rollout
-            delegate_resource_enabled: false, // Default false for safe rollout
-            undelegate_resource_enabled: false, // Default false for safe rollout
-            cancel_all_unfreeze_v2_enabled: false, // Default false for safe rollout
+            delegate_resource_enabled: false,        // Default false for safe rollout
+            undelegate_resource_enabled: false,      // Default false for safe rollout
+            cancel_all_unfreeze_v2_enabled: false,   // Default false for safe rollout
             // Phase 2.E: TRC-10 Extension contracts (9/14/15)
             participate_asset_issue_enabled: false, // Default false for safe rollout
-            unfreeze_asset_enabled: false, // Default false for safe rollout
-            update_asset_enabled: false, // Default false for safe rollout
+            unfreeze_asset_enabled: false,          // Default false for safe rollout
+            update_asset_enabled: false,            // Default false for safe rollout
             // Phase 2.F: Exchange contracts (41/42/43/44)
             exchange_create_enabled: false, // Default false for safe rollout
             exchange_inject_enabled: false, // Default false for safe rollout
@@ -722,4 +717,4 @@ impl Default for RemoteExecutionConfig {
             genesis_block_timestamp: default_genesis_block_timestamp(),
         }
     }
-} 
+}

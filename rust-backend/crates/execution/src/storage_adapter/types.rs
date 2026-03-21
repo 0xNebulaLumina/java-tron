@@ -13,9 +13,9 @@ use revm::primitives::{AccountInfo, Address, U256};
 /// TRON Witness information - equivalent to WitnessCapsule in Java
 #[derive(Debug, Clone)]
 pub struct WitnessInfo {
-    pub address: Address,     // 20-byte witness address (owner address)
-    pub url: String,          // Witness URL
-    pub vote_count: u64,      // Total votes received
+    pub address: Address, // 20-byte witness address (owner address)
+    pub url: String,      // Witness URL
+    pub vote_count: u64,  // Total votes received
 }
 
 impl WitnessInfo {
@@ -36,8 +36,8 @@ impl WitnessInfo {
     ///
     /// java-tron stores witness addresses as 21-byte TRON addresses (prefix + 20 bytes).
     pub fn serialize_with_prefix(&self, address_prefix: u8) -> Vec<u8> {
-        use prost::Message;
         use crate::protocol::Witness;
+        use prost::Message;
 
         // Build TRON address (21 bytes: network prefix + 20-byte address)
         let mut tron_address = Vec::with_capacity(21);
@@ -45,7 +45,9 @@ impl WitnessInfo {
         tron_address.extend_from_slice(self.address.as_slice());
 
         // Convert vote_count to i64 (panic if exceeds i64::MAX)
-        let vote_count_i64 = self.vote_count.try_into()
+        let vote_count_i64 = self
+            .vote_count
+            .try_into()
             .expect("vote_count exceeds i64::MAX");
 
         // Build protobuf Witness message
@@ -54,8 +56,8 @@ impl WitnessInfo {
             vote_count: vote_count_i64,
             pub_key: vec![], // Empty, not used in current implementation
             url: self.url.clone(),
-            total_produced: 0, // Default
-            total_missed: 0,   // Default
+            total_produced: 0,   // Default
+            total_missed: 0,     // Default
             latest_block_num: 0, // Default
             latest_slot_num: 0,  // Default
             // java-tron does not set this field for WitnessCreate writes (default false).
@@ -70,15 +72,17 @@ impl WitnessInfo {
     /// Deserialize witness info from Java protobuf format
     /// Returns WitnessInfo if successful, otherwise returns error for fallback
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        use prost::Message;
         use crate::protocol::Witness;
+        use prost::Message;
 
         // Try to decode as protocol.Witness protobuf
-        let witness = Witness::decode(data)
-            .map_err(|e| anyhow::anyhow!("Protobuf decode failed: {}", e))?;
+        let witness =
+            Witness::decode(data).map_err(|e| anyhow::anyhow!("Protobuf decode failed: {}", e))?;
 
         // Extract and validate address
-        let address = if witness.address.len() == 21 && (witness.address[0] == 0x41 || witness.address[0] == 0xa0) {
+        let address = if witness.address.len() == 21
+            && (witness.address[0] == 0x41 || witness.address[0] == 0xa0)
+        {
             // TRON format: 21 bytes with network prefix (0x41 mainnet / 0xa0 testnet)
             let mut addr_bytes = [0u8; 20];
             addr_bytes.copy_from_slice(&witness.address[1..21]);
@@ -100,7 +104,10 @@ impl WitnessInfo {
 
         // Extract voteCount (int64 -> u64)
         let vote_count = if witness.vote_count < 0 {
-            return Err(anyhow::anyhow!("Negative voteCount in protobuf: {}", witness.vote_count));
+            return Err(anyhow::anyhow!(
+                "Negative voteCount in protobuf: {}",
+                witness.vote_count
+            ));
         } else {
             witness.vote_count as u64
         };
@@ -146,14 +153,12 @@ impl FreezeRecord {
 
         // Read frozen amount (8 bytes)
         let frozen_amount = u64::from_be_bytes([
-            data[0], data[1], data[2], data[3],
-            data[4], data[5], data[6], data[7]
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
         ]);
 
         // Read expiration timestamp (8 bytes)
         let expiration_timestamp = i64::from_be_bytes([
-            data[8], data[9], data[10], data[11],
-            data[12], data[13], data[14], data[15]
+            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
         ]);
 
         Ok(FreezeRecord::new(frozen_amount, expiration_timestamp))
@@ -243,8 +248,14 @@ impl AccountAext {
         // Helper to read i64
         let read_i64 = |data: &[u8], pos: &mut usize| -> i64 {
             let value = i64::from_be_bytes([
-                data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3],
-                data[*pos + 4], data[*pos + 5], data[*pos + 6], data[*pos + 7],
+                data[*pos],
+                data[*pos + 1],
+                data[*pos + 2],
+                data[*pos + 3],
+                data[*pos + 4],
+                data[*pos + 5],
+                data[*pos + 6],
+                data[*pos + 7],
             ]);
             *pos += 8;
             value
@@ -341,7 +352,8 @@ impl Vote {
             let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
-                (1, 2) => { // vote_address (length-delimited)
+                (1, 2) => {
+                    // vote_address (length-delimited)
                     let (length, new_pos) = Self::read_varint(data, pos)?;
                     pos = new_pos;
                     if pos + length as usize > data.len() {
@@ -351,23 +363,29 @@ impl Vote {
                     pos += length as usize;
 
                     // Remove TRON prefix if present
-                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
+                    let evm_addr = if addr_bytes.len() == 21
+                        && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0)
+                    {
                         &addr_bytes[1..]
                     } else if addr_bytes.len() == 20 {
                         addr_bytes
                     } else {
-                        return Err(anyhow::anyhow!("Invalid vote_address length: {}", addr_bytes.len()));
+                        return Err(anyhow::anyhow!(
+                            "Invalid vote_address length: {}",
+                            addr_bytes.len()
+                        ));
                     };
 
                     let mut addr = [0u8; 20];
                     addr.copy_from_slice(evm_addr);
                     vote_address = Some(Address::from(addr));
-                },
-                (2, 0) => { // vote_count (varint)
+                }
+                (2, 0) => {
+                    // vote_count (varint)
                     let (count, new_pos) = Self::read_varint(data, pos)?;
                     pos = new_pos;
                     vote_count = Some(count);
-                },
+                }
                 _ => {
                     // Skip unknown field
                     pos = Self::skip_field(data, pos, wire_type)?;
@@ -409,26 +427,32 @@ impl Vote {
             }
         }
 
-        Err(anyhow::anyhow!("Unexpected end of data while reading varint"))
+        Err(anyhow::anyhow!(
+            "Unexpected end of data while reading varint"
+        ))
     }
 
     fn skip_field(data: &[u8], pos: usize, wire_type: u64) -> Result<usize> {
         match wire_type {
-            0 => { // Varint
+            0 => {
+                // Varint
                 let (_, new_pos) = Self::read_varint(data, pos)?;
                 Ok(new_pos)
-            },
-            1 => { // 64-bit
+            }
+            1 => {
+                // 64-bit
                 Ok(pos + 8)
-            },
-            2 => { // Length-delimited
+            }
+            2 => {
+                // Length-delimited
                 let (length, new_pos) = Self::read_varint(data, pos)?;
                 Ok(new_pos + length as usize)
-            },
-            5 => { // 32-bit
+            }
+            5 => {
+                // 32-bit
                 Ok(pos + 4)
-            },
-            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type))
+            }
+            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type)),
         }
     }
 }
@@ -437,9 +461,9 @@ impl Vote {
 /// Equivalent to VotesCapsule in java-tron
 #[derive(Debug, Clone)]
 pub struct VotesRecord {
-    pub address: Address,         // 20-byte account address
-    pub old_votes: Vec<Vote>,     // Previous votes
-    pub new_votes: Vec<Vote>,     // Current votes
+    pub address: Address,     // 20-byte account address
+    pub old_votes: Vec<Vote>, // Previous votes
+    pub new_votes: Vec<Vote>, // Current votes
 }
 
 impl VotesRecord {
@@ -527,7 +551,8 @@ impl VotesRecord {
             let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
-                (1, 2) => { // address (length-delimited)
+                (1, 2) => {
+                    // address (length-delimited)
                     let (length, new_pos) = Self::read_varint(data, pos)?;
                     pos = new_pos;
                     if pos + length as usize > data.len() {
@@ -537,19 +562,25 @@ impl VotesRecord {
                     pos += length as usize;
 
                     // Remove TRON prefix if present
-                    let evm_addr = if addr_bytes.len() == 21 && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0) {
+                    let evm_addr = if addr_bytes.len() == 21
+                        && (addr_bytes[0] == 0x41 || addr_bytes[0] == 0xa0)
+                    {
                         &addr_bytes[1..]
                     } else if addr_bytes.len() == 20 {
                         addr_bytes
                     } else {
-                        return Err(anyhow::anyhow!("Invalid address length: {}", addr_bytes.len()));
+                        return Err(anyhow::anyhow!(
+                            "Invalid address length: {}",
+                            addr_bytes.len()
+                        ));
                     };
 
                     let mut addr = [0u8; 20];
                     addr.copy_from_slice(evm_addr);
                     address = Some(Address::from(addr));
-                },
-                (2, 2) => { // old_votes (length-delimited)
+                }
+                (2, 2) => {
+                    // old_votes (length-delimited)
                     let (length, new_pos) = Self::read_varint(data, pos)?;
                     pos = new_pos;
                     if pos + length as usize > data.len() {
@@ -558,8 +589,9 @@ impl VotesRecord {
                     let vote_bytes = &data[pos..pos + length as usize];
                     pos += length as usize;
                     old_votes.push(Vote::deserialize(vote_bytes)?);
-                },
-                (3, 2) => { // new_votes (length-delimited)
+                }
+                (3, 2) => {
+                    // new_votes (length-delimited)
                     let (length, new_pos) = Self::read_varint(data, pos)?;
                     pos = new_pos;
                     if pos + length as usize > data.len() {
@@ -568,7 +600,7 @@ impl VotesRecord {
                     let vote_bytes = &data[pos..pos + length as usize];
                     pos += length as usize;
                     new_votes.push(Vote::deserialize(vote_bytes)?);
-                },
+                }
                 _ => {
                     // Skip unknown field
                     pos = Self::skip_field(data, pos, wire_type)?;
@@ -611,26 +643,32 @@ impl VotesRecord {
             }
         }
 
-        Err(anyhow::anyhow!("Unexpected end of data while reading varint"))
+        Err(anyhow::anyhow!(
+            "Unexpected end of data while reading varint"
+        ))
     }
 
     fn skip_field(data: &[u8], pos: usize, wire_type: u64) -> Result<usize> {
         match wire_type {
-            0 => { // Varint
+            0 => {
+                // Varint
                 let (_, new_pos) = Self::read_varint(data, pos)?;
                 Ok(new_pos)
-            },
-            1 => { // 64-bit
+            }
+            1 => {
+                // 64-bit
                 Ok(pos + 8)
-            },
-            2 => { // Length-delimited
+            }
+            2 => {
+                // Length-delimited
                 let (length, new_pos) = Self::read_varint(data, pos)?;
                 Ok(new_pos + length as usize)
-            },
-            5 => { // 32-bit
+            }
+            5 => {
+                // 32-bit
                 Ok(pos + 4)
-            },
-            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type))
+            }
+            _ => Err(anyhow::anyhow!("Unknown wire type: {}", wire_type)),
         }
     }
 }

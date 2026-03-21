@@ -11,9 +11,9 @@
 //! - `PRECISION` constant (1_000_000) for fixed-point arithmetic
 //! - `DEFAULT_WINDOW_SIZE` (28800 slots = 86400s / 3s)
 
+use super::types::AccountAext;
 use anyhow::Result;
 use revm::primitives::Address;
-use super::types::AccountAext;
 
 /// Precision constant matching Java's ResourceProcessor.PRECISION
 const PRECISION: i64 = 1_000_000;
@@ -180,13 +180,18 @@ impl ResourceTracker {
 
         // Compute netCost: for create-account txns, multiply bytes by rate
         let net_cost = if params.creates_new_account {
-            params.bytes_used.saturating_mul(params.create_account_bandwidth_rate)
+            params
+                .bytes_used
+                .saturating_mul(params.create_account_bandwidth_rate)
         } else {
             params.bytes_used
         };
 
         // Path 1: ACCOUNT_NET (try frozen bandwidth first)
-        let available_account_net = params.account_net_limit.saturating_sub(recovered_net_usage).max(0);
+        let available_account_net = params
+            .account_net_limit
+            .saturating_sub(recovered_net_usage)
+            .max(0);
         if net_cost <= available_account_net {
             let new_net_usage = Self::increase(
                 params.current_aext.net_usage,
@@ -219,7 +224,10 @@ impl ResourceTracker {
         }
 
         // Path 2: FREE_NET (check both account free_net_limit and global public_net_limit)
-        let available_free_net = params.free_net_limit.saturating_sub(recovered_free_net_usage).max(0);
+        let available_free_net = params
+            .free_net_limit
+            .saturating_sub(recovered_free_net_usage)
+            .max(0);
 
         if net_cost <= available_free_net {
             // Also check global PUBLIC_NET pool
@@ -229,7 +237,10 @@ impl ResourceTracker {
                 params.now,
                 free_net_window_size,
             );
-            let available_public_net = params.public_net_limit.saturating_sub(recovered_public_net).max(0);
+            let available_public_net = params
+                .public_net_limit
+                .saturating_sub(recovered_public_net)
+                .max(0);
 
             if net_cost <= available_public_net {
                 // Both account and global limits allow it

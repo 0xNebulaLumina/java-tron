@@ -1,7 +1,7 @@
 use super::super::*;
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_execution::{AccountAext, EngineBackedEvmStateStore, TronTransaction, TxMetadata};
 use tron_backend_storage::StorageEngine;
-use revm_primitives::{AccountInfo, Address, Bytes, U256};
 
 #[test]
 fn test_calculate_bandwidth_usage_fallback() {
@@ -110,7 +110,8 @@ fn test_delegate_resource_window_normalization_for_optimized_window_size() {
 
     // With correct normalization, decayed usage is ~500 bytes, scaled to 500_000_000 SUN usage,
     // leaving 300_000_000 SUN available.
-    let available = BackendService::compute_available_freeze_v2_bandwidth(&account, 1, 1, head_slot);
+    let available =
+        BackendService::compute_available_freeze_v2_bandwidth(&account, 1, 1, head_slot);
     assert_eq!(available, 300_000_000);
 }
 
@@ -150,7 +151,10 @@ fn test_apply_bandwidth_aext_updates_account_proto_window_raw() {
         .apply_bandwidth_aext_to_account_proto(&address, &aext)
         .unwrap();
 
-    let proto = storage_adapter.get_account_proto(&address).unwrap().unwrap();
+    let proto = storage_adapter
+        .get_account_proto(&address)
+        .unwrap()
+        .unwrap();
     assert_eq!(proto.net_usage, 123);
     assert_eq!(proto.free_net_usage, 456);
     assert_eq!(proto.latest_consume_time, 111);

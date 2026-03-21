@@ -2,9 +2,9 @@
 
 use super::super::super::*;
 use super::common::{new_test_context, seed_dynamic_properties};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
-use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
 
 fn new_test_service_with_trc10_enabled() -> BackendService {
     let exec_config = ExecutionConfig {
@@ -35,11 +35,7 @@ fn test_trc10_transfer_emits_recipient_account_creation() {
         .unwrap();
     // Seed ALLOW_MULTI_SIGN=1 so recipient account creation includes default permissions.
     storage_engine
-        .put(
-            "properties",
-            b"ALLOW_MULTI_SIGN",
-            &1i64.to_be_bytes(),
-        )
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
         .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
@@ -66,7 +62,10 @@ fn test_trc10_transfer_emits_recipient_account_creation() {
             },
         )
         .unwrap();
-    let mut owner_proto = storage_adapter.get_account_proto(&owner_address).unwrap().unwrap();
+    let mut owner_proto = storage_adapter
+        .get_account_proto(&owner_address)
+        .unwrap()
+        .unwrap();
     owner_proto
         .asset
         .insert("TEST".to_string(), 1_000 /* units */);
@@ -103,8 +102,13 @@ fn test_trc10_transfer_emits_recipient_account_creation() {
         },
     };
 
-    let result = service.execute_trc10_transfer_contract(&mut storage_adapter, &tx, &new_test_context());
-    assert!(result.is_ok(), "TRC-10 transfer should succeed: {:?}", result.err());
+    let result =
+        service.execute_trc10_transfer_contract(&mut storage_adapter, &tx, &new_test_context());
+    assert!(
+        result.is_ok(),
+        "TRC-10 transfer should succeed: {:?}",
+        result.err()
+    );
     let exec_result = result.unwrap();
 
     let recipient_change = exec_result.state_changes.iter().find_map(|sc| match sc {
@@ -116,10 +120,19 @@ fn test_trc10_transfer_emits_recipient_account_creation() {
         _ => None,
     });
 
-    assert!(recipient_change.is_some(), "Expected recipient AccountChange in state_changes");
+    assert!(
+        recipient_change.is_some(),
+        "Expected recipient AccountChange in state_changes"
+    );
     let (old_account, new_account) = recipient_change.unwrap();
-    assert!(old_account.is_none(), "Recipient should be emitted as account creation (old_account=None)");
-    assert!(new_account.is_some(), "Recipient should have a post-state AccountInfo (new_account=Some)");
+    assert!(
+        old_account.is_none(),
+        "Recipient should be emitted as account creation (old_account=None)"
+    );
+    assert!(
+        new_account.is_some(),
+        "Recipient should have a post-state AccountInfo (new_account=Some)"
+    );
 
     // Verify owner balance is unchanged (create_account_fee=0, no TRX transferred in TRC-10 transfer)
     let owner_change = exec_result.state_changes.iter().find_map(|sc| match sc {
@@ -130,37 +143,68 @@ fn test_trc10_transfer_emits_recipient_account_creation() {
         } if *address == owner_address => Some((old_account.clone(), new_account.clone())),
         _ => None,
     });
-    assert!(owner_change.is_some(), "Expected owner AccountChange in state_changes");
+    assert!(
+        owner_change.is_some(),
+        "Expected owner AccountChange in state_changes"
+    );
     let (old_owner, new_owner) = owner_change.unwrap();
     assert!(old_owner.is_some(), "Owner should have pre-state");
     assert!(new_owner.is_some(), "Owner should have post-state");
     // With create_account_fee=0, owner TRX balance should be unchanged
-    assert_eq!(old_owner.unwrap().balance, new_owner.unwrap().balance, "Owner TRX balance should be unchanged when create_account_fee=0");
+    assert_eq!(
+        old_owner.unwrap().balance,
+        new_owner.unwrap().balance,
+        "Owner TRX balance should be unchanged when create_account_fee=0"
+    );
 
     // Verify TRC-10 change is emitted with correct data
-    assert!(!exec_result.trc10_changes.is_empty(), "Expected at least one TRC-10 change");
+    assert!(
+        !exec_result.trc10_changes.is_empty(),
+        "Expected at least one TRC-10 change"
+    );
     let asset_transfer = exec_result.trc10_changes.iter().find(|c| {
         matches!(c, tron_backend_execution::Trc10Change::AssetTransferred(t) if t.owner_address == owner_address && t.to_address == recipient_address)
     });
-    assert!(asset_transfer.is_some(), "Expected Trc10Change::AssetTransferred for owner→recipient");
+    assert!(
+        asset_transfer.is_some(),
+        "Expected Trc10Change::AssetTransferred for owner→recipient"
+    );
     if let Some(tron_backend_execution::Trc10Change::AssetTransferred(t)) = asset_transfer {
         assert_eq!(t.amount, 100, "Transfer amount should be 100");
         assert_eq!(t.asset_name, b"TEST".to_vec(), "Asset name should be TEST");
     }
 
     // Verify post-execution asset balances in storage
-    let owner_proto_after = storage_adapter.get_account_proto(&owner_address).unwrap().unwrap();
-    let recipient_proto_after = storage_adapter.get_account_proto(&recipient_address).unwrap().unwrap();
+    let owner_proto_after = storage_adapter
+        .get_account_proto(&owner_address)
+        .unwrap()
+        .unwrap();
+    let recipient_proto_after = storage_adapter
+        .get_account_proto(&recipient_address)
+        .unwrap()
+        .unwrap();
 
     // Owner should have 900 units remaining (started with 1000, transferred 100)
-    assert_eq!(*owner_proto_after.asset.get("TEST").unwrap_or(&0), 900,
-        "Owner asset balance should decrease by transfer amount");
-    assert_eq!(*owner_proto_after.asset_v2.get("1000009").unwrap_or(&0), 900,
-        "Owner asset_v2 balance should decrease by transfer amount");
+    assert_eq!(
+        *owner_proto_after.asset.get("TEST").unwrap_or(&0),
+        900,
+        "Owner asset balance should decrease by transfer amount"
+    );
+    assert_eq!(
+        *owner_proto_after.asset_v2.get("1000009").unwrap_or(&0),
+        900,
+        "Owner asset_v2 balance should decrease by transfer amount"
+    );
 
     // Recipient should have 100 units
-    assert_eq!(*recipient_proto_after.asset.get("TEST").unwrap_or(&0), 100,
-        "Recipient asset balance should equal transfer amount");
-    assert_eq!(*recipient_proto_after.asset_v2.get("1000009").unwrap_or(&0), 100,
-        "Recipient asset_v2 balance should equal transfer amount");
+    assert_eq!(
+        *recipient_proto_after.asset.get("TEST").unwrap_or(&0),
+        100,
+        "Recipient asset balance should equal transfer amount"
+    );
+    assert_eq!(
+        *recipient_proto_after.asset_v2.get("1000009").unwrap_or(&0),
+        100,
+        "Recipient asset_v2 balance should equal transfer amount"
+    );
 }

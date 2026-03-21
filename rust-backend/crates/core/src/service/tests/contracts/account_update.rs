@@ -7,13 +7,24 @@
 //! - Duplicate name check via account-index when updates disabled
 
 use super::super::super::*;
-use super::common::{seed_dynamic_properties, make_from_raw, new_test_service_with_system_enabled, new_test_context};
+use super::common::{
+    make_from_raw, new_test_context, new_test_service_with_system_enabled, seed_dynamic_properties,
+};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
 
 /// Helper to seed ALLOW_UPDATE_ACCOUNT_NAME dynamic property
-fn seed_allow_update_account_name(storage_engine: &tron_backend_storage::StorageEngine, value: i64) {
-    storage_engine.put("properties", b"ALLOW_UPDATE_ACCOUNT_NAME", &value.to_be_bytes()).unwrap();
+fn seed_allow_update_account_name(
+    storage_engine: &tron_backend_storage::StorageEngine,
+    value: i64,
+) {
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_UPDATE_ACCOUNT_NAME",
+            &value.to_be_bytes(),
+        )
+        .unwrap();
 }
 
 #[test]
@@ -35,7 +46,9 @@ fn test_account_update_happy_path_with_valid_from_raw() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account.clone()).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account.clone())
+        .is_ok());
 
     // Create transaction with proper 21-byte from_raw (0x41 prefix + 20-byte address)
     let account_name = "TestAccount";
@@ -55,10 +68,15 @@ fn test_account_update_happy_path_with_valid_from_raw() {
     };
 
     // Execute
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
 
     // Assert success
-    assert!(result.is_ok(), "Account update should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Account update should succeed: {:?}",
+        result.err()
+    );
     let execution_result = result.unwrap();
 
     assert!(execution_result.success, "Execution should be successful");
@@ -89,7 +107,9 @@ fn test_account_update_allows_empty_name() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     // Empty name should be allowed per Java TransactionUtil.validAccountName
     let transaction = TronTransaction {
@@ -107,8 +127,13 @@ fn test_account_update_allows_empty_name() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "Empty name should be allowed: {:?}", result.err());
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(
+        result.is_ok(),
+        "Empty name should be allowed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -129,7 +154,9 @@ fn test_account_update_allows_200_byte_name() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     // 200 bytes should succeed
     let name_200 = vec![b'a'; 200];
@@ -148,8 +175,13 @@ fn test_account_update_allows_200_byte_name() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "200-byte name should be allowed: {:?}", result.err());
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(
+        result.is_ok(),
+        "200-byte name should be allowed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -170,7 +202,9 @@ fn test_account_update_rejects_201_byte_name() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     // 201 bytes should fail
     let name_201 = vec![b'a'; 201];
@@ -189,7 +223,8 @@ fn test_account_update_rejects_201_byte_name() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_err(), "201-byte name should be rejected");
     assert_eq!(result.unwrap_err(), "Invalid accountName");
 }
@@ -212,7 +247,9 @@ fn test_account_update_rejects_missing_from_raw() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     // No from_raw provided
     let transaction = TronTransaction {
@@ -230,7 +267,8 @@ fn test_account_update_rejects_missing_from_raw() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_err(), "Missing from_raw should be rejected");
     assert_eq!(result.unwrap_err(), "Invalid ownerAddress");
 }
@@ -253,7 +291,9 @@ fn test_account_update_rejects_20_byte_address() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     // 20-byte address (missing TRON prefix)
     let transaction = TronTransaction {
@@ -271,7 +311,8 @@ fn test_account_update_rejects_20_byte_address() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_err(), "20-byte address should be rejected");
     assert_eq!(result.unwrap_err(), "Invalid ownerAddress");
 }
@@ -294,7 +335,9 @@ fn test_account_update_rejects_wrong_prefix() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     // Wrong prefix (0xa0 when mainnet expects 0x41)
     let mut from_raw_wrong_prefix = vec![0xa0u8];
@@ -315,7 +358,8 @@ fn test_account_update_rejects_wrong_prefix() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_err(), "Wrong prefix should be rejected");
     assert_eq!(result.unwrap_err(), "Invalid ownerAddress");
 }
@@ -349,7 +393,8 @@ fn test_account_update_rejects_nonexistent_account() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_err(), "Non-existent account should be rejected");
     assert_eq!(result.unwrap_err(), "Account does not exist");
 }
@@ -372,7 +417,9 @@ fn test_account_update_only_set_once_when_updates_disabled() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     // First name set should succeed
     let first_tx = TronTransaction {
@@ -391,7 +438,11 @@ fn test_account_update_only_set_once_when_updates_disabled() {
     };
 
     let result = service.execute_account_update_contract(&mut storage_adapter, &first_tx, &context);
-    assert!(result.is_ok(), "First name set should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "First name set should succeed: {:?}",
+        result.err()
+    );
 
     // Second attempt should fail with Java error message
     let second_tx = TronTransaction {
@@ -409,8 +460,12 @@ fn test_account_update_only_set_once_when_updates_disabled() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &second_tx, &context);
-    assert!(result.is_err(), "Second name set should fail when updates disabled");
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &second_tx, &context);
+    assert!(
+        result.is_err(),
+        "Second name set should fail when updates disabled"
+    );
     assert_eq!(result.unwrap_err(), "This account name is already existed");
 
     // Verify original name is still there
@@ -436,7 +491,9 @@ fn test_account_update_allows_repeated_updates_when_enabled() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     // First name set
     let first_tx = TronTransaction {
@@ -473,8 +530,13 @@ fn test_account_update_allows_repeated_updates_when_enabled() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &second_tx, &context);
-    assert!(result.is_ok(), "Second name set should succeed when updates enabled: {:?}", result.err());
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &second_tx, &context);
+    assert!(
+        result.is_ok(),
+        "Second name set should succeed when updates enabled: {:?}",
+        result.err()
+    );
 
     // Verify new name was stored
     let stored_name = storage_adapter.get_account_name(&owner_address).unwrap();
@@ -546,7 +608,10 @@ fn test_account_update_duplicate_name_check_when_updates_disabled() {
     };
 
     let result = service.execute_account_update_contract(&mut storage_adapter, &tx2, &context);
-    assert!(result.is_err(), "Duplicate name should be rejected when updates disabled");
+    assert!(
+        result.is_err(),
+        "Duplicate name should be rejected when updates disabled"
+    );
     assert_eq!(result.unwrap_err(), "This name is existed");
 }
 
@@ -615,7 +680,11 @@ fn test_account_update_duplicate_name_allowed_when_updates_enabled() {
     };
 
     let result = service.execute_account_update_contract(&mut storage_adapter, &tx2, &context);
-    assert!(result.is_ok(), "Duplicate name should be allowed when updates enabled: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Duplicate name should be allowed when updates enabled: {:?}",
+        result.err()
+    );
 }
 
 // ============================================================================
@@ -662,7 +731,9 @@ fn test_account_update_with_contract_parameter() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     let from_raw = make_from_raw(&owner_address);
     let account_name = b"ProtoName";
@@ -689,8 +760,13 @@ fn test_account_update_with_contract_parameter() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "Should succeed with valid contract_parameter: {:?}", result.err());
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    assert!(
+        result.is_ok(),
+        "Should succeed with valid contract_parameter: {:?}",
+        result.err()
+    );
 
     let stored_name = storage_adapter.get_account_name(&owner_address).unwrap();
     assert_eq!(stored_name, Some("ProtoName".to_string()));
@@ -714,7 +790,9 @@ fn test_account_update_rejects_wrong_type_url() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     let from_raw = make_from_raw(&owner_address);
 
@@ -737,7 +815,8 @@ fn test_account_update_rejects_wrong_type_url() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_err(), "Should reject wrong type URL");
     assert!(result.unwrap_err().contains("contract type error"));
 }
@@ -760,7 +839,9 @@ fn test_account_update_with_malformed_proto() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     let from_raw = make_from_raw(&owner_address);
 
@@ -783,7 +864,8 @@ fn test_account_update_with_malformed_proto() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_err(), "Should reject malformed protobuf");
     assert!(result.unwrap_err().contains("Protocol buffer parse error"));
 }
@@ -806,7 +888,9 @@ fn test_account_update_proto_name_takes_precedence() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account)
+        .is_ok());
 
     let from_raw = make_from_raw(&owner_address);
 
@@ -832,10 +916,15 @@ fn test_account_update_proto_name_takes_precedence() {
         },
     };
 
-    let result = service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
+    let result =
+        service.execute_account_update_contract(&mut storage_adapter, &transaction, &context);
     assert!(result.is_ok(), "Should succeed: {:?}", result.err());
 
     // Verify proto name was used (not transaction.data)
     let stored_name = storage_adapter.get_account_name(&owner_address).unwrap();
-    assert_eq!(stored_name, Some("ProtoName".to_string()), "Should use name from decoded proto");
+    assert_eq!(
+        stored_name,
+        Some("ProtoName".to_string()),
+        "Should use name from decoded proto"
+    );
 }

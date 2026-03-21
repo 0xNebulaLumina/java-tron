@@ -20,15 +20,15 @@
 //! compatibility with `lib.rs` expectations.
 
 // Submodule declarations
+pub mod database;
+pub mod db_names;
+pub mod engine;
+pub mod in_memory;
+pub mod key_helpers;
+pub mod resource;
 pub mod traits;
 pub mod types;
 pub mod utils;
-pub mod db_names;
-pub mod key_helpers;
-pub mod in_memory;
-pub mod engine;
-pub mod database;
-pub mod resource;
 pub mod write_buffer;
 
 // Tests module (contains all storage_adapter tests)
@@ -36,14 +36,12 @@ pub mod write_buffer;
 mod tests;
 
 // Public re-exports for API compatibility with lib.rs
-pub use traits::EvmStateStore;
-pub use types::{
-    WitnessInfo, FreezeRecord, Vote, VotesRecord, AccountAext, StateChangeRecord,
-};
-pub use in_memory::InMemoryEvmStateStore;
-pub use engine::EngineBackedEvmStateStore;
 pub use database::EvmStateDatabase;
 #[allow(unused_imports)]
 pub use database::SnapshotHook;
-pub use resource::{ResourceTracker, BandwidthPath, BandwidthParams, BandwidthResult};
-pub use write_buffer::{ExecutionWriteBuffer, WriteBufferBuilder, WriteOp, TouchedKey};
+pub use engine::EngineBackedEvmStateStore;
+pub use in_memory::InMemoryEvmStateStore;
+pub use resource::{BandwidthParams, BandwidthPath, BandwidthResult, ResourceTracker};
+pub use traits::EvmStateStore;
+pub use types::{AccountAext, FreezeRecord, StateChangeRecord, Vote, VotesRecord, WitnessInfo};
+pub use write_buffer::{ExecutionWriteBuffer, TouchedKey, WriteBufferBuilder, WriteOp};

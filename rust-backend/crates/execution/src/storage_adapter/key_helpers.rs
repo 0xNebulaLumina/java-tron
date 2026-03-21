@@ -73,7 +73,7 @@ pub mod delegated_resource {
         let mut key = Vec::with_capacity(43);
         key.push(V2_PREFIX);
         key.extend_from_slice(from_address); // 21 bytes
-        key.extend_from_slice(to_address);   // 21 bytes
+        key.extend_from_slice(to_address); // 21 bytes
         key
     }
 
@@ -84,7 +84,7 @@ pub mod delegated_resource {
         let mut key = Vec::with_capacity(43);
         key.push(V2_LOCK_PREFIX);
         key.extend_from_slice(from_address); // 21 bytes
-        key.extend_from_slice(to_address);   // 21 bytes
+        key.extend_from_slice(to_address); // 21 bytes
         key
     }
 

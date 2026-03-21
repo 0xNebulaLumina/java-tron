@@ -32,6 +32,6 @@ pub mod kv_format;
 pub mod metadata;
 pub mod runner;
 
-pub use kv_format::{read_kv_file, write_kv_file, compare_kv_data, KvDiff, KvError};
+pub use kv_format::{compare_kv_data, read_kv_file, write_kv_file, KvDiff, KvError};
 pub use metadata::FixtureMetadata;
-pub use runner::{ConformanceRunner, ConformanceResult, FixtureInfo};
+pub use runner::{ConformanceResult, ConformanceRunner, FixtureInfo};

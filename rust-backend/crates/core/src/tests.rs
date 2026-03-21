@@ -9,9 +9,12 @@
 //! - State change generation
 //! - Feature flag integration
 
+use revm_primitives::{Address, Bytes, U256};
 use tron_backend_common::ExecutionConfig;
-use tron_backend_execution::{TronContractType, TxMetadata, TronTransaction, TronExecutionContext, TronStateChange, ExecutionModule, EvmStateStore};
-use revm_primitives::{Address, U256, Bytes};
+use tron_backend_execution::{
+    EvmStateStore, ExecutionModule, TronContractType, TronExecutionContext, TronStateChange,
+    TronTransaction, TxMetadata,
+};
 
 /// Create a test configuration for witness contract testing
 fn create_test_config() -> ExecutionConfig {
@@ -20,7 +23,7 @@ fn create_test_config() -> ExecutionConfig {
     // Enable witness contracts
     config.remote.witness_create_enabled = true;
     config.remote.witness_update_enabled = true; // Phase 2
-    config.remote.vote_witness_enabled = false;   // Phase 3
+    config.remote.vote_witness_enabled = false; // Phase 3
     config.remote.system_enabled = true;
 
     // Use burn mode for fee handling
@@ -36,7 +39,7 @@ fn create_tron_address(suffix: &[u8]) -> Address {
     addr[0] = 0x41; // TRON address prefix
 
     let copy_len = std::cmp::min(suffix.len(), 19);
-    addr[1..1+copy_len].copy_from_slice(&suffix[..copy_len]);
+    addr[1..1 + copy_len].copy_from_slice(&suffix[..copy_len]);
 
     Address::from_slice(&addr)
 }
@@ -52,8 +55,16 @@ fn get_change_address(change: &TronStateChange) -> Address {
 /// Seed required dynamic properties for tests
 /// This is needed because many system contracts check for ALLOW_MULTI_SIGN
 fn seed_dynamic_properties(storage_engine: &tron_backend_storage::StorageEngine) {
-    storage_engine.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
 }
 
 /// Test contract metadata parsing for witness contracts
@@ -67,7 +78,10 @@ fn test_witness_contract_metadata_parsing() {
     };
 
     // Verify contract type parsing
-    assert_eq!(witness_create_metadata.contract_type, Some(TronContractType::WitnessCreateContract));
+    assert_eq!(
+        witness_create_metadata.contract_type,
+        Some(TronContractType::WitnessCreateContract)
+    );
     assert_eq!(TronContractType::WitnessCreateContract as i32, 5);
 
     // Test parsing from i32
@@ -114,9 +128,18 @@ fn test_witness_create_execution() {
     };
 
     // Verify transaction structure before execution
-    assert!(transaction.to.is_none(), "System contracts should have no 'to' address");
-    assert_eq!(transaction.metadata.contract_type, Some(TronContractType::WitnessCreateContract));
-    assert!(!transaction.data.is_empty(), "WitnessCreate should have URL data");
+    assert!(
+        transaction.to.is_none(),
+        "System contracts should have no 'to' address"
+    );
+    assert_eq!(
+        transaction.metadata.contract_type,
+        Some(TronContractType::WitnessCreateContract)
+    );
+    assert!(
+        !transaction.data.is_empty(),
+        "WitnessCreate should have URL data"
+    );
 
     // Execute the transaction using in-memory storage
     let temp_dir = tempfile::tempdir().unwrap();
@@ -128,7 +151,10 @@ fn test_witness_create_execution() {
     match result {
         Ok(execution_result) => {
             // System contracts consume 0 energy in TRON parity mode
-            assert_eq!(execution_result.energy_used, 0, "WitnessCreate should use 0 energy");
+            assert_eq!(
+                execution_result.energy_used, 0,
+                "WitnessCreate should use 0 energy"
+            );
 
             // Verify no zero-address changes (this was the bug we're fixing)
             for change in &execution_result.state_changes {
@@ -146,13 +172,19 @@ fn test_witness_create_execution() {
         }
         Err(e) => {
             // Log error but don't fail test if it's a validation error in test environment
-            println!("WitnessCreate execution error (may be expected in test environment): {}", e);
+            println!(
+                "WitnessCreate execution error (may be expected in test environment): {}",
+                e
+            );
 
             // Check if it's a feature flag error (expected)
             let error_str = e.to_string();
             if error_str.contains("WitnessCreate") && error_str.contains("disabled") {
                 println!("Feature flag test successful - got expected disabled error");
-            } else if error_str.contains("storage") || error_str.contains("balance") || error_str.contains("Nonce") {
+            } else if error_str.contains("storage")
+                || error_str.contains("balance")
+                || error_str.contains("Nonce")
+            {
                 println!("Storage/balance/nonce error expected in test environment");
             } else {
                 panic!("Unexpected error: {}", e);
@@ -215,11 +247,16 @@ fn test_witness_create_blackhole_mode() {
                 assert_ne!(addr, Address::ZERO, "Should not have zero-address changes");
             }
 
-            println!("Blackhole mode WitnessCreate executed successfully with {} state changes",
-                execution_result.state_changes.len());
+            println!(
+                "Blackhole mode WitnessCreate executed successfully with {} state changes",
+                execution_result.state_changes.len()
+            );
         }
         Err(e) => {
-            println!("Blackhole mode test error (expected in test environment): {}", e);
+            println!(
+                "Blackhole mode test error (expected in test environment): {}",
+                e
+            );
         }
     }
 }
@@ -275,10 +312,16 @@ fn test_witness_create_feature_disabled() {
         }
         Err(e) => {
             let error_str = e.to_string();
-            if error_str.contains("WitnessCreate") || error_str.contains("disabled") || error_str.contains("not enabled") {
+            if error_str.contains("WitnessCreate")
+                || error_str.contains("disabled")
+                || error_str.contains("not enabled")
+            {
                 println!("Feature disabled test successful: {}", e);
             } else {
-                println!("Got different error (may be expected in test environment): {}", e);
+                println!(
+                    "Got different error (may be expected in test environment): {}",
+                    e
+                );
             }
         }
     }
@@ -336,7 +379,11 @@ fn test_account_serialization_format() {
 
                 // Check if this is an account change (which would have serialization data)
                 match change {
-                    TronStateChange::AccountChange { old_account, new_account, .. } => {
+                    TronStateChange::AccountChange {
+                        old_account,
+                        new_account,
+                        ..
+                    } => {
                         if old_account.is_some() || new_account.is_some() {
                             println!("Account change for address: {:?}", addr);
                         }
@@ -347,11 +394,16 @@ fn test_account_serialization_format() {
                 }
             }
 
-            println!("Account serialization test passed with {} state changes",
-                execution_result.state_changes.len());
+            println!(
+                "Account serialization test passed with {} state changes",
+                execution_result.state_changes.len()
+            );
         }
         Err(e) => {
-            println!("Account serialization test error (expected in test environment): {}", e);
+            println!(
+                "Account serialization test error (expected in test environment): {}",
+                e
+            );
         }
     }
 }
@@ -404,22 +456,40 @@ fn test_state_change_deterministic_ordering() {
     seed_dynamic_properties(&storage_engine2);
     let storage2 = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine2);
 
-    let result1 = execution_module1.execute_transaction_with_storage(storage1, &transaction, &context);
-    let result2 = execution_module2.execute_transaction_with_storage(storage2, &transaction, &context);
+    let result1 =
+        execution_module1.execute_transaction_with_storage(storage1, &transaction, &context);
+    let result2 =
+        execution_module2.execute_transaction_with_storage(storage2, &transaction, &context);
 
     // Check if both executions had the same result structure
     match (&result1, &result2) {
         (Ok(result1), Ok(result2)) => {
             // Verify same number of state changes
-            assert_eq!(result1.state_changes.len(), result2.state_changes.len(),
-                "Should have same number of state changes");
+            assert_eq!(
+                result1.state_changes.len(),
+                result2.state_changes.len(),
+                "Should have same number of state changes"
+            );
 
             // Verify same addresses in same order
-            let addresses1: Vec<Address> = result1.state_changes.iter().map(|c| get_change_address(c)).collect();
-            let addresses2: Vec<Address> = result2.state_changes.iter().map(|c| get_change_address(c)).collect();
-            assert_eq!(addresses1, addresses2, "Should have same addresses in same order");
+            let addresses1: Vec<Address> = result1
+                .state_changes
+                .iter()
+                .map(|c| get_change_address(c))
+                .collect();
+            let addresses2: Vec<Address> = result2
+                .state_changes
+                .iter()
+                .map(|c| get_change_address(c))
+                .collect();
+            assert_eq!(
+                addresses1, addresses2,
+                "Should have same addresses in same order"
+            );
 
-            println!("Deterministic ordering test passed - both executions produced identical results");
+            println!(
+                "Deterministic ordering test passed - both executions produced identical results"
+            );
         }
         _ => {
             println!("Deterministic ordering test: one or both executions failed (expected in test environment)");
@@ -485,19 +555,25 @@ fn test_vote_witness_after_freeze_v1_succeeds() {
         frozen_amount: 1_000_000,
         expiration_timestamp: 1000000000 + 3 * 86400 * 1000,
     };
-    storage.set_freeze_record(owner_address, 0, &freeze_record1)
+    storage
+        .set_freeze_record(owner_address, 0, &freeze_record1)
         .expect("Should set freeze record");
 
     // Verify freeze was set
-    let freeze_record = storage.get_freeze_record(&owner_address, 0)
+    let freeze_record = storage
+        .get_freeze_record(&owner_address, 0)
         .expect("Should get freeze record")
         .expect("Freeze record should exist");
     assert_eq!(freeze_record.frozen_amount, 1_000_000);
 
     // Verify tron power is now 1_000_000
-    let tron_power = storage.get_tron_power_in_sun(&owner_address, false)
+    let tron_power = storage
+        .get_tron_power_in_sun(&owner_address, false)
         .expect("Should compute tron power");
-    assert_eq!(tron_power, 1_000_000, "Tron power should equal frozen amount");
+    assert_eq!(
+        tron_power, 1_000_000,
+        "Tron power should equal frozen amount"
+    );
 
     // Step 2: Execute VoteWitness with 1_000_000 votes
     // Create VoteWitness transaction
@@ -530,7 +606,11 @@ fn test_vote_witness_after_freeze_v1_succeeds() {
         transaction_id: None,
     };
 
-    let result = execution_module.execute_transaction_with_storage(storage, &vote_transaction, &vote_context);
+    let result = execution_module.execute_transaction_with_storage(
+        storage,
+        &vote_transaction,
+        &vote_context,
+    );
 
     // Verify execution succeeded (no REVERT)
     match result {
@@ -540,19 +620,29 @@ fn test_vote_witness_after_freeze_v1_succeeds() {
             println!("Energy used: {}", exec_result.energy_used);
 
             // Expect at least one state change (owner account)
-            assert!(exec_result.state_changes.len() >= 1,
-                "Expected at least one state change (owner account)");
+            assert!(
+                exec_result.state_changes.len() >= 1,
+                "Expected at least one state change (owner account)"
+            );
 
             // Verify owner account change exists
             let has_owner_change = exec_result.state_changes.iter().any(|change| {
                 matches!(change, TronStateChange::AccountChange { address, .. } if *address == owner_address)
             });
-            assert!(has_owner_change, "Expected owner account change for CSV parity");
+            assert!(
+                has_owner_change,
+                "Expected owner account change for CSV parity"
+            );
 
-            println!("✓ VoteWitness after FreezeBalance succeeded with correct tron power computation");
+            println!(
+                "✓ VoteWitness after FreezeBalance succeeded with correct tron power computation"
+            );
         }
         Err(e) => {
-            panic!("VoteWitness should succeed after FreezeBalance, but got error: {}", e);
+            panic!(
+                "VoteWitness should succeed after FreezeBalance, but got error: {}",
+                e
+            );
         }
     }
 }
@@ -601,7 +691,8 @@ fn test_vote_witness_multi_freeze_accumulates() {
         frozen_amount: 1_000_000,
         expiration_timestamp: 2000000000 + 3 * 86400 * 1000,
     };
-    storage.set_freeze_record(owner_address, 0, &freeze_record_bandwidth)
+    storage
+        .set_freeze_record(owner_address, 0, &freeze_record_bandwidth)
         .expect("Should set bandwidth freeze");
 
     // Freeze for ENERGY (resource=1)
@@ -609,13 +700,18 @@ fn test_vote_witness_multi_freeze_accumulates() {
         frozen_amount: 2_000_000,
         expiration_timestamp: 2000000000 + 3 * 86400 * 1000,
     };
-    storage.set_freeze_record(owner_address, 1, &freeze_record_energy)
+    storage
+        .set_freeze_record(owner_address, 1, &freeze_record_energy)
         .expect("Should set energy freeze");
 
     // Verify total tron power is sum of both
-    let tron_power = storage.get_tron_power_in_sun(&owner_address, false)
+    let tron_power = storage
+        .get_tron_power_in_sun(&owner_address, false)
         .expect("Should compute tron power");
-    assert_eq!(tron_power, 3_000_000, "Tron power should be sum of BANDWIDTH + ENERGY");
+    assert_eq!(
+        tron_power, 3_000_000,
+        "Tron power should be sum of BANDWIDTH + ENERGY"
+    );
 
     // Create VoteWitness transaction with 3_000_000 votes
     let vote_transaction = TronTransaction {
@@ -633,10 +729,14 @@ fn test_vote_witness_multi_freeze_accumulates() {
         },
     };
 
-    let result = execution_module.execute_transaction_with_storage(storage, &vote_transaction, &context);
+    let result =
+        execution_module.execute_transaction_with_storage(storage, &vote_transaction, &context);
 
     // Verify success
-    assert!(result.is_ok(), "VoteWitness should succeed with accumulated tron power from multiple resources");
+    assert!(
+        result.is_ok(),
+        "VoteWitness should succeed with accumulated tron power from multiple resources"
+    );
     println!("✓ VoteWitness with multi-resource freeze accumulation succeeded");
 }
 
@@ -701,23 +801,35 @@ fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
     seed_dynamic_properties(&storage_engine);
     let mut storage = tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine);
 
-    storage.put_account_proto(&owner_address, &tron_backend_execution::protocol::Account::default())
+    storage
+        .put_account_proto(
+            &owner_address,
+            &tron_backend_execution::protocol::Account::default(),
+        )
         .unwrap();
-    storage.put_account_proto(&witness_address, &tron_backend_execution::protocol::Account::default())
+    storage
+        .put_account_proto(
+            &witness_address,
+            &tron_backend_execution::protocol::Account::default(),
+        )
         .unwrap();
-    storage.put_witness(&tron_backend_execution::WitnessInfo::new(
-        witness_address,
-        "witness".to_string(),
-        0,
-    )).unwrap();
-    storage.set_freeze_record(
-        owner_address,
-        0,
-        &tron_backend_execution::FreezeRecord {
-            frozen_amount: 10_000_000_000,
-            expiration_timestamp: 1000000000 + 3 * 86400 * 1000,
-        },
-    ).unwrap();
+    storage
+        .put_witness(&tron_backend_execution::WitnessInfo::new(
+            witness_address,
+            "witness".to_string(),
+            0,
+        ))
+        .unwrap();
+    storage
+        .set_freeze_record(
+            owner_address,
+            0,
+            &tron_backend_execution::FreezeRecord {
+                frozen_amount: 10_000_000_000,
+                expiration_timestamp: 1000000000 + 3 * 86400 * 1000,
+            },
+        )
+        .unwrap();
 
     let tx1 = TronTransaction {
         from: owner_address,
@@ -733,11 +845,18 @@ fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
             ..Default::default()
         },
     };
-    backend_service.execute_non_vm_contract(&mut storage, &tx1, &context)
+    backend_service
+        .execute_non_vm_contract(&mut storage, &tx1, &context)
         .expect("First VoteWitness should succeed");
 
-    let votes_after_1 = storage.get_votes(&owner_address).unwrap().expect("VotesRecord should exist");
-    assert!(votes_after_1.old_votes.is_empty(), "old_votes should remain epoch baseline");
+    let votes_after_1 = storage
+        .get_votes(&owner_address)
+        .unwrap()
+        .expect("VotesRecord should exist");
+    assert!(
+        votes_after_1.old_votes.is_empty(),
+        "old_votes should remain epoch baseline"
+    );
     assert_eq!(votes_after_1.new_votes.len(), 1);
     assert_eq!(votes_after_1.new_votes[0].vote_address, witness_address);
     assert_eq!(votes_after_1.new_votes[0].vote_count, 4754);
@@ -756,11 +875,18 @@ fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
             ..Default::default()
         },
     };
-    backend_service.execute_non_vm_contract(&mut storage, &tx2, &context)
+    backend_service
+        .execute_non_vm_contract(&mut storage, &tx2, &context)
         .expect("Second VoteWitness should succeed");
 
-    let votes_after_2 = storage.get_votes(&owner_address).unwrap().expect("VotesRecord should exist");
-    assert!(votes_after_2.old_votes.is_empty(), "old_votes should not be shifted to prior new_votes");
+    let votes_after_2 = storage
+        .get_votes(&owner_address)
+        .unwrap()
+        .expect("VotesRecord should exist");
+    assert!(
+        votes_after_2.old_votes.is_empty(),
+        "old_votes should not be shifted to prior new_votes"
+    );
     assert_eq!(votes_after_2.new_votes.len(), 1);
     assert_eq!(votes_after_2.new_votes[0].vote_address, witness_address);
     assert_eq!(votes_after_2.new_votes[0].vote_count, 4838);
@@ -780,11 +906,17 @@ fn test_asset_issue_contract_metadata() {
     };
 
     // Verify contract type parsing
-    assert_eq!(asset_issue_metadata.contract_type, Some(TronContractType::AssetIssueContract));
+    assert_eq!(
+        asset_issue_metadata.contract_type,
+        Some(TronContractType::AssetIssueContract)
+    );
 
     // Verify enum value
     let contract_type_value = TronContractType::AssetIssueContract as i32;
-    assert!(contract_type_value > 0, "AssetIssueContract should have a positive enum value");
+    assert!(
+        contract_type_value > 0,
+        "AssetIssueContract should have a positive enum value"
+    );
 
     // Verify we can parse back from i32
     let parsed_type = TronContractType::try_from(contract_type_value)
@@ -856,14 +988,22 @@ fn test_asset_issue_fee_burn() {
     match result {
         Ok(execution_result) => {
             // System contracts consume 0 energy
-            assert_eq!(execution_result.energy_used, 0, "AssetIssue should use 0 energy");
+            assert_eq!(
+                execution_result.energy_used, 0,
+                "AssetIssue should use 0 energy"
+            );
 
             // Verify bandwidth is computed
-            assert!(execution_result.bandwidth_used > 0, "AssetIssue should use bandwidth");
+            assert!(
+                execution_result.bandwidth_used > 0,
+                "AssetIssue should use bandwidth"
+            );
 
             // In burn mode, we should have exactly 1 state change (owner account -fee)
-            assert!(execution_result.state_changes.len() >= 1,
-                "Should have at least 1 state change (owner)");
+            assert!(
+                execution_result.state_changes.len() >= 1,
+                "Should have at least 1 state change (owner)"
+            );
 
             // Verify owner account change exists
             let has_owner_change = execution_result.state_changes.iter().any(|change| {
@@ -878,12 +1018,17 @@ fn test_asset_issue_fee_burn() {
             }
 
             // Verify state changes are sorted by address (deterministic)
-            let addresses: Vec<Address> = execution_result.state_changes.iter()
+            let addresses: Vec<Address> = execution_result
+                .state_changes
+                .iter()
                 .map(|c| get_change_address(c))
                 .collect();
             let mut sorted_addresses = addresses.clone();
             sorted_addresses.sort_by(|a, b| a.as_slice().cmp(b.as_slice()));
-            assert_eq!(addresses, sorted_addresses, "State changes should be sorted by address");
+            assert_eq!(
+                addresses, sorted_addresses,
+                "State changes should be sorted by address"
+            );
 
             println!("✓ AssetIssue with burn mode executed successfully");
             println!("  Energy used: {}", execution_result.energy_used);
@@ -891,7 +1036,10 @@ fn test_asset_issue_fee_burn() {
             println!("  State changes: {}", execution_result.state_changes.len());
         }
         Err(e) => {
-            println!("AssetIssue burn mode test error (expected in test environment): {}", e);
+            println!(
+                "AssetIssue burn mode test error (expected in test environment): {}",
+                e
+            );
         }
     }
 }
@@ -957,12 +1105,17 @@ fn test_asset_issue_fee_blackhole_credit() {
     match result {
         Ok(execution_result) => {
             // System contracts consume 0 energy
-            assert_eq!(execution_result.energy_used, 0, "AssetIssue should use 0 energy");
+            assert_eq!(
+                execution_result.energy_used, 0,
+                "AssetIssue should use 0 energy"
+            );
 
             // In blackhole mode, we should have 2 state changes (owner -fee, blackhole +fee)
             // NOTE: In test environment this might vary, so we check for at least 1
-            assert!(execution_result.state_changes.len() >= 1,
-                "Should have at least 1 state change");
+            assert!(
+                execution_result.state_changes.len() >= 1,
+                "Should have at least 1 state change"
+            );
 
             // Verify owner account change exists
             let has_owner_change = execution_result.state_changes.iter().any(|change| {
@@ -977,18 +1130,26 @@ fn test_asset_issue_fee_blackhole_credit() {
             }
 
             // Verify deterministic ordering
-            let addresses: Vec<Address> = execution_result.state_changes.iter()
+            let addresses: Vec<Address> = execution_result
+                .state_changes
+                .iter()
                 .map(|c| get_change_address(c))
                 .collect();
             let mut sorted_addresses = addresses.clone();
             sorted_addresses.sort_by(|a, b| a.as_slice().cmp(b.as_slice()));
-            assert_eq!(addresses, sorted_addresses, "State changes should be sorted by address");
+            assert_eq!(
+                addresses, sorted_addresses,
+                "State changes should be sorted by address"
+            );
 
             println!("✓ AssetIssue with blackhole credit mode executed successfully");
             println!("  State changes: {}", execution_result.state_changes.len());
         }
         Err(e) => {
-            println!("AssetIssue blackhole credit mode test error (expected in test environment): {}", e);
+            println!(
+                "AssetIssue blackhole credit mode test error (expected in test environment): {}",
+                e
+            );
         }
     }
 }
@@ -1053,7 +1214,10 @@ fn test_asset_issue_aext_tracking() {
     match result {
         Ok(execution_result) => {
             // Verify bandwidth was computed
-            assert!(execution_result.bandwidth_used > 0, "AssetIssue should compute bandwidth");
+            assert!(
+                execution_result.bandwidth_used > 0,
+                "AssetIssue should compute bandwidth"
+            );
 
             // When AEXT mode is "tracked", aext_map should be populated
             // NOTE: In test environment this may not be fully populated, so we just verify structure
@@ -1062,7 +1226,10 @@ fn test_asset_issue_aext_tracking() {
             println!("  AEXT map entries: {}", execution_result.aext_map.len());
         }
         Err(e) => {
-            println!("AssetIssue AEXT tracking test error (expected in test environment): {}", e);
+            println!(
+                "AssetIssue AEXT tracking test error (expected in test environment): {}",
+                e
+            );
         }
     }
 }
@@ -1132,27 +1299,51 @@ fn test_asset_issue_deterministic_execution() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage1.set_account(owner_address, owner_account.clone()).unwrap();
+    storage1
+        .set_account(owner_address, owner_account.clone())
+        .unwrap();
     storage2.set_account(owner_address, owner_account).unwrap();
 
-    let result1 = execution_module1.execute_transaction_with_storage(storage1, &transaction, &context);
-    let result2 = execution_module2.execute_transaction_with_storage(storage2, &transaction, &context);
+    let result1 =
+        execution_module1.execute_transaction_with_storage(storage1, &transaction, &context);
+    let result2 =
+        execution_module2.execute_transaction_with_storage(storage2, &transaction, &context);
 
     // Check if both executions had the same result structure
     match (&result1, &result2) {
         (Ok(result1), Ok(result2)) => {
             // Verify same energy and bandwidth
-            assert_eq!(result1.energy_used, result2.energy_used, "Energy should be deterministic");
-            assert_eq!(result1.bandwidth_used, result2.bandwidth_used, "Bandwidth should be deterministic");
+            assert_eq!(
+                result1.energy_used, result2.energy_used,
+                "Energy should be deterministic"
+            );
+            assert_eq!(
+                result1.bandwidth_used, result2.bandwidth_used,
+                "Bandwidth should be deterministic"
+            );
 
             // Verify same number of state changes
-            assert_eq!(result1.state_changes.len(), result2.state_changes.len(),
-                "Should have same number of state changes");
+            assert_eq!(
+                result1.state_changes.len(),
+                result2.state_changes.len(),
+                "Should have same number of state changes"
+            );
 
             // Verify same addresses in same order
-            let addresses1: Vec<Address> = result1.state_changes.iter().map(|c| get_change_address(c)).collect();
-            let addresses2: Vec<Address> = result2.state_changes.iter().map(|c| get_change_address(c)).collect();
-            assert_eq!(addresses1, addresses2, "Should have same addresses in same order");
+            let addresses1: Vec<Address> = result1
+                .state_changes
+                .iter()
+                .map(|c| get_change_address(c))
+                .collect();
+            let addresses2: Vec<Address> = result2
+                .state_changes
+                .iter()
+                .map(|c| get_change_address(c))
+                .collect();
+            assert_eq!(
+                addresses1, addresses2,
+                "Should have same addresses in same order"
+            );
 
             println!("✓ AssetIssue deterministic execution test passed");
         }
@@ -1218,7 +1409,10 @@ fn test_create_smart_contract_zero_address_treated_as_none() {
     };
 
     // Verify the transaction has correct semantics for contract creation
-    assert!(transaction.to.is_none(), "CreateSmartContract should have to=None");
+    assert!(
+        transaction.to.is_none(),
+        "CreateSmartContract should have to=None"
+    );
     assert_eq!(
         transaction.metadata.contract_type,
         Some(TronContractType::CreateSmartContract),
@@ -1260,9 +1454,13 @@ fn test_create_smart_contract_zero_address_treated_as_none() {
             let error_str = e.to_string().to_lowercase();
             assert!(
                 !error_str.contains("address 0") && !error_str.contains("address zero"),
-                "Error should not reference address 0 call: {}", e
+                "Error should not reference address 0 call: {}",
+                e
             );
-            println!("CreateSmartContract failed (expected for test bytecode): {}", e);
+            println!(
+                "CreateSmartContract failed (expected for test bytecode): {}",
+                e
+            );
         }
     }
 }

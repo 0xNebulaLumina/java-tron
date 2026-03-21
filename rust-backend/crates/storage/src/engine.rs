@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
-use rocksdb::{DB, Options, WriteBatch, IteratorMode, Direction};
+use rocksdb::{Direction, IteratorMode, Options, WriteBatch, DB};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
-use uuid::Uuid;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct StorageEngine {
@@ -36,7 +36,7 @@ impl StorageEngine {
     pub fn new<P: AsRef<Path>>(base_path: P) -> Result<Self> {
         let base_path = base_path.as_ref().to_string_lossy().to_string();
         std::fs::create_dir_all(&base_path)?;
-        
+
         Ok(StorageEngine {
             databases: Arc::new(RwLock::new(HashMap::new())),
             transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -81,7 +81,10 @@ impl StorageEngine {
         let db_arc = Arc::new(db);
 
         databases.insert(database.to_string(), db_arc.clone());
-        info!("Auto-initialized database: {} with default configuration", database);
+        info!(
+            "Auto-initialized database: {} with default configuration",
+            database
+        );
 
         Ok(db_arc)
     }
@@ -127,13 +130,16 @@ impl StorageEngine {
         let mut databases = self.databases.write().unwrap();
         databases.insert(database.to_string(), db_arc);
 
-        info!("Initialized database: {} with custom configuration", database);
+        info!(
+            "Initialized database: {} with custom configuration",
+            database
+        );
         Ok(())
     }
 
     pub fn close_db(&self, database: &str) -> Result<()> {
         let mut databases = self.databases.write().unwrap();
-        
+
         if let Some(_db) = databases.remove(database) {
             info!("Closed database: {}", database);
             Ok(())
@@ -163,19 +169,19 @@ impl StorageEngine {
 
     pub fn size(&self, database: &str) -> Result<i64> {
         let db = self.get_or_init_db(database)?;
-        
+
         let mut count = 0i64;
         let iter = db.iterator(IteratorMode::Start);
         for _item in iter {
             count += 1;
         }
-        
+
         Ok(count)
     }
 
     pub fn is_empty(&self, database: &str) -> Result<bool> {
         let db = self.get_or_init_db(database)?;
-        
+
         let mut iter = db.iterator(IteratorMode::Start);
         Ok(iter.next().is_none())
     }
@@ -209,10 +215,12 @@ impl StorageEngine {
 
         for op in operations {
             match op.r#type {
-                0 => { // PUT
+                0 => {
+                    // PUT
                     batch.put(&op.key, &op.value);
                 }
-                1 => { // DELETE
+                1 => {
+                    // DELETE
                     batch.delete(&op.key);
                 }
                 _ => return Err(anyhow!("Unknown operation type: {}", op.r#type)),
@@ -284,53 +292,63 @@ impl StorageEngine {
         Ok(results)
     }
 
-    pub fn get_keys_next(&self, database: &str, start_key: &[u8], limit: i32) -> Result<Vec<Vec<u8>>> {
+    pub fn get_keys_next(
+        &self,
+        database: &str,
+        start_key: &[u8],
+        limit: i32,
+    ) -> Result<Vec<Vec<u8>>> {
         let db = self.get_or_init_db(database)?;
-        
+
         let mut keys = Vec::new();
         let iter = db.iterator(IteratorMode::From(start_key, Direction::Forward));
-        
+
         for (i, item) in iter.enumerate() {
             if i >= limit as usize {
                 break;
             }
-            
+
             let (key, _) = item?;
             keys.push(key.to_vec());
         }
-        
+
         Ok(keys)
     }
 
-    pub fn get_values_next(&self, database: &str, start_key: &[u8], limit: i32) -> Result<Vec<Vec<u8>>> {
+    pub fn get_values_next(
+        &self,
+        database: &str,
+        start_key: &[u8],
+        limit: i32,
+    ) -> Result<Vec<Vec<u8>>> {
         let db = self.get_or_init_db(database)?;
-        
+
         let mut values = Vec::new();
         let iter = db.iterator(IteratorMode::From(start_key, Direction::Forward));
-        
+
         for (i, item) in iter.enumerate() {
             if i >= limit as usize {
                 break;
             }
-            
+
             let (_, value) = item?;
             values.push(value.to_vec());
         }
-        
+
         Ok(values)
     }
 
     pub fn get_next(&self, database: &str, start_key: &[u8], limit: i32) -> Result<Vec<KeyValue>> {
         let db = self.get_or_init_db(database)?;
-        
+
         let mut pairs = Vec::new();
         let iter = db.iterator(IteratorMode::From(start_key, Direction::Forward));
-        
+
         for (i, item) in iter.enumerate() {
             if i >= limit as usize {
                 break;
             }
-            
+
             let (key, value) = item?;
             pairs.push(KeyValue {
                 key: key.to_vec(),
@@ -338,52 +356,53 @@ impl StorageEngine {
                 found: true,
             });
         }
-        
+
         Ok(pairs)
     }
 
     pub fn prefix_query(&self, database: &str, prefix: &[u8]) -> Result<Vec<KeyValue>> {
         let db = self.get_or_init_db(database)?;
-        
+
         let mut pairs = Vec::new();
         let iter = db.iterator(IteratorMode::From(prefix, Direction::Forward));
-        
+
         for item in iter {
             let (key, value) = item?;
-            
+
             // Check if key still has the prefix
             if !key.starts_with(prefix) {
                 break;
             }
-            
+
             pairs.push(KeyValue {
                 key: key.to_vec(),
                 value: value.to_vec(),
                 found: true,
             });
         }
-        
+
         Ok(pairs)
     }
 
     pub fn begin_transaction(&self, database: &str) -> Result<String> {
         let transaction_id = Uuid::new_v4().to_string();
-        
+
         let transaction_info = TransactionInfo {
             db_name: database.to_string(),
             operations: Vec::new(),
         };
-        
+
         let mut transactions = self.transactions.write().unwrap();
         transactions.insert(transaction_id.clone(), transaction_info);
-        
+
         Ok(transaction_id)
     }
 
     pub fn commit_transaction(&self, transaction_id: &str) -> Result<()> {
         let transaction_info = {
             let mut transactions = self.transactions.write().unwrap();
-            transactions.remove(transaction_id)
+            transactions
+                .remove(transaction_id)
                 .ok_or_else(|| anyhow!("Transaction {} not found", transaction_id))?
         };
 
@@ -407,31 +426,33 @@ impl StorageEngine {
 
     pub fn rollback_transaction(&self, transaction_id: &str) -> Result<()> {
         let mut transactions = self.transactions.write().unwrap();
-        transactions.remove(transaction_id)
+        transactions
+            .remove(transaction_id)
             .ok_or_else(|| anyhow!("Transaction {} not found", transaction_id))?;
-        
+
         Ok(())
     }
 
     pub fn create_snapshot(&self, database: &str) -> Result<String> {
         let snapshot_id = Uuid::new_v4().to_string();
-        
+
         let snapshot_info = SnapshotInfo {
             db_name: database.to_string(),
         };
-        
+
         let mut snapshots = self.snapshots.write().unwrap();
         snapshots.insert(snapshot_id.clone(), snapshot_info);
-        
+
         info!("Created snapshot {} for database {}", snapshot_id, database);
         Ok(snapshot_id)
     }
 
     pub fn delete_snapshot(&self, snapshot_id: &str) -> Result<()> {
         let mut snapshots = self.snapshots.write().unwrap();
-        snapshots.remove(snapshot_id)
+        snapshots
+            .remove(snapshot_id)
             .ok_or_else(|| anyhow!("Snapshot {} not found", snapshot_id))?;
-        
+
         info!("Deleted snapshot {}", snapshot_id);
         Ok(())
     }
@@ -439,9 +460,11 @@ impl StorageEngine {
     pub fn get_from_snapshot(&self, snapshot_id: &str, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let db_name = {
             let snapshots = self.snapshots.read().unwrap();
-            snapshots.get(snapshot_id)
+            snapshots
+                .get(snapshot_id)
                 .ok_or_else(|| anyhow!("Snapshot {} not found", snapshot_id))?
-                .db_name.clone()
+                .db_name
+                .clone()
         };
 
         // For simplicity, we just read from the current database
@@ -456,17 +479,17 @@ impl StorageEngine {
 
     pub fn get_stats(&self, database: &str) -> Result<StorageStats> {
         let db = self.get_or_init_db(database)?;
-        
+
         // Get basic stats
         let total_keys = self.size(database)?;
-        
+
         // Get RocksDB specific stats
         let mut engine_stats = HashMap::new();
-        
+
         if let Ok(Some(stats)) = db.property_value("rocksdb.stats") {
             engine_stats.insert("rocksdb.stats".to_string(), stats);
         }
-        
+
         if let Ok(Some(mem_usage)) = db.property_value("rocksdb.estimate-table-readers-mem") {
             engine_stats.insert("rocksdb.table_readers_mem".to_string(), mem_usage);
         }
@@ -479,7 +502,12 @@ impl StorageEngine {
         })
     }
 
-    pub fn compact_range(&self, database: &str, start_key: Option<&[u8]>, end_key: Option<&[u8]>) -> Result<()> {
+    pub fn compact_range(
+        &self,
+        database: &str,
+        start_key: Option<&[u8]>,
+        end_key: Option<&[u8]>,
+    ) -> Result<()> {
         let db = self.get_or_init_db(database)?;
         db.compact_range(start_key, end_key);
         Ok(())
@@ -521,4 +549,4 @@ pub struct StorageStats {
     pub total_size: i64,
     pub engine_stats: HashMap<String, String>,
     pub last_modified: i64,
-} 
+}

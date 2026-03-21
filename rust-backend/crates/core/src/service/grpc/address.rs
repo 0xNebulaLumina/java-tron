@@ -34,7 +34,10 @@ pub(in crate::service) fn add_tron_address_prefix_with(address: &Address, prefix
 
 /// Validate that address has correct prefix for the network.
 /// Returns the 20-byte EVM address if valid, or an error if prefix doesn't match.
-pub(in crate::service) fn validate_tron_address_prefix(address_bytes: &[u8], expected_prefix: u8) -> Result<&[u8], String> {
+pub(in crate::service) fn validate_tron_address_prefix(
+    address_bytes: &[u8],
+    expected_prefix: u8,
+) -> Result<&[u8], String> {
     if address_bytes.len() == 21 && address_bytes[0] == expected_prefix {
         Ok(&address_bytes[1..])
     } else if address_bytes.len() == 21 {

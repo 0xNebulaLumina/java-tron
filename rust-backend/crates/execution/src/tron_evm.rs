@@ -1,16 +1,13 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use prost::Message;
 use revm::{
-    primitives::{
-        ExecutionResult, HandlerCfg, Output, SpecId,
-    },
-    EvmContext, Inspector,
-    Evm, Database, DatabaseCommit,
+    primitives::{ExecutionResult, HandlerCfg, Output, SpecId},
+    Database, DatabaseCommit, Evm, EvmContext, Inspector,
 };
 
-use tron_backend_common::ExecutionConfig;
 use crate::precompiles::TronPrecompiles;
 use crate::storage_adapter::{EvmStateDatabase, EvmStateStore};
+use tron_backend_common::ExecutionConfig;
 
 // Tron-specific transaction and execution types
 
@@ -148,14 +145,15 @@ impl<DB: Database> Inspector<DB> for TronExternalContext {
         self.last_gas_spent = Some(interp.gas.spent());
 
         match interp.current_opcode() {
-            0x51 => self.mload_count += 1,         // MLOAD
-            0x52 => self.mstore_count += 1,        // MSTORE
-            0x53 => self.mstore8_count += 1,       // MSTORE8
-            0x37 => self.calldatacopy_count += 1,  // CALLDATACOPY
-            0x39 => self.codecopy_count += 1,      // CODECOPY
-            0x3e => self.returndatacopy_count += 1,// RETURNDATACOPY
-            0x54 => self.sload_count += 1,         // SLOAD
-            0x0a => {                               // EXP
+            0x51 => self.mload_count += 1,          // MLOAD
+            0x52 => self.mstore_count += 1,         // MSTORE
+            0x53 => self.mstore8_count += 1,        // MSTORE8
+            0x37 => self.calldatacopy_count += 1,   // CALLDATACOPY
+            0x39 => self.codecopy_count += 1,       // CODECOPY
+            0x3e => self.returndatacopy_count += 1, // RETURNDATACOPY
+            0x54 => self.sload_count += 1,          // SLOAD
+            0x0a => {
+                // EXP
                 let stack_len = interp.stack.len();
                 if stack_len >= 2 {
                     // EVM stack order: [.., exponent, base] with base on top.
@@ -283,7 +281,12 @@ fn tron_create_with_optional_override<DB: Database>(
     }
 
     // Increase nonce of caller and check overflow.
-    if context.evm.journaled_state.inc_nonce(inputs.caller).is_none() {
+    if context
+        .evm
+        .journaled_state
+        .inc_nonce(inputs.caller)
+        .is_none()
+    {
         return return_error(InstructionResult::Return);
     }
 
@@ -437,7 +440,7 @@ impl TryFrom<i32> for TronContractType {
 #[derive(Debug, Clone)]
 pub struct TxMetadata {
     pub contract_type: Option<TronContractType>,
-    pub asset_id: Option<Vec<u8>>,  // For TRC-10 transfers
+    pub asset_id: Option<Vec<u8>>, // For TRC-10 transfers
     /// Raw `from` bytes as received over the wire (20 bytes EVM, 21 bytes TRON-prefixed, or malformed).
     /// Some fixtures intentionally include malformed owner addresses; storing the raw bytes allows
     /// contract-level validation to match java-tron error ordering and messages.
@@ -483,7 +486,7 @@ pub struct TronTransaction {
     pub gas_limit: u64,
     pub gas_price: revm::primitives::U256,
     pub nonce: u64,
-    pub metadata: TxMetadata,  // Added metadata for contract type and asset ID
+    pub metadata: TxMetadata, // Added metadata for contract type and asset ID
 }
 
 #[derive(Debug, Clone)]
@@ -524,9 +527,9 @@ pub enum TronStateChange {
 pub struct FreezeLedgerChange {
     pub owner_address: revm::primitives::Address,
     pub resource: FreezeLedgerResource,
-    pub amount: i64,          // Absolute value after operation (for idempotency)
-    pub expiration_ms: i64,   // Expiration timestamp in milliseconds since epoch
-    pub v2_model: bool,       // true for V2 model, false for legacy V1
+    pub amount: i64,        // Absolute value after operation (for idempotency)
+    pub expiration_ms: i64, // Expiration timestamp in milliseconds since epoch
+    pub v2_model: bool,     // true for V2 model, false for legacy V1
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -541,10 +544,10 @@ pub enum FreezeLedgerResource {
 /// immediately after freeze/unfreeze operations, fixing FREE_NET vs ACCOUNT_NET divergence
 #[derive(Debug, Clone)]
 pub struct GlobalResourceTotalsChange {
-    pub total_net_weight: i64,      // Sum of all BANDWIDTH freezes / TRX_PRECISION
-    pub total_net_limit: i64,       // Current network bandwidth limit (from dynamic props)
-    pub total_energy_weight: i64,   // Sum of all ENERGY freezes / TRX_PRECISION
-    pub total_energy_limit: i64,    // Current energy limit (from dynamic props, or 0 if N/A)
+    pub total_net_weight: i64, // Sum of all BANDWIDTH freezes / TRX_PRECISION
+    pub total_net_limit: i64,  // Current network bandwidth limit (from dynamic props)
+    pub total_energy_weight: i64, // Sum of all ENERGY freezes / TRX_PRECISION
+    pub total_energy_limit: i64, // Current energy limit (from dynamic props, or 0 if N/A)
 }
 
 /// TRC-10 Asset Issued (Phase 2: full TRC-10 ledger semantics)
@@ -566,18 +569,18 @@ pub struct Trc10AssetIssued {
     pub public_free_asset_net_limit: i64,
     pub public_free_asset_net_usage: i64,
     pub public_latest_free_net_time: i64,
-    pub token_id: Option<String>,  // Optional; if None, Java computes via TOKEN_ID_NUM
+    pub token_id: Option<String>, // Optional; if None, Java computes via TOKEN_ID_NUM
 }
 
 /// TRC-10 Asset Transferred (Phase 2: TRC-10 transfer operation)
 /// Describes a TRC-10 transfer for Java-side persistence of asset balance changes
 #[derive(Debug, Clone)]
 pub struct Trc10AssetTransferred {
-    pub owner_address: revm::primitives::Address,  // Sender address (20-byte EVM format)
-    pub to_address: revm::primitives::Address,     // Recipient address (20-byte EVM format)
-    pub asset_name: Vec<u8>,                       // V1 path: asset name bytes
-    pub token_id: Option<String>,                  // V2 path: token ID if parsable from asset_name
-    pub amount: i64,                               // Transfer amount
+    pub owner_address: revm::primitives::Address, // Sender address (20-byte EVM format)
+    pub to_address: revm::primitives::Address,    // Recipient address (20-byte EVM format)
+    pub asset_name: Vec<u8>,                      // V1 path: asset name bytes
+    pub token_id: Option<String>,                 // V2 path: token ID if parsable from asset_name
+    pub amount: i64,                              // Transfer amount
 }
 
 /// TRC-10 Change (union type for different TRC-10 operations)
@@ -592,7 +595,7 @@ pub enum Trc10Change {
 /// Vote entry for VoteChange - represents a single vote for a witness
 #[derive(Debug, Clone)]
 pub struct VoteEntry {
-    pub vote_address: revm::primitives::Address,  // Witness address (20-byte EVM format)
+    pub vote_address: revm::primitives::Address, // Witness address (20-byte EVM format)
     pub vote_count: u64,
 }
 
@@ -601,8 +604,8 @@ pub struct VoteEntry {
 /// This ensures correct old_votes seeding on subsequent votes in the same or later epochs.
 #[derive(Debug, Clone)]
 pub struct VoteChange {
-    pub owner_address: revm::primitives::Address,  // Voter address (20-byte EVM format)
-    pub votes: Vec<VoteEntry>,  // New votes list (replaces Account.votes)
+    pub owner_address: revm::primitives::Address, // Voter address (20-byte EVM format)
+    pub votes: Vec<VoteEntry>,                    // New votes list (replaces Account.votes)
 }
 
 /// WithdrawChange carries withdrawal info for applying allowance and latestWithdrawTime updates.
@@ -610,9 +613,9 @@ pub struct VoteChange {
 /// Balance delta is already handled by AccountChange; this sidecar handles the allowance/time reset.
 #[derive(Debug, Clone)]
 pub struct WithdrawChange {
-    pub owner_address: revm::primitives::Address,  // Witness address (20-byte EVM format)
-    pub amount: i64,                               // The withdrawn amount (= Account.allowance before operation)
-    pub latest_withdraw_time: i64,                 // Timestamp to set as Account.latestWithdrawTime (block time)
+    pub owner_address: revm::primitives::Address, // Witness address (20-byte EVM format)
+    pub amount: i64, // The withdrawn amount (= Account.allowance before operation)
+    pub latest_withdraw_time: i64, // Timestamp to set as Account.latestWithdrawTime (block time)
 }
 
 #[derive(Debug, Clone)]
@@ -626,7 +629,13 @@ pub struct TronExecutionResult {
     pub error: Option<String>,
     /// AEXT sidecar: per-address resource tracking (before, after) for tracked mode
     /// Key: address, Value: (AextBefore, AextAfter)
-    pub aext_map: std::collections::HashMap<revm::primitives::Address, (crate::storage_adapter::AccountAext, crate::storage_adapter::AccountAext)>,
+    pub aext_map: std::collections::HashMap<
+        revm::primitives::Address,
+        (
+            crate::storage_adapter::AccountAext,
+            crate::storage_adapter::AccountAext,
+        ),
+    >,
     /// Freeze/resource ledger changes (Phase 2: emit_freeze_ledger_changes)
     /// Emitted when config flag is enabled, for Java-side application
     pub freeze_changes: Vec<FreezeLedgerChange>,
@@ -669,8 +678,8 @@ pub struct TronEvm<DB: Database + DatabaseCommit + Send + Sync + 'static> {
     state_changes: Vec<TronStateChange>,
 }
 
-impl<DB: Database + DatabaseCommit + Send + Sync + 'static> TronEvm<DB> 
-where 
+impl<DB: Database + DatabaseCommit + Send + Sync + 'static> TronEvm<DB>
+where
     DB::Error: std::fmt::Debug,
 {
     pub(crate) fn spec_id_from_config(config: &ExecutionConfig) -> SpecId {
@@ -690,7 +699,11 @@ where
         Self::new_with_spec_id(database, config, spec_id)
     }
 
-    pub fn new_with_spec_id(database: DB, config: &ExecutionConfig, spec_id: SpecId) -> Result<Self> {
+    pub fn new_with_spec_id(
+        database: DB,
+        config: &ExecutionConfig,
+        spec_id: SpecId,
+    ) -> Result<Self> {
         let mut evm = Evm::builder()
             .with_db(database)
             .with_external_context(TronExternalContext::default())
@@ -731,7 +744,10 @@ where
     ) -> Result<TronExecutionResult> {
         self.setup_environment(tx, context);
 
-        let result = self.evm.transact().map_err(|e| anyhow!("Contract call failed: {:?}", e))?;
+        let result = self
+            .evm
+            .transact()
+            .map_err(|e| anyhow!("Contract call failed: {:?}", e))?;
         self.process_call_result(result.result, context)
     }
 
@@ -743,7 +759,10 @@ where
     ) -> Result<u64> {
         self.setup_environment(tx, context);
 
-        let result = self.evm.transact().map_err(|e| anyhow!("Energy estimation failed: {:?}", e))?;
+        let result = self
+            .evm
+            .transact()
+            .map_err(|e| anyhow!("Energy estimation failed: {:?}", e))?;
 
         Ok(self.calculate_energy_usage(&result.result, tx))
     }
@@ -773,25 +792,29 @@ where
         self.evm.context.evm.inner.env.tx.nonce = Some(tx.nonce);
 
         // Set block environment
-        self.evm.context.evm.inner.env.block.number = revm::primitives::U256::from(context.block_number);
-        self.evm.context.evm.inner.env.block.timestamp = revm::primitives::U256::from(context.block_timestamp);
+        self.evm.context.evm.inner.env.block.number =
+            revm::primitives::U256::from(context.block_number);
+        self.evm.context.evm.inner.env.block.timestamp =
+            revm::primitives::U256::from(context.block_timestamp);
         // TRON parity: many callers omit coinbase; avoid touching address(0) by defaulting to sender.
-        self.evm.context.evm.inner.env.block.coinbase = if context.block_coinbase
-            == revm::primitives::Address::ZERO
-        {
-            tx.from
-        } else {
-            context.block_coinbase
-        };
+        self.evm.context.evm.inner.env.block.coinbase =
+            if context.block_coinbase == revm::primitives::Address::ZERO {
+                tx.from
+            } else {
+                context.block_coinbase
+            };
         self.evm.context.evm.inner.env.block.difficulty = context.block_difficulty;
         self.evm.context.evm.inner.env.block.gas_limit =
             revm::primitives::U256::from(context.block_gas_limit);
-        
+
         // TRON Parity Fix: Set basefee = 0 to prevent EIP-1559 base fee burns
         // Keep coinbase set for COINBASE opcode correctness, but ensure no fee distribution
         self.evm.context.evm.inner.env.block.basefee = revm::primitives::U256::ZERO;
-        
-        tracing::debug!("TRON environment setup - gas_price: {}, basefee: 0 (TRON mode)", tx.gas_price);
+
+        tracing::debug!(
+            "TRON environment setup - gas_price: {}, basefee: 0 (TRON mode)",
+            tx.gas_price
+        );
 
         // Set Tron-specific configurations
         self.energy_accounting.reset();
@@ -881,7 +904,13 @@ where
         let bandwidth_used = self.calculate_bandwidth_usage(tx);
 
         match result {
-            ExecutionResult::Success { reason: _, gas_used: _, gas_refunded: _, logs, output } => {
+            ExecutionResult::Success {
+                reason: _,
+                gas_used: _,
+                gas_refunded: _,
+                logs,
+                output,
+            } => {
                 // Phase 2.I L2: Extract return_data and contract_address from output
                 let (return_data, contract_address) = match output {
                     Output::Call(data) => (data, None),
@@ -894,7 +923,7 @@ where
                             tracing::warn!("Contract creation succeeded but no address returned");
                             (data, None)
                         }
-                    },
+                    }
                 };
 
                 Ok(TronExecutionResult {
@@ -908,33 +937,37 @@ where
                     aext_map: std::collections::HashMap::new(), // Will be populated by caller for tracked mode
                     freeze_changes: vec![], // Will be populated by contract handlers
                     global_resource_changes: vec![], // Will be populated by contract handlers
-                    trc10_changes: vec![], // Will be populated by TRC-10 contract handlers
-                    vote_changes: vec![], // Will be populated by vote contract handlers
+                    trc10_changes: vec![],  // Will be populated by TRC-10 contract handlers
+                    vote_changes: vec![],   // Will be populated by vote contract handlers
                     withdraw_changes: vec![], // Will be populated by withdraw contract handler
                     tron_transaction_result: None, // Phase 0.4: Populated by system contract handlers when needed
-                    contract_address, // Phase 2.I L2: Set for CreateSmartContract
+                    contract_address,              // Phase 2.I L2: Set for CreateSmartContract
                 })
             }
-            ExecutionResult::Revert { gas_used: _, output } => {
-                Ok(TronExecutionResult {
-                    success: false,
-                    return_data: output,
-                    energy_used,
-                    bandwidth_used,
-                    logs: vec![],
-                    state_changes: vec![],
-                    error: Some("REVERT opcode executed".to_string()),
-                    aext_map: std::collections::HashMap::new(),
-                    freeze_changes: vec![],
-                    global_resource_changes: vec![],
-                    trc10_changes: vec![],
-                    vote_changes: vec![],
-                    withdraw_changes: vec![],
-                    tron_transaction_result: None,
-                    contract_address: None,
-                })
-            }
-            ExecutionResult::Halt { reason, gas_used: _ } => {
+            ExecutionResult::Revert {
+                gas_used: _,
+                output,
+            } => Ok(TronExecutionResult {
+                success: false,
+                return_data: output,
+                energy_used,
+                bandwidth_used,
+                logs: vec![],
+                state_changes: vec![],
+                error: Some("REVERT opcode executed".to_string()),
+                aext_map: std::collections::HashMap::new(),
+                freeze_changes: vec![],
+                global_resource_changes: vec![],
+                trc10_changes: vec![],
+                vote_changes: vec![],
+                withdraw_changes: vec![],
+                tron_transaction_result: None,
+                contract_address: None,
+            }),
+            ExecutionResult::Halt {
+                reason,
+                gas_used: _,
+            } => {
                 let error = Some(self.format_halt_error(&reason, tx));
                 Ok(TronExecutionResult {
                     success: false,
@@ -957,7 +990,11 @@ where
         }
     }
 
-    fn format_halt_error(&self, reason: &revm::primitives::HaltReason, tx: &TronTransaction) -> String {
+    fn format_halt_error(
+        &self,
+        reason: &revm::primitives::HaltReason,
+        tx: &TronTransaction,
+    ) -> String {
         use revm::primitives::HaltReason;
 
         if tx.metadata.contract_type == Some(TronContractType::CreateSmartContract) {
@@ -966,7 +1003,8 @@ where
                     // REVM v10 maps CreateContractStartingWithEF -> CreateContractSizeLimit in
                     // SuccessOrHalt conversion. Derive the java-tron error from returned code.
                     if self.spec_id.is_enabled_in(SpecId::LONDON) {
-                        if let Some(output) = self.evm.context.external.last_create_output.as_ref() {
+                        if let Some(output) = self.evm.context.external.last_create_output.as_ref()
+                        {
                             if output.first() == Some(&0xEF) {
                                 return "invalid code: must not begin with 0xef".to_string();
                             }
@@ -987,7 +1025,8 @@ where
                                 .external
                                 .last_create_gas_remaining
                                 .unwrap_or(0);
-                            let adjustment = self.evm.context.external.tron_energy_opcode_adjustment();
+                            let adjustment =
+                                self.evm.context.external.tron_energy_opcode_adjustment();
                             let left_tron = left_evm.saturating_add(adjustment);
                             return format!(
                                 "Not enough energy for 'save just created contract code' executing: needEnergy[{}], leftEnergy[{}];",
@@ -1026,7 +1065,13 @@ where
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
         match result {
-            ExecutionResult::Success { reason: _, gas_used, gas_refunded: _, logs, output } => {
+            ExecutionResult::Success {
+                reason: _,
+                gas_used,
+                gas_refunded: _,
+                logs,
+                output,
+            } => {
                 let return_data = match output {
                     Output::Call(data) => data,
                     Output::Create(data, _) => data, // Call shouldn't create, but handle for completeness
@@ -1050,44 +1095,40 @@ where
                     contract_address: None, // Calls don't create contracts
                 })
             }
-            ExecutionResult::Revert { gas_used, output } => {
-                Ok(TronExecutionResult {
-                    success: false,
-                    return_data: output,
-                    energy_used: gas_used,
-                    bandwidth_used: 0,
-                    logs: vec![],
-                    state_changes: vec![],
-                    error: Some("Call reverted".to_string()),
-                    aext_map: std::collections::HashMap::new(),
-                    freeze_changes: vec![],
-                    global_resource_changes: vec![],
-                    trc10_changes: vec![],
-                    vote_changes: vec![],
-                    withdraw_changes: vec![],
-                    tron_transaction_result: None,
-                    contract_address: None,
-                })
-            }
-            ExecutionResult::Halt { reason, gas_used } => {
-                Ok(TronExecutionResult {
-                    success: false,
-                    return_data: revm::primitives::Bytes::new(),
-                    energy_used: gas_used,
-                    bandwidth_used: 0,
-                    logs: vec![],
-                    state_changes: vec![],
-                    error: Some(format!("Call halted: {:?}", reason)),
-                    aext_map: std::collections::HashMap::new(),
-                    freeze_changes: vec![],
-                    global_resource_changes: vec![],
-                    trc10_changes: vec![],
-                    vote_changes: vec![],
-                    withdraw_changes: vec![],
-                    tron_transaction_result: None,
-                    contract_address: None,
-                })
-            }
+            ExecutionResult::Revert { gas_used, output } => Ok(TronExecutionResult {
+                success: false,
+                return_data: output,
+                energy_used: gas_used,
+                bandwidth_used: 0,
+                logs: vec![],
+                state_changes: vec![],
+                error: Some("Call reverted".to_string()),
+                aext_map: std::collections::HashMap::new(),
+                freeze_changes: vec![],
+                global_resource_changes: vec![],
+                trc10_changes: vec![],
+                vote_changes: vec![],
+                withdraw_changes: vec![],
+                tron_transaction_result: None,
+                contract_address: None,
+            }),
+            ExecutionResult::Halt { reason, gas_used } => Ok(TronExecutionResult {
+                success: false,
+                return_data: revm::primitives::Bytes::new(),
+                energy_used: gas_used,
+                bandwidth_used: 0,
+                logs: vec![],
+                state_changes: vec![],
+                error: Some(format!("Call halted: {:?}", reason)),
+                aext_map: std::collections::HashMap::new(),
+                freeze_changes: vec![],
+                global_resource_changes: vec![],
+                trc10_changes: vec![],
+                vote_changes: vec![],
+                withdraw_changes: vec![],
+                tron_transaction_result: None,
+                contract_address: None,
+            }),
         }
     }
 
@@ -1097,7 +1138,11 @@ where
         match result {
             // TRON parity: energy usage counts only TVM execution, not transaction intrinsic costs
             // (base + calldata). Bandwidth accounts for transaction bytes separately.
-            ExecutionResult::Success { gas_used, gas_refunded, .. } => gas_used
+            ExecutionResult::Success {
+                gas_used,
+                gas_refunded,
+                ..
+            } => gas_used
                 .saturating_add(*gas_refunded)
                 .saturating_sub(intrinsic)
                 .saturating_sub(tron_adjustment),
@@ -1123,7 +1168,13 @@ where
             .map(|l| l.len() as u64)
             .unwrap_or_default();
 
-        gas::validate_initial_tx_gas(self.spec_id, input, is_create, access_list, authorization_list_num)
+        gas::validate_initial_tx_gas(
+            self.spec_id,
+            input,
+            is_create,
+            access_list,
+            authorization_list_num,
+        )
     }
 
     fn calculate_bandwidth_usage(&self, tx: &TronTransaction) -> u64 {
@@ -1164,87 +1215,134 @@ impl<S: EvmStateStore + Send + Sync + 'static> TronEvm<EvmStateDatabase<S>> {
     pub fn extract_state_changes_from_db(&mut self) -> Vec<TronStateChange> {
         let db = &mut self.evm.context.evm.db;
         let state_records = db.get_state_change_records();
-        
-        tracing::info!("Extracting {} state change records from database", state_records.len());
-        
-        let mut state_changes: Vec<TronStateChange> = state_records.iter().map(|record| {
-            match record {
-                crate::storage_adapter::StateChangeRecord::StorageChange { 
-                    address, key, old_value, new_value 
+
+        tracing::info!(
+            "Extracting {} state change records from database",
+            state_records.len()
+        );
+
+        let mut state_changes: Vec<TronStateChange> = state_records
+            .iter()
+            .map(|record| match record {
+                crate::storage_adapter::StateChangeRecord::StorageChange {
+                    address,
+                    key,
+                    old_value,
+                    new_value,
                 } => TronStateChange::StorageChange {
                     address: *address,
                     key: *key,
                     old_value: *old_value,
                     new_value: *new_value,
                 },
-                crate::storage_adapter::StateChangeRecord::AccountChange { 
-                    address, old_account, new_account 
+                crate::storage_adapter::StateChangeRecord::AccountChange {
+                    address,
+                    old_account,
+                    new_account,
                 } => TronStateChange::AccountChange {
                     address: *address,
                     old_account: old_account.clone(),
                     new_account: new_account.clone(),
                 },
-            }
-        }).collect();
-        
+            })
+            .collect();
+
         // TRON Parity Fix: Sort state changes deterministically for consistent digest calculation
         state_changes.sort_by(|a, b| {
             match (a, b) {
                 // AccountChange comes before StorageChange for same address
-                (TronStateChange::AccountChange { address: addr_a, .. }, 
-                 TronStateChange::StorageChange { address: addr_b, .. }) => {
+                (
+                    TronStateChange::AccountChange {
+                        address: addr_a, ..
+                    },
+                    TronStateChange::StorageChange {
+                        address: addr_b, ..
+                    },
+                ) => {
                     let cmp = addr_a.cmp(addr_b);
                     if cmp == std::cmp::Ordering::Equal {
                         std::cmp::Ordering::Less // AccountChange before StorageChange
                     } else {
                         cmp
                     }
-                },
-                (TronStateChange::StorageChange { address: addr_a, .. }, 
-                 TronStateChange::AccountChange { address: addr_b, .. }) => {
+                }
+                (
+                    TronStateChange::StorageChange {
+                        address: addr_a, ..
+                    },
+                    TronStateChange::AccountChange {
+                        address: addr_b, ..
+                    },
+                ) => {
                     let cmp = addr_a.cmp(addr_b);
                     if cmp == std::cmp::Ordering::Equal {
                         std::cmp::Ordering::Greater // StorageChange after AccountChange
                     } else {
                         cmp
                     }
-                },
+                }
                 // AccountChange: sort by address
-                (TronStateChange::AccountChange { address: addr_a, .. }, 
-                 TronStateChange::AccountChange { address: addr_b, .. }) => {
-                    addr_a.cmp(addr_b)
-                },
+                (
+                    TronStateChange::AccountChange {
+                        address: addr_a, ..
+                    },
+                    TronStateChange::AccountChange {
+                        address: addr_b, ..
+                    },
+                ) => addr_a.cmp(addr_b),
                 // StorageChange: sort by (address, key)
-                (TronStateChange::StorageChange { address: addr_a, key: key_a, .. }, 
-                 TronStateChange::StorageChange { address: addr_b, key: key_b, .. }) => {
+                (
+                    TronStateChange::StorageChange {
+                        address: addr_a,
+                        key: key_a,
+                        ..
+                    },
+                    TronStateChange::StorageChange {
+                        address: addr_b,
+                        key: key_b,
+                        ..
+                    },
+                ) => {
                     let addr_cmp = addr_a.cmp(addr_b);
                     if addr_cmp == std::cmp::Ordering::Equal {
                         key_a.cmp(key_b)
                     } else {
                         addr_cmp
                     }
-                },
+                }
             }
         });
-        
+
         // Clear the records after extracting them
         db.clear_state_change_records();
-        
-        tracing::info!("Extracted and sorted {} state changes for return", state_changes.len());
+
+        tracing::info!(
+            "Extracted and sorted {} state changes for return",
+            state_changes.len()
+        );
         for (i, change) in state_changes.iter().enumerate() {
             match change {
                 TronStateChange::StorageChange { address, key, .. } => {
-                    tracing::info!("  State change {}: StorageChange for address {:?}, key {:?}", i, address, key);
-                },
-                TronStateChange::AccountChange { address, old_account, new_account } => {
+                    tracing::info!(
+                        "  State change {}: StorageChange for address {:?}, key {:?}",
+                        i,
+                        address,
+                        key
+                    );
+                }
+                TronStateChange::AccountChange {
+                    address,
+                    old_account,
+                    new_account,
+                } => {
                     let old_exists = old_account.is_some();
                     let new_exists = new_account.is_some();
                     tracing::info!("  State change {}: AccountChange for address {:?}, old_exists: {}, new_exists: {}", 
                                   i, address, old_exists, new_exists);
-                },
+                }
             }
         }
-        
+
         state_changes
     }
 
@@ -1256,28 +1354,37 @@ impl<S: EvmStateStore + Send + Sync + 'static> TronEvm<EvmStateDatabase<S>> {
     ) -> Result<TronExecutionResult> {
         // Clear previous state changes
         self.state_changes.clear();
-        
+
         // Validate gas limits before execution
         if tx.gas_limit > context.block_gas_limit {
-            return Err(anyhow!("Transaction gas limit ({}) exceeds block gas limit ({})", 
-                              tx.gas_limit, context.block_gas_limit));
+            return Err(anyhow!(
+                "Transaction gas limit ({}) exceeds block gas limit ({})",
+                tx.gas_limit,
+                context.block_gas_limit
+            ));
         }
-        
+
         // TRON Parity Fix: Remove Ethereum 21000 gas minimum requirement
         // Only warn for unusually low gas limits to help with debugging
         if tx.gas_limit > 0 && tx.gas_limit < 21000 {
-            tracing::warn!("Transaction has unusually low gas limit ({}), may be non-VM transaction", tx.gas_limit);
+            tracing::warn!(
+                "Transaction has unusually low gas limit ({}), may be non-VM transaction",
+                tx.gas_limit
+            );
         }
-        
+
         self.setup_environment(tx, context);
 
         // Use transact_commit() to execute and commit changes to the database
-        let result = self.evm.transact_commit().map_err(|e| anyhow!("Transaction execution failed: {:?}", e))?;
+        let result = self
+            .evm
+            .transact_commit()
+            .map_err(|e| anyhow!("Transaction execution failed: {:?}", e))?;
         let mut execution_result = self.process_execution_result(result, tx, context)?;
-        
+
         // Extract real state changes from the database
         execution_result.state_changes = self.extract_state_changes_from_db();
-        
+
         Ok(execution_result)
     }
 }
@@ -1345,7 +1452,7 @@ mod internal_nonce_tests {
     use super::*;
     use revm::{
         db::InMemoryDB,
-        primitives::{AccountInfo, Address, Bytecode, Bytes, B256, U256, KECCAK_EMPTY},
+        primitives::{AccountInfo, Address, Bytecode, Bytes, B256, KECCAK_EMPTY, U256},
     };
 
     fn evm_bytecode_call(target: Address) -> Bytes {
@@ -1432,7 +1539,9 @@ mod internal_nonce_tests {
         };
 
         let ctx = basic_context();
-        let _ = evm.call_contract(&tx, &ctx).expect("tx call should succeed");
+        let _ = evm
+            .call_contract(&tx, &ctx)
+            .expect("tx call should succeed");
 
         // Exactly one internal CALL from the contract bytecode; root tx call is not counted.
         assert_eq!(evm.evm.context.external.internal_tx_nonce, 1);
@@ -1465,7 +1574,9 @@ mod internal_nonce_tests {
         };
 
         let ctx = basic_context();
-        let _ = evm.call_contract(&tx, &ctx).expect("tx call should succeed");
+        let _ = evm
+            .call_contract(&tx, &ctx)
+            .expect("tx call should succeed");
 
         // java-tron does not increment the internal nonce for precompile calls.
         assert_eq!(evm.evm.context.external.internal_tx_nonce, 0);
@@ -1482,15 +1593,28 @@ mod internal_nonce_tests {
         ctx.internal_tx_nonce = 0;
 
         // First CREATE uses nonce 0 and increments to 1
-        let addr1 = ctx.derive_internal_create_address().expect("Should derive address");
-        assert_eq!(ctx.internal_tx_nonce, 1, "Nonce should increment after derivation");
+        let addr1 = ctx
+            .derive_internal_create_address()
+            .expect("Should derive address");
+        assert_eq!(
+            ctx.internal_tx_nonce, 1,
+            "Nonce should increment after derivation"
+        );
 
         // Second derivation uses nonce 1 and increments to 2
-        let addr2 = ctx.derive_internal_create_address().expect("Should derive address");
-        assert_eq!(ctx.internal_tx_nonce, 2, "Nonce should increment after derivation");
+        let addr2 = ctx
+            .derive_internal_create_address()
+            .expect("Should derive address");
+        assert_eq!(
+            ctx.internal_tx_nonce, 2,
+            "Nonce should increment after derivation"
+        );
 
         // Addresses should be different
-        assert_ne!(addr1, addr2, "Different nonces should produce different addresses");
+        assert_ne!(
+            addr1, addr2,
+            "Different nonces should produce different addresses"
+        );
 
         // Verify the formula by recomputing manually
         use sha3::{Digest, Keccak256};
@@ -1499,7 +1623,10 @@ mod internal_nonce_tests {
         combined[32..40].copy_from_slice(&0u64.to_be_bytes());
         let hash = Keccak256::digest(&combined);
         let expected_addr1 = Address::from_slice(&hash[12..32]);
-        assert_eq!(addr1, expected_addr1, "Address derivation should match manual calculation");
+        assert_eq!(
+            addr1, expected_addr1,
+            "Address derivation should match manual calculation"
+        );
     }
 
     #[test]
@@ -1512,7 +1639,10 @@ mod internal_nonce_tests {
         let result = ctx.derive_internal_create_address();
         assert!(result.is_none(), "Should return None when txid is not set");
         // Nonce should not be incremented when derivation fails
-        assert_eq!(ctx.internal_tx_nonce, 0, "Nonce should not change on failed derivation");
+        assert_eq!(
+            ctx.internal_tx_nonce, 0,
+            "Nonce should not change on failed derivation"
+        );
     }
 
     #[test]
@@ -1600,11 +1730,15 @@ mod internal_nonce_tests {
         };
 
         let ctx = basic_context();
-        let _ = evm.call_contract(&tx, &ctx).expect("tx call should succeed");
+        let _ = evm
+            .call_contract(&tx, &ctx)
+            .expect("tx call should succeed");
 
         // Two internal CALLs (excluding root tx call) should have incremented nonce twice
-        assert_eq!(evm.evm.context.external.internal_tx_nonce, 2,
-            "Two internal CALLs should increment nonce to 2");
+        assert_eq!(
+            evm.evm.context.external.internal_tx_nonce, 2,
+            "Two internal CALLs should increment nonce to 2"
+        );
     }
 
     #[test]
@@ -1638,7 +1772,9 @@ mod internal_nonce_tests {
         let eth_addr = Address::from_slice(&eth_hash[12..32]);
 
         // The addresses should be different due to different derivation schemes
-        assert_ne!(tron_addr, eth_addr,
-            "TRON and Ethereum CREATE addresses should differ due to different derivation");
+        assert_ne!(
+            tron_addr, eth_addr,
+            "TRON and Ethereum CREATE addresses should differ due to different derivation"
+        );
     }
 }

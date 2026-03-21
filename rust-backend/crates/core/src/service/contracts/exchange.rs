@@ -116,7 +116,12 @@ impl ExchangeProcessor {
     /// Amount of tokens to be received (buy tokens)
     ///
     /// This is the main entry point that combines both exchange phases.
-    pub fn exchange(&mut self, sell_token_balance: i64, buy_token_balance: i64, sell_token_quant: i64) -> i64 {
+    pub fn exchange(
+        &mut self,
+        sell_token_balance: i64,
+        buy_token_balance: i64,
+        sell_token_quant: i64,
+    ) -> i64 {
         let relay = self.exchange_to_supply(sell_token_balance, sell_token_quant);
         self.exchange_from_supply(buy_token_balance, relay)
     }
@@ -243,7 +248,8 @@ pub fn is_withdraw_precise_enough(
     other_balance: i64,
     token_quant: i64,
 ) -> bool {
-    let another_quant = calculate_withdraw_another_amount(token_balance, other_balance, token_quant);
+    let another_quant =
+        calculate_withdraw_another_amount(token_balance, other_balance, token_quant);
     if another_quant <= 0 {
         return false;
     }
@@ -403,7 +409,11 @@ mod tests {
         // Results should be very close (within a small margin due to floating-point)
         // but may not be exactly equal on all platforms
         let diff = (result_strict - result_normal).abs();
-        assert!(diff <= 1, "Strict and normal math should produce very similar results, diff: {}", diff);
+        assert!(
+            diff <= 1,
+            "Strict and normal math should produce very similar results, diff: {}",
+            diff
+        );
     }
 
     #[test]
@@ -599,13 +609,17 @@ mod tests {
         // Test with large production-like values
         // Common exchange balances might be in TRX (10^6 SUN per TRX)
         let token_balance = 1_000_000_000_000i64; // 1M TRX
-        let other_balance = 500_000_000_000i64;   // 500K TRX
-        let quant = 1_000_000_000i64;             // 1K TRX
+        let other_balance = 500_000_000_000i64; // 500K TRX
+        let quant = 1_000_000_000i64; // 1K TRX
 
         // another = floor(500_000_000_000 * 1_000_000_000 / 1_000_000_000_000)
         //         = floor(500_000_000) = 500_000_000
         // This is exact division, should pass
-        assert!(is_withdraw_precise_enough(token_balance, other_balance, quant));
+        assert!(is_withdraw_precise_enough(
+            token_balance,
+            other_balance,
+            quant
+        ));
     }
 
     #[test]

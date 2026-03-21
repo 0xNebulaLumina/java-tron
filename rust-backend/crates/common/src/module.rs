@@ -1,32 +1,32 @@
-use std::collections::HashMap;
-use async_trait::async_trait;
 use anyhow::Result;
-use tracing::{info, warn, error};
+use async_trait::async_trait;
+use std::collections::HashMap;
+use tracing::{error, info, warn};
 
 /// Trait that all backend modules must implement
 #[async_trait]
 pub trait Module: Send + Sync {
     /// Module name (used for logging and configuration)
     fn name(&self) -> &str;
-    
+
     /// Module version
     fn version(&self) -> &str;
-    
+
     /// Initialize the module (called once at startup)
     async fn init(&mut self) -> Result<()>;
-    
+
     /// Start the module (called after all modules are initialized)
     async fn start(&mut self) -> Result<()>;
-    
+
     /// Stop the module (called during shutdown)
     async fn stop(&mut self) -> Result<()>;
-    
+
     /// Health check for the module
     async fn health(&self) -> ModuleHealth;
-    
+
     /// Get module-specific metrics
     fn metrics(&self) -> HashMap<String, f64>;
-    
+
     /// Allow downcasting to concrete module types
     fn as_any(&self) -> &dyn std::any::Any;
 }
@@ -53,7 +53,7 @@ impl ModuleHealth {
             details: HashMap::new(),
         }
     }
-    
+
     pub fn degraded(message: &str) -> Self {
         Self {
             status: HealthStatus::Degraded,
@@ -61,7 +61,7 @@ impl ModuleHealth {
             details: HashMap::new(),
         }
     }
-    
+
     pub fn unhealthy(message: &str) -> Self {
         Self {
             status: HealthStatus::Unhealthy,
@@ -69,7 +69,7 @@ impl ModuleHealth {
             details: HashMap::new(),
         }
     }
-    
+
     pub fn with_details(mut self, details: HashMap<String, String>) -> Self {
         self.details = details;
         self
@@ -89,14 +89,18 @@ impl ModuleManager {
             startup_order: Vec::new(),
         }
     }
-    
+
     /// Register a module
     pub fn register(&mut self, name: &str, module: Box<dyn Module>) {
-        info!("Registering module: {} v{}", module.name(), module.version());
+        info!(
+            "Registering module: {} v{}",
+            module.name(),
+            module.version()
+        );
         self.startup_order.push(name.to_string());
         self.modules.insert(name.to_string(), module);
     }
-    
+
     /// Initialize all modules in registration order
     pub async fn init_all(&mut self) -> Result<()> {
         for name in &self.startup_order {
@@ -110,12 +114,12 @@ impl ModuleManager {
         }
         Ok(())
     }
-    
+
     /// Start all modules in registration order
     pub async fn start_all(&mut self) -> Result<()> {
         // First initialize all modules
         self.init_all().await?;
-        
+
         // Then start them
         for name in &self.startup_order {
             if let Some(module) = self.modules.get_mut(name) {
@@ -128,12 +132,12 @@ impl ModuleManager {
         }
         Ok(())
     }
-    
+
     /// Stop all modules in reverse order
     pub async fn stop_all(&mut self) -> Result<()> {
         let mut stop_order = self.startup_order.clone();
         stop_order.reverse();
-        
+
         for name in &stop_order {
             if let Some(module) = self.modules.get_mut(name) {
                 info!("Stopping module: {}", module.name());
@@ -145,48 +149,48 @@ impl ModuleManager {
         }
         Ok(())
     }
-    
+
     /// Get a module by name
     pub fn get(&self, name: &str) -> Option<&Box<dyn Module>> {
         self.modules.get(name)
     }
-    
+
     /// Get a mutable reference to a module by name
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Box<dyn Module>> {
         self.modules.get_mut(name)
     }
-    
+
     /// Get health status of all modules
     pub async fn health_all(&self) -> HashMap<String, ModuleHealth> {
         let mut health_map = HashMap::new();
-        
+
         for (name, module) in &self.modules {
             let health = module.health().await;
             health_map.insert(name.clone(), health);
         }
-        
+
         health_map
     }
-    
+
     /// Get metrics from all modules
     pub fn metrics_all(&self) -> HashMap<String, HashMap<String, f64>> {
         let mut metrics_map = HashMap::new();
-        
+
         for (name, module) in &self.modules {
             let metrics = module.metrics();
             if !metrics.is_empty() {
                 metrics_map.insert(name.clone(), metrics);
             }
         }
-        
+
         metrics_map
     }
-    
+
     /// Get list of registered module names
     pub fn module_names(&self) -> Vec<String> {
         self.startup_order.clone()
     }
-    
+
     /// Get list of registered module versions
     pub fn module_versions(&self) -> HashMap<String, String> {
         let mut versions = HashMap::new();
@@ -195,4 +199,4 @@ impl ModuleManager {
         }
         versions
     }
-} 
+}

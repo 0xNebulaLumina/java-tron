@@ -13,15 +13,12 @@ use super::common::{encode_varint, make_from_raw, seed_dynamic_properties};
 use revm_primitives::{Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronContractParameter, TronContractType,
-    TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronContractParameter, TronContractType, TronExecutionContext,
+    TronTransaction, TxMetadata,
 };
 
 /// Helper to build a SetAccountIdContract protobuf
-fn build_set_account_id_contract(
-    account_id: &[u8],
-    owner_address: &[u8],
-) -> Vec<u8> {
+fn build_set_account_id_contract(account_id: &[u8], owner_address: &[u8]) -> Vec<u8> {
     let mut buf = Vec::new();
 
     // Field 1: account_id (bytes, wire type 2)
@@ -137,7 +134,11 @@ fn test_set_account_id_success() {
     let result =
         service.execute_set_account_id_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_ok(), "SetAccountId should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "SetAccountId should succeed: {:?}",
+        result.err()
+    );
     let exec_result = result.unwrap();
     assert!(exec_result.success);
     assert_eq!(exec_result.energy_used, 0);
@@ -185,7 +186,11 @@ fn test_set_account_id_uses_contract_owner_address() {
         service.execute_set_account_id_contract(&mut storage_adapter, &transaction, &context);
 
     // Should succeed — it uses owner_b from contract bytes, not owner_a from tx.from
-    assert!(result.is_ok(), "Should use contract owner_address, not tx.from: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should use contract owner_address, not tx.from: {:?}",
+        result.err()
+    );
 }
 
 // =====================================================================
@@ -353,7 +358,8 @@ fn test_set_account_id_validates_account_id_before_owner_address() {
 
     assert!(result.is_err());
     assert_eq!(
-        result.unwrap_err(), "Invalid accountId",
+        result.unwrap_err(),
+        "Invalid accountId",
         "accountId should be validated before ownerAddress"
     );
 }
@@ -555,7 +561,11 @@ fn test_set_account_id_duplicate_id() {
     let context = new_test_context();
     let result =
         service.execute_set_account_id_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "First SetAccountId should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "First SetAccountId should succeed: {:?}",
+        result.err()
+    );
 
     // Now create owner_b and try to use the same account_id
     let owner_b = Address::from([2u8; 20]);
@@ -628,7 +638,11 @@ fn test_set_account_id_already_set() {
     let context = new_test_context();
     let result =
         service.execute_set_account_id_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "First SetAccountId should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "First SetAccountId should succeed: {:?}",
+        result.err()
+    );
 
     // Try to set a different account_id on the same account
     let account_id2 = b"secondaccid1";
@@ -744,7 +758,11 @@ fn test_set_account_id_case_insensitive_uniqueness() {
     let context = new_test_context();
     let result =
         service.execute_set_account_id_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "First SetAccountId should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "First SetAccountId should succeed: {:?}",
+        result.err()
+    );
 
     // Now try "myaccount123" (lowercase) on owner_b — should fail
     let owner_b = Address::from([2u8; 20]);
@@ -783,7 +801,8 @@ fn test_set_account_id_case_insensitive_uniqueness() {
 
     assert!(result2.is_err());
     assert_eq!(
-        result2.unwrap_err(), "This id has existed",
+        result2.unwrap_err(),
+        "This id has existed",
         "Case-insensitive uniqueness: MYACCOUNT123 and myaccount123 should collide"
     );
 }
@@ -911,7 +930,11 @@ fn test_set_account_id_min_length() {
     let context = new_test_context();
     let result =
         service.execute_set_account_id_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "8-byte account_id should be valid: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "8-byte account_id should be valid: {:?}",
+        result.err()
+    );
 }
 
 /// Test maximum valid account_id length (32 bytes).
@@ -948,5 +971,9 @@ fn test_set_account_id_max_length() {
     let context = new_test_context();
     let result =
         service.execute_set_account_id_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_ok(), "32-byte account_id should be valid: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "32-byte account_id should be valid: {:?}",
+        result.err()
+    );
 }

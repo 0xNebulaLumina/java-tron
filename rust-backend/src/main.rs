@@ -7,8 +7,8 @@ use tracing::{info, warn};
 use tracing::error;
 use tracing_subscriber;
 
+use tron_backend_common::{Config, GenesisConfig, ModuleManager};
 use tron_backend_core::BackendService;
-use tron_backend_common::{Config, ModuleManager, GenesisConfig};
 
 // Use the protobuf code from the core crate
 use tron_backend_core::backend;
@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
 
@@ -41,7 +41,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(feature = "execution")]
     {
-        let execution_module = tron_backend_execution::ExecutionModule::new(config.execution.clone());
+        let execution_module =
+            tron_backend_execution::ExecutionModule::new(config.execution.clone());
         module_manager.register("execution", Box::new(execution_module));
     }
 
@@ -53,7 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "storage")]
     if config.genesis.enabled {
         if let Some(storage_module) = module_manager.get("storage") {
-            if let Some(storage_mod) = storage_module.as_any().downcast_ref::<tron_backend_storage::StorageModule>() {
+            if let Some(storage_mod) = storage_module
+                .as_any()
+                .downcast_ref::<tron_backend_storage::StorageModule>()
+            {
                 if let Ok(engine) = storage_mod.engine() {
                     initialize_genesis_accounts(engine, &config.genesis)?;
                 } else {
@@ -65,14 +69,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Log remote execution configuration (Phase 2 freeze ledger changes feature)
     info!("=== Remote Execution Configuration ===");
-    info!("  AccountInfo AEXT mode: {}", config.execution.remote.accountinfo_aext_mode);
-    info!("  Emit freeze ledger changes: {}", config.execution.remote.emit_freeze_ledger_changes);
-    info!("  Emit global resource changes: {}", config.execution.remote.emit_global_resource_changes);
-    info!("  AccountCreate enabled: {}", config.execution.remote.account_create_enabled);
-    info!("  FreezeBalance V1 enabled: {}", config.execution.remote.freeze_balance_enabled);
-    info!("  UnfreezeBalance V1 enabled: {}", config.execution.remote.unfreeze_balance_enabled);
-    info!("  FreezeBalanceV2 enabled: {}", config.execution.remote.freeze_balance_v2_enabled);
-    info!("  UnfreezeBalanceV2 enabled: {}", config.execution.remote.unfreeze_balance_v2_enabled);
+    info!(
+        "  AccountInfo AEXT mode: {}",
+        config.execution.remote.accountinfo_aext_mode
+    );
+    info!(
+        "  Emit freeze ledger changes: {}",
+        config.execution.remote.emit_freeze_ledger_changes
+    );
+    info!(
+        "  Emit global resource changes: {}",
+        config.execution.remote.emit_global_resource_changes
+    );
+    info!(
+        "  AccountCreate enabled: {}",
+        config.execution.remote.account_create_enabled
+    );
+    info!(
+        "  FreezeBalance V1 enabled: {}",
+        config.execution.remote.freeze_balance_enabled
+    );
+    info!(
+        "  UnfreezeBalance V1 enabled: {}",
+        config.execution.remote.unfreeze_balance_enabled
+    );
+    info!(
+        "  FreezeBalanceV2 enabled: {}",
+        config.execution.remote.freeze_balance_v2_enabled
+    );
+    info!(
+        "  UnfreezeBalanceV2 enabled: {}",
+        config.execution.remote.unfreeze_balance_v2_enabled
+    );
     info!("======================================");
 
     // Create the backend service
@@ -134,7 +162,10 @@ fn initialize_genesis_accounts(
     genesis_config: &GenesisConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("=== Genesis Account Initialization ===");
-    info!("  Accounts to initialize: {}", genesis_config.accounts.len());
+    info!(
+        "  Accounts to initialize: {}",
+        genesis_config.accounts.len()
+    );
 
     // Database name for accounts (matching java-tron's AccountStore)
     const ACCOUNT_DB: &str = "account";
@@ -157,16 +188,21 @@ fn initialize_genesis_accounts(
         // Check if account already exists
         match engine.get(ACCOUNT_DB, &key) {
             Ok(Some(existing_data)) => {
-                info!("  Account {} already exists (data_len={}), skipping genesis init",
-                      account.address, existing_data.len());
+                info!(
+                    "  Account {} already exists (data_len={}), skipping genesis init",
+                    account.address,
+                    existing_data.len()
+                );
                 continue;
             }
             Ok(None) => {
                 // Account doesn't exist, will create it
             }
             Err(e) => {
-                warn!("  Error checking account {}: {}, attempting to create anyway",
-                      account.address, e);
+                warn!(
+                    "  Error checking account {}: {}, attempting to create anyway",
+                    account.address, e
+                );
             }
         }
 
@@ -185,7 +221,7 @@ fn initialize_genesis_accounts(
         // Field 3: address (length-delimited)
         // Tag = (3 << 3) | 2 = 26 = 0x1A
         proto_data.push(0x1A); // Tag for field 3, length-delimited
-        proto_data.push(21);   // Length of 21-byte address
+        proto_data.push(21); // Length of 21-byte address
         proto_data.extend_from_slice(&key); // 21-byte address with 0x41 prefix
 
         // Field 4: balance (varint)
@@ -199,10 +235,16 @@ fn initialize_genesis_accounts(
         // Store the account
         match engine.put(ACCOUNT_DB, &key, &proto_data) {
             Ok(()) => {
-                info!("  Initialized account {} with balance {} SUN{}",
-                      account.address,
-                      account.balance_sun,
-                      if account.comment.is_empty() { "".to_string() } else { format!(" ({})", account.comment) });
+                info!(
+                    "  Initialized account {} with balance {} SUN{}",
+                    account.address,
+                    account.balance_sun,
+                    if account.comment.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!(" ({})", account.comment)
+                    }
+                );
             }
             Err(e) => {
                 error!("  Failed to store account {}: {}", account.address, e);
@@ -230,4 +272,4 @@ fn encode_signed_varint(output: &mut Vec<u8>, value: i64) {
             v >>= 7;
         }
     }
-} 
+}

@@ -1,19 +1,19 @@
 // AccountAext parsing helpers
 // Functions for parsing pre-execution AccountAext data
 
-use std::collections::HashMap;
-use revm_primitives::Address;
-use tracing::{debug, warn};
 use revm_primitives::hex;
+use revm_primitives::Address;
+use std::collections::HashMap;
+use tracing::{debug, warn};
 use tron_backend_execution::AccountAext;
 
-use crate::backend::AccountAextSnapshot;
 use super::address::strip_tron_address_prefix;
+use crate::backend::AccountAextSnapshot;
 
 /// Parse pre-execution AEXT snapshots from the gRPC request into a HashMap.
 /// Converts Tron 21-byte addresses (0x41 prefix) to 20-byte EVM addresses for lookup.
 pub(super) fn parse_pre_execution_aext(
-    snapshots: &[AccountAextSnapshot]
+    snapshots: &[AccountAextSnapshot],
 ) -> HashMap<Address, AccountAext> {
     let mut map = HashMap::new();
 

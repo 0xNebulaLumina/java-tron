@@ -7,14 +7,14 @@
 //! - Validation error messages
 
 use super::super::super::*;
-use super::common::{encode_varint, seed_dynamic_properties, make_from_raw, new_test_context};
+use super::common::{encode_varint, make_from_raw, new_test_context, seed_dynamic_properties};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata,
-    TronContractType, WitnessInfo,
+    EngineBackedEvmStateStore, TronContractType, TronExecutionContext, TronTransaction, TxMetadata,
+    WitnessInfo,
 };
 use tron_backend_storage::StorageEngine;
-use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -107,10 +107,12 @@ fn seed_owner_with_tron_power(
     let mut proto = tron_backend_execution::protocol::Account::default();
     proto.balance = balance_sun;
     if frozen_bandwidth_sun > 0 {
-        proto.frozen.push(tron_backend_execution::protocol::account::Frozen {
-            frozen_balance: frozen_bandwidth_sun,
-            expire_time: i64::MAX, // Far future
-        });
+        proto
+            .frozen
+            .push(tron_backend_execution::protocol::account::Frozen {
+                frozen_balance: frozen_bandwidth_sun,
+                expire_time: i64::MAX, // Far future
+            });
     }
     storage_adapter.put_account_proto(owner, &proto).unwrap();
 }
@@ -123,7 +125,9 @@ fn seed_witness(storage_adapter: &mut EngineBackedEvmStateStore, witness_addr: &
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(*witness_addr, account_info).unwrap();
+    storage_adapter
+        .set_account(*witness_addr, account_info)
+        .unwrap();
 
     let witness = WitnessInfo::new(*witness_addr, "http://witness.example".to_string(), 0);
     storage_adapter.put_witness(&witness).unwrap();
@@ -164,7 +168,10 @@ fn test_vote_witness_no_reward_when_delegation_disabled() {
 
     // Allowance should remain 0 (no delegation reward)
     let account = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
-    assert_eq!(account.allowance, 0, "Allowance should remain 0 when delegation disabled");
+    assert_eq!(
+        account.allowance, 0,
+        "Allowance should remain 0 when delegation disabled"
+    );
 }
 
 /// When CHANGE_DELEGATION == 1 and rewards exist, withdrawReward should
@@ -177,9 +184,13 @@ fn test_vote_witness_withdraw_reward_with_delegation_enabled() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
     // Enable delegation
-    storage_engine.put("properties", b"CHANGE_DELEGATION", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"CHANGE_DELEGATION", &1i64.to_be_bytes())
+        .unwrap();
     // Set current cycle to 5
-    storage_engine.put("properties", b"CURRENT_CYCLE_NUMBER", &5i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"CURRENT_CYCLE_NUMBER", &5i64.to_be_bytes())
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -193,7 +204,9 @@ fn test_vote_witness_withdraw_reward_with_delegation_enabled() {
 
     // Set up delegation store: beginCycle=5, endCycle=6 (no pending reward cycles)
     // This means the account is already at the current cycle, so no reward to compute.
-    storage_adapter.set_delegation_begin_cycle(&owner, 5).unwrap();
+    storage_adapter
+        .set_delegation_begin_cycle(&owner, 5)
+        .unwrap();
     storage_adapter.set_delegation_end_cycle(&owner, 6).unwrap();
 
     let data = encode_vote_witness_contract(&owner_tron, &[(&witness_tron, 1)]);
@@ -207,7 +220,10 @@ fn test_vote_witness_withdraw_reward_with_delegation_enabled() {
 
     // With beginCycle == currentCycle (5), withdrawal should find no reward
     let account = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
-    assert_eq!(account.allowance, 0, "No reward when beginCycle == currentCycle");
+    assert_eq!(
+        account.allowance, 0,
+        "No reward when beginCycle == currentCycle"
+    );
 }
 
 /// When CHANGE_DELEGATION == 1 but delegation is enabled with no votes (empty account),
@@ -219,8 +235,12 @@ fn test_vote_witness_withdraw_reward_noop_no_prior_votes() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
-    storage_engine.put("properties", b"CHANGE_DELEGATION", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"CURRENT_CYCLE_NUMBER", &10i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b"CHANGE_DELEGATION", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put("properties", b"CURRENT_CYCLE_NUMBER", &10i64.to_be_bytes())
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -261,7 +281,13 @@ fn test_vote_witness_initializes_old_tron_power_positive() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
     // Enable new resource model
-    storage_engine.put("properties", b"ALLOW_NEW_RESOURCE_MODEL", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_NEW_RESOURCE_MODEL",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -287,8 +313,10 @@ fn test_vote_witness_initializes_old_tron_power_positive() {
 
     // Verify oldTronPower was set to the frozen balance (5_000_000)
     let after = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
-    assert_eq!(after.old_tron_power, 5_000_000,
-               "oldTronPower should be initialized to legacy frozen amount");
+    assert_eq!(
+        after.old_tron_power, 5_000_000,
+        "oldTronPower should be initialized to legacy frozen amount"
+    );
 }
 
 /// When ALLOW_NEW_RESOURCE_MODEL == 1 and oldTronPower == 0 with zero tron power,
@@ -300,7 +328,13 @@ fn test_vote_witness_initializes_old_tron_power_to_minus_one_when_zero_power() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
-    storage_engine.put("properties", b"ALLOW_NEW_RESOURCE_MODEL", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_NEW_RESOURCE_MODEL",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -323,10 +357,12 @@ fn test_vote_witness_initializes_old_tron_power_to_minus_one_when_zero_power() {
     proto.balance = 100_000_000;
     proto.old_tron_power = 0;
     // Use frozenV2 with TRON_POWER type to give voting power under new model
-    proto.frozen_v2.push(tron_backend_execution::protocol::account::FreezeV2 {
-        amount: 5_000_000,
-        r#type: 2, // TRON_POWER
-    });
+    proto
+        .frozen_v2
+        .push(tron_backend_execution::protocol::account::FreezeV2 {
+            amount: 5_000_000,
+            r#type: 2, // TRON_POWER
+        });
     storage_adapter.put_account_proto(&owner, &proto).unwrap();
     seed_witness(&mut storage_adapter, &witness);
 
@@ -340,8 +376,10 @@ fn test_vote_witness_initializes_old_tron_power_to_minus_one_when_zero_power() {
     // oldTronPower = getTronPower() which only counts legacy frozen (field 7), not frozenV2.
     // Since legacy frozen is 0, oldTronPower should be -1.
     let after = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
-    assert_eq!(after.old_tron_power, -1,
-               "oldTronPower should be -1 when legacy tron power is zero");
+    assert_eq!(
+        after.old_tron_power, -1,
+        "oldTronPower should be -1 when legacy tron power is zero"
+    );
 }
 
 /// When ALLOW_NEW_RESOURCE_MODEL is disabled, oldTronPower should NOT be modified.
@@ -353,7 +391,13 @@ fn test_vote_witness_skips_old_tron_power_when_old_model() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
     // ALLOW_NEW_RESOURCE_MODEL defaults to 0 or not set → disabled
-    storage_engine.put("properties", b"ALLOW_NEW_RESOURCE_MODEL", &0i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_NEW_RESOURCE_MODEL",
+            &0i64.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -373,8 +417,10 @@ fn test_vote_witness_skips_old_tron_power_when_old_model() {
     assert!(result.is_ok(), "Should succeed: {:?}", result.err());
 
     let after = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
-    assert_eq!(after.old_tron_power, 0,
-               "oldTronPower should remain 0 when new resource model is disabled");
+    assert_eq!(
+        after.old_tron_power, 0,
+        "oldTronPower should remain 0 when new resource model is disabled"
+    );
 }
 
 /// When oldTronPower is already initialized (non-zero), it should NOT be re-initialized.
@@ -385,7 +431,13 @@ fn test_vote_witness_preserves_existing_old_tron_power() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
-    storage_engine.put("properties", b"ALLOW_NEW_RESOURCE_MODEL", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_NEW_RESOURCE_MODEL",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
 
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
@@ -407,11 +459,13 @@ fn test_vote_witness_preserves_existing_old_tron_power() {
     let mut proto = tron_backend_execution::protocol::Account::default();
     proto.balance = 100_000_000;
     proto.old_tron_power = -1; // Already initialized
-    // Use frozenV2 TRON_POWER to give voting power (legacy frozen doesn't count when old_tron_power == -1)
-    proto.frozen_v2.push(tron_backend_execution::protocol::account::FreezeV2 {
-        amount: 5_000_000,
-        r#type: 2, // TRON_POWER
-    });
+                               // Use frozenV2 TRON_POWER to give voting power (legacy frozen doesn't count when old_tron_power == -1)
+    proto
+        .frozen_v2
+        .push(tron_backend_execution::protocol::account::FreezeV2 {
+            amount: 5_000_000,
+            r#type: 2, // TRON_POWER
+        });
     storage_adapter.put_account_proto(&owner, &proto).unwrap();
     seed_witness(&mut storage_adapter, &witness);
 
@@ -423,8 +477,10 @@ fn test_vote_witness_preserves_existing_old_tron_power() {
     assert!(result.is_ok(), "Should succeed: {:?}", result.err());
 
     let after = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
-    assert_eq!(after.old_tron_power, -1,
-               "oldTronPower should remain -1 when already initialized");
+    assert_eq!(
+        after.old_tron_power, -1,
+        "oldTronPower should remain -1 when already initialized"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -460,10 +516,12 @@ fn test_vote_witness_seeds_old_votes_from_account_votes() {
 
     let mut proto = tron_backend_execution::protocol::Account::default();
     proto.balance = 100_000_000;
-    proto.frozen.push(tron_backend_execution::protocol::account::Frozen {
-        frozen_balance: 10_000_000,
-        expire_time: i64::MAX,
-    });
+    proto
+        .frozen
+        .push(tron_backend_execution::protocol::account::Frozen {
+            frozen_balance: 10_000_000,
+            expire_time: i64::MAX,
+        });
     // Pre-existing votes in Account proto
     proto.votes.push(tron_backend_execution::protocol::Vote {
         vote_address: witness1_tron.clone(),
@@ -483,25 +541,42 @@ fn test_vote_witness_seeds_old_votes_from_account_votes() {
     assert!(result.is_ok(), "Should succeed: {:?}", result.err());
 
     // Check VotesRecord: old_votes should be seeded from Account.votes
-    let votes_record = storage_adapter.get_votes(&owner).unwrap()
+    let votes_record = storage_adapter
+        .get_votes(&owner)
+        .unwrap()
         .expect("VotesRecord should exist");
 
-    assert_eq!(votes_record.old_votes.len(), 1,
-               "old_votes should contain the prior Account.votes entry");
-    assert_eq!(votes_record.old_votes[0].vote_count, 3,
-               "old_votes should preserve the old vote count");
+    assert_eq!(
+        votes_record.old_votes.len(),
+        1,
+        "old_votes should contain the prior Account.votes entry"
+    );
+    assert_eq!(
+        votes_record.old_votes[0].vote_count, 3,
+        "old_votes should preserve the old vote count"
+    );
 
-    assert_eq!(votes_record.new_votes.len(), 1,
-               "new_votes should contain the new vote");
-    assert_eq!(votes_record.new_votes[0].vote_count, 2,
-               "new_votes should have the new vote count");
+    assert_eq!(
+        votes_record.new_votes.len(),
+        1,
+        "new_votes should contain the new vote"
+    );
+    assert_eq!(
+        votes_record.new_votes[0].vote_count, 2,
+        "new_votes should have the new vote count"
+    );
 
     // Account.votes should be replaced with new votes
     let updated_account = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
-    assert_eq!(updated_account.votes.len(), 1,
-               "Account.votes should have exactly one entry after re-vote");
-    assert_eq!(updated_account.votes[0].vote_count, 2,
-               "Account.votes should reflect the new vote count");
+    assert_eq!(
+        updated_account.votes.len(),
+        1,
+        "Account.votes should have exactly one entry after re-vote"
+    );
+    assert_eq!(
+        updated_account.votes[0].vote_count, 2,
+        "Account.votes should reflect the new vote count"
+    );
 }
 
 /// Second VoteWitness in same epoch should NOT shift old_votes.
@@ -532,11 +607,18 @@ fn test_vote_witness_second_vote_preserves_old_votes() {
     let ctx = new_test_context();
 
     let result1 = service.execute_vote_witness_contract(&mut storage_adapter, &tx1, &ctx);
-    assert!(result1.is_ok(), "First vote should succeed: {:?}", result1.err());
+    assert!(
+        result1.is_ok(),
+        "First vote should succeed: {:?}",
+        result1.err()
+    );
 
     // After first vote, old_votes should be empty (no prior Account.votes)
     let votes1 = storage_adapter.get_votes(&owner).unwrap().unwrap();
-    assert!(votes1.old_votes.is_empty(), "old_votes should be empty after first vote");
+    assert!(
+        votes1.old_votes.is_empty(),
+        "old_votes should be empty after first vote"
+    );
     assert_eq!(votes1.new_votes.len(), 1);
     assert_eq!(votes1.new_votes[0].vote_count, 3);
 
@@ -545,15 +627,23 @@ fn test_vote_witness_second_vote_preserves_old_votes() {
     let tx2 = make_vote_tx(owner, owner_tron.clone(), data2);
 
     let result2 = service.execute_vote_witness_contract(&mut storage_adapter, &tx2, &ctx);
-    assert!(result2.is_ok(), "Second vote should succeed: {:?}", result2.err());
+    assert!(
+        result2.is_ok(),
+        "Second vote should succeed: {:?}",
+        result2.err()
+    );
 
     // After second vote, old_votes should still be empty (preserved from first VotesRecord)
     let votes2 = storage_adapter.get_votes(&owner).unwrap().unwrap();
-    assert!(votes2.old_votes.is_empty(),
-            "old_votes should remain empty (not shift) on second vote in same epoch");
+    assert!(
+        votes2.old_votes.is_empty(),
+        "old_votes should remain empty (not shift) on second vote in same epoch"
+    );
     assert_eq!(votes2.new_votes.len(), 1);
-    assert_eq!(votes2.new_votes[0].vote_count, 5,
-               "new_votes should be replaced with the second vote");
+    assert_eq!(
+        votes2.new_votes[0].vote_count, 5,
+        "new_votes should be replaced with the second vote"
+    );
 
     // Account.votes should reflect the second vote
     let updated_account = storage_adapter.get_account_proto(&owner).unwrap().unwrap();
@@ -594,8 +684,16 @@ fn test_vote_witness_happy_path_single_vote() {
 
     assert!(exec_result.success);
     assert_eq!(exec_result.energy_used, 0);
-    assert_eq!(exec_result.state_changes.len(), 1, "Should have one AccountChange for CSV parity");
-    assert_eq!(exec_result.vote_changes.len(), 1, "Should have one VoteChange");
+    assert_eq!(
+        exec_result.state_changes.len(),
+        1,
+        "Should have one AccountChange for CSV parity"
+    );
+    assert_eq!(
+        exec_result.vote_changes.len(),
+        1,
+        "Should have one VoteChange"
+    );
     assert_eq!(exec_result.vote_changes[0].votes.len(), 1);
     assert_eq!(exec_result.vote_changes[0].votes[0].vote_count, 5);
     assert!(exec_result.bandwidth_used > 0);
@@ -629,10 +727,8 @@ fn test_vote_witness_multiple_witnesses() {
     seed_witness(&mut storage_adapter, &witness1);
     seed_witness(&mut storage_adapter, &witness2);
 
-    let data = encode_vote_witness_contract(&owner_tron, &[
-        (&witness1_tron, 3),
-        (&witness2_tron, 7),
-    ]);
+    let data =
+        encode_vote_witness_contract(&owner_tron, &[(&witness1_tron, 3), (&witness2_tron, 7)]);
     let tx = make_vote_tx(owner, owner_tron.clone(), data);
     let ctx = new_test_context();
 
@@ -724,7 +820,9 @@ fn test_vote_witness_validation_not_a_witness() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(non_witness, account_info).unwrap();
+    storage_adapter
+        .set_account(non_witness, account_info)
+        .unwrap();
 
     let data = encode_vote_witness_contract(&owner_tron, &[(&non_witness_tron, 1)]);
     let tx = make_vote_tx(owner, owner_tron.clone(), data);
@@ -733,8 +831,11 @@ fn test_vote_witness_validation_not_a_witness() {
     let result = service.execute_vote_witness_contract(&mut storage_adapter, &tx, &ctx);
     assert!(result.is_err());
     let err_msg = result.unwrap_err();
-    assert!(err_msg.contains("Witness") && err_msg.contains("not exists"),
-            "Error should mention witness not exists, got: {}", err_msg);
+    assert!(
+        err_msg.contains("Witness") && err_msg.contains("not exists"),
+        "Error should mention witness not exists, got: {}",
+        err_msg
+    );
 }
 
 /// Invalid owner address should fail.

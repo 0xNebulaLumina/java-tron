@@ -3,9 +3,9 @@
 //! This module defines the `EvmStateStore` trait, which provides the essential
 //! interface for account, code, and storage operations needed by the EVM execution engine.
 
-use anyhow::Result;
 use crate::protocol::AssetIssueContractData;
-use revm::primitives::{AccountInfo, Bytecode, Address, SpecId, U256};
+use anyhow::Result;
+use revm::primitives::{AccountInfo, Address, Bytecode, SpecId, U256};
 
 /// Minimal EVM-facing state interface for account, code, and storage operations.
 /// Provides the essential read/write operations needed by the EVM execution engine.

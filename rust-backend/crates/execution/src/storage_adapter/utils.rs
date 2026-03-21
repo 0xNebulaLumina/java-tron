@@ -59,11 +59,15 @@ pub fn from_tron_address(tron_address: &str) -> anyhow::Result<Address> {
     use sha2::{Digest, Sha256};
 
     // Decode base58
-    let decoded = bs58::decode(tron_address).into_vec()
+    let decoded = bs58::decode(tron_address)
+        .into_vec()
         .map_err(|e| anyhow::anyhow!("Invalid base58: {}", e))?;
 
     if decoded.len() != 25 {
-        return Err(anyhow::anyhow!("Invalid Tron address length: expected 25 bytes, got {}", decoded.len()));
+        return Err(anyhow::anyhow!(
+            "Invalid Tron address length: expected 25 bytes, got {}",
+            decoded.len()
+        ));
     }
 
     // Split address and checksum
@@ -84,7 +88,10 @@ pub fn from_tron_address(tron_address: &str) -> anyhow::Result<Address> {
 
     // Check 0x41 prefix
     if addr_bytes[0] != 0x41 {
-        return Err(anyhow::anyhow!("Invalid Tron address prefix: expected 0x41, got 0x{:02x}", addr_bytes[0]));
+        return Err(anyhow::anyhow!(
+            "Invalid Tron address prefix: expected 0x41, got 0x{:02x}",
+            addr_bytes[0]
+        ));
     }
 
     // Return the 20-byte EVM address (without the 0x41 prefix)

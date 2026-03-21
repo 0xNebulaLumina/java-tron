@@ -15,14 +15,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ".protocol.Account.free_asset_net_usageV2",
         ".protocol.TransactionResult.cancel_unfreezeV2_amount",
     ]);
-    config
-        .compile_protos(
-            &[
-                "protos/witness.proto",  // Legacy witness proto (kept for backward compatibility)
-                "protos/tron.proto",     // Comprehensive TRON types (Account, Proposal, etc.)
-            ],
-            &["protos/"],
-        )?;
+    config.compile_protos(
+        &[
+            "protos/witness.proto", // Legacy witness proto (kept for backward compatibility)
+            "protos/tron.proto",    // Comprehensive TRON types (Account, Proposal, etc.)
+        ],
+        &["protos/"],
+    )?;
 
     Ok(())
 }

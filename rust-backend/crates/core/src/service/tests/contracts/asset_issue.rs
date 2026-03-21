@@ -2,9 +2,11 @@
 
 use super::super::super::*;
 use super::common::{encode_varint, new_test_context, seed_dynamic_properties};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
-use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
+use tron_backend_execution::{
+    EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata,
+};
 use tron_backend_storage::StorageEngine;
 
 fn new_test_service_with_trc10_enabled() -> BackendService {
@@ -80,7 +82,9 @@ fn test_asset_issue_contract_trc10_change_emission() {
     let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
     // Enable same-token-name mode so precision passes through (not forced to 0)
-    storage_engine.put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
+        .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     let exec_config = ExecutionConfig {
@@ -98,16 +102,19 @@ fn test_asset_issue_contract_trc10_change_emission() {
 
     // Create test account (owner must have sufficient balance for fee)
     // 20-byte EVM address; the TRON owner_address field is encoded as 0x41 + this 20-byte value.
-    let owner_address = Address::from([0xab, 0xd4, 0xb9, 0x36, 0x77, 0x99, 0xea, 0xa3, 0x19,
-                                      0x7f, 0xec, 0xb1, 0x44, 0xeb, 0x71, 0xde, 0x1e, 0x04,
-                                      0x91, 0x50]);
+    let owner_address = Address::from([
+        0xab, 0xd4, 0xb9, 0x36, 0x77, 0x99, 0xea, 0xa3, 0x19, 0x7f, 0xec, 0xb1, 0x44, 0xeb, 0x71,
+        0xde, 0x1e, 0x04, 0x91, 0x50,
+    ]);
     let owner_account = AccountInfo {
         balance: U256::from(2000_000000u64), // 2000 TRX (enough for fee)
         nonce: 0,
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account.clone()).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account.clone())
+        .is_ok());
 
     // Build AssetIssueContract protobuf manually
     let mut contract_data = Vec::new();
@@ -200,31 +207,56 @@ fn test_asset_issue_contract_trc10_change_emission() {
     let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &context);
 
     // Assert success
-    assert!(result.is_ok(), "Asset issue should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Asset issue should succeed: {:?}",
+        result.err()
+    );
     let execution_result = result.unwrap();
 
     assert!(execution_result.success, "Execution should be successful");
     assert!(execution_result.error.is_none(), "Should have no error");
 
     // Verify Trc10Change emission (Phase 2) - This is the core test
-    assert_eq!(execution_result.trc10_changes.len(), 1, "Should have exactly 1 TRC-10 change");
+    assert_eq!(
+        execution_result.trc10_changes.len(),
+        1,
+        "Should have exactly 1 TRC-10 change"
+    );
 
     match &execution_result.trc10_changes[0] {
         tron_backend_execution::Trc10Change::AssetIssued(asset_issued) => {
-            assert_eq!(asset_issued.owner_address, owner_address, "Owner address should match");
+            assert_eq!(
+                asset_issued.owner_address, owner_address,
+                "Owner address should match"
+            );
             assert_eq!(asset_issued.name, name.to_vec(), "Name should match");
             assert_eq!(asset_issued.abbr, abbr.to_vec(), "Abbr should match");
-            assert_eq!(asset_issued.total_supply, 1000000, "Total supply should match");
+            assert_eq!(
+                asset_issued.total_supply, 1000000,
+                "Total supply should match"
+            );
             assert_eq!(asset_issued.precision, 6, "Precision should match");
             assert_eq!(asset_issued.trx_num, 1, "TRX num should match");
             assert_eq!(asset_issued.num, 1, "Num should match");
             assert_eq!(asset_issued.start_time, 1000000, "Start time should match");
             assert_eq!(asset_issued.end_time, 2000000, "End time should match");
-            assert_eq!(asset_issued.description, description.to_vec(), "Description should match");
+            assert_eq!(
+                asset_issued.description,
+                description.to_vec(),
+                "Description should match"
+            );
             assert_eq!(asset_issued.url, url.to_vec(), "URL should match");
             // token_id is now self-contained (populated by Rust) for executor-only parity
-            assert!(asset_issued.token_id.is_some(), "Token ID should be populated");
-            assert_eq!(asset_issued.token_id.as_ref().unwrap(), "1000001", "Token ID should be 1000001 (first allocation)");
+            assert!(
+                asset_issued.token_id.is_some(),
+                "Token ID should be populated"
+            );
+            assert_eq!(
+                asset_issued.token_id.as_ref().unwrap(),
+                "1000001",
+                "Token ID should be 1000001 (first allocation)"
+            );
         }
         _ => panic!("Expected AssetIssued change"),
     }
@@ -257,7 +289,9 @@ fn test_asset_issue_contract_disabled() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account.clone()).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account.clone())
+        .is_ok());
 
     // Build minimal AssetIssueContract
     let mut contract_data = Vec::new();
@@ -298,11 +332,17 @@ fn test_asset_issue_contract_disabled() {
 
     // Execute should fail
     let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &context);
-    assert!(result.is_err(), "Asset issue should fail when TRC-10 is disabled");
+    assert!(
+        result.is_err(),
+        "Asset issue should fail when TRC-10 is disabled"
+    );
 
     let error_message = result.err().unwrap();
-    assert!(error_message.contains("ASSET_ISSUE_CONTRACT execution is disabled"),
-            "Error should mention disabled TRC-10: {}", error_message);
+    assert!(
+        error_message.contains("ASSET_ISSUE_CONTRACT execution is disabled"),
+        "Error should mention disabled TRC-10: {}",
+        error_message
+    );
 }
 
 #[test]
@@ -332,7 +372,9 @@ fn test_asset_issue_contract_phase2_fields() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    assert!(storage_adapter.set_account(owner_address, owner_account.clone()).is_ok());
+    assert!(storage_adapter
+        .set_account(owner_address, owner_account.clone())
+        .is_ok());
 
     // Build AssetIssueContract with Phase 2 fields (22-25)
     let mut contract_data = Vec::new();
@@ -415,16 +457,30 @@ fn test_asset_issue_contract_phase2_fields() {
         transaction_id: None,
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &context).unwrap();
+    let result = service
+        .execute_asset_issue_contract(&mut storage_adapter, &transaction, &context)
+        .unwrap();
 
     // Verify Phase 2 fields in Trc10Change
     assert_eq!(result.trc10_changes.len(), 1, "Should have 1 TRC-10 change");
     match &result.trc10_changes[0] {
         tron_backend_execution::Trc10Change::AssetIssued(asset_issued) => {
-            assert_eq!(asset_issued.free_asset_net_limit, 12345, "free_asset_net_limit should match");
-            assert_eq!(asset_issued.public_free_asset_net_limit, 67890, "public_free_asset_net_limit should match");
-            assert_eq!(asset_issued.public_free_asset_net_usage, 0, "public_free_asset_net_usage should match");
-            assert_eq!(asset_issued.public_latest_free_net_time, 999000, "public_latest_free_net_time should match");
+            assert_eq!(
+                asset_issued.free_asset_net_limit, 12345,
+                "free_asset_net_limit should match"
+            );
+            assert_eq!(
+                asset_issued.public_free_asset_net_limit, 67890,
+                "public_free_asset_net_limit should match"
+            );
+            assert_eq!(
+                asset_issued.public_free_asset_net_usage, 0,
+                "public_free_asset_net_usage should match"
+            );
+            assert_eq!(
+                asset_issued.public_latest_free_net_time, 999000,
+                "public_latest_free_net_time should match"
+            );
         }
         _ => panic!("Expected AssetIssued change"),
     }
@@ -444,7 +500,9 @@ fn test_asset_issue_validate_fail_insufficient_balance_message() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     let contract_data = build_asset_issue_contract_data(
         owner_address,
@@ -472,7 +530,11 @@ fn test_asset_issue_validate_fail_insufficient_balance_message() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err());
     assert_eq!(result.err().unwrap(), "No enough balance for fee!");
 }
@@ -491,11 +553,18 @@ fn test_asset_issue_validate_fail_owner_already_issued() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
-    let mut proto_account = storage_adapter.get_account_proto(&owner_address).unwrap().unwrap();
+    let mut proto_account = storage_adapter
+        .get_account_proto(&owner_address)
+        .unwrap()
+        .unwrap();
     proto_account.asset_issued_name = b"ExistingToken".to_vec();
-    storage_adapter.put_account_proto(&owner_address, &proto_account).unwrap();
+    storage_adapter
+        .put_account_proto(&owner_address, &proto_account)
+        .unwrap();
 
     let contract_data = build_asset_issue_contract_data(
         owner_address,
@@ -523,7 +592,11 @@ fn test_asset_issue_validate_fail_owner_already_issued() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err());
     assert_eq!(result.err().unwrap(), "An account can only issue one asset");
 }
@@ -542,7 +615,9 @@ fn test_asset_issue_validate_fail_total_supply_zero() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     let contract_data = build_asset_issue_contract_data(
         owner_address,
@@ -570,7 +645,11 @@ fn test_asset_issue_validate_fail_total_supply_zero() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err());
     assert_eq!(result.err().unwrap(), "TotalSupply must greater than 0!");
 }
@@ -580,11 +659,9 @@ fn test_asset_issue_validate_fail_invalid_name_trx() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     // In java-tron, "assetName can't be trx" is enforced only when ALLOW_SAME_TOKEN_NAME != 0.
-    storage_engine.put(
-        "properties",
-        b" ALLOW_SAME_TOKEN_NAME",
-        &1i64.to_be_bytes(),
-    ).unwrap();
+    storage_engine
+        .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
+        .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_trc10_enabled();
 
@@ -595,7 +672,9 @@ fn test_asset_issue_validate_fail_invalid_name_trx() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     let contract_data = build_asset_issue_contract_data(
         owner_address,
@@ -623,7 +702,11 @@ fn test_asset_issue_validate_fail_invalid_name_trx() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err());
     assert_eq!(result.err().unwrap(), "assetName can't be trx");
 }
@@ -632,11 +715,13 @@ fn test_asset_issue_validate_fail_invalid_name_trx() {
 fn test_asset_issue_validate_fail_start_time_before_head_block_time() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
-    storage_engine.put(
-        "properties",
-        b"latest_block_header_timestamp",
-        &2_000_000i64.to_be_bytes(),
-    ).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"latest_block_header_timestamp",
+            &2_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_trc10_enabled();
 
@@ -647,7 +732,9 @@ fn test_asset_issue_validate_fail_start_time_before_head_block_time() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     let contract_data = build_asset_issue_contract_data(
         owner_address,
@@ -675,9 +762,16 @@ fn test_asset_issue_validate_fail_start_time_before_head_block_time() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err());
-    assert_eq!(result.err().unwrap(), "Start time should be greater than HeadBlockTime");
+    assert_eq!(
+        result.err().unwrap(),
+        "Start time should be greater than HeadBlockTime"
+    );
 }
 
 #[test]
@@ -694,7 +788,9 @@ fn test_asset_issue_validate_fail_end_time_not_greater_than_start_time() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     let contract_data = build_asset_issue_contract_data(
         owner_address,
@@ -722,9 +818,16 @@ fn test_asset_issue_validate_fail_end_time_not_greater_than_start_time() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err());
-    assert_eq!(result.err().unwrap(), "End time should be greater than start time");
+    assert_eq!(
+        result.err().unwrap(),
+        "End time should be greater than start time"
+    );
 }
 
 #[test]
@@ -777,7 +880,11 @@ fn test_asset_issue_validate_fail_owner_address_empty() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err());
     assert_eq!(result.err().unwrap(), "Invalid ownerAddress");
 }
@@ -839,9 +946,16 @@ fn test_asset_issue_validate_fail_frozen_supply_amount_zero() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err());
-    assert_eq!(result.err().unwrap(), "Frozen supply must be greater than 0!");
+    assert_eq!(
+        result.err().unwrap(),
+        "Frozen supply must be greater than 0!"
+    );
 }
 
 #[test]
@@ -901,7 +1015,11 @@ fn test_asset_issue_validate_fail_frozen_supply_days_out_of_range_message() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err());
     assert_eq!(
         result.err().unwrap(),
@@ -965,7 +1083,11 @@ fn test_asset_issue_validate_fail_wrong_address_prefix() {
     };
 
     // Should fail with "Invalid ownerAddress" because prefix doesn't match DB prefix
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err());
     assert_eq!(result.err().unwrap(), "Invalid ownerAddress");
 }
@@ -986,7 +1108,9 @@ fn test_asset_issue_token_id_populated_in_trc10_change() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     let contract_data = build_asset_issue_contract_data(
         owner_address,
@@ -1014,15 +1138,26 @@ fn test_asset_issue_token_id_populated_in_trc10_change() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_ok(), "Asset issue should succeed: {:?}", result.err());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_ok(),
+        "Asset issue should succeed: {:?}",
+        result.err()
+    );
     let execution_result = result.unwrap();
 
     // Verify token_id is populated (not None) - this is the key change for Task 3
     assert_eq!(execution_result.trc10_changes.len(), 1);
     match &execution_result.trc10_changes[0] {
         tron_backend_execution::Trc10Change::AssetIssued(asset_issued) => {
-            assert!(asset_issued.token_id.is_some(), "token_id should be Some (self-contained)");
+            assert!(
+                asset_issued.token_id.is_some(),
+                "token_id should be Some (self-contained)"
+            );
             // First token allocation should be 1000001 (TOKEN_ID_NUM defaults to 1000000, incremented by 1)
             assert_eq!(asset_issued.token_id.as_ref().unwrap(), "1000001");
         }
@@ -1043,19 +1178,34 @@ fn test_asset_issue_token_id_num_persisted_alongside_token_id() {
 
     // Verify initial TOKEN_ID_NUM (default is 1000000)
     let initial_token_id_num = storage_adapter.get_token_id_num().unwrap();
-    assert_eq!(initial_token_id_num, 1_000_000, "Initial TOKEN_ID_NUM should be 1000000");
+    assert_eq!(
+        initial_token_id_num, 1_000_000,
+        "Initial TOKEN_ID_NUM should be 1000000"
+    );
 
     // Issue first asset
     let owner1 = Address::from([0x11u8; 20]);
-    storage_adapter.set_account(owner1, AccountInfo {
-        balance: U256::from(2_000_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner1,
+            AccountInfo {
+                balance: U256::from(2_000_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     let contract_data1 = build_asset_issue_contract_data(
-        owner1, b"Token1", 1000, 1, 1, 1000000, 2000000, b"https://t1.example",
+        owner1,
+        b"Token1",
+        1000,
+        1,
+        1,
+        1000000,
+        2000000,
+        b"https://t1.example",
     );
     let tx1 = TronTransaction {
         from: owner1,
@@ -1072,31 +1222,54 @@ fn test_asset_issue_token_id_num_persisted_alongside_token_id() {
         },
     };
 
-    let result1 = service.execute_asset_issue_contract(&mut storage_adapter, &tx1, &new_test_context()).unwrap();
+    let result1 = service
+        .execute_asset_issue_contract(&mut storage_adapter, &tx1, &new_test_context())
+        .unwrap();
 
     // Verify token_id in change matches persisted TOKEN_ID_NUM
     let token_id1 = match &result1.trc10_changes[0] {
-        tron_backend_execution::Trc10Change::AssetIssued(issued) => issued.token_id.clone().unwrap(),
+        tron_backend_execution::Trc10Change::AssetIssued(issued) => {
+            issued.token_id.clone().unwrap()
+        }
         _ => panic!("Expected AssetIssued"),
     };
     assert_eq!(token_id1, "1000001");
 
     // KEY ASSERTION: TOKEN_ID_NUM must be persisted to storage
     let persisted_token_id_num = storage_adapter.get_token_id_num().unwrap();
-    assert_eq!(persisted_token_id_num, 1_000_001, "TOKEN_ID_NUM must be persisted after asset issue");
-    assert_eq!(token_id1, persisted_token_id_num.to_string(), "Emitted token_id must match persisted TOKEN_ID_NUM");
+    assert_eq!(
+        persisted_token_id_num, 1_000_001,
+        "TOKEN_ID_NUM must be persisted after asset issue"
+    );
+    assert_eq!(
+        token_id1,
+        persisted_token_id_num.to_string(),
+        "Emitted token_id must match persisted TOKEN_ID_NUM"
+    );
 
     // Issue second asset (different owner) to verify incrementing works
     let owner2 = Address::from([0x22u8; 20]);
-    storage_adapter.set_account(owner2, AccountInfo {
-        balance: U256::from(2_000_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner2,
+            AccountInfo {
+                balance: U256::from(2_000_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     let contract_data2 = build_asset_issue_contract_data(
-        owner2, b"Token2", 2000, 1, 1, 1000000, 2000000, b"https://t2.example",
+        owner2,
+        b"Token2",
+        2000,
+        1,
+        1,
+        1000000,
+        2000000,
+        b"https://t2.example",
     );
     let tx2 = TronTransaction {
         from: owner2,
@@ -1113,16 +1286,26 @@ fn test_asset_issue_token_id_num_persisted_alongside_token_id() {
         },
     };
 
-    let result2 = service.execute_asset_issue_contract(&mut storage_adapter, &tx2, &new_test_context()).unwrap();
+    let result2 = service
+        .execute_asset_issue_contract(&mut storage_adapter, &tx2, &new_test_context())
+        .unwrap();
 
     let token_id2 = match &result2.trc10_changes[0] {
-        tron_backend_execution::Trc10Change::AssetIssued(issued) => issued.token_id.clone().unwrap(),
+        tron_backend_execution::Trc10Change::AssetIssued(issued) => {
+            issued.token_id.clone().unwrap()
+        }
         _ => panic!("Expected AssetIssued"),
     };
-    assert_eq!(token_id2, "1000002", "Second token should get incremented ID");
+    assert_eq!(
+        token_id2, "1000002",
+        "Second token should get incremented ID"
+    );
 
     let final_token_id_num = storage_adapter.get_token_id_num().unwrap();
-    assert_eq!(final_token_id_num, 1_000_002, "TOKEN_ID_NUM must be incremented after second asset issue");
+    assert_eq!(
+        final_token_id_num, 1_000_002,
+        "TOKEN_ID_NUM must be incremented after second asset issue"
+    );
 }
 
 // =============================================================================
@@ -1191,8 +1374,15 @@ fn test_asset_issue_malformed_utf8_name_invalid_asset_name() {
     };
 
     // Should fail with "Invalid assetName" because non-alphanumeric bytes don't pass validation
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_err(), "Malformed UTF-8 name should fail validation");
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_err(),
+        "Malformed UTF-8 name should fail validation"
+    );
     assert_eq!(result.err().unwrap(), "Invalid assetName");
 }
 
@@ -1254,7 +1444,11 @@ fn test_asset_issue_name_with_control_characters_fails() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Name with control characters should fail");
     assert_eq!(result.err().unwrap(), "Invalid assetName");
 }
@@ -1317,8 +1511,15 @@ fn test_asset_issue_high_ascii_bytes_in_name_fails() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_err(), "Name with high ASCII/UTF-8 bytes should fail");
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_err(),
+        "Name with high ASCII/UTF-8 bytes should fail"
+    );
     assert_eq!(result.err().unwrap(), "Invalid assetName");
 }
 
@@ -1402,8 +1603,16 @@ fn test_asset_issue_uses_contract_parameter_when_data_empty() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_ok(), "Should succeed using contract_parameter when data is empty: {:?}", result.err());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_ok(),
+        "Should succeed using contract_parameter when data is empty: {:?}",
+        result.err()
+    );
 
     let exec_result = result.unwrap();
     assert!(exec_result.success);
@@ -1440,12 +1649,17 @@ fn test_asset_issue_prefers_contract_parameter_over_data() {
     };
 
     // Set up owner account
-    storage_adapter.set_account(owner, AccountInfo {
-        balance: U256::from(2_000_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner,
+            AccountInfo {
+                balance: U256::from(2_000_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     // Build contract bytes for contract_parameter (the "real" source)
     let contract_param = AssetIssueContractData {
@@ -1519,7 +1733,11 @@ fn test_asset_issue_prefers_contract_parameter_over_data() {
         },
     };
 
-    let result = service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_ok(), "Should succeed: {:?}", result.err());
 
     let exec_result = result.unwrap();
@@ -1528,10 +1746,15 @@ fn test_asset_issue_prefers_contract_parameter_over_data() {
     match &exec_result.trc10_changes[0] {
         tron_backend_execution::Trc10Change::AssetIssued(issued) => {
             // Verify that contract_parameter.value was used (name = "ParamSource")
-            assert_eq!(issued.name, b"ParamSource".to_vec(),
-                "contract_parameter should take precedence over transaction.data");
-            assert_eq!(issued.total_supply, 1000,
-                "total_supply should come from contract_parameter (1000, not 2000)");
+            assert_eq!(
+                issued.name,
+                b"ParamSource".to_vec(),
+                "contract_parameter should take precedence over transaction.data"
+            );
+            assert_eq!(
+                issued.total_supply, 1000,
+                "total_supply should come from contract_parameter (1000, not 2000)"
+            );
         }
         _ => panic!("Expected AssetIssued"),
     }
@@ -1555,8 +1778,15 @@ fn test_strict_get_asset_issue_fee_missing() {
 
     // Strict getter returns error
     let strict_result = storage_adapter.get_asset_issue_fee_strict();
-    assert!(strict_result.is_err(), "Strict should return error when missing");
-    assert!(strict_result.err().unwrap().to_string().contains("not found ASSET_ISSUE_FEE"));
+    assert!(
+        strict_result.is_err(),
+        "Strict should return error when missing"
+    );
+    assert!(strict_result
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("not found ASSET_ISSUE_FEE"));
 }
 
 #[test]
@@ -1573,8 +1803,15 @@ fn test_strict_get_token_id_num_missing() {
 
     // Strict getter returns error
     let strict_result = storage_adapter.get_token_id_num_strict();
-    assert!(strict_result.is_err(), "Strict should return error when missing");
-    assert!(strict_result.err().unwrap().to_string().contains("not found TOKEN_ID_NUM"));
+    assert!(
+        strict_result.is_err(),
+        "Strict should return error when missing"
+    );
+    assert!(strict_result
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("not found TOKEN_ID_NUM"));
 }
 
 #[test]
@@ -1591,8 +1828,15 @@ fn test_strict_get_allow_same_token_name_missing() {
 
     // Strict getter returns error
     let strict_result = storage_adapter.get_allow_same_token_name_strict();
-    assert!(strict_result.is_err(), "Strict should return error when missing");
-    assert!(strict_result.err().unwrap().to_string().contains("not found ALLOW_SAME_TOKEN_NAME"));
+    assert!(
+        strict_result.is_err(),
+        "Strict should return error when missing"
+    );
+    assert!(strict_result
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("not found ALLOW_SAME_TOKEN_NAME"));
 }
 
 #[test]
@@ -1609,8 +1853,15 @@ fn test_strict_get_one_day_net_limit_missing() {
 
     // Strict getter returns error
     let strict_result = storage_adapter.get_one_day_net_limit_strict();
-    assert!(strict_result.is_err(), "Strict should return error when missing");
-    assert!(strict_result.err().unwrap().to_string().contains("not found ONE_DAY_NET_LIMIT"));
+    assert!(
+        strict_result.is_err(),
+        "Strict should return error when missing"
+    );
+    assert!(strict_result
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("not found ONE_DAY_NET_LIMIT"));
 }
 
 #[test]
@@ -1629,15 +1880,27 @@ fn test_strict_frozen_supply_properties_missing() {
     // Strict getters return errors
     let max_num_result = storage_adapter.get_max_frozen_supply_number_strict();
     assert!(max_num_result.is_err());
-    assert!(max_num_result.err().unwrap().to_string().contains("not found MAX_FROZEN_SUPPLY_NUMBER"));
+    assert!(max_num_result
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("not found MAX_FROZEN_SUPPLY_NUMBER"));
 
     let max_time_result = storage_adapter.get_max_frozen_supply_time_strict();
     assert!(max_time_result.is_err());
-    assert!(max_time_result.err().unwrap().to_string().contains("not found MAX_FROZEN_SUPPLY_TIME"));
+    assert!(max_time_result
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("not found MAX_FROZEN_SUPPLY_TIME"));
 
     let min_time_result = storage_adapter.get_min_frozen_supply_time_strict();
     assert!(min_time_result.is_err());
-    assert!(min_time_result.err().unwrap().to_string().contains("not found MIN_FROZEN_SUPPLY_TIME"));
+    assert!(min_time_result
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("not found MIN_FROZEN_SUPPLY_TIME"));
 }
 
 #[test]
@@ -1647,22 +1910,75 @@ fn test_strict_getters_succeed_when_keys_present() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
 
     // Seed all the properties
-    storage_engine.put("properties", b"ASSET_ISSUE_FEE", &2048000000u64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"TOKEN_ID_NUM", &2_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"ONE_DAY_NET_LIMIT", &10_000_000_000i64.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"MAX_FROZEN_SUPPLY_NUMBER", &20i32.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"MAX_FROZEN_SUPPLY_TIME", &5000i32.to_be_bytes()).unwrap();
-    storage_engine.put("properties", b"MIN_FROZEN_SUPPLY_TIME", &2i32.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ASSET_ISSUE_FEE",
+            &2048000000u64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put("properties", b" ALLOW_SAME_TOKEN_NAME", &1i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put("properties", b"TOKEN_ID_NUM", &2_000_000i64.to_be_bytes())
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"ONE_DAY_NET_LIMIT",
+            &10_000_000_000i64.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"MAX_FROZEN_SUPPLY_NUMBER",
+            &20i32.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"MAX_FROZEN_SUPPLY_TIME",
+            &5000i32.to_be_bytes(),
+        )
+        .unwrap();
+    storage_engine
+        .put("properties", b"MIN_FROZEN_SUPPLY_TIME", &2i32.to_be_bytes())
+        .unwrap();
 
     let storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
 
     // All strict getters should succeed and return the seeded values
-    assert_eq!(storage_adapter.get_asset_issue_fee_strict().unwrap(), 2048000000);
-    assert_eq!(storage_adapter.get_allow_same_token_name_strict().unwrap(), 1);
-    assert_eq!(storage_adapter.get_token_id_num_strict().unwrap(), 2_000_000);
-    assert_eq!(storage_adapter.get_one_day_net_limit_strict().unwrap(), 10_000_000_000);
-    assert_eq!(storage_adapter.get_max_frozen_supply_number_strict().unwrap(), 20);
-    assert_eq!(storage_adapter.get_max_frozen_supply_time_strict().unwrap(), 5000);
-    assert_eq!(storage_adapter.get_min_frozen_supply_time_strict().unwrap(), 2);
+    assert_eq!(
+        storage_adapter.get_asset_issue_fee_strict().unwrap(),
+        2048000000
+    );
+    assert_eq!(
+        storage_adapter.get_allow_same_token_name_strict().unwrap(),
+        1
+    );
+    assert_eq!(
+        storage_adapter.get_token_id_num_strict().unwrap(),
+        2_000_000
+    );
+    assert_eq!(
+        storage_adapter.get_one_day_net_limit_strict().unwrap(),
+        10_000_000_000
+    );
+    assert_eq!(
+        storage_adapter
+            .get_max_frozen_supply_number_strict()
+            .unwrap(),
+        20
+    );
+    assert_eq!(
+        storage_adapter.get_max_frozen_supply_time_strict().unwrap(),
+        5000
+    );
+    assert_eq!(
+        storage_adapter.get_min_frozen_supply_time_strict().unwrap(),
+        2
+    );
 }

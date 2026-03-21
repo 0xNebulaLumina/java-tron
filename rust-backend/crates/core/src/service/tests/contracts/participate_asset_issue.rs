@@ -8,10 +8,12 @@
 //! - self-participation rejection
 
 use super::super::super::*;
-use super::common::{encode_varint, new_test_context, seed_dynamic_properties, make_from_raw};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TronExecutionContext, TxMetadata};
-use revm_primitives::{Address, Bytes, U256, AccountInfo};
-use tron_backend_common::{ModuleManager, ExecutionConfig, RemoteExecutionConfig};
+use super::common::{encode_varint, make_from_raw, new_test_context, seed_dynamic_properties};
+use revm_primitives::{AccountInfo, Address, Bytes, U256};
+use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
+use tron_backend_execution::{
+    EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata,
+};
 use tron_backend_storage::StorageEngine;
 
 fn new_test_service_with_participate_enabled() -> BackendService {
@@ -89,7 +91,7 @@ fn test_participate_validate_fail_owner_address_empty() {
 
     // Build contract with EMPTY owner_address
     let contract_data = build_participate_contract_data(
-        &[],  // Empty owner_address
+        &[], // Empty owner_address
         &make_tron_address(&issuer),
         b"TEST",
         100,
@@ -104,16 +106,26 @@ fn test_participate_validate_fail_owner_address_empty() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Should fail with empty owner_address");
-    assert_eq!(result.err().unwrap(), "Invalid ownerAddress", "Error message should match Java parity");
+    assert_eq!(
+        result.err().unwrap(),
+        "Invalid ownerAddress",
+        "Error message should match Java parity"
+    );
 }
 
 #[test]
@@ -129,7 +141,7 @@ fn test_participate_validate_fail_owner_address_too_short() {
 
     // Build contract with 20-byte owner_address (missing prefix)
     let contract_data = build_participate_contract_data(
-        owner.as_slice(),  // Only 20 bytes, missing 0x41 prefix
+        owner.as_slice(), // Only 20 bytes, missing 0x41 prefix
         &make_tron_address(&issuer),
         b"TEST",
         100,
@@ -144,16 +156,26 @@ fn test_participate_validate_fail_owner_address_too_short() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Should fail with 20-byte owner_address");
-    assert_eq!(result.err().unwrap(), "Invalid ownerAddress", "Error message should match Java parity");
+    assert_eq!(
+        result.err().unwrap(),
+        "Invalid ownerAddress",
+        "Error message should match Java parity"
+    );
 }
 
 #[test]
@@ -172,7 +194,7 @@ fn test_participate_validate_fail_owner_address_wrong_prefix() {
     wrong_prefix_owner.extend_from_slice(owner.as_slice());
 
     let contract_data = build_participate_contract_data(
-        &wrong_prefix_owner,  // Wrong prefix
+        &wrong_prefix_owner, // Wrong prefix
         &make_tron_address(&issuer),
         b"TEST",
         100,
@@ -187,16 +209,29 @@ fn test_participate_validate_fail_owner_address_wrong_prefix() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_err(), "Should fail with wrong prefix owner_address");
-    assert_eq!(result.err().unwrap(), "Invalid ownerAddress", "Error message should match Java parity");
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_err(),
+        "Should fail with wrong prefix owner_address"
+    );
+    assert_eq!(
+        result.err().unwrap(),
+        "Invalid ownerAddress",
+        "Error message should match Java parity"
+    );
 }
 
 // =============================================================================
@@ -217,7 +252,7 @@ fn test_participate_validate_fail_to_address_empty() {
     // Build contract with EMPTY to_address
     let contract_data = build_participate_contract_data(
         &make_tron_address(&owner),
-        &[],  // Empty to_address
+        &[], // Empty to_address
         b"TEST",
         100,
     );
@@ -231,16 +266,26 @@ fn test_participate_validate_fail_to_address_empty() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Should fail with empty to_address");
-    assert_eq!(result.err().unwrap(), "Invalid toAddress", "Error message should match Java parity");
+    assert_eq!(
+        result.err().unwrap(),
+        "Invalid toAddress",
+        "Error message should match Java parity"
+    );
 }
 
 #[test]
@@ -257,7 +302,7 @@ fn test_participate_validate_fail_to_address_too_short() {
     // Build contract with 20-byte to_address (missing prefix)
     let contract_data = build_participate_contract_data(
         &make_tron_address(&owner),
-        issuer.as_slice(),  // Only 20 bytes, missing 0x41 prefix
+        issuer.as_slice(), // Only 20 bytes, missing 0x41 prefix
         b"TEST",
         100,
     );
@@ -271,16 +316,26 @@ fn test_participate_validate_fail_to_address_too_short() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Should fail with 20-byte to_address");
-    assert_eq!(result.err().unwrap(), "Invalid toAddress", "Error message should match Java parity");
+    assert_eq!(
+        result.err().unwrap(),
+        "Invalid toAddress",
+        "Error message should match Java parity"
+    );
 }
 
 #[test]
@@ -300,7 +355,7 @@ fn test_participate_validate_fail_to_address_wrong_prefix() {
 
     let contract_data = build_participate_contract_data(
         &make_tron_address(&owner),
-        &wrong_prefix_to,  // Wrong prefix
+        &wrong_prefix_to, // Wrong prefix
         b"TEST",
         100,
     );
@@ -314,16 +369,26 @@ fn test_participate_validate_fail_to_address_wrong_prefix() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Should fail with wrong prefix to_address");
-    assert_eq!(result.err().unwrap(), "Invalid toAddress", "Error message should match Java parity");
+    assert_eq!(
+        result.err().unwrap(),
+        "Invalid toAddress",
+        "Error message should match Java parity"
+    );
 }
 
 // =============================================================================
@@ -344,18 +409,23 @@ fn test_participate_validate_fail_empty_asset_name_message_parity() {
     let issuer = Address::from([2u8; 20]);
 
     // Set up owner account with sufficient balance
-    storage_adapter.set_account(owner, AccountInfo {
-        balance: U256::from(1_000_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner,
+            AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     // Build contract with EMPTY asset_name
     let contract_data = build_participate_contract_data(
         &make_tron_address(&owner),
         &make_tron_address(&issuer),
-        &[],  // Empty asset_name
+        &[], // Empty asset_name
         100,
     );
 
@@ -368,18 +438,27 @@ fn test_participate_validate_fail_empty_asset_name_message_parity() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Should fail with empty asset_name");
     // Java parity: ByteArray.toStr([]) == "null"
-    assert_eq!(result.err().unwrap(), "No asset named null",
-        "Error message should use 'null' for empty asset_name (Java parity)");
+    assert_eq!(
+        result.err().unwrap(),
+        "No asset named null",
+        "Error message should use 'null' for empty asset_name (Java parity)"
+    );
 }
 
 // =============================================================================
@@ -401,7 +480,7 @@ fn test_participate_validate_fail_amount_zero() {
         &make_tron_address(&owner),
         &make_tron_address(&issuer),
         b"TEST",
-        0,  // Zero amount
+        0, // Zero amount
     );
 
     let transaction = TronTransaction {
@@ -413,14 +492,20 @@ fn test_participate_validate_fail_amount_zero() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Should fail with zero amount");
     assert_eq!(result.err().unwrap(), "Amount must greater than 0!");
 }
@@ -438,7 +523,7 @@ fn test_participate_validate_fail_self_participation() {
     // Build contract where owner == to_address (self-participation)
     let contract_data = build_participate_contract_data(
         &make_tron_address(&owner),
-        &make_tron_address(&owner),  // Same as owner
+        &make_tron_address(&owner), // Same as owner
         b"TEST",
         100,
     );
@@ -452,16 +537,25 @@ fn test_participate_validate_fail_self_participation() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Should fail with self-participation");
-    assert_eq!(result.err().unwrap(), "Cannot participate asset Issue yourself !");
+    assert_eq!(
+        result.err().unwrap(),
+        "Cannot participate asset Issue yourself !"
+    );
 }
 
 #[test]
@@ -492,15 +586,24 @@ fn test_participate_validate_fail_owner_account_not_exist() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
-    assert!(result.is_err(), "Should fail when owner account does not exist");
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
+    assert!(
+        result.is_err(),
+        "Should fail when owner account does not exist"
+    );
     assert_eq!(result.err().unwrap(), "Account does not exist!");
 }
 
@@ -516,18 +619,23 @@ fn test_participate_validate_fail_insufficient_balance() {
     let issuer = Address::from([2u8; 20]);
 
     // Set up owner account with insufficient balance
-    storage_adapter.set_account(owner, AccountInfo {
-        balance: U256::from(50u64),  // Only 50, but trying to spend 100
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner,
+            AccountInfo {
+                balance: U256::from(50u64), // Only 50, but trying to spend 100
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     let contract_data = build_participate_contract_data(
         &make_tron_address(&owner),
         &make_tron_address(&issuer),
         b"TEST",
-        100,  // More than balance
+        100, // More than balance
     );
 
     let transaction = TronTransaction {
@@ -539,14 +647,20 @@ fn test_participate_validate_fail_insufficient_balance() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Should fail with insufficient balance");
     assert_eq!(result.err().unwrap(), "No enough balance !");
 }
@@ -563,12 +677,17 @@ fn test_participate_validate_fail_asset_not_exist() {
     let issuer = Address::from([2u8; 20]);
 
     // Set up owner account with sufficient balance
-    storage_adapter.set_account(owner, AccountInfo {
-        balance: U256::from(1_000_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner,
+            AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     // Note: asset "NONEXISTENT" is NOT created
 
@@ -588,14 +707,20 @@ fn test_participate_validate_fail_asset_not_exist() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_err(), "Should fail when asset does not exist");
     assert_eq!(result.err().unwrap(), "No asset named NONEXISTENT");
 }
@@ -610,7 +735,13 @@ fn test_participate_happy_path() {
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
     seed_dynamic_properties(&storage_engine);
     // Set timestamp to be within asset's time window
-    storage_engine.put("properties", b"latest_block_header_timestamp", &1_500_000i64.to_be_bytes()).unwrap();
+    storage_engine
+        .put(
+            "properties",
+            b"latest_block_header_timestamp",
+            &1_500_000i64.to_be_bytes(),
+        )
+        .unwrap();
     let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
     let service = new_test_service_with_participate_enabled();
 
@@ -618,42 +749,56 @@ fn test_participate_happy_path() {
     let issuer = Address::from([2u8; 20]);
 
     // Set up owner account with sufficient balance
-    storage_adapter.set_account(owner, AccountInfo {
-        balance: U256::from(1_000_000_000u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            owner,
+            AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     // Set up issuer account
-    storage_adapter.set_account(issuer, AccountInfo {
-        balance: U256::from(0u64),
-        nonce: 0,
-        code_hash: revm::primitives::B256::ZERO,
-        code: None,
-    }).unwrap();
+    storage_adapter
+        .set_account(
+            issuer,
+            AccountInfo {
+                balance: U256::from(0u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
 
     // Give issuer tokens
     let mut issuer_proto = storage_adapter.get_account_proto(&issuer).unwrap().unwrap();
     issuer_proto.asset.insert("TEST".to_string(), 10_000);
     issuer_proto.asset_v2.insert("1000001".to_string(), 10_000);
-    storage_adapter.put_account_proto(&issuer, &issuer_proto).unwrap();
+    storage_adapter
+        .put_account_proto(&issuer, &issuer_proto)
+        .unwrap();
 
     // Create asset issue record
     let mut asset_issue = tron_backend_execution::protocol::AssetIssueContractData::default();
     asset_issue.id = "1000001".to_string();
     asset_issue.owner_address = make_tron_address(&issuer);
     asset_issue.trx_num = 1;
-    asset_issue.num = 10;  // 10 tokens per TRX
+    asset_issue.num = 10; // 10 tokens per TRX
     asset_issue.start_time = 1_000_000;
     asset_issue.end_time = 2_000_000;
-    storage_adapter.put_asset_issue(b"TEST", &asset_issue, false).unwrap();
+    storage_adapter
+        .put_asset_issue(b"TEST", &asset_issue, false)
+        .unwrap();
 
     let contract_data = build_participate_contract_data(
         &make_tron_address(&owner),
         &make_tron_address(&issuer),
         b"TEST",
-        100,  // Spend 100 TRX
+        100, // Spend 100 TRX
     );
 
     let transaction = TronTransaction {
@@ -665,14 +810,20 @@ fn test_participate_happy_path() {
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
-            contract_type: Some(tron_backend_execution::TronContractType::ParticipateAssetIssueContract),
+            contract_type: Some(
+                tron_backend_execution::TronContractType::ParticipateAssetIssueContract,
+            ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
             ..Default::default()
         },
     };
 
-    let result = service.execute_participate_asset_issue_contract(&mut storage_adapter, &transaction, &new_test_context());
+    let result = service.execute_participate_asset_issue_contract(
+        &mut storage_adapter,
+        &transaction,
+        &new_test_context(),
+    );
     assert!(result.is_ok(), "Should succeed: {:?}", result.err());
 
     let exec_result = result.unwrap();
@@ -683,9 +834,18 @@ fn test_participate_happy_path() {
     assert_eq!(exec_result.trc10_changes.len(), 1);
     match &exec_result.trc10_changes[0] {
         tron_backend_execution::Trc10Change::AssetTransferred(transferred) => {
-            assert_eq!(transferred.owner_address, issuer, "Token sender should be issuer");
-            assert_eq!(transferred.to_address, owner, "Token receiver should be participant");
-            assert_eq!(transferred.amount, 1000, "Should receive 10 tokens per TRX * 100 TRX = 1000 tokens");
+            assert_eq!(
+                transferred.owner_address, issuer,
+                "Token sender should be issuer"
+            );
+            assert_eq!(
+                transferred.to_address, owner,
+                "Token receiver should be participant"
+            );
+            assert_eq!(
+                transferred.amount, 1000,
+                "Should receive 10 tokens per TRX * 100 TRX = 1000 tokens"
+            );
         }
         _ => panic!("Expected AssetTransferred change"),
     }

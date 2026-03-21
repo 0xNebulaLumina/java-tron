@@ -182,7 +182,10 @@ mod tests {
     fn test_camel_case_names_are_correct() {
         // These are critical - case must match exactly
         assert_eq!(delegation::DELEGATED_RESOURCE, "DelegatedResource");
-        assert_eq!(delegation::DELEGATED_RESOURCE_ACCOUNT_INDEX, "DelegatedResourceAccountIndex");
+        assert_eq!(
+            delegation::DELEGATED_RESOURCE_ACCOUNT_INDEX,
+            "DelegatedResourceAccountIndex"
+        );
     }
 
     #[test]
@@ -191,7 +194,10 @@ mod tests {
         assert_eq!(market::MARKET_ACCOUNT, "market_account");
         assert_eq!(market::MARKET_ORDER, "market_order");
         assert_eq!(market::MARKET_PAIR_TO_PRICE, "market_pair_to_price");
-        assert_eq!(market::MARKET_PAIR_PRICE_TO_ORDER, "market_pair_price_to_order");
+        assert_eq!(
+            market::MARKET_PAIR_PRICE_TO_ORDER,
+            "market_pair_price_to_order"
+        );
     }
 
     #[test]

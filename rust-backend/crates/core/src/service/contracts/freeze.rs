@@ -4,11 +4,11 @@
 use super::super::BackendService;
 use super::proto::{read_varint, TransactionResultBuilder};
 use revm_primitives::{Address, Bytes, U256};
+use tracing::{debug, error, info, warn};
 use tron_backend_execution::{
     EvmStateStore, TronExecutionContext, TronExecutionResult, TronStateChange, TronTransaction,
     VotesRecord,
 };
-use tracing::{debug, info, error, warn};
 
 /// FreezeBalance contract parameters
 #[derive(Debug, Clone)]
@@ -84,11 +84,13 @@ impl BackendService {
         // Parse freeze parameters from transaction data
         let params = Self::parse_freeze_balance_params(&transaction.data)?;
 
-        info!("FreezeBalance owner={} amount={} resource={:?} duration={}",
-              tron_backend_common::to_tron_address(&transaction.from),
-              params.frozen_balance,
-              params.resource,
-              params.frozen_duration);
+        info!(
+            "FreezeBalance owner={} amount={} resource={:?} duration={}",
+            tron_backend_common::to_tron_address(&transaction.from),
+            params.frozen_balance,
+            params.resource,
+            params.frozen_duration
+        );
 
         // === Validation (match java-tron FreezeBalanceActuator#validate) ===
         let prefix = storage_adapter.address_prefix();
@@ -135,7 +137,8 @@ impl BackendService {
             .map_err(|e| format!("Failed to get MAX_FROZEN_TIME: {}", e))?;
 
         // Java gating: CommonParameter.checkFrozenTime defaults to 1 (enabled).
-        if !(params.frozen_duration >= min_frozen_time && params.frozen_duration <= max_frozen_time) {
+        if !(params.frozen_duration >= min_frozen_time && params.frozen_duration <= max_frozen_time)
+        {
             return Err(format!(
                 "frozenDuration must be less than {} days and more than {} days",
                 max_frozen_time, min_frozen_time
@@ -144,27 +147,37 @@ impl BackendService {
 
         // ResourceCode validation.
         // Java reference: FreezeBalanceActuator.validate() switch (contract.getResource())
-        let support_allow_new_resource_model = storage_adapter
-            .support_allow_new_resource_model()
-            .map_err(|e| format!("Failed to read ALLOW_NEW_RESOURCE_MODEL: {}", e))?;
+        let support_allow_new_resource_model =
+            storage_adapter
+                .support_allow_new_resource_model()
+                .map_err(|e| format!("Failed to read ALLOW_NEW_RESOURCE_MODEL: {}", e))?;
         match params.resource {
             FreezeResource::Bandwidth | FreezeResource::Energy => {}
             FreezeResource::TronPower => {
                 if support_allow_new_resource_model {
                     if !params.receiver_address.is_empty() {
-                        return Err("TRON_POWER is not allowed to delegate to other accounts.".to_string());
+                        return Err(
+                            "TRON_POWER is not allowed to delegate to other accounts.".to_string()
+                        );
                     }
                 } else {
-                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
+                    return Err(
+                        "ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string()
+                    );
                 }
             }
             FreezeResource::Unknown => {
                 // Unknown resource codes: match Java's default case exactly.
                 // Java uses fullwidth comma (U+3001 "、") in error messages.
                 if support_allow_new_resource_model {
-                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY、TRON_POWER]".to_string());
+                    return Err(
+                        "ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY、TRON_POWER]"
+                            .to_string(),
+                    );
                 } else {
-                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
+                    return Err(
+                        "ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string()
+                    );
                 }
             }
         }
@@ -241,9 +254,7 @@ impl BackendService {
 
         // Determine whether to use the new reward algorithm for weight deltas.
         // Java reference: DynamicPropertiesStore.allowNewReward() -> ALLOW_NEW_REWARD == 1
-        let allow_new_reward = storage_adapter
-            .allow_new_reward()
-            .unwrap_or(false);
+        let allow_new_reward = storage_adapter.allow_new_reward().unwrap_or(false);
 
         // Java: initialize oldTronPower when the new resource model is enabled and oldTronPower==0.
         // This must be done BEFORE applying the freeze mutation.
@@ -260,9 +271,11 @@ impl BackendService {
                     .try_into()
                     .map_err(|_| "tron power exceeds i64::MAX".to_string())?
             };
-            debug!("Initialized oldTronPower to {} for owner={}",
-                   owner_proto.old_tron_power,
-                   tron_backend_common::to_tron_address(&transaction.from));
+            debug!(
+                "Initialized oldTronPower to {} for owner={}",
+                owner_proto.old_tron_power,
+                tron_backend_common::to_tron_address(&transaction.from)
+            );
         }
 
         // Check if delegate optimization is enabled for index updates.
@@ -308,10 +321,14 @@ impl BackendService {
                         // Convert any legacy index entries for both addresses first
                         storage_adapter
                             .convert_delegated_resource_account_index_v1(&transaction.from)
-                            .map_err(|e| format!("Failed to convert owner delegation index: {}", e))?;
+                            .map_err(|e| {
+                                format!("Failed to convert owner delegation index: {}", e)
+                            })?;
                         storage_adapter
                             .convert_delegated_resource_account_index_v1(&receiver)
-                            .map_err(|e| format!("Failed to convert receiver delegation index: {}", e))?;
+                            .map_err(|e| {
+                                format!("Failed to convert receiver delegation index: {}", e)
+                            })?;
                         // Write optimized prefix keys
                         storage_adapter
                             .delegate_v1_optimized(&transaction.from, &receiver, now_ms)
@@ -319,7 +336,12 @@ impl BackendService {
                     } else {
                         storage_adapter
                             .delegate_resource_account_index_v1(&transaction.from, &receiver)
-                            .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e))?;
+                            .map_err(|e| {
+                                format!(
+                                    "Failed to update DelegatedResourceAccountIndex (v1): {}",
+                                    e
+                                )
+                            })?;
                     }
 
                     // Update owner delegated balance.
@@ -329,13 +351,16 @@ impl BackendService {
                         .ok_or("Delegated frozen balance overflow")?;
 
                     // Update receiver acquired delegated balance.
-                    let old_weight = new_receiver_proto.acquired_delegated_frozen_balance_for_bandwidth
-                        / super::super::TRX_PRECISION as i64;
-                    new_receiver_proto.acquired_delegated_frozen_balance_for_bandwidth = new_receiver_proto
+                    let old_weight = new_receiver_proto
                         .acquired_delegated_frozen_balance_for_bandwidth
-                        .checked_add(params.frozen_balance)
-                        .ok_or("Acquired delegated frozen balance overflow")?;
-                    let new_weight = new_receiver_proto.acquired_delegated_frozen_balance_for_bandwidth
+                        / super::super::TRX_PRECISION as i64;
+                    new_receiver_proto.acquired_delegated_frozen_balance_for_bandwidth =
+                        new_receiver_proto
+                            .acquired_delegated_frozen_balance_for_bandwidth
+                            .checked_add(params.frozen_balance)
+                            .ok_or("Acquired delegated frozen balance overflow")?;
+                    let new_weight = new_receiver_proto
+                        .acquired_delegated_frozen_balance_for_bandwidth
                         / super::super::TRX_PRECISION as i64;
                     increment = new_weight - old_weight;
 
@@ -363,27 +388,38 @@ impl BackendService {
                     if support_delegate_optimization {
                         storage_adapter
                             .convert_delegated_resource_account_index_v1(&transaction.from)
-                            .map_err(|e| format!("Failed to convert owner delegation index: {}", e))?;
+                            .map_err(|e| {
+                                format!("Failed to convert owner delegation index: {}", e)
+                            })?;
                         storage_adapter
                             .convert_delegated_resource_account_index_v1(&receiver)
-                            .map_err(|e| format!("Failed to convert receiver delegation index: {}", e))?;
+                            .map_err(|e| {
+                                format!("Failed to convert receiver delegation index: {}", e)
+                            })?;
                         storage_adapter
                             .delegate_v1_optimized(&transaction.from, &receiver, now_ms)
                             .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1 optimized): {}", e))?;
                     } else {
                         storage_adapter
                             .delegate_resource_account_index_v1(&transaction.from, &receiver)
-                            .map_err(|e| format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e))?;
+                            .map_err(|e| {
+                                format!(
+                                    "Failed to update DelegatedResourceAccountIndex (v1): {}",
+                                    e
+                                )
+                            })?;
                     }
 
                     // Ensure AccountResource exists on both accounts.
                     if new_owner_proto.account_resource.is_none() {
-                        new_owner_proto.account_resource =
-                            Some(tron_backend_execution::protocol::account::AccountResource::default());
+                        new_owner_proto.account_resource = Some(
+                            tron_backend_execution::protocol::account::AccountResource::default(),
+                        );
                     }
                     if new_receiver_proto.account_resource.is_none() {
-                        new_receiver_proto.account_resource =
-                            Some(tron_backend_execution::protocol::account::AccountResource::default());
+                        new_receiver_proto.account_resource = Some(
+                            tron_backend_execution::protocol::account::AccountResource::default(),
+                        );
                     }
 
                     // Update owner delegated balance for energy.
@@ -455,10 +491,11 @@ impl BackendService {
                     let new_frozen = old_frozen
                         .checked_add(params.frozen_balance)
                         .ok_or("Frozen balance overflow")?;
-                    new_owner_proto.frozen = vec![tron_backend_execution::protocol::account::Frozen {
-                        frozen_balance: new_frozen,
-                        expire_time: expiration_timestamp,
-                    }];
+                    new_owner_proto.frozen =
+                        vec![tron_backend_execution::protocol::account::Frozen {
+                            frozen_balance: new_frozen,
+                            expire_time: expiration_timestamp,
+                        }];
 
                     let new_weight = new_frozen / super::super::TRX_PRECISION as i64;
                     let increment = new_weight - old_weight;
@@ -474,8 +511,9 @@ impl BackendService {
                 }
                 FreezeResource::Energy => {
                     if new_owner_proto.account_resource.is_none() {
-                        new_owner_proto.account_resource =
-                            Some(tron_backend_execution::protocol::account::AccountResource::default());
+                        new_owner_proto.account_resource = Some(
+                            tron_backend_execution::protocol::account::AccountResource::default(),
+                        );
                     }
 
                     let old_frozen = new_owner_proto
@@ -490,10 +528,11 @@ impl BackendService {
                         .checked_add(params.frozen_balance)
                         .ok_or("Frozen balance overflow")?;
                     if let Some(ref mut res) = new_owner_proto.account_resource {
-                        res.frozen_balance_for_energy = Some(tron_backend_execution::protocol::account::Frozen {
-                            frozen_balance: new_frozen,
-                            expire_time: expiration_timestamp,
-                        });
+                        res.frozen_balance_for_energy =
+                            Some(tron_backend_execution::protocol::account::Frozen {
+                                frozen_balance: new_frozen,
+                                expire_time: expiration_timestamp,
+                            });
                     }
 
                     let new_weight = new_frozen / super::super::TRX_PRECISION as i64;
@@ -519,10 +558,11 @@ impl BackendService {
                     let new_frozen = old_frozen
                         .checked_add(params.frozen_balance)
                         .ok_or("Frozen balance overflow")?;
-                    new_owner_proto.tron_power = Some(tron_backend_execution::protocol::account::Frozen {
-                        frozen_balance: new_frozen,
-                        expire_time: expiration_timestamp,
-                    });
+                    new_owner_proto.tron_power =
+                        Some(tron_backend_execution::protocol::account::Frozen {
+                            frozen_balance: new_frozen,
+                            expire_time: expiration_timestamp,
+                        });
 
                     let new_weight = new_frozen / super::super::TRX_PRECISION as i64;
                     let increment = new_weight - old_weight;
@@ -562,27 +602,25 @@ impl BackendService {
         new_owner.balance = U256::from(new_owner_balance as u64);
 
         // Emit exactly one state change for CSV parity (Phase 1 behavior)
-        let state_changes = vec![
-            TronStateChange::AccountChange {
-                address: transaction.from,
-                old_account: Some(owner_account),
-                new_account: Some(new_owner),
-            }
-        ];
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: transaction.from,
+            old_account: Some(owner_account),
+            new_account: Some(new_owner),
+        }];
 
         // Phase 2: Emit freeze ledger changes when enabled
         // Read the flag from config
-        let emit_freeze_changes = self.get_execution_config()
+        let emit_freeze_changes = self
+            .get_execution_config()
             .ok()
             .map(|cfg| cfg.remote.emit_freeze_ledger_changes)
             .unwrap_or(false);
 
         let freeze_changes = if emit_freeze_changes {
             // Read back the total frozen amount after aggregation
-            let freeze_record = storage_adapter.get_freeze_record(
-                &transaction.from,
-                params.resource as u8
-            ).map_err(|e| format!("Failed to read freeze record: {}", e))?;
+            let freeze_record = storage_adapter
+                .get_freeze_record(&transaction.from, params.resource as u8)
+                .map_err(|e| format!("Failed to read freeze record: {}", e))?;
 
             if let Some(record) = freeze_record {
                 // Map FreezeResource to FreezeLedgerResource
@@ -601,19 +639,26 @@ impl BackendService {
                     owner_address: transaction.from,
                     resource,
                     amount: record.frozen_amount as i64, // Absolute total after operation
-                    expiration_ms: record.expiration_timestamp,  // Latest expiration
-                    v2_model: false, // FreezeBalanceContract is V1 model
+                    expiration_ms: record.expiration_timestamp, // Latest expiration
+                    v2_model: false,                     // FreezeBalanceContract is V1 model
                 };
 
-                info!("Emitting freeze change: owner={}, resource={:?}, amount={}, expiration={}",
-                      tron_backend_common::to_tron_address(&transaction.from),
-                      resource, record.frozen_amount, record.expiration_timestamp);
+                info!(
+                    "Emitting freeze change: owner={}, resource={:?}, amount={}, expiration={}",
+                    tron_backend_common::to_tron_address(&transaction.from),
+                    resource,
+                    record.frozen_amount,
+                    record.expiration_timestamp
+                );
 
                 vec![change]
             } else {
                 // No record found - this shouldn't happen since we just added it
-                warn!("Freeze record not found after add_freeze_amount for owner={}, resource={:?}",
-                      tron_backend_common::to_tron_address(&transaction.from), params.resource);
+                warn!(
+                    "Freeze record not found after add_freeze_amount for owner={}, resource={:?}",
+                    tron_backend_common::to_tron_address(&transaction.from),
+                    params.resource
+                );
                 vec![]
             }
         } else {
@@ -621,20 +666,25 @@ impl BackendService {
         };
 
         // Phase 2: Emit global resource totals when enabled
-        let emit_global_changes = self.get_execution_config()
+        let emit_global_changes = self
+            .get_execution_config()
             .ok()
             .map(|cfg| cfg.remote.emit_global_resource_changes)
             .unwrap_or(false);
 
         let global_resource_changes = if emit_global_changes {
             // Read current global totals from DynamicProperties (already updated in-buffer).
-            let total_net_weight = storage_adapter.get_total_net_weight()
+            let total_net_weight = storage_adapter
+                .get_total_net_weight()
                 .map_err(|e| format!("Failed to get total net weight: {}", e))?;
-            let total_net_limit = storage_adapter.get_total_net_limit()
+            let total_net_limit = storage_adapter
+                .get_total_net_limit()
                 .map_err(|e| format!("Failed to get total net limit: {}", e))?;
-            let total_energy_weight = storage_adapter.get_total_energy_weight()
+            let total_energy_weight = storage_adapter
+                .get_total_energy_weight()
                 .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
-            let total_energy_limit = storage_adapter.get_total_energy_limit()
+            let total_energy_limit = storage_adapter
+                .get_total_energy_limit()
                 .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
 
             let change = tron_backend_execution::GlobalResourceTotalsChange {
@@ -711,7 +761,8 @@ impl BackendService {
             params.receiver_address.len()
         );
 
-        const INVALID_RESOURCE_CODE: &str = "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]";
+        const INVALID_RESOURCE_CODE: &str =
+            "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]";
 
         // === Validation (match java-tron UnfreezeBalanceActuator messages) ===
         // Validate owner address
@@ -745,9 +796,7 @@ impl BackendService {
 
         // Determine whether to use the new reward algorithm for weight deltas.
         // Java reference: DynamicPropertiesStore.allowNewReward() -> ALLOW_NEW_REWARD == 1
-        let allow_new_reward = storage_adapter
-            .allow_new_reward()
-            .unwrap_or(false);
+        let allow_new_reward = storage_adapter.allow_new_reward().unwrap_or(false);
 
         // Check if delegate optimization is enabled for index updates.
         let support_delegate_optimization = storage_adapter
@@ -758,8 +807,8 @@ impl BackendService {
         // This computes delegation rewards and updates delegation-store cycle state.
         // The returned reward must be added to Account.allowance (via adjustAllowance).
         // Java reference: UnfreezeBalanceActuator.execute() line 75.
-        let delegation_reward = self
-            .compute_delegation_reward_if_enabled(storage_adapter, &transaction.from)?;
+        let delegation_reward =
+            self.compute_delegation_reward_if_enabled(storage_adapter, &transaction.from)?;
 
         if delegation_reward > 0 {
             info!(
@@ -806,7 +855,8 @@ impl BackendService {
 
         let mut unfreeze_amount: i64 = 0;
         let mut decrease: i64 = 0;
-        let mut updated_receiver: Option<(Address, tron_backend_execution::protocol::Account)> = None;
+        let mut updated_receiver: Option<(Address, tron_backend_execution::protocol::Account)> =
+            None;
 
         // If receiver_address is provided and supportDR() is enabled, unfreeze delegated balance.
         if !params.receiver_address.is_empty() && support_dr {
@@ -852,7 +902,9 @@ impl BackendService {
                     // Validate acquired delegated balance.
                     if allow_tvm_constantinople == 0 {
                         if let Some(ref rcvr) = receiver_proto {
-                            if rcvr.acquired_delegated_frozen_balance_for_bandwidth < delegated_balance {
+                            if rcvr.acquired_delegated_frozen_balance_for_bandwidth
+                                < delegated_balance
+                            {
                                 return Err(format!(
                                     "AcquiredDelegatedFrozenBalanceForBandwidth[{}] < delegatedBandwidth[{}]",
                                     rcvr.acquired_delegated_frozen_balance_for_bandwidth,
@@ -865,7 +917,8 @@ impl BackendService {
                             let is_contract = rcvr.r#type
                                 == tron_backend_execution::protocol::AccountType::Contract as i32;
                             if !is_contract
-                                && rcvr.acquired_delegated_frozen_balance_for_bandwidth < delegated_balance
+                                && rcvr.acquired_delegated_frozen_balance_for_bandwidth
+                                    < delegated_balance
                             {
                                 return Err(format!(
                                     "AcquiredDelegatedFrozenBalanceForBandwidth[{}] < delegatedBandwidth[{}]",
@@ -895,15 +948,15 @@ impl BackendService {
                             .as_ref()
                             .map(|rcvr| {
                                 rcvr.r#type
-                                    != tron_backend_execution::protocol::AccountType::Contract as i32
+                                    != tron_backend_execution::protocol::AccountType::Contract
+                                        as i32
                             })
                             .unwrap_or(false);
 
                     if should_update_receiver {
                         if let Some(rcvr) = receiver_proto {
-                            let old_weight =
-                                rcvr.acquired_delegated_frozen_balance_for_bandwidth
-                                    / super::super::TRX_PRECISION as i64;
+                            let old_weight = rcvr.acquired_delegated_frozen_balance_for_bandwidth
+                                / super::super::TRX_PRECISION as i64;
                             let mut new_rcvr = rcvr;
 
                             if allow_tvm_solidity059 == 1
@@ -917,9 +970,9 @@ impl BackendService {
                                     .acquired_delegated_frozen_balance_for_bandwidth
                                     .checked_sub(unfreeze_amount)
                                     .ok_or("Acquired delegated frozen balance underflow")?;
-                                let new_weight =
-                                    new_rcvr.acquired_delegated_frozen_balance_for_bandwidth
-                                        / super::super::TRX_PRECISION as i64;
+                                let new_weight = new_rcvr
+                                    .acquired_delegated_frozen_balance_for_bandwidth
+                                    / super::super::TRX_PRECISION as i64;
                                 decrease = new_weight - old_weight;
                             }
 
@@ -984,8 +1037,9 @@ impl BackendService {
                     new_delegated_resource.expire_time_for_energy = 0;
 
                     if new_owner_proto.account_resource.is_none() {
-                        new_owner_proto.account_resource =
-                            Some(tron_backend_execution::protocol::account::AccountResource::default());
+                        new_owner_proto.account_resource = Some(
+                            tron_backend_execution::protocol::account::AccountResource::default(),
+                        );
                     }
                     if let Some(ref mut res) = new_owner_proto.account_resource {
                         res.delegated_frozen_balance_for_energy = res
@@ -1000,7 +1054,8 @@ impl BackendService {
                             .as_ref()
                             .map(|rcvr| {
                                 rcvr.r#type
-                                    != tron_backend_execution::protocol::AccountType::Contract as i32
+                                    != tron_backend_execution::protocol::AccountType::Contract
+                                        as i32
                             })
                             .unwrap_or(false);
 
@@ -1088,15 +1143,16 @@ impl BackendService {
                     storage_adapter
                         .undelegate_resource_account_index_v1(&transaction.from, &receiver)
                         .map_err(|e| {
-                            format!(
-                                "Failed to update DelegatedResourceAccountIndex (v1): {}",
-                                e
-                            )
+                            format!("Failed to update DelegatedResourceAccountIndex (v1): {}", e)
                         })?;
                 }
             } else {
                 storage_adapter
-                    .put_delegated_resource_v1(&transaction.from, &receiver, &new_delegated_resource)
+                    .put_delegated_resource_v1(
+                        &transaction.from,
+                        &receiver,
+                        &new_delegated_resource,
+                    )
                     .map_err(|e| format!("Failed to update DelegatedResource (v1): {}", e))?;
             }
         } else {
@@ -1165,8 +1221,7 @@ impl BackendService {
                     }
 
                     unfreeze_amount = frozen_energy.frozen_balance;
-                    let old_weight =
-                        unfreeze_amount / super::super::TRX_PRECISION as i64;
+                    let old_weight = unfreeze_amount / super::super::TRX_PRECISION as i64;
                     decrease = -old_weight;
 
                     if new_owner_proto.account_resource.is_some() {
@@ -1194,8 +1249,7 @@ impl BackendService {
                     }
 
                     unfreeze_amount = tron_power.frozen_balance;
-                    let old_weight =
-                        unfreeze_amount / super::super::TRX_PRECISION as i64;
+                    let old_weight = unfreeze_amount / super::super::TRX_PRECISION as i64;
                     decrease = -old_weight;
 
                     new_owner_proto.tron_power = None;
@@ -1208,7 +1262,10 @@ impl BackendService {
                     // Unknown resource codes: match Java's default case exactly.
                     // Java reference: UnfreezeBalanceActuator.validate() default case (self-freeze path).
                     if allow_new_resource_model {
-                        return Err("ResourceCode error.valid ResourceCode[BANDWIDTH、Energy、TRON_POWER]".to_string());
+                        return Err(
+                            "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy、TRON_POWER]"
+                                .to_string(),
+                        );
                     } else {
                         return Err(INVALID_RESOURCE_CODE.to_string());
                     }
@@ -1413,12 +1470,11 @@ impl BackendService {
                 }
             };
 
-            let (amount, expiration_ms) = match storage_adapter
-                .get_freeze_record(&transaction.from, freeze_resource)
-            {
-                Ok(Some(record)) => (record.frozen_amount as i64, record.expiration_timestamp),
-                _ => (0, 0),
-            };
+            let (amount, expiration_ms) =
+                match storage_adapter.get_freeze_record(&transaction.from, freeze_resource) {
+                    Ok(Some(record)) => (record.frozen_amount as i64, record.expiration_timestamp),
+                    _ => (0, 0),
+                };
 
             let change = tron_backend_execution::FreezeLedgerChange {
                 owner_address: transaction.from,
@@ -1442,20 +1498,25 @@ impl BackendService {
         };
 
         // Phase 2: Emit global resource totals when enabled
-        let emit_global_changes = self.get_execution_config()
+        let emit_global_changes = self
+            .get_execution_config()
             .ok()
             .map(|cfg| cfg.remote.emit_global_resource_changes)
             .unwrap_or(false);
 
         let global_resource_changes = if emit_global_changes {
             // Read current global totals from DynamicProperties (already updated in-buffer).
-            let total_net_weight = storage_adapter.get_total_net_weight()
+            let total_net_weight = storage_adapter
+                .get_total_net_weight()
                 .map_err(|e| format!("Failed to get total net weight: {}", e))?;
-            let total_net_limit = storage_adapter.get_total_net_limit()
+            let total_net_limit = storage_adapter
+                .get_total_net_limit()
                 .map_err(|e| format!("Failed to get total net limit: {}", e))?;
-            let total_energy_weight = storage_adapter.get_total_energy_weight()
+            let total_energy_weight = storage_adapter
+                .get_total_energy_weight()
                 .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
-            let total_energy_limit = storage_adapter.get_total_energy_limit()
+            let total_energy_limit = storage_adapter
+                .get_total_energy_limit()
                 .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
 
             let change = tron_backend_execution::GlobalResourceTotalsChange {
@@ -1509,7 +1570,9 @@ impl BackendService {
     /// - owner_address: bytes (field 1) - we get this from transaction.from
     /// - resource: ResourceCode enum (field 10)
     /// - receiver_address: bytes (field 15) - optional, Phase 1 ignores
-    pub(crate) fn parse_unfreeze_balance_params(data: &revm_primitives::Bytes) -> Result<UnfreezeParams, String> {
+    pub(crate) fn parse_unfreeze_balance_params(
+        data: &revm_primitives::Bytes,
+    ) -> Result<UnfreezeParams, String> {
         // Simple protobuf parser for the specific fields we need
         let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
         let mut resource_raw: i64 = 0; // Track raw value for Java-parity error messages
@@ -1527,14 +1590,18 @@ impl BackendService {
             match field_number {
                 1 => {
                     // owner_address (bytes) - skip, we use transaction.from
-                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for owner_address".to_string());
+                    }
                     let (len, new_pos) = read_varint(&data[pos..])?;
                     pos = pos + new_pos + len as usize;
-                },
+                }
                 10 => {
                     // resource (enum ResourceCode)
                     // Java defers validation of unknown values to validate() method, so we don't fail early.
-                    if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for resource".to_string());
+                    }
                     let (value, new_pos) = read_varint(&data[pos..])?;
                     resource_raw = value as i64;
                     resource = match value {
@@ -1544,10 +1611,12 @@ impl BackendService {
                         _ => FreezeResource::Unknown,
                     };
                     pos = pos + new_pos;
-                },
+                }
                 15 => {
                     // receiver_address (bytes)
-                    if wire_type != 2 { return Err("Invalid wire type for receiver_address".to_string()); }
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for receiver_address".to_string());
+                    }
                     let (len, new_pos) = read_varint(&data[pos..])?;
                     pos = pos + new_pos;
                     let len = len as usize;
@@ -1556,25 +1625,34 @@ impl BackendService {
                     }
                     receiver_address = data[pos..pos + len].to_vec();
                     pos = pos + len;
-                },
+                }
                 _ => {
                     // Unknown field - skip
                     match wire_type {
                         0 => {
                             let (_, new_pos) = read_varint(&data[pos..])?;
                             pos = pos + new_pos;
-                        },
+                        }
                         2 => {
                             let (len, new_pos) = read_varint(&data[pos..])?;
                             pos = pos + new_pos + len as usize;
-                        },
-                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                        }
+                        _ => {
+                            return Err(format!(
+                                "Unsupported wire type {} for field {}",
+                                wire_type, field_number
+                            ))
+                        }
                     }
                 }
             }
         }
 
-        Ok(UnfreezeParams { resource, resource_raw, receiver_address })
+        Ok(UnfreezeParams {
+            resource,
+            resource_raw,
+            receiver_address,
+        })
     }
 
     /// Execute a FREEZE_BALANCE_V2_CONTRACT (Phase 2: with freeze ledger changes)
@@ -1662,16 +1740,23 @@ impl BackendService {
             }
             Some(FreezeResource::TronPower) => {
                 if !allow_new_resource_model {
-                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
+                    return Err(
+                        "ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string()
+                    );
                 }
                 FreezeResource::TronPower
             }
             Some(FreezeResource::Unknown) => {
                 // Unknown resource codes: match Java's default case exactly.
                 if allow_new_resource_model {
-                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY、TRON_POWER]".to_string());
+                    return Err(
+                        "ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY、TRON_POWER]"
+                            .to_string(),
+                    );
                 } else {
-                    return Err("ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string());
+                    return Err(
+                        "ResourceCode error, valid ResourceCode[BANDWIDTH、ENERGY]".to_string()
+                    );
                 }
             }
             None => {
@@ -1733,8 +1818,8 @@ impl BackendService {
             }
         }
 
-        let old_weight = frozen_v2_with_delegated(&owner_proto, resource)
-            / super::super::TRX_PRECISION as i64;
+        let old_weight =
+            frozen_v2_with_delegated(&owner_proto, resource) / super::super::TRX_PRECISION as i64;
 
         // Update frozen_v2 list (aggregate by resource type).
         let resource_type = resource as i32;
@@ -1810,16 +1895,15 @@ impl BackendService {
         new_owner.balance = U256::from(new_owner_proto.balance as u64);
 
         // Emit exactly one state change for CSV parity
-        let state_changes = vec![
-            TronStateChange::AccountChange {
-                address: owner_address,
-                old_account: Some(owner_account),
-                new_account: Some(new_owner),
-            }
-        ];
+        let state_changes = vec![TronStateChange::AccountChange {
+            address: owner_address,
+            old_account: Some(owner_account),
+            new_account: Some(new_owner),
+        }];
 
         // Phase 2: Emit freeze ledger changes when enabled
-        let emit_freeze_changes = self.get_execution_config()
+        let emit_freeze_changes = self
+            .get_execution_config()
             .ok()
             .map(|cfg| cfg.remote.emit_freeze_ledger_changes)
             .unwrap_or(false);
@@ -1860,20 +1944,25 @@ impl BackendService {
         };
 
         // Phase 2: Emit global resource totals when enabled
-        let emit_global_changes = self.get_execution_config()
+        let emit_global_changes = self
+            .get_execution_config()
             .ok()
             .map(|cfg| cfg.remote.emit_global_resource_changes)
             .unwrap_or(false);
 
         let global_resource_changes = if emit_global_changes {
             // Read current global totals from DynamicProperties (already updated in-buffer).
-            let total_net_weight = storage_adapter.get_total_net_weight()
+            let total_net_weight = storage_adapter
+                .get_total_net_weight()
                 .map_err(|e| format!("Failed to get total net weight: {}", e))?;
-            let total_net_limit = storage_adapter.get_total_net_limit()
+            let total_net_limit = storage_adapter
+                .get_total_net_limit()
                 .map_err(|e| format!("Failed to get total net limit: {}", e))?;
-            let total_energy_weight = storage_adapter.get_total_energy_weight()
+            let total_energy_weight = storage_adapter
+                .get_total_energy_weight()
                 .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
-            let total_energy_limit = storage_adapter.get_total_energy_limit()
+            let total_energy_limit = storage_adapter
+                .get_total_energy_limit()
                 .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
 
             let change = tron_backend_execution::GlobalResourceTotalsChange {
@@ -1972,9 +2061,7 @@ impl BackendService {
         let owner_proto = storage_adapter
             .get_account_proto(&transaction.from)
             .map_err(|e| format!("Failed to load owner account proto: {}", e))?
-            .ok_or_else(|| {
-                format!("Account[{}] does not exist", readable_owner_address)
-            })?;
+            .ok_or_else(|| format!("Account[{}] does not exist", readable_owner_address))?;
 
         let owner_account = storage_adapter
             .get_account(&transaction.from)
@@ -1985,10 +2072,7 @@ impl BackendService {
             .support_allow_new_resource_model()
             .map_err(|e| format!("Failed to read ALLOW_NEW_RESOURCE_MODEL: {}", e))?;
 
-        fn frozen_v2_sum(
-            account: &tron_backend_execution::protocol::Account,
-            r#type: i32,
-        ) -> i64 {
+        fn frozen_v2_sum(account: &tron_backend_execution::protocol::Account, r#type: i32) -> i64 {
             account
                 .frozen_v2
                 .iter()
@@ -2023,7 +2107,8 @@ impl BackendService {
             Some(FreezeResource::Unknown) => {
                 // Unknown resource codes: match Java's default case exactly.
                 return Err(if allow_new_resource_model {
-                    "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy、TRON_POWER]".to_string()
+                    "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy、TRON_POWER]"
+                        .to_string()
                 } else {
                     "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]".to_string()
                 });
@@ -2031,7 +2116,8 @@ impl BackendService {
             Some(r) => r,
             None => {
                 return Err(if allow_new_resource_model {
-                    "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy、TRON_POWER]".to_string()
+                    "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy、TRON_POWER]"
+                        .to_string()
                 } else {
                     "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]".to_string()
                 });
@@ -2060,7 +2146,7 @@ impl BackendService {
             FreezeResource::TronPower => {
                 if !allow_new_resource_model {
                     return Err(
-                        "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]".to_string(),
+                        "ResourceCode error.valid ResourceCode[BANDWIDTH、Energy]".to_string()
                     );
                 }
                 if frozen_amount <= 0 {
@@ -2100,8 +2186,8 @@ impl BackendService {
         // This computes delegation rewards and updates delegation-store cycle state.
         // The returned reward must be added to Account.allowance (via adjustAllowance).
         // Java reference: UnfreezeBalanceV2Actuator.execute() line 72.
-        let delegation_reward = self
-            .compute_delegation_reward_if_enabled(storage_adapter, &transaction.from)?;
+        let delegation_reward =
+            self.compute_delegation_reward_if_enabled(storage_adapter, &transaction.from)?;
 
         if delegation_reward > 0 {
             info!(
@@ -2203,8 +2289,8 @@ impl BackendService {
             });
 
         // Update total resource weights in DynamicPropertiesStore (delta-based).
-        let old_weight = frozen_v2_with_delegated(&owner_proto, resource)
-            / super::super::TRX_PRECISION as i64;
+        let old_weight =
+            frozen_v2_with_delegated(&owner_proto, resource) / super::super::TRX_PRECISION as i64;
         let new_weight = frozen_v2_with_delegated(&new_owner_proto, resource)
             / super::super::TRX_PRECISION as i64;
         let weight_delta = new_weight - old_weight;
@@ -2284,14 +2370,12 @@ impl BackendService {
             // Java parity: skip rescaling when new resource model && oldTronPower==-1
             // && resource is BANDWIDTH/ENERGY (early return in Java's updateVote).
             if !skip_vote_rescale && !new_owner_proto.votes.is_empty() {
-                let total_vote: i64 = new_owner_proto
-                    .votes
-                    .iter()
-                    .map(|v| v.vote_count)
-                    .sum();
+                let total_vote: i64 = new_owner_proto.votes.iter().map(|v| v.vote_count).sum();
                 if total_vote > 0 {
                     // Compute owned tron power after the unfreeze (java-tron: getTronPower/getAllTronPower).
-                    fn tron_power_in_sun(account: &tron_backend_execution::protocol::Account) -> i128 {
+                    fn tron_power_in_sun(
+                        account: &tron_backend_execution::protocol::Account,
+                    ) -> i128 {
                         let mut tp: i128 = 0;
                         for frozen in &account.frozen {
                             tp = tp.saturating_add(frozen.frozen_balance as i128);
@@ -2301,10 +2385,14 @@ impl BackendService {
                                 tp = tp.saturating_add(frozen_energy.frozen_balance as i128);
                             }
                             tp = tp.saturating_add(res.delegated_frozen_balance_for_energy as i128);
-                            tp = tp.saturating_add(res.delegated_frozen_v2_balance_for_energy as i128);
+                            tp = tp
+                                .saturating_add(res.delegated_frozen_v2_balance_for_energy as i128);
                         }
-                        tp = tp.saturating_add(account.delegated_frozen_balance_for_bandwidth as i128);
-                        tp = tp.saturating_add(account.delegated_frozen_v2_balance_for_bandwidth as i128);
+                        tp = tp
+                            .saturating_add(account.delegated_frozen_balance_for_bandwidth as i128);
+                        tp = tp.saturating_add(
+                            account.delegated_frozen_v2_balance_for_bandwidth as i128,
+                        );
 
                         const TRON_POWER_TYPE: i32 =
                             tron_backend_execution::protocol::ResourceCode::TronPower as i32;
@@ -2333,7 +2421,8 @@ impl BackendService {
                             .filter(|f| f.r#type == TRON_POWER_TYPE)
                             .map(|f| f.amount as i128)
                             .sum();
-                        let tp_frozen_total = tp_frozen_balance.saturating_add(tp_frozen_v2_balance);
+                        let tp_frozen_total =
+                            tp_frozen_balance.saturating_add(tp_frozen_v2_balance);
 
                         match account.old_tron_power {
                             -1 => tp_frozen_total,
@@ -2349,8 +2438,8 @@ impl BackendService {
                         tron_power_in_sun(&new_owner_proto)
                     };
 
-                    let required_tron_power_sun: i128 = (total_vote as i128)
-                        .saturating_mul(super::super::TRX_PRECISION as i128);
+                    let required_tron_power_sun: i128 =
+                        (total_vote as i128).saturating_mul(super::super::TRX_PRECISION as i128);
                     if owned_tron_power_sun < required_tron_power_sun {
                         let existing_votes = storage_adapter
                             .get_votes(&transaction.from)
@@ -2393,9 +2482,9 @@ impl BackendService {
                             if vote_count <= 0 {
                                 continue;
                             }
-                            let new_vote_count = ((vote_count as f64) / total_vote_f64
-                                * owned_tp_f64
-                                / trx_precision_f64) as i64;
+                            let new_vote_count =
+                                ((vote_count as f64) / total_vote_f64 * owned_tp_f64
+                                    / trx_precision_f64) as i64;
                             if new_vote_count > 0 {
                                 scaled_votes_proto.push(tron_backend_execution::protocol::Vote {
                                     vote_address: vote.vote_address.clone(),
@@ -2446,8 +2535,7 @@ impl BackendService {
         // Java parity: V2 freeze has no expiration concept, always use 0.
         let freeze_resource = resource as u8;
         if remaining_frozen > 0 {
-            let record =
-                tron_backend_execution::FreezeRecord::new(remaining_frozen as u64, 0);
+            let record = tron_backend_execution::FreezeRecord::new(remaining_frozen as u64, 0);
             storage_adapter
                 .set_freeze_record(transaction.from, freeze_resource, &record)
                 .map_err(|e| format!("Failed to persist freeze record: {}", e))?;
@@ -2467,7 +2555,8 @@ impl BackendService {
         }];
 
         // Phase 2: Emit freeze ledger changes when enabled
-        let emit_freeze_changes = self.get_execution_config()
+        let emit_freeze_changes = self
+            .get_execution_config()
             .ok()
             .map(|cfg| cfg.remote.emit_freeze_ledger_changes)
             .unwrap_or(false);
@@ -2506,20 +2595,25 @@ impl BackendService {
         };
 
         // Phase 2: Emit global resource totals when enabled
-        let emit_global_changes = self.get_execution_config()
+        let emit_global_changes = self
+            .get_execution_config()
             .ok()
             .map(|cfg| cfg.remote.emit_global_resource_changes)
             .unwrap_or(false);
 
         let global_resource_changes = if emit_global_changes {
             // Read current global totals from DynamicProperties (already updated in-buffer).
-            let total_net_weight = storage_adapter.get_total_net_weight()
+            let total_net_weight = storage_adapter
+                .get_total_net_weight()
                 .map_err(|e| format!("Failed to get total net weight: {}", e))?;
-            let total_net_limit = storage_adapter.get_total_net_limit()
+            let total_net_limit = storage_adapter
+                .get_total_net_limit()
                 .map_err(|e| format!("Failed to get total net limit: {}", e))?;
-            let total_energy_weight = storage_adapter.get_total_energy_weight()
+            let total_energy_weight = storage_adapter
+                .get_total_energy_weight()
                 .map_err(|e| format!("Failed to get total energy weight: {}", e))?;
-            let total_energy_limit = storage_adapter.get_total_energy_limit()
+            let total_energy_limit = storage_adapter
+                .get_total_energy_limit()
                 .map_err(|e| format!("Failed to get total energy limit: {}", e))?;
 
             let change = tron_backend_execution::GlobalResourceTotalsChange {
@@ -2575,7 +2669,9 @@ impl BackendService {
     /// - owner_address: bytes (field 1) - parsed from contract data and validated (Java parity)
     /// - frozen_balance: int64 (field 2)
     /// - resource: ResourceCode enum (field 3)
-    pub(crate) fn parse_freeze_balance_v2_params(data: &revm_primitives::Bytes) -> Result<FreezeV2Params, String> {
+    pub(crate) fn parse_freeze_balance_v2_params(
+        data: &revm_primitives::Bytes,
+    ) -> Result<FreezeV2Params, String> {
         // Proto3 semantics: missing scalar fields read as 0.
         let mut owner_address: Vec<u8> = Vec::new();
         let mut frozen_balance: i64 = 0;
@@ -2593,7 +2689,9 @@ impl BackendService {
             match field_number {
                 1 => {
                     // owner_address (bytes)
-                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for owner_address".to_string());
+                    }
                     let (len, new_pos) = read_varint(&data[pos..])?;
                     pos = pos + new_pos;
                     let len = len as usize;
@@ -2602,17 +2700,21 @@ impl BackendService {
                     }
                     owner_address = data[pos..pos + len].to_vec();
                     pos = pos + len;
-                },
+                }
                 2 => {
                     // frozen_balance (int64)
-                    if wire_type != 0 { return Err("Invalid wire type for frozen_balance".to_string()); }
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for frozen_balance".to_string());
+                    }
                     let (value, new_pos) = read_varint(&data[pos..])?;
                     frozen_balance = value as i64;
                     pos = pos + new_pos;
-                },
+                }
                 3 => {
                     // resource (enum ResourceCode)
-                    if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for resource".to_string());
+                    }
                     let (value, new_pos) = read_varint(&data[pos..])?;
                     resource = match value {
                         0 => Some(FreezeResource::Bandwidth),
@@ -2621,19 +2723,24 @@ impl BackendService {
                         _ => None,
                     };
                     pos = pos + new_pos;
-                },
+                }
                 _ => {
                     // Unknown field - skip
                     match wire_type {
                         0 => {
                             let (_, new_pos) = read_varint(&data[pos..])?;
                             pos = pos + new_pos;
-                        },
+                        }
                         2 => {
                             let (len, new_pos) = read_varint(&data[pos..])?;
                             pos = pos + new_pos + len as usize;
-                        },
-                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                        }
+                        _ => {
+                            return Err(format!(
+                                "Unsupported wire type {} for field {}",
+                                wire_type, field_number
+                            ))
+                        }
                     }
                 }
             }
@@ -2652,7 +2759,9 @@ impl BackendService {
     /// - owner_address: bytes (field 1) - we get this from transaction.from
     /// - unfreeze_balance: int64 (field 2)
     /// - resource: ResourceCode enum (field 3)
-    pub(crate) fn parse_unfreeze_balance_v2_params(data: &revm_primitives::Bytes) -> Result<UnfreezeV2Params, String> {
+    pub(crate) fn parse_unfreeze_balance_v2_params(
+        data: &revm_primitives::Bytes,
+    ) -> Result<UnfreezeV2Params, String> {
         if data.is_empty() {
             return Err("UnfreezeBalanceV2 params cannot be empty".to_string());
         }
@@ -2672,20 +2781,26 @@ impl BackendService {
             match field_number {
                 1 => {
                     // owner_address (bytes) - skip, we use transaction.from
-                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for owner_address".to_string());
+                    }
                     let (len, new_pos) = read_varint(&data[pos..])?;
                     pos = pos + new_pos + len as usize;
-                },
+                }
                 2 => {
                     // unfreeze_balance (int64)
-                    if wire_type != 0 { return Err("Invalid wire type for unfreeze_balance".to_string()); }
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for unfreeze_balance".to_string());
+                    }
                     let (value, new_pos) = read_varint(&data[pos..])?;
                     unfreeze_balance = Some(value as i64);
                     pos = pos + new_pos;
-                },
+                }
                 3 => {
                     // resource (enum ResourceCode)
-                    if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for resource".to_string());
+                    }
                     let (value, new_pos) = read_varint(&data[pos..])?;
                     resource = match value {
                         0 => Some(FreezeResource::Bandwidth),
@@ -2694,19 +2809,24 @@ impl BackendService {
                         _ => None,
                     };
                     pos = pos + new_pos;
-                },
+                }
                 _ => {
                     // Unknown field - skip
                     match wire_type {
                         0 => {
                             let (_, new_pos) = read_varint(&data[pos..])?;
                             pos = pos + new_pos;
-                        },
+                        }
                         2 => {
                             let (len, new_pos) = read_varint(&data[pos..])?;
                             pos = pos + new_pos + len as usize;
-                        },
-                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                        }
+                        _ => {
+                            return Err(format!(
+                                "Unsupported wire type {} for field {}",
+                                wire_type, field_number
+                            ))
+                        }
                     }
                 }
             }
@@ -2729,7 +2849,9 @@ impl BackendService {
     /// - frozen_duration: int64 (field 3)
     /// - resource: ResourceCode enum (field 10)
     /// - receiver_address: bytes (field 15) - optional (delegate freeze when supportDR is enabled)
-    pub(crate) fn parse_freeze_balance_params(data: &revm_primitives::Bytes) -> Result<FreezeParams, String> {
+    pub(crate) fn parse_freeze_balance_params(
+        data: &revm_primitives::Bytes,
+    ) -> Result<FreezeParams, String> {
         if data.is_empty() {
             return Err("FreezeBalance params cannot be empty".to_string());
         }
@@ -2758,28 +2880,36 @@ impl BackendService {
             match field_number {
                 1 => {
                     // owner_address (bytes) - skip, we use transaction.from
-                    if wire_type != 2 { return Err("Invalid wire type for owner_address".to_string()); }
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for owner_address".to_string());
+                    }
                     let (len, new_pos) = read_varint(&data[pos..])?;
                     pos = pos + new_pos + len as usize;
-                },
+                }
                 2 => {
                     // frozen_balance (int64)
-                    if wire_type != 0 { return Err("Invalid wire type for frozen_balance".to_string()); }
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for frozen_balance".to_string());
+                    }
                     let (value, new_pos) = read_varint(&data[pos..])?;
                     frozen_balance = value as i64;
                     pos = pos + new_pos;
-                },
+                }
                 3 => {
                     // frozen_duration (int64)
-                    if wire_type != 0 { return Err("Invalid wire type for frozen_duration".to_string()); }
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for frozen_duration".to_string());
+                    }
                     let (value, new_pos) = read_varint(&data[pos..])?;
                     frozen_duration = value as i64;
                     pos = pos + new_pos;
-                },
+                }
                 10 => {
                     // resource (enum ResourceCode)
                     // Java defers validation of unknown values to validate() method, so we don't fail early.
-                    if wire_type != 0 { return Err("Invalid wire type for resource".to_string()); }
+                    if wire_type != 0 {
+                        return Err("Invalid wire type for resource".to_string());
+                    }
                     let (value, new_pos) = read_varint(&data[pos..])?;
                     resource_raw = value as i64;
                     resource = match value {
@@ -2789,10 +2919,12 @@ impl BackendService {
                         _ => FreezeResource::Unknown,
                     };
                     pos = pos + new_pos;
-                },
+                }
                 15 => {
                     // receiver_address (bytes)
-                    if wire_type != 2 { return Err("Invalid wire type for receiver_address".to_string()); }
+                    if wire_type != 2 {
+                        return Err("Invalid wire type for receiver_address".to_string());
+                    }
                     let (len, new_pos) = read_varint(&data[pos..])?;
                     pos += new_pos;
                     let len_usize = len as usize;
@@ -2801,19 +2933,24 @@ impl BackendService {
                     }
                     receiver_address = data[pos..pos + len_usize].to_vec();
                     pos += len_usize;
-                },
+                }
                 _ => {
                     // Unknown field - skip
                     match wire_type {
                         0 => {
                             let (_, new_pos) = read_varint(&data[pos..])?;
                             pos = pos + new_pos;
-                        },
+                        }
                         2 => {
                             let (len, new_pos) = read_varint(&data[pos..])?;
                             pos = pos + new_pos + len as usize;
-                        },
-                        _ => return Err(format!("Unsupported wire type {} for field {}", wire_type, field_number)),
+                        }
+                        _ => {
+                            return Err(format!(
+                                "Unsupported wire type {} for field {}",
+                                wire_type, field_number
+                            ))
+                        }
                     }
                 }
             }

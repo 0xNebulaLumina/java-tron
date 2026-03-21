@@ -9,18 +9,15 @@
 use super::super::super::*;
 use super::common::{encode_varint, make_from_raw, seed_dynamic_properties};
 use revm_primitives::{Address, Bytes, U256};
+use std::collections::BTreeMap;
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{
     protocol::Proposal, EngineBackedEvmStateStore, TronContractParameter, TronContractType,
     TronExecutionContext, TronTransaction, TxMetadata,
 };
-use std::collections::BTreeMap;
 
 /// Helper to build a ProposalDeleteContract protobuf
-fn build_proposal_delete_contract(
-    owner_address: &[u8],
-    proposal_id: i64,
-) -> Vec<u8> {
+fn build_proposal_delete_contract(owner_address: &[u8], proposal_id: i64) -> Vec<u8> {
     let mut buf = Vec::new();
 
     // Field 1: owner_address (bytes, wire type 2)
@@ -128,7 +125,9 @@ fn test_proposal_delete_missing_proposal_id_defaults_to_zero() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     // Build contract WITHOUT proposal_id field (omitted = proto3 default 0)
     let contract_data = build_proposal_delete_contract_no_proposal_id(&owner_tron);
@@ -155,7 +154,10 @@ fn test_proposal_delete_missing_proposal_id_defaults_to_zero() {
     let result =
         service.execute_proposal_delete_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_err(), "Should fail when proposal_id=0 doesn't exist");
+    assert!(
+        result.is_err(),
+        "Should fail when proposal_id=0 doesn't exist"
+    );
     let err = result.unwrap_err();
     assert_eq!(
         err, "Proposal[0] not exists",
@@ -197,7 +199,9 @@ fn test_proposal_delete_explicit_proposal_id_zero() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     // Build contract with explicit proposal_id=0 (build_proposal_delete_contract
     // skips field 2 when proposal_id==0, simulating proto3's wire format)
@@ -266,9 +270,9 @@ fn test_proposal_delete_preserves_parameter_order() {
         1, // proposal_id
         &owner_tron,
         &[(16, 1), (0, 1000000), (1, 3)], // Non-sorted parameter order
-        2_000_000, // expiration_time (future)
-        500_000,   // create_time
-        0,         // state = PENDING
+        2_000_000,                        // expiration_time (future)
+        500_000,                          // create_time
+        0,                                // state = PENDING
     );
 
     // Store the proposal with non-sorted parameter order directly in storage engine
@@ -287,7 +291,9 @@ fn test_proposal_delete_preserves_parameter_order() {
         code_hash: revm::primitives::B256::ZERO,
         code: None,
     };
-    storage_adapter.set_account(owner_address, owner_account).unwrap();
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
 
     // Now execute ProposalDelete
     let contract_data = build_proposal_delete_contract(&owner_tron, 1);
@@ -314,7 +320,11 @@ fn test_proposal_delete_preserves_parameter_order() {
     let result =
         service.execute_proposal_delete_contract(&mut storage_adapter, &transaction, &context);
 
-    assert!(result.is_ok(), "ProposalDelete should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "ProposalDelete should succeed: {:?}",
+        result.err()
+    );
 
     // Read back the raw proposal bytes via get_proposal_with_raw
     let (_, post_delete_bytes) = storage_adapter
