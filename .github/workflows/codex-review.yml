@@ -1,0 +1,100 @@
+name: Codex
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+jobs:
+  review:
+    # Skip for forked PRs — secrets are not available
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      final_message: ${{ steps.run_codex.outputs.final-message }}
+    steps:
+      # - name: Create unprivileged user
+      #   run: |
+      #     sudo adduser --system --home /home/guest --shell /bin/bash --group guest
+      #     # Ensure the default runner account can collaborate with the guest user.
+      #     sudo usermod -a -G guest runner
+
+      #     # Allow the guest user to traverse runner-owned directories.
+      #     # In particular, actions/checkout@v5 checks out code under
+      #     # /home/runner/work, but /home/runner has permissions 750.
+      #     sudo usermod -a -G runner guest
+
+      - uses: actions/checkout@v5
+        with:
+          # Explicitly check out the PR's merge commit.
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+
+      - name: Pre-fetch base and head refs for the PR
+        env:
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Pass GitHub expressions through env and quote shell expansions.
+          git fetch --no-tags origin \
+            "$PR_BASE_REF" \
+            "+refs/pull/$PR_NUMBER/head"
+
+      # - name: Change ownership
+      #   run: |
+      #     # Change the group ownership of the checked-out files to the `guest` group.
+      #     sudo chown -R runner:guest "$GITHUB_WORKSPACE"
+
+      #     # Extend user permissions to the group.
+      #     sudo chmod -R g+rwX "$GITHUB_WORKSPACE"
+
+      #     # Set the setgid bit so new directories stay in the shared group.
+      #     sudo find "$GITHUB_WORKSPACE" -type d -exec chmod g+s {} +
+
+      # If you want Codex to build and run code, install any dependencies that
+      # need to be downloaded before the "Run Codex" step because Codex's
+      # default sandbox disables network access.
+
+      - name: Run Codex
+        id: run_codex
+        uses: openai/codex-action@v1
+        with:
+          responses-api-endpoint: ${{ secrets.RESPONSES_API_ENDPOINT }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          # sandbox: danger-full-access
+          # safety-strategy: unprivileged-user
+          # codex-user: guest
+          prompt: |
+            This is PR #${{ github.event.pull_request.number }} for ${{ github.repository }}.
+
+            Review ONLY the changes introduced by the PR, so consider:
+               git log --oneline ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
+
+            Suggest any improvements, potential bugs, or issues.
+            Be concise and specific in your feedback.
+
+            Pull request title and body:
+            ----
+            ${{ github.event.pull_request.title }}
+            ${{ github.event.pull_request.body }}
+
+  feedback:
+    runs-on: ubuntu-latest
+    needs: review
+    if: needs.review.outputs.final_message != ''
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Report Codex feedback
+        uses: actions/github-script@v7
+        env:
+          CODEX_FINAL_MESSAGE: ${{ needs.review.outputs.final_message }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: process.env.CODEX_FINAL_MESSAGE,
+            });
