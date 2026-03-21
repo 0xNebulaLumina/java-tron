@@ -68,3 +68,24 @@ The downstream TransferContract revert at block 122719 is just fallout from the 
 Next useful step is targeted instrumentation, not contract changes: log whether TGj1... is present in the pre-exec dirty account batch, log the serialized allowance Java is sending, and make batchWrite() fail
 hard on success=false. I can implement that next.
 
+---
+
+• Implemented the missing reward-sync path for delegation mode.
+
+The mismatch at block 120399 / tx e8a5bc5d90155b978ab4ca54a03faedfd66577c279e7ffe11be0856292d1d8e0 is consistent with Java paying post-block witness rewards into DelegationStore while Rust withdraw computes
+reward from the remote delegation DB. The earlier fix only mirrored the legacy direct-allowance branch, so Rust kept missing the 32,000,000 SUN reward.
+
+Changes are in framework/src/main/java/org/tron/core/db/Manager.java:2008 and framework/src/main/java/org/tron/core/storage/sync/ResourceSyncService.java:147:
+
+- Manager.payReward(...) now collects post-block dirty witness accounts plus current-cycle delegation reward keys (<cycle>-<witnessHex>-reward) for the block witness, standby witnesses, and tx-fee reward,
+  then flushes them immediately.
+- ResourceSyncService now supports flushing delegation DB keys, includes them in debug logging/confirmation reads, and uses the same fail-closed behavior as the existing account/property sync.
+
+Verification:
+
+- ./gradlew :framework:compileJava -x test --dependency-verification=off passed.
+- ./gradlew :framework:checkstyleMain --dependency-verification=off passed with the repo’s existing warning-heavy baseline.
+- I did not rerun the full parity job.
+
+Next step is to rerun the remote scenario with this build. If the diagnosis is right, the first mismatch at row 9887 should disappear. If it does not, the next place to instrument is Rust-side delegation
+batch-write readback, not WithdrawBalanceContract itself.
