@@ -52,6 +52,12 @@ Determine the mode from the user's request. Each mode uses a different sandbox l
 | Plan | `-s read-only` | Only needs to read code to design a plan |
 | Debug | `-s danger-full-access` | May need to run tests, try fixes, execute build commands |
 
+### Choosing the mode
+- If the user explicitly says "plan", "design", or "implement" → Plan
+- If the user mentions a bug, failure, error, test failing, or unexpected behavior → Debug
+- Otherwise → Question (the safe default)
+- When ambiguous, briefly ask the user which mode they prefer.
+
 ### Mode 1: Question (ask)
 
 For general questions about the codebase, architecture, or implementation approach.
