@@ -22,6 +22,7 @@ import tron.backend.BackendGrpc;
 import tron.backend.BackendOuterClass.BatchGetRequest;
 import tron.backend.BackendOuterClass.BatchGetResponse;
 import tron.backend.BackendOuterClass.BatchWriteRequest;
+import tron.backend.BackendOuterClass.BatchWriteResponse;
 import tron.backend.BackendOuterClass.BeginTransactionRequest;
 import tron.backend.BackendOuterClass.BeginTransactionResponse;
 import tron.backend.BackendOuterClass.CloseDBRequest;
@@ -228,9 +229,23 @@ public class RemoteStorageSPI implements StorageSPI {
               requestBuilder.addOperations(opBuilder.build());
             }
 
-            blockingStub.batchWrite(requestBuilder.build());
+            BatchWriteResponse response = blockingStub.batchWrite(requestBuilder.build());
+            if (!response.getSuccess()) {
+              String errorMsg = response.getErrorMessage();
+              logger.error(
+                  "gRPC batch write failed: db={}, backend returned success=false, "
+                      + "operations.size={}, error={}",
+                  dbName,
+                  operations.size(),
+                  errorMsg);
+              throw new RuntimeException(
+                  "Storage batch write failed for db=" + dbName + ": " + errorMsg);
+            }
             logger.debug(
-                "Batch write operation: db={}, operations.size={}", dbName, operations.size());
+                "Batch write operation: db={}, operations.size={}, applied={}",
+                dbName,
+                operations.size(),
+                response.getOperationsApplied());
           } catch (StatusRuntimeException e) {
             logger.error("gRPC batch write failed: db={}, error={}", dbName, e.getStatus());
             throw new RuntimeException("Storage batch write operation failed", e);

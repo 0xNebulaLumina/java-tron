@@ -178,6 +178,7 @@ import org.tron.core.store.TransactionRetStore;
 import org.tron.core.store.VotesStore;
 import org.tron.core.store.WitnessScheduleStore;
 import org.tron.core.store.WitnessStore;
+import org.tron.core.storage.sync.ResourceSyncService;
 import org.tron.core.utils.TransactionRegister;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Permission;
@@ -198,6 +199,8 @@ public class Manager {
   private static final int NO_BLOCK_WAITING_LOCK = 0;
   private static final byte[] LATEST_BLOCK_HEADER_TIMESTAMP_KEY =
       "latest_block_header_timestamp".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] TRANSACTION_FEE_POOL_KEY =
+      "TRANSACTION_FEE_POOL".getBytes(StandardCharsets.UTF_8);
   private final int shieldedTransInPendingMaxCounts =
       Args.getInstance().getShieldedTransInPendingMaxCounts();
   @Getter @Setter public boolean eventPluginLoaded = false;
@@ -2014,8 +2017,24 @@ public class Manager {
                     .getWitnessAddress()
                     .toByteArray());
     if (getDynamicPropertiesStore().allowChangeDelegation()) {
+      long currentCycle = getDynamicPropertiesStore().getCurrentCycleNumber();
+      Set<byte[]> dirtyAccounts = new HashSet<>();
+      Set<byte[]> dirtyDelegationKeys = new HashSet<>();
+      Set<byte[]> dirtyDynamicKeys = new HashSet<>();
+
+      byte[] blockWitnessAddress = witnessCapsule.getAddress().toByteArray();
+      addDirtyKey(dirtyAccounts, blockWitnessAddress);
+      addDirtyKey(dirtyDelegationKeys, buildDelegationRewardKey(currentCycle, blockWitnessAddress));
+
+      for (WitnessCapsule standbyWitness : chainBaseManager.getWitnessStore().getWitnessStandby(
+          getDynamicPropertiesStore().allowWitnessSortOptimization())) {
+        byte[] standbyAddress = standbyWitness.getAddress().toByteArray();
+        addDirtyKey(dirtyAccounts, standbyAddress);
+        addDirtyKey(dirtyDelegationKeys, buildDelegationRewardKey(currentCycle, standbyAddress));
+      }
+
       mortgageService.payBlockReward(
-          witnessCapsule.getAddress().toByteArray(),
+          blockWitnessAddress,
           getDynamicPropertiesStore().getWitnessPayPerBlock());
       mortgageService.payStandbyWitness();
 
@@ -2026,16 +2045,20 @@ public class Manager {
                 Constant.TRANSACTION_FEE_POOL_PERIOD,
                 chainBaseManager.getDynamicPropertiesStore().disableJavaLangMath());
         mortgageService.payTransactionFeeReward(
-            witnessCapsule.getAddress().toByteArray(), transactionFeeReward);
+            blockWitnessAddress, transactionFeeReward);
         chainBaseManager
             .getDynamicPropertiesStore()
             .saveTransactionFeePool(
                 chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool()
                     - transactionFeeReward);
+        addDirtyKey(dirtyDynamicKeys, TRANSACTION_FEE_POOL_KEY);
       }
+
+      syncPostBlockRewardDeltas(dirtyAccounts, dirtyDynamicKeys, dirtyDelegationKeys);
     } else {
       byte[] witness = block.getWitnessAddress().toByteArray();
       AccountCapsule account = getAccountStore().get(witness);
+      boolean transactionFeePoolChanged = false;
       account.setAllowance(
           account.getAllowance()
               + chainBaseManager.getDynamicPropertiesStore().getWitnessPayPerBlock());
@@ -2052,10 +2075,54 @@ public class Manager {
             .saveTransactionFeePool(
                 chainBaseManager.getDynamicPropertiesStore().getTransactionFeePool()
                     - transactionFeeReward);
+        transactionFeePoolChanged = true;
       }
 
       getAccountStore().put(account.createDbKey(), account);
+      syncPostBlockRewardDeltas(
+          Collections.singleton(account.createDbKey()),
+          transactionFeePoolChanged
+              ? Collections.singleton(TRANSACTION_FEE_POOL_KEY)
+              : Collections.emptySet(),
+          Collections.emptySet());
     }
+  }
+
+  private void syncPostBlockRewardDeltas(Set<byte[]> dirtyAccounts,
+                                         Set<byte[]> dirtyDynamicKeys,
+                                         Set<byte[]> dirtyDelegationKeys) {
+    if (!ResourceSyncService.isEnabled()
+        || (dirtyAccounts.isEmpty() && dirtyDynamicKeys.isEmpty()
+            && dirtyDelegationKeys.isEmpty())) {
+      return;
+    }
+
+    ResourceSyncService resourceSyncService = ResourceSyncService.getInstance();
+    if (resourceSyncService == null) {
+      throw new IllegalStateException("ResourceSyncService is not available for post-block sync");
+    }
+
+    resourceSyncService.flushResourceDeltas(
+        null,
+        dirtyAccounts,
+        dirtyDynamicKeys,
+        Collections.emptySet(),
+        Collections.emptySet(),
+        dirtyDelegationKeys);
+  }
+
+  private static byte[] buildDelegationRewardKey(long cycle, byte[] address) {
+    // Use platform default charset to match DelegationStore.buildRewardKey() encoding
+    return (cycle + "-" + Hex.toHexString(address) + "-reward").getBytes();
+  }
+
+  private static void addDirtyKey(Set<byte[]> dirtyKeys, byte[] key) {
+    for (byte[] existing : dirtyKeys) {
+      if (Arrays.equals(existing, key)) {
+        return;
+      }
+    }
+    dirtyKeys.add(key);
   }
 
   private void postSolidityLogContractTrigger(Long blockNum, Long lastSolidityNum) {
