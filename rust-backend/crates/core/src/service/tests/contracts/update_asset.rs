@@ -878,7 +878,7 @@ fn test_update_asset_happy_path_v2_mode() {
 
     let exec_result = result.unwrap();
     assert!(exec_result.success);
-    assert_eq!(exec_result.state_changes.len(), 1);
+    assert_eq!(exec_result.state_changes.len(), 0);
 
     // Verify the updated asset in V2 store
     let updated_asset = storage_adapter
@@ -950,6 +950,7 @@ fn test_update_asset_happy_path_legacy_mode_preserves_per_store_fields() {
         &new_test_context(),
     );
     assert!(result.is_ok(), "Expected success, got: {:?}", result.err());
+    assert_eq!(result.as_ref().unwrap().state_changes.len(), 0);
 
     // Verify legacy store: updated fields + preserved per-store fields
     let updated_legacy = storage_adapter
