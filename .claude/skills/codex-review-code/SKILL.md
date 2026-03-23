@@ -154,7 +154,7 @@ Save a diff-hash marker so the Stop hook won't re-trigger for already-reviewed c
 ```bash
 H=$(command -v shasum >/dev/null 2>&1 && echo "shasum -a 256" || echo "sha256sum")
 REPO_ID=$(git rev-parse --show-toplevel 2>/dev/null | $H | cut -d' ' -f1 | head -c 12)
-(git diff HEAD 2>/dev/null; git ls-files --others --exclude-standard -z 2>/dev/null | sort -z | xargs -0 -r sh -c 'for f; do printf "\0%s\0" "$f"; cat "$f"; done' _) | $H | cut -d' ' -f1 > "/tmp/.codex-last-reviewed-hash-${REPO_ID}"
+(git diff HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do printf '\0%s\0' "$f"; cat "$f"; done) | $H | cut -d' ' -f1 > "/tmp/.codex-last-reviewed-hash-${REPO_ID}"
 ```
 
 If you make additional fixes after saving the hash, save it again.
