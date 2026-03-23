@@ -152,7 +152,8 @@ Fix what you can before reporting. Then present to the user:
 Save a diff-hash marker so the Stop hook won't re-trigger for already-reviewed changes:
 
 ```bash
-(git diff HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null) | md5sum | cut -d' ' -f1 > /tmp/.codex-last-reviewed-hash
+REPO_ID=$(git rev-parse --show-toplevel 2>/dev/null | shasum -a 256 | cut -d' ' -f1 | head -c 12)
+(git diff HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null) | shasum -a 256 | cut -d' ' -f1 > "/tmp/.codex-last-reviewed-hash-${REPO_ID}"
 ```
 
 If you make additional fixes after saving the hash, save it again.
