@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CHANGES=$(git diff HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null); if [ -n \"$CHANGES\" ]; then REPO_ID=$(git rev-parse --show-toplevel 2>/dev/null | shasum -a 256 | cut -d' ' -f1 | head -c 12); CURRENT_HASH=$(echo \"$CHANGES\" | shasum -a 256 | cut -d' ' -f1); LAST_HASH=$(cat \"/tmp/.codex-last-reviewed-hash-${REPO_ID}\" 2>/dev/null); if [ \"$CURRENT_HASH\" != \"$LAST_HASH\" ]; then echo '{\"decision\":\"block\",\"reason\":\"Code changes detected since last Codex review. Run the codex-review-code skill to review these changes.\"}'; fi; fi",
+            "command": "H=$(command -v shasum >/dev/null 2>&1 && echo 'shasum -a 256' || echo 'sha256sum'); CHANGES=$(git diff HEAD 2>/dev/null; git ls-files --others --exclude-standard -z 2>/dev/null | xargs -0 cat 2>/dev/null); if [ -n \"$CHANGES\" ]; then REPO_ID=$(git rev-parse --show-toplevel 2>/dev/null | $H | cut -d' ' -f1 | head -c 12); CURRENT_HASH=$(echo \"$CHANGES\" | $H | cut -d' ' -f1); LAST_HASH=$(cat \"/tmp/.codex-last-reviewed-hash-${REPO_ID}\" 2>/dev/null); if [ \"$CURRENT_HASH\" != \"$LAST_HASH\" ]; then echo '{\"decision\":\"block\",\"reason\":\"Code changes detected since last Codex review. Run the codex-review-code skill to review these changes.\"}'; fi; fi",
             "timeout": 10
           }
         ]
