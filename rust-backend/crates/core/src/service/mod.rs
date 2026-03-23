@@ -9724,19 +9724,9 @@ impl BackendService {
                 .map_err(|e| format!("Failed to persist asset issue V2: {}", e))?;
         }
 
-        // Build minimal state change (no TRX balance change, fee == 0)
-        let account_info = revm_primitives::AccountInfo {
-            balance: revm_primitives::U256::from(account.balance as u64),
-            nonce: 0,
-            code_hash: revm_primitives::B256::ZERO,
-            code: None,
-        };
-
-        let state_changes = vec![TronStateChange::AccountChange {
-            address: owner,
-            old_account: Some(account_info.clone()),
-            new_account: Some(account_info),
-        }];
+        // Java's UpdateAssetActuator only mutates AssetIssue stores. It does not update the
+        // issuer account, so embedded CSV reporting sees no account/state changes for this tx.
+        let state_changes = Vec::new();
 
         let bandwidth_used = Self::calculate_bandwidth_usage(transaction);
 
