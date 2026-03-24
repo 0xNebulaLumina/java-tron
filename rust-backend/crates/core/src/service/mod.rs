@@ -50,6 +50,10 @@ impl BackendService {
     /// Require `contract_parameter` to be present with a matching `type_url`.
     /// Returns the parameter value bytes on success, or the handler-specific
     /// type-mismatch error string on failure.
+    ///
+    /// Safety: Java's RemoteExecutionSPI.buildExecuteTransactionRequest() always
+    /// sets contract_parameter from Contract.getParameter(). Java actuators also
+    /// validate via any.is(). No fallback to transaction.data is needed.
     fn require_contract_parameter<'a>(
         transaction: &'a TronTransaction,
         expected_proto_type: &str,
@@ -4583,6 +4587,11 @@ impl BackendService {
         use prost::Message;
         use tron_backend_execution::protocol::Permission;
 
+        // Outer wire-level parsing (tags, length-delimited framing, unknown fields) uses
+        // the unified ProtobufError taxonomy for protobuf-java 3.21.12 message parity.
+        // Inner Permission::decode() uses prost, which has its own error surface — remapping
+        // prost errors to Java-parity strings would require manual Permission parsing and is
+        // out of scope for the wire-level taxonomy unification.
         let map_err = |e: ProtobufError| e.to_java_message();
 
         let mut owner_address: Option<Vec<u8>> = None;
