@@ -184,8 +184,8 @@ Fallback plan (acceptable but less robust):
 
 #### 4.3 Enforce across all NON_VM system contracts implemented in Rust
 Audit every handler reachable via the NON_VM dispatch path in `rust-backend/crates/core/src/service/mod.rs`:
-- [ ] If a handler currently does `if let Some(any) = ...` for type checking, convert to "require".
-- [ ] If a handler uses `transaction.data` as a substitute for missing `Any.value`, remove that behavior.
+- [x] If a handler currently does `if let Some(any) = ...` for type checking, convert to "require". ✅ DONE for contract-metadata family (33/45/48/49) via `require_contract_parameter` helper
+- [x] If a handler uses `transaction.data` as a substitute for missing `Any.value`, remove that behavior. ✅ DONE for contract-metadata family
 - [x] Ensure error messages stay identical for existing fixtures (type mismatch fixtures must still pass). ✅ VERIFIED
 
 Minimum audit list (from dispatch):
@@ -203,9 +203,9 @@ Minimum audit list (from dispatch):
 - UpdateAssetContract (15) - **FUTURE**
 - ProposalCreate/Approve/Delete (16/17/18) - **FUTURE**
 - SetAccountId (19) - **FUTURE**
-- AccountPermissionUpdate (46) - **FUTURE**
-- UpdateSetting/UpdateEnergyLimit/ClearAbi (33/45/48) - **ClearABI DONE** ✅
-- UpdateBrokerage (49) - **FUTURE**
+- AccountPermissionUpdate (46) - ✅ DONE (strict + `require_contract_parameter`)
+- UpdateSetting/UpdateEnergyLimit/ClearAbi (33/45/48) - ✅ DONE (strict + `require_contract_parameter` + `resolve_owner_address`)
+- UpdateBrokerage (49) - ✅ DONE (strict + `require_contract_parameter` + `resolve_owner_address`)
 - Exchange* (41/42/43/44) - **FUTURE**
 - Market* (52/53) - **FUTURE**
 - FreezeBalanceV2/UnfreezeBalanceV2 (54/55) - **FUTURE**
