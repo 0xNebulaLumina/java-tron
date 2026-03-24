@@ -4556,8 +4556,14 @@ impl BackendService {
         ),
         String,
     > {
+        use contracts::proto::{
+            read_length_delimited_typed, read_tag_typed, skip_protobuf_field_checked,
+            ProtobufError,
+        };
         use prost::Message;
         use tron_backend_execution::protocol::Permission;
+
+        let map_err = |e: ProtobufError| e.to_java_message();
 
         let mut owner_address: Option<Vec<u8>> = None;
         let mut owner_permission: Option<Permission> = None;
@@ -4566,73 +4572,50 @@ impl BackendService {
         let mut pos = 0;
 
         while pos < data.len() {
-            let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            let (field_number, wire_type, bytes_read) =
+                read_tag_typed(&data[pos..]).map_err(map_err)?;
             pos += bytes_read;
-
-            let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid owner address length".to_string());
-                    }
-                    owner_address = Some(data[pos..end].to_vec());
-                    pos = end;
+                    // owner_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    owner_address = Some(payload.to_vec());
+                    pos += total;
                 }
                 (2, 2) => {
-                    // owner permission
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid owner permission length".to_string());
-                    }
+                    // owner permission (embedded message)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
                     owner_permission = Some(
-                        Permission::decode(&data[pos..end])
+                        Permission::decode(payload)
                             .map_err(|e| format!("Failed to decode owner permission: {}", e))?,
                     );
-                    pos = end;
+                    pos += total;
                 }
                 (3, 2) => {
-                    // witness permission
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid witness permission length".to_string());
-                    }
+                    // witness permission (embedded message)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
                     witness_permission = Some(
-                        Permission::decode(&data[pos..end])
+                        Permission::decode(payload)
                             .map_err(|e| format!("Failed to decode witness permission: {}", e))?,
                     );
-                    pos = end;
+                    pos += total;
                 }
                 (4, 2) => {
-                    // active permission (repeated)
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid active permission length".to_string());
-                    }
-                    let perm = Permission::decode(&data[pos..end])
+                    // active permission (repeated embedded message)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    let perm = Permission::decode(payload)
                         .map_err(|e| format!("Failed to decode active permission: {}", e))?;
                     active_permissions.push(perm);
-                    pos = end;
+                    pos += total;
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(map_err)?;
                     pos += skip_len;
                 }
             }
@@ -6020,7 +6003,12 @@ impl BackendService {
         &self,
         data: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>, i64), String> {
-        use contracts::proto::read_varint;
+        use contracts::proto::{
+            read_length_delimited_typed, read_tag_typed, read_varint_typed,
+            skip_protobuf_field_checked, ProtobufError,
+        };
+
+        let map_err = |e: ProtobufError| e.to_java_message();
 
         let mut owner_address: Vec<u8> = vec![];
         let mut contract_address: Vec<u8> = vec![];
@@ -6028,48 +6016,35 @@ impl BackendService {
         let mut pos = 0;
 
         while pos < data.len() {
-            let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            let (field_number, wire_type, bytes_read) =
+                read_tag_typed(&data[pos..]).map_err(map_err)?;
             pos += bytes_read;
-
-            let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid owner_address length".to_string());
-                    }
-                    owner_address = data[pos..end].to_vec();
-                    pos = end;
+                    // owner_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    owner_address = payload.to_vec();
+                    pos += total;
                 }
                 (2, 2) => {
-                    // contract_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid contract_address length".to_string());
-                    }
-                    contract_address = data[pos..end].to_vec();
-                    pos = end;
+                    // contract_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    contract_address = payload.to_vec();
+                    pos += total;
                 }
                 (3, 0) => {
                     // consume_user_resource_percent (varint)
-                    let (value, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read percent: {}", e))?;
-                    pos += bytes_read;
+                    let (value, bytes_read) =
+                        read_varint_typed(&data[pos..]).map_err(|e| ProtobufError::from(e).to_java_message())?;
                     consume_user_resource_percent = value as i64;
+                    pos += bytes_read;
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(map_err)?;
                     pos += skip_len;
                 }
             }
@@ -6253,7 +6228,12 @@ impl BackendService {
         &self,
         data: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>, i64), String> {
-        use contracts::proto::read_varint;
+        use contracts::proto::{
+            read_length_delimited_typed, read_tag_typed, read_varint_typed,
+            skip_protobuf_field_checked, ProtobufError,
+        };
+
+        let map_err = |e: ProtobufError| e.to_java_message();
 
         let mut owner_address: Vec<u8> = vec![];
         let mut contract_address: Vec<u8> = vec![];
@@ -6261,48 +6241,35 @@ impl BackendService {
         let mut pos = 0;
 
         while pos < data.len() {
-            let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            let (field_number, wire_type, bytes_read) =
+                read_tag_typed(&data[pos..]).map_err(map_err)?;
             pos += bytes_read;
-
-            let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid owner_address length".to_string());
-                    }
-                    owner_address = data[pos..end].to_vec();
-                    pos = end;
+                    // owner_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    owner_address = payload.to_vec();
+                    pos += total;
                 }
                 (2, 2) => {
-                    // contract_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid contract_address length".to_string());
-                    }
-                    contract_address = data[pos..end].to_vec();
-                    pos = end;
+                    // contract_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    contract_address = payload.to_vec();
+                    pos += total;
                 }
                 (3, 0) => {
                     // origin_energy_limit (varint)
-                    let (value, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read origin_energy_limit: {}", e))?;
-                    pos += bytes_read;
+                    let (value, bytes_read) =
+                        read_varint_typed(&data[pos..]).map_err(|e| ProtobufError::from(e).to_java_message())?;
                     origin_energy_limit = value as i64;
+                    pos += bytes_read;
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(map_err)?;
                     pos += skip_len;
                 }
             }
@@ -6583,58 +6550,40 @@ impl BackendService {
     ///   bytes owner_address = 1;
     ///   int32 brokerage = 2;
     fn parse_update_brokerage_contract(&self, data: &[u8]) -> Result<(Vec<u8>, i32), String> {
-        use contracts::proto::read_varint;
+        use contracts::proto::{
+            read_length_delimited_typed, read_tag_typed, read_varint_typed,
+            skip_protobuf_field_checked, ProtobufError,
+        };
+
+        let map_err = |e: ProtobufError| e.to_java_message();
 
         let mut owner_address: Vec<u8> = vec![];
         let mut brokerage: i32 = 0;
         let mut pos = 0;
 
-        let invalid_protobuf_message = || {
-            "While parsing a protocol message, the input ended unexpectedly in the middle of a field.  This could mean either that the input has been truncated or that an embedded message misreported its own length.".to_string()
-        };
-
-        let map_protobuf_error = |e: String| {
-            // Our lightweight parser produces different error strings than protobuf-java.
-            // Map truncation/EOF cases to the exact InvalidProtocolBufferException message
-            // expected by java-side fixtures.
-            if e.contains("Unexpected end") || e.contains("Varint") {
-                invalid_protobuf_message()
-            } else {
-                e
-            }
-        };
-
         while pos < data.len() {
-            let (field_header, bytes_read) =
-                read_varint(&data[pos..]).map_err(map_protobuf_error)?;
+            let (field_number, wire_type, bytes_read) =
+                read_tag_typed(&data[pos..]).map_err(map_err)?;
             pos += bytes_read;
-
-            let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address
-                    let (length, bytes_read) =
-                        read_varint(&data[pos..]).map_err(map_protobuf_error)?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err(invalid_protobuf_message());
-                    }
-                    owner_address = data[pos..end].to_vec();
-                    pos = end;
+                    // owner_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    owner_address = payload.to_vec();
+                    pos += total;
                 }
                 (2, 0) => {
                     // brokerage (int32, wire type 0 = varint)
                     let (value, bytes_read) =
-                        read_varint(&data[pos..]).map_err(map_protobuf_error)?;
-                    pos += bytes_read;
+                        read_varint_typed(&data[pos..]).map_err(|e| ProtobufError::from(e).to_java_message())?;
                     brokerage = value as i32;
+                    pos += bytes_read;
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(map_protobuf_error)?;
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(map_err)?;
                     pos += skip_len;
                 }
             }

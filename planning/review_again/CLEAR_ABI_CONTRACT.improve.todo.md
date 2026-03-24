@@ -225,7 +225,7 @@ Minimum audit list (from dispatch):
 - [x] Ensure the returned error string matches the new fixtures exactly. ✅ VERIFIED by conformance tests
 
 Stretch goal (recommended):
-- [ ] Reuse the same error taxonomy/mapping for other manual parsers (e.g. UpdateBrokerage) so behavior is consistent across the "contract metadata family" (33/45/48/49). **FUTURE**
+- [x] Reuse the same error taxonomy/mapping for other manual parsers (e.g. UpdateBrokerage) so behavior is consistent across the "contract metadata family" (33/45/48/49). ✅ DONE — All 5 parsers (UpdateBrokerage, UpdateSetting, UpdateEnergyLimit, AccountPermissionUpdate, AccountUpdate) now use `read_tag_typed`, `read_length_delimited_typed`, `skip_protobuf_field_checked`, and `ProtobufError::to_java_message()`.
 
 ---
 
