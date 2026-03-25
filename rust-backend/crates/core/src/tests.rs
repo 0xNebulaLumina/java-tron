@@ -585,7 +585,7 @@ fn test_vote_witness_after_freeze_v1_succeeds() {
         data: Bytes::new(), // Simplified - would contain vote details in real scenario
         gas_limit: 10000,
         gas_price: U256::ZERO,
-        nonce: 1,
+        nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(TronContractType::VoteWitnessContract),
             asset_id: None,
@@ -721,7 +721,7 @@ fn test_vote_witness_multi_freeze_accumulates() {
         data: Bytes::new(),
         gas_limit: 10000,
         gas_price: U256::ZERO,
-        nonce: 1,
+        nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(TronContractType::VoteWitnessContract),
             asset_id: None,
@@ -750,21 +750,38 @@ fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
         buf.push(value as u8);
     }
 
-    fn encode_vote_witness_contract_single(vote_address: &Address, vote_count: u64) -> Bytes {
+    fn encode_vote_witness_contract(
+        owner_address: &Address,
+        vote_address: &Address,
+        vote_count: u64,
+    ) -> Bytes {
+        let mut contract = Vec::new();
+
+        // Field 1: owner_address (tag=0x0a, length-delimited)
+        let mut owner_tron = Vec::with_capacity(21);
+        owner_tron.push(0x41);
+        owner_tron.extend_from_slice(owner_address.as_slice());
+        contract.push(0x0a);
+        write_varint(&mut contract, owner_tron.len() as u64);
+        contract.extend_from_slice(&owner_tron);
+
+        // Field 2: votes (tag=0x12, length-delimited)
         let mut vote_msg = Vec::new();
+        // Vote.vote_address (field 1, tag=0x0a)
         vote_msg.push(0x0a);
-        let mut tron_addr = Vec::with_capacity(21);
-        tron_addr.push(0x41);
-        tron_addr.extend_from_slice(vote_address.as_slice());
-        write_varint(&mut vote_msg, tron_addr.len() as u64);
-        vote_msg.extend_from_slice(&tron_addr);
+        let mut vote_tron = Vec::with_capacity(21);
+        vote_tron.push(0x41);
+        vote_tron.extend_from_slice(vote_address.as_slice());
+        write_varint(&mut vote_msg, vote_tron.len() as u64);
+        vote_msg.extend_from_slice(&vote_tron);
+        // Vote.vote_count (field 2, tag=0x10)
         vote_msg.push(0x10);
         write_varint(&mut vote_msg, vote_count);
 
-        let mut contract = Vec::new();
         contract.push(0x12);
         write_varint(&mut contract, vote_msg.len() as u64);
         contract.extend_from_slice(&vote_msg);
+
         Bytes::from(contract)
     }
 
@@ -835,7 +852,7 @@ fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: encode_vote_witness_contract_single(&witness_address, 4754),
+        data: encode_vote_witness_contract(&owner_address, &witness_address, 4754),
         gas_limit: 10000,
         gas_price: U256::ZERO,
         nonce: 1,
@@ -865,7 +882,7 @@ fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: encode_vote_witness_contract_single(&witness_address, 4838),
+        data: encode_vote_witness_contract(&owner_address, &witness_address, 4838),
         gas_limit: 10000,
         gas_price: U256::ZERO,
         nonce: 2,

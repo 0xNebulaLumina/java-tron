@@ -6,7 +6,7 @@
 //! ## Algorithm Overview
 //!
 //! TRON uses a Bancor-style AMM with the formula:
-//! ```
+//! ```text
 //! exchangeToSupply:   issuedSupply = -supply * (1 - (1 + quant/newBalance)^0.0005)
 //! exchangeFromSupply: exchangeBalance = balance * ((1 + supplyQuant/supply)^2000 - 1)
 //! ```
