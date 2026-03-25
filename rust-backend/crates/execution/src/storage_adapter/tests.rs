@@ -161,6 +161,8 @@ mod tests {
 
     #[test]
     fn test_account_name_storage() {
+        use crate::protocol::Account as ProtoAccount;
+
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
             .expect("Failed to create storage engine");
@@ -168,6 +170,9 @@ mod tests {
 
         let test_address = Address::from([1u8; 20]);
         let test_name = b"TestAccount";
+
+        // Account must exist before setting name
+        adapter.put_account_proto(&test_address, &ProtoAccount::default()).unwrap();
 
         // Test setting and getting account name
         assert!(adapter.set_account_name(test_address, test_name).is_ok());
@@ -183,20 +188,31 @@ mod tests {
 
     #[test]
     fn test_account_name_validation() {
+        use crate::protocol::Account as ProtoAccount;
+
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
             .expect("Failed to create storage engine");
         let mut adapter = EngineBackedEvmStateStore::new(storage_engine);
 
         let test_address = Address::from([1u8; 20]);
+        let another_address = Address::from([2u8; 20]);
 
-        // Test empty name (should fail)
+        // Accounts must exist before setting name
+        adapter.put_account_proto(&test_address, &ProtoAccount::default()).unwrap();
+        adapter.put_account_proto(&another_address, &ProtoAccount::default()).unwrap();
+
+        // Test empty name (allowed — Java does not reject empty account names)
         let empty_name = b"";
-        assert!(adapter.set_account_name(test_address, empty_name).is_err());
+        assert!(adapter.set_account_name(test_address, empty_name).is_ok());
 
-        // Test name too long (should fail)
+        // Test name within 200-byte limit (allowed)
         let long_name = b"ThisIsAVeryLongAccountNameThatExceedsTheThirtyTwoByteLimitAndShouldFail";
-        assert!(adapter.set_account_name(test_address, long_name).is_err());
+        assert!(adapter.set_account_name(test_address, long_name).is_ok());
+
+        // Test name exceeding 200-byte limit (should fail)
+        let too_long_name = &[b'A'; 201];
+        assert!(adapter.set_account_name(test_address, too_long_name).is_err());
 
         // Test valid name length
         let valid_name = b"ValidAccountName";
@@ -204,7 +220,6 @@ mod tests {
 
         // Test maximum length name (32 bytes)
         let max_length_name = b"ThisIsExactlyThirtyTwoBytesLong!";
-        let another_address = Address::from([2u8; 20]);
         assert_eq!(max_length_name.len(), 32);
         assert!(adapter
             .set_account_name(another_address, max_length_name)
@@ -213,12 +228,19 @@ mod tests {
 
     #[test]
     fn test_account_name_utf8_handling() {
+        use crate::protocol::Account as ProtoAccount;
+
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let storage_engine = tron_backend_storage::StorageEngine::new(temp_dir.path())
             .expect("Failed to create storage engine");
         let mut adapter = EngineBackedEvmStateStore::new(storage_engine);
 
         let test_address = Address::from([1u8; 20]);
+        let non_utf8_address = Address::from([2u8; 20]);
+
+        // Accounts must exist before setting name
+        adapter.put_account_proto(&test_address, &ProtoAccount::default()).unwrap();
+        adapter.put_account_proto(&non_utf8_address, &ProtoAccount::default()).unwrap();
 
         // Test valid UTF-8 name
         let utf8_name = "ValidUTF8Name".as_bytes();
@@ -228,7 +250,6 @@ mod tests {
         assert_eq!(retrieved_name, Some("ValidUTF8Name".to_string()));
 
         // Test non-UTF-8 bytes (should store but warn)
-        let non_utf8_address = Address::from([2u8; 20]);
         let non_utf8_name = &[0xFF, 0xFE, 0xFD, 0xFC]; // Invalid UTF-8 sequence
         assert!(adapter
             .set_account_name(non_utf8_address, non_utf8_name)
@@ -597,9 +618,10 @@ mod tests {
 
     #[test]
     fn test_resource_tracker_increase_negative_time_delta() {
-        // When now < lastTime, should not recover
+        // When now < lastTime, delta is negative so decay factor > 1.0
+        // This matches Java's BandwidthProcessor.increase() behavior
         let new_usage = ResourceTracker::increase(1000, 200, 5000, 4000, 28800);
-        assert_eq!(new_usage, 1200, "Negative time delta should not recover");
+        assert_eq!(new_usage, 1234, "Negative time delta: decay > 1.0 per Java parity");
     }
 
     #[test]
