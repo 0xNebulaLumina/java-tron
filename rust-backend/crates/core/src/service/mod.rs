@@ -47,6 +47,44 @@ impl BackendService {
         }
     }
 
+    /// Require `contract_parameter` to be present with a matching `type_url`.
+    /// Returns the parameter value bytes on success, or the handler-specific
+    /// type-mismatch error string on failure.
+    ///
+    /// Safety: Java's RemoteExecutionSPI.buildExecuteTransactionRequest() always
+    /// sets contract_parameter from Contract.getParameter(). Java actuators also
+    /// validate via any.is(). No fallback to transaction.data is needed.
+    fn require_contract_parameter<'a>(
+        transaction: &'a TronTransaction,
+        expected_proto_type: &str,
+        type_mismatch_error: &str,
+    ) -> Result<&'a [u8], String> {
+        let any = transaction
+            .metadata
+            .contract_parameter
+            .as_ref()
+            .ok_or_else(|| type_mismatch_error.to_string())?;
+        if any.type_url.is_empty()
+            || !Self::any_type_url_matches(&any.type_url, expected_proto_type)
+        {
+            return Err(type_mismatch_error.to_string());
+        }
+        Ok(&any.value)
+    }
+
+    /// Resolve the owner address from the parsed contract field, falling back
+    /// to `from_raw` when the contract field is empty.
+    fn resolve_owner_address<'a>(
+        owner_from_contract: &'a [u8],
+        from_raw: Option<&'a [u8]>,
+    ) -> &'a [u8] {
+        if !owner_from_contract.is_empty() {
+            owner_from_contract
+        } else {
+            from_raw.unwrap_or(&[])
+        }
+    }
+
     /// Validate that `data` is a valid protobuf-encoded `WitnessUpdateContract`.
     ///
     /// ```protobuf
@@ -4326,26 +4364,12 @@ impl BackendService {
             );
         }
 
-        // Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(
-                &any.type_url,
-                "protocol.AccountPermissionUpdateContract",
-            ) {
-                return Err(
-                    "contract type error,expected type [AccountPermissionUpdateContract],real type[class com.google.protobuf.Any]"
-                        .to_string(),
-                );
-            }
-        }
-
-        // Parse contract
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
+        // Require contract_parameter with matching type_url (strict enforcement)
+        let contract_bytes = Self::require_contract_parameter(
+            transaction,
+            "protocol.AccountPermissionUpdateContract",
+            "contract type error,expected type [AccountPermissionUpdateContract],real type[class com.google.protobuf.Any]",
+        )?;
         let (owner_address_bytes, mut owner_permission, witness_permission, active_permissions) =
             self.parse_account_permission_update_contract(contract_bytes)?;
 
@@ -4556,8 +4580,19 @@ impl BackendService {
         ),
         String,
     > {
+        use contracts::proto::{
+            read_length_delimited_typed, read_tag_typed, skip_protobuf_field_checked,
+            ProtobufError,
+        };
         use prost::Message;
         use tron_backend_execution::protocol::Permission;
+
+        // Outer wire-level parsing (tags, length-delimited framing, unknown fields) uses
+        // the unified ProtobufError taxonomy for protobuf-java 3.21.12 message parity.
+        // Inner Permission::decode() uses prost, which has its own error surface — remapping
+        // prost errors to Java-parity strings would require manual Permission parsing and is
+        // out of scope for the wire-level taxonomy unification.
+        let map_err = |e: ProtobufError| e.to_java_message();
 
         let mut owner_address: Option<Vec<u8>> = None;
         let mut owner_permission: Option<Permission> = None;
@@ -4566,73 +4601,50 @@ impl BackendService {
         let mut pos = 0;
 
         while pos < data.len() {
-            let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            let (field_number, wire_type, bytes_read) =
+                read_tag_typed(&data[pos..]).map_err(map_err)?;
             pos += bytes_read;
-
-            let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid owner address length".to_string());
-                    }
-                    owner_address = Some(data[pos..end].to_vec());
-                    pos = end;
+                    // owner_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    owner_address = Some(payload.to_vec());
+                    pos += total;
                 }
                 (2, 2) => {
-                    // owner permission
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid owner permission length".to_string());
-                    }
+                    // owner permission (embedded message)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
                     owner_permission = Some(
-                        Permission::decode(&data[pos..end])
+                        Permission::decode(payload)
                             .map_err(|e| format!("Failed to decode owner permission: {}", e))?,
                     );
-                    pos = end;
+                    pos += total;
                 }
                 (3, 2) => {
-                    // witness permission
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid witness permission length".to_string());
-                    }
+                    // witness permission (embedded message)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
                     witness_permission = Some(
-                        Permission::decode(&data[pos..end])
+                        Permission::decode(payload)
                             .map_err(|e| format!("Failed to decode witness permission: {}", e))?,
                     );
-                    pos = end;
+                    pos += total;
                 }
                 (4, 2) => {
-                    // active permission (repeated)
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid active permission length".to_string());
-                    }
-                    let perm = Permission::decode(&data[pos..end])
+                    // active permission (repeated embedded message)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    let perm = Permission::decode(payload)
                         .map_err(|e| format!("Failed to decode active permission: {}", e))?;
                     active_permissions.push(perm);
-                    pos = end;
+                    pos += total;
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(map_err)?;
                     pos += skip_len;
                 }
             }
@@ -5887,47 +5899,14 @@ impl BackendService {
         use revm_primitives::Address;
         use tron_backend_execution::TronExecutionResult;
 
-        // 1. Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.UpdateSettingContract") {
-                return Err(
-                    "contract type error, expected type [UpdateSettingContract], real type[class com.google.protobuf.Any]"
-                        .to_string(),
-                );
-            }
-        }
-
-        // 2. Parse the contract data
-        // NOTE: RemoteExecutionSPI always sets contract_parameter for UpdateSettingContract.
-        // The Any-less fallback (using transaction.data) is kept for backward compatibility
-        // with older clients / synthetic tests, but is not expected in production.
-        if transaction.metadata.contract_parameter.is_none() {
-            warn!("UpdateSettingContract: contract_parameter is missing; using transaction.data as fallback. \
-                   This path is not used by RemoteExecutionSPI and may not achieve full Java parity.");
-        }
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
+        // 1. Require contract_parameter with matching type_url (strict enforcement)
+        let contract_bytes = Self::require_contract_parameter(
+            transaction,
+            "protocol.UpdateSettingContract",
+            "contract type error, expected type [UpdateSettingContract], real type[class com.google.protobuf.Any]",
+        )?;
         let (owner_in_contract, contract_address, new_percent) =
             self.parse_update_setting_contract(contract_bytes)?;
-
-        // java-tron validates the Any type_url before unpacking. In the fixture generator, a type
-        // mismatch causes TransactionCapsule#getOwnerAddress() to return an empty `from` field
-        // while the encoded payload still contains a non-empty owner address. Mirror that behavior
-        // so type-mismatch fixtures produce the expected message.
-        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if transaction.metadata.contract_parameter.is_none()
-            && owner_from_field.is_empty()
-            && !owner_in_contract.is_empty()
-        {
-            return Err(
-                "contract type error, expected type [UpdateSettingContract], real type[class com.google.protobuf.Any]"
-                    .to_string(),
-            );
-        }
 
         debug!(
             "Parsed UpdateSettingContract: contract_address={}, new_percent={}",
@@ -5936,11 +5915,10 @@ impl BackendService {
         );
 
         // 2. Validate owner address
-        let owner_tron = if !owner_in_contract.is_empty() {
-            owner_in_contract.as_slice()
-        } else {
-            owner_from_field
-        };
+        let owner_tron = Self::resolve_owner_address(
+            owner_in_contract.as_slice(),
+            transaction.metadata.from_raw.as_deref(),
+        );
 
         let expected_prefix = storage_adapter.address_prefix();
         if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
@@ -6020,7 +5998,12 @@ impl BackendService {
         &self,
         data: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>, i64), String> {
-        use contracts::proto::read_varint;
+        use contracts::proto::{
+            read_length_delimited_typed, read_tag_typed, read_varint_typed,
+            skip_protobuf_field_checked, ProtobufError,
+        };
+
+        let map_err = |e: ProtobufError| e.to_java_message();
 
         let mut owner_address: Vec<u8> = vec![];
         let mut contract_address: Vec<u8> = vec![];
@@ -6028,48 +6011,35 @@ impl BackendService {
         let mut pos = 0;
 
         while pos < data.len() {
-            let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            let (field_number, wire_type, bytes_read) =
+                read_tag_typed(&data[pos..]).map_err(map_err)?;
             pos += bytes_read;
-
-            let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid owner_address length".to_string());
-                    }
-                    owner_address = data[pos..end].to_vec();
-                    pos = end;
+                    // owner_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    owner_address = payload.to_vec();
+                    pos += total;
                 }
                 (2, 2) => {
-                    // contract_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid contract_address length".to_string());
-                    }
-                    contract_address = data[pos..end].to_vec();
-                    pos = end;
+                    // contract_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    contract_address = payload.to_vec();
+                    pos += total;
                 }
                 (3, 0) => {
                     // consume_user_resource_percent (varint)
-                    let (value, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read percent: {}", e))?;
-                    pos += bytes_read;
+                    let (value, bytes_read) =
+                        read_varint_typed(&data[pos..]).map_err(|e| ProtobufError::from(e).to_java_message())?;
                     consume_user_resource_percent = value as i64;
+                    pos += bytes_read;
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(map_err)?;
                     pos += skip_len;
                 }
             }
@@ -6119,41 +6089,14 @@ impl BackendService {
             );
         }
 
-        // 2. Validate contract parameter type (Any.is) when raw Any is available
-        // Java: !any.is(UpdateEnergyLimitContract.class)
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.UpdateEnergyLimitContract") {
-                return Err(
-                    "contract type error, expected type [UpdateEnergyLimitContract],real type[class com.google.protobuf.Any]"
-                        .to_string(),
-                );
-            }
-        }
-
-        // 3. Parse the contract data
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
+        // 2. Require contract_parameter with matching type_url (strict enforcement)
+        let contract_bytes = Self::require_contract_parameter(
+            transaction,
+            "protocol.UpdateEnergyLimitContract",
+            "contract type error, expected type [UpdateEnergyLimitContract],real type[class com.google.protobuf.Any]",
+        )?;
         let (owner_in_contract, contract_address, new_origin_energy_limit) =
             self.parse_update_energy_limit_contract(contract_bytes)?;
-
-        // Java-tron validates the Any type_url before unpacking. In the fixture generator, a type
-        // mismatch causes TransactionCapsule#getOwnerAddress() to return an empty `from` field
-        // while the encoded payload still contains a non-empty owner address. Mirror that behavior
-        // so type-mismatch fixtures produce the expected message.
-        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if transaction.metadata.contract_parameter.is_none()
-            && owner_from_field.is_empty()
-            && !owner_in_contract.is_empty()
-        {
-            return Err(
-                "contract type error, expected type [UpdateEnergyLimitContract],real type[class com.google.protobuf.Any]"
-                    .to_string(),
-            );
-        }
 
         debug!(
             "Parsed UpdateEnergyLimitContract: contract_address={}, new_origin_energy_limit={}",
@@ -6161,13 +6104,11 @@ impl BackendService {
             new_origin_energy_limit
         );
 
-        // 4. Validate owner address (Java: DecodeUtil.addressValid)
-        // Use payload owner_address first; fall back to from_raw for Any-less compatibility.
-        let owner_tron = if !owner_in_contract.is_empty() {
-            owner_in_contract.as_slice()
-        } else {
-            owner_from_field
-        };
+        // 3. Validate owner address (Java: DecodeUtil.addressValid)
+        let owner_tron = Self::resolve_owner_address(
+            owner_in_contract.as_slice(),
+            transaction.metadata.from_raw.as_deref(),
+        );
 
         let expected_prefix = storage_adapter.address_prefix();
         if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
@@ -6253,7 +6194,12 @@ impl BackendService {
         &self,
         data: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>, i64), String> {
-        use contracts::proto::read_varint;
+        use contracts::proto::{
+            read_length_delimited_typed, read_tag_typed, read_varint_typed,
+            skip_protobuf_field_checked, ProtobufError,
+        };
+
+        let map_err = |e: ProtobufError| e.to_java_message();
 
         let mut owner_address: Vec<u8> = vec![];
         let mut contract_address: Vec<u8> = vec![];
@@ -6261,48 +6207,35 @@ impl BackendService {
         let mut pos = 0;
 
         while pos < data.len() {
-            let (field_header, bytes_read) = read_varint(&data[pos..])
-                .map_err(|e| format!("Failed to read field header: {}", e))?;
+            let (field_number, wire_type, bytes_read) =
+                read_tag_typed(&data[pos..]).map_err(map_err)?;
             pos += bytes_read;
-
-            let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid owner_address length".to_string());
-                    }
-                    owner_address = data[pos..end].to_vec();
-                    pos = end;
+                    // owner_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    owner_address = payload.to_vec();
+                    pos += total;
                 }
                 (2, 2) => {
-                    // contract_address
-                    let (length, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read length: {}", e))?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err("Invalid contract_address length".to_string());
-                    }
-                    contract_address = data[pos..end].to_vec();
-                    pos = end;
+                    // contract_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    contract_address = payload.to_vec();
+                    pos += total;
                 }
                 (3, 0) => {
                     // origin_energy_limit (varint)
-                    let (value, bytes_read) = read_varint(&data[pos..])
-                        .map_err(|e| format!("Failed to read origin_energy_limit: {}", e))?;
-                    pos += bytes_read;
+                    let (value, bytes_read) =
+                        read_varint_typed(&data[pos..]).map_err(|e| ProtobufError::from(e).to_java_message())?;
                     origin_energy_limit = value as i64;
+                    pos += bytes_read;
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(|e| format!("Failed to skip field: {}", e))?;
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(map_err)?;
                     pos += skip_len;
                 }
             }
@@ -6339,38 +6272,19 @@ impl BackendService {
             return Err("contract type error,unexpected type [ClearABIContract]".to_string());
         }
 
-        // 2. Strict contract_parameter requirement for NON_VM system contracts
-        // Java always populates contract_parameter; we require it for strict parity.
-        // Treat None and empty type_url as "missing" → return type-mismatch error.
-        let any = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .ok_or_else(|| {
-                "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]"
-                    .to_string()
-            })?;
+        // 2. Require contract_parameter with matching type_url (strict enforcement)
+        let contract_bytes = Self::require_contract_parameter(
+            transaction,
+            "protocol.ClearABIContract",
+            "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]",
+        )?;
+        let (owner_in_contract, contract_address) =
+            self.parse_clear_abi_contract(contract_bytes)?;
 
-        // Validate type_url is present and matches expected type
-        if any.type_url.is_empty()
-            || !Self::any_type_url_matches(&any.type_url, "protocol.ClearABIContract")
-        {
-            return Err(
-                "contract type error,expected type [ClearABIContract],real type[class com.google.protobuf.Any]"
-                    .to_string(),
-            );
-        }
-
-        // 3. Parse the contract data from contract_parameter.value only (no fallback)
-        let (owner_in_contract, contract_address) = self.parse_clear_abi_contract(&any.value)?;
-
-        // Use owner from contract if present, else from metadata.from_raw
-        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        let owner_tron = if !owner_in_contract.is_empty() {
-            owner_in_contract.as_slice()
-        } else {
-            owner_from_field
-        };
+        let owner_tron = Self::resolve_owner_address(
+            owner_in_contract.as_slice(),
+            transaction.metadata.from_raw.as_deref(),
+        );
 
         debug!(
             "Executing CLEAR_ABI_CONTRACT for owner={}, contract={}",
@@ -6466,47 +6380,20 @@ impl BackendService {
             );
         }
 
-        // 2. Validate contract parameter type (Any.is) when raw Any is available
-        if let Some(any) = transaction.metadata.contract_parameter.as_ref() {
-            if !Self::any_type_url_matches(&any.type_url, "protocol.UpdateBrokerageContract") {
-                return Err(
-                    "contract type error, expected type [UpdateBrokerageContract], real type[class com.google.protobuf.Any]"
-                        .to_string(),
-                );
-            }
-        }
-
-        // 3. Parse the contract data to get owner_address and brokerage value
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
+        // 2. Require contract_parameter with matching type_url (strict enforcement)
+        let contract_bytes = Self::require_contract_parameter(
+            transaction,
+            "protocol.UpdateBrokerageContract",
+            "contract type error, expected type [UpdateBrokerageContract], real type[class com.google.protobuf.Any]",
+        )?;
         let (owner_in_contract, brokerage) =
             self.parse_update_brokerage_contract(contract_bytes)?;
 
-        // java-tron validates the Any type_url before unpacking. In the fixture generator, a type
-        // mismatch causes TransactionCapsule#getOwnerAddress() to return an empty `from` field
-        // while the encoded payload still contains a non-empty owner address. Mirror that behavior
-        // so type-mismatch fixtures produce the expected message.
-        let owner_from_field = transaction.metadata.from_raw.as_deref().unwrap_or(&[]);
-        if transaction.metadata.contract_parameter.is_none()
-            && owner_from_field.is_empty()
-            && !owner_in_contract.is_empty()
-        {
-            return Err(
-                "contract type error, expected type [UpdateBrokerageContract], real type[class com.google.protobuf.Any]"
-                    .to_string(),
-            );
-        }
-
         // 3. Validate owner address (DecodeUtil.addressValid)
-        let owner_tron = if !owner_in_contract.is_empty() {
-            owner_in_contract.as_slice()
-        } else {
-            owner_from_field
-        };
+        let owner_tron = Self::resolve_owner_address(
+            owner_in_contract.as_slice(),
+            transaction.metadata.from_raw.as_deref(),
+        );
         let expected_prefix = storage_adapter.address_prefix();
         if owner_tron.len() != 21 || owner_tron[0] != expected_prefix {
             return Err("Invalid ownerAddress".to_string());
@@ -6583,58 +6470,40 @@ impl BackendService {
     ///   bytes owner_address = 1;
     ///   int32 brokerage = 2;
     fn parse_update_brokerage_contract(&self, data: &[u8]) -> Result<(Vec<u8>, i32), String> {
-        use contracts::proto::read_varint;
+        use contracts::proto::{
+            read_length_delimited_typed, read_tag_typed, read_varint_typed,
+            skip_protobuf_field_checked, ProtobufError,
+        };
+
+        let map_err = |e: ProtobufError| e.to_java_message();
 
         let mut owner_address: Vec<u8> = vec![];
         let mut brokerage: i32 = 0;
         let mut pos = 0;
 
-        let invalid_protobuf_message = || {
-            "While parsing a protocol message, the input ended unexpectedly in the middle of a field.  This could mean either that the input has been truncated or that an embedded message misreported its own length.".to_string()
-        };
-
-        let map_protobuf_error = |e: String| {
-            // Our lightweight parser produces different error strings than protobuf-java.
-            // Map truncation/EOF cases to the exact InvalidProtocolBufferException message
-            // expected by java-side fixtures.
-            if e.contains("Unexpected end") || e.contains("Varint") {
-                invalid_protobuf_message()
-            } else {
-                e
-            }
-        };
-
         while pos < data.len() {
-            let (field_header, bytes_read) =
-                read_varint(&data[pos..]).map_err(map_protobuf_error)?;
+            let (field_number, wire_type, bytes_read) =
+                read_tag_typed(&data[pos..]).map_err(map_err)?;
             pos += bytes_read;
-
-            let field_number = field_header >> 3;
-            let wire_type = field_header & 0x7;
 
             match (field_number, wire_type) {
                 (1, 2) => {
-                    // owner_address
-                    let (length, bytes_read) =
-                        read_varint(&data[pos..]).map_err(map_protobuf_error)?;
-                    pos += bytes_read;
-                    let end = pos + length as usize;
-                    if end > data.len() {
-                        return Err(invalid_protobuf_message());
-                    }
-                    owner_address = data[pos..end].to_vec();
-                    pos = end;
+                    // owner_address (bytes)
+                    let (payload, total) =
+                        read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                    owner_address = payload.to_vec();
+                    pos += total;
                 }
                 (2, 0) => {
                     // brokerage (int32, wire type 0 = varint)
                     let (value, bytes_read) =
-                        read_varint(&data[pos..]).map_err(map_protobuf_error)?;
-                    pos += bytes_read;
+                        read_varint_typed(&data[pos..]).map_err(|e| ProtobufError::from(e).to_java_message())?;
                     brokerage = value as i32;
+                    pos += bytes_read;
                 }
                 _ => {
-                    let skip_len = Self::skip_protobuf_field(&data[pos..], wire_type)
-                        .map_err(map_protobuf_error)?;
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(map_err)?;
                     pos += skip_len;
                 }
             }

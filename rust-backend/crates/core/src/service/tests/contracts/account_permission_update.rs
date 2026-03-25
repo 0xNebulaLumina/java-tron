@@ -4,7 +4,9 @@ use super::super::super::*;
 use super::common::{encode_varint, new_test_context, new_test_service_with_system_enabled};
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
+use tron_backend_execution::{
+    EngineBackedEvmStateStore, TronContractParameter, TronTransaction, TxMetadata,
+};
 use tron_backend_storage::StorageEngine;
 
 /// Helper to build AccountPermissionUpdateContract protobuf data
@@ -128,6 +130,46 @@ fn build_key(address: &[u8], weight: i64) -> Vec<u8> {
 }
 
 #[test]
+fn test_account_permission_update_strict_contract_parameter_required() {
+    // Verify that missing contract_parameter is rejected (strict enforcement).
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    storage_engine
+        .put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+        .unwrap();
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_system_enabled();
+    let context = new_test_context();
+
+    let transaction = TronTransaction {
+        from: Address::ZERO,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(vec![0x0a, 0x00]),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(
+                tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
+            ),
+            // contract_parameter intentionally omitted — must be rejected
+            ..Default::default()
+        },
+    };
+
+    let err = service
+        .execute_account_permission_update_contract(&mut storage_adapter, &transaction, &context)
+        .unwrap_err();
+    assert!(
+        err.contains("contract type error"),
+        "Expected type mismatch error, got: {}",
+        err
+    );
+}
+
+#[test]
 fn test_account_permission_update_validate_fail_owner_address_empty() {
     let temp_dir = tempfile::tempdir().unwrap();
     let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
@@ -196,7 +238,7 @@ fn test_account_permission_update_validate_fail_owner_address_empty() {
         from: tx_from,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -205,6 +247,11 @@ fn test_account_permission_update_validate_fail_owner_address_empty() {
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountPermissionUpdateContract"
+                    .to_string(),
+                value: contract_data.to_vec(),
+            }),
             ..Default::default()
         },
     };
@@ -324,7 +371,7 @@ fn test_account_permission_update_burn_trx_when_blackhole_optimization_enabled()
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -332,6 +379,11 @@ fn test_account_permission_update_burn_trx_when_blackhole_optimization_enabled()
             contract_type: Some(
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountPermissionUpdateContract"
+                    .to_string(),
+                value: contract_data.to_vec(),
+            }),
             ..Default::default()
         },
     };
@@ -467,7 +519,7 @@ fn test_account_permission_update_credit_blackhole_when_optimization_disabled() 
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -475,6 +527,11 @@ fn test_account_permission_update_credit_blackhole_when_optimization_disabled() 
             contract_type: Some(
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountPermissionUpdateContract"
+                    .to_string(),
+                value: contract_data.to_vec(),
+            }),
             ..Default::default()
         },
     };
@@ -594,7 +651,7 @@ fn test_account_permission_update_insufficient_balance_error_message() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -602,6 +659,11 @@ fn test_account_permission_update_insufficient_balance_error_message() {
             contract_type: Some(
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountPermissionUpdateContract"
+                    .to_string(),
+                value: contract_data.to_vec(),
+            }),
             ..Default::default()
         },
     };
@@ -769,7 +831,7 @@ fn test_account_permission_update_invalid_contract_type_in_operations() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -777,6 +839,11 @@ fn test_account_permission_update_invalid_contract_type_in_operations() {
             contract_type: Some(
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountPermissionUpdateContract"
+                    .to_string(),
+                value: contract_data.to_vec(),
+            }),
             ..Default::default()
         },
     };
@@ -873,7 +940,7 @@ fn test_account_permission_update_missing_available_contract_type() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -881,6 +948,11 @@ fn test_account_permission_update_missing_available_contract_type() {
             contract_type: Some(
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountPermissionUpdateContract"
+                    .to_string(),
+                value: contract_data.to_vec(),
+            }),
             ..Default::default()
         },
     };
@@ -974,7 +1046,7 @@ fn test_account_permission_update_available_contract_type_too_short() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -982,6 +1054,11 @@ fn test_account_permission_update_available_contract_type_too_short() {
             contract_type: Some(
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountPermissionUpdateContract"
+                    .to_string(),
+                value: contract_data.to_vec(),
+            }),
             ..Default::default()
         },
     };
@@ -1075,7 +1152,7 @@ fn test_account_permission_update_missing_allow_multi_sign() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1083,6 +1160,11 @@ fn test_account_permission_update_missing_allow_multi_sign() {
             contract_type: Some(
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountPermissionUpdateContract"
+                    .to_string(),
+                value: contract_data.to_vec(),
+            }),
             ..Default::default()
         },
     };
@@ -1175,7 +1257,7 @@ fn test_account_permission_update_missing_total_sign_num() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1183,6 +1265,11 @@ fn test_account_permission_update_missing_total_sign_num() {
             contract_type: Some(
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountPermissionUpdateContract"
+                    .to_string(),
+                value: contract_data.to_vec(),
+            }),
             ..Default::default()
         },
     };
@@ -1271,7 +1358,7 @@ fn test_account_permission_update_missing_update_account_permission_fee() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1279,6 +1366,11 @@ fn test_account_permission_update_missing_update_account_permission_fee() {
             contract_type: Some(
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "type.googleapis.com/protocol.AccountPermissionUpdateContract"
+                    .to_string(),
+                value: contract_data.to_vec(),
+            }),
             ..Default::default()
         },
     };

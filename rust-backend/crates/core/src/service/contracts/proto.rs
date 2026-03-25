@@ -102,74 +102,41 @@ pub struct AccountUpdateContractParams {
 
 /// Parse AccountUpdateContract from protobuf bytes
 /// Wire format: field 1 = account_name (bytes), field 2 = owner_address (bytes)
+///
+/// Error handling matches protobuf-java 3.21.12 for exact parity.
 pub(crate) fn parse_account_update_contract(
     data: &[u8],
 ) -> Result<AccountUpdateContractParams, String> {
+    let map_err = |e: ProtobufError| e.to_java_message();
+
     let mut params = AccountUpdateContractParams::default();
     let mut pos = 0;
 
     while pos < data.len() {
-        // Read tag (field_number << 3 | wire_type)
-        let (tag, tag_len) = read_varint(&data[pos..])?;
-        pos += tag_len;
-
-        let field_number = (tag >> 3) as u32;
-        let wire_type = (tag & 0x7) as u8;
+        let (field_number, wire_type, bytes_read) =
+            read_tag_typed(&data[pos..]).map_err(map_err)?;
+        pos += bytes_read;
 
         match (field_number, wire_type) {
             // Field 1: account_name (bytes, wire type 2 = length-delimited)
             (1, 2) => {
-                let (len, len_bytes) = read_varint(&data[pos..])?;
-                pos += len_bytes;
-                let len = len as usize;
-                if pos + len > data.len() {
-                    return Err("Truncated account_name field".to_string());
-                }
-                params.account_name = data[pos..pos + len].to_vec();
-                pos += len;
+                let (payload, total) =
+                    read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                params.account_name = payload.to_vec();
+                pos += total;
             }
             // Field 2: owner_address (bytes, wire type 2 = length-delimited)
             (2, 2) => {
-                let (len, len_bytes) = read_varint(&data[pos..])?;
-                pos += len_bytes;
-                let len = len as usize;
-                if pos + len > data.len() {
-                    return Err("Truncated owner_address field".to_string());
-                }
-                params.owner_address = data[pos..pos + len].to_vec();
-                pos += len;
+                let (payload, total) =
+                    read_length_delimited_typed(&data[pos..]).map_err(map_err)?;
+                params.owner_address = payload.to_vec();
+                pos += total;
             }
             // Skip unknown fields
-            (_, 0) => {
-                // Varint - skip
-                let (_val, val_len) = read_varint(&data[pos..])?;
-                pos += val_len;
-            }
-            (_, 1) => {
-                // 64-bit fixed - skip 8 bytes
-                if pos + 8 > data.len() {
-                    return Err("Truncated 64-bit field".to_string());
-                }
-                pos += 8;
-            }
-            (_, 2) => {
-                // Length-delimited - skip
-                let (len, len_bytes) = read_varint(&data[pos..])?;
-                pos += len_bytes;
-                pos += len as usize;
-            }
-            (_, 5) => {
-                // 32-bit fixed - skip 4 bytes
-                if pos + 4 > data.len() {
-                    return Err("Truncated 32-bit field".to_string());
-                }
-                pos += 4;
-            }
             _ => {
-                return Err(format!(
-                    "Unknown wire type {} for field {}",
-                    wire_type, field_number
-                ));
+                let skip_len =
+                    skip_protobuf_field_checked(&data[pos..], wire_type).map_err(map_err)?;
+                pos += skip_len;
             }
         }
     }
@@ -233,6 +200,35 @@ pub(crate) fn read_varint_typed(data: &[u8]) -> Result<(u64, usize), VarintError
     }
 }
 
+/// Read a protobuf tag (field header) with typed error reporting
+/// Validates tag != 0 and wire_type not in {6, 7}
+/// Returns (field_number, wire_type, bytes_consumed) on success
+pub(crate) fn read_tag_typed(data: &[u8]) -> Result<(u64, u8, usize), ProtobufError> {
+    let (tag, bytes_read) = read_varint_typed(data)?;
+    let field_number = tag >> 3;
+    let wire_type = (tag & 0x7) as u8;
+    // protobuf-java rejects field_number == 0 as invalid tag, regardless of wire_type
+    if field_number == 0 {
+        return Err(ProtobufError::InvalidTagZero);
+    }
+    if wire_type == 6 || wire_type == 7 {
+        return Err(ProtobufError::InvalidWireType(wire_type));
+    }
+    Ok((field_number, wire_type, bytes_read))
+}
+
+/// Read a length-delimited protobuf field with typed error reporting
+/// Returns (payload_slice, total_bytes_consumed) on success
+pub(crate) fn read_length_delimited_typed(data: &[u8]) -> Result<(&[u8], usize), ProtobufError> {
+    let (length, bytes_read) = read_varint_typed(data)?;
+    let length = usize::try_from(length).map_err(|_| ProtobufError::Truncated)?;
+    let total = bytes_read.checked_add(length).ok_or(ProtobufError::Truncated)?;
+    if total > data.len() {
+        return Err(ProtobufError::Truncated);
+    }
+    Ok((&data[bytes_read..bytes_read + length], total))
+}
+
 /// Skip a protobuf field with bounds checking and typed errors
 /// Returns bytes to skip on success
 pub(crate) fn skip_protobuf_field_checked(
@@ -255,7 +251,8 @@ pub(crate) fn skip_protobuf_field_checked(
         2 => {
             // Length-delimited - read length then skip that many bytes
             let (length, bytes_read) = read_varint_typed(data)?;
-            let total = bytes_read + length as usize;
+            let length = usize::try_from(length).map_err(|_| ProtobufError::Truncated)?;
+            let total = bytes_read.checked_add(length).ok_or(ProtobufError::Truncated)?;
             if total > data.len() {
                 return Err(ProtobufError::Truncated);
             }
@@ -712,7 +709,7 @@ mod tests {
 
         let result = parse_account_update_contract(&data);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Truncated"));
+        assert!(result.unwrap_err().contains("the input ended unexpectedly"));
     }
 
     #[test]
