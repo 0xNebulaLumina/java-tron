@@ -71,15 +71,15 @@ impl BackendService {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
         // Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.FreezeBalanceContract",
             Self::CONTRACT_NOT_EXIST,
             "contract type error,expected type [FreezeBalanceContract],real type[class com.google.protobuf.Any]",
         )?;
 
-        // Parse freeze parameters from transaction data
-        let params = Self::parse_freeze_balance_params(&transaction.data)?;
+        // Parse freeze parameters from contract bytes
+        let params = Self::parse_freeze_balance_params(contract_bytes)?;
 
         info!(
             "FreezeBalance owner={} amount={} resource={:?} duration={}",
@@ -739,15 +739,15 @@ impl BackendService {
         );
 
         // Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.UnfreezeBalanceContract",
             Self::CONTRACT_NOT_EXIST,
             "contract type error, expected type [UnfreezeBalanceContract], real type[class com.google.protobuf.Any]",
         )?;
 
-        // Parse unfreeze parameters from transaction data
-        let params = Self::parse_unfreeze_balance_params(&transaction.data)?;
+        // Parse unfreeze parameters from contract bytes
+        let params = Self::parse_unfreeze_balance_params(contract_bytes)?;
 
         debug!(
             "Parsed unfreeze params: resource={:?}, receiver_len={}",
@@ -1565,7 +1565,7 @@ impl BackendService {
     /// - resource: ResourceCode enum (field 10)
     /// - receiver_address: bytes (field 15) - optional, Phase 1 ignores
     pub(crate) fn parse_unfreeze_balance_params(
-        data: &revm_primitives::Bytes,
+        data: &[u8],
     ) -> Result<UnfreezeParams, String> {
         // Simple protobuf parser for the specific fields we need
         let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
@@ -1647,7 +1647,7 @@ impl BackendService {
         );
 
         // Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.FreezeBalanceV2Contract",
             Self::CONTRACT_NOT_EXIST,
@@ -1664,8 +1664,8 @@ impl BackendService {
             );
         }
 
-        // Parse freeze V2 parameters from transaction data
-        let params = Self::parse_freeze_balance_v2_params(&transaction.data)?;
+        // Parse freeze V2 parameters from contract bytes
+        let params = Self::parse_freeze_balance_v2_params(contract_bytes)?;
 
         debug!(
             "Parsed freeze V2 params: owner_len={}, frozen_balance={}, resource={:?}",
@@ -1994,15 +1994,15 @@ impl BackendService {
         );
 
         // Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.UnfreezeBalanceV2Contract",
             Self::CONTRACT_NOT_EXIST,
             "contract type error, expected type [UnfreezeBalanceV2Contract], real type[class com.google.protobuf.Any]",
         )?;
 
-        // Parse unfreeze V2 parameters from transaction data
-        let params = Self::parse_unfreeze_balance_v2_params(&transaction.data)?;
+        // Parse unfreeze V2 parameters from contract bytes
+        let params = Self::parse_unfreeze_balance_v2_params(contract_bytes)?;
 
         debug!(
             "Parsed unfreeze V2 params: unfreeze_balance={}, resource={:?}",
@@ -2641,7 +2641,7 @@ impl BackendService {
     /// - frozen_balance: int64 (field 2)
     /// - resource: ResourceCode enum (field 3)
     pub(crate) fn parse_freeze_balance_v2_params(
-        data: &revm_primitives::Bytes,
+        data: &[u8],
     ) -> Result<FreezeV2Params, String> {
         // Proto3 semantics: missing scalar fields read as 0.
         let mut owner_address: Vec<u8> = Vec::new();
@@ -2714,7 +2714,7 @@ impl BackendService {
     /// - unfreeze_balance: int64 (field 2)
     /// - resource: ResourceCode enum (field 3)
     pub(crate) fn parse_unfreeze_balance_v2_params(
-        data: &revm_primitives::Bytes,
+        data: &[u8],
     ) -> Result<UnfreezeV2Params, String> {
         if data.is_empty() {
             return Err("UnfreezeBalanceV2 params cannot be empty".to_string());
@@ -2792,7 +2792,7 @@ impl BackendService {
     /// - resource: ResourceCode enum (field 10)
     /// - receiver_address: bytes (field 15) - optional (delegate freeze when supportDR is enabled)
     pub(crate) fn parse_freeze_balance_params(
-        data: &revm_primitives::Bytes,
+        data: &[u8],
     ) -> Result<FreezeParams, String> {
         if data.is_empty() {
             return Err("FreezeBalance params cannot be empty".to_string());

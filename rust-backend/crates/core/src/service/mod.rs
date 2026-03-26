@@ -2151,7 +2151,7 @@ impl BackendService {
         use tron_backend_execution::{TronExecutionResult, TronStateChange, VotesRecord};
 
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.VoteWitnessContract",
             Self::CONTRACT_NOT_EXIST,
@@ -2163,9 +2163,9 @@ impl BackendService {
 
         let prefix = storage_adapter.address_prefix();
 
-        // 1. Parse VoteWitnessContract from transaction data
+        // 1. Parse VoteWitnessContract from contract_parameter.value
         let (owner_address_raw, votes_raw) =
-            Self::parse_vote_witness_contract(&transaction.data)
+            Self::parse_vote_witness_contract(contract_bytes)
                 .map_err(|e| format!("Failed to parse VoteWitnessContract: {}", e))?;
 
         // 2. Validate owner address (java-tron: DecodeUtil.addressValid)
@@ -2758,7 +2758,7 @@ impl BackendService {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.AccountCreateContract",
             Self::CONTRACT_NOT_EXIST,
@@ -2770,12 +2770,6 @@ impl BackendService {
         //   bytes owner_address = 1;
         //   bytes account_address = 2; (target account to create)
         //   AccountType type = 3;      (account type enum)
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
 
         // Get expected address prefix for strict validation (matches Java DecodeUtil.addressValid)
         let expected_prefix = storage_adapter.address_prefix();
@@ -3258,19 +3252,19 @@ impl BackendService {
         use tron_backend_execution::TronExecutionResult;
 
         // Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.ProposalCreateContract",
             Self::CONTRACT_NOT_EXIST,
             "contract type error,expected type [ProposalCreateContract],real type[class com.google.protobuf.Any]",
         )?;
 
-        // 1. Parse ProposalCreateContract from transaction.data
+        // 1. Parse ProposalCreateContract from contract_bytes
         // ProposalCreateContract:
         //   bytes owner_address = 1;
         //   map<int64, int64> parameters = 2;
         let (owner_address_bytes, parameters) =
-            self.parse_proposal_create_contract(&transaction.data)?;
+            self.parse_proposal_create_contract(contract_bytes)?;
         let readable_owner_address = hex::encode(&owner_address_bytes);
 
         // 2. Validate owner address (java-tron: DecodeUtil.addressValid)
@@ -3688,7 +3682,7 @@ impl BackendService {
         use tron_backend_execution::TronExecutionResult;
 
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.ProposalDeleteContract",
             Self::CONTRACT_NOT_EXIST,
@@ -3699,12 +3693,6 @@ impl BackendService {
         // ProposalDeleteContract:
         //   bytes owner_address = 1;
         //   int64 proposal_id = 2;
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
         let (owner_address_bytes, proposal_id) =
             self.parse_proposal_delete_contract(contract_bytes)?;
         let readable_owner_address = hex::encode(&owner_address_bytes);
@@ -3887,7 +3875,7 @@ impl BackendService {
         use tron_backend_execution::TronExecutionResult;
 
         // Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.SetAccountIdContract",
             Self::CONTRACT_NOT_EXIST,
@@ -3898,12 +3886,6 @@ impl BackendService {
         // SetAccountIdContract:
         //   bytes account_id = 1;
         //   bytes owner_address = 2;
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
         let (account_id, owner_address_bytes) =
             self.parse_set_account_id_contract(contract_bytes)?;
 
@@ -5006,19 +4988,12 @@ impl BackendService {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
         // Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.AssetIssueContract",
             Self::CONTRACT_NOT_EXIST,
             "contract type error,expected type [AssetIssueContract],real type[class com.google.protobuf.Any]",
         )?;
-
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
 
         // Decode full AssetIssueContractData early so we can validate owner_address and
         // frozen_supply (java-tron AssetIssueActuator.validate).
@@ -6808,7 +6783,7 @@ impl BackendService {
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.DelegateResourceContract",
             Self::CONTRACT_NOT_EXIST,
@@ -6816,7 +6791,7 @@ impl BackendService {
         )?;
 
         // Parse contract data
-        let delegate_info = self.parse_delegate_resource_contract(&transaction.data)?;
+        let delegate_info = self.parse_delegate_resource_contract(contract_bytes)?;
 
         // 1. Gate check: supportDR() must be true
         let support_dr = storage_adapter
@@ -7174,7 +7149,7 @@ impl BackendService {
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.UnDelegateResourceContract",
             Self::CONTRACT_NOT_EXIST,
@@ -7215,7 +7190,7 @@ impl BackendService {
             .ok_or_else(|| format!("Account[{}] does not exist", readable_owner_address))?;
 
         // Parse contract data
-        let undelegate_info = self.parse_undelegate_resource_contract(&transaction.data)?;
+        let undelegate_info = self.parse_undelegate_resource_contract(contract_bytes)?;
 
         // 4. Validate receiver address (DecodeUtil.addressValid)
         let receiver_raw = undelegate_info.receiver_address.as_slice();
@@ -8663,7 +8638,7 @@ impl BackendService {
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.ParticipateAssetIssueContract",
             Self::CONTRACT_NOT_EXIST,
@@ -8671,7 +8646,7 @@ impl BackendService {
         )?;
 
         // Parse contract data first to get all fields
-        let participate_info = self.parse_participate_asset_issue_contract(&transaction.data)?;
+        let participate_info = self.parse_participate_asset_issue_contract(contract_bytes)?;
 
         // Get expected address prefix for validation (Java: DecodeUtil.addressPreFixByte)
         let expected_prefix = storage_adapter.address_prefix();
@@ -8949,7 +8924,7 @@ impl BackendService {
         _context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
         // 1. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.UnfreezeAssetContract",
             Self::CONTRACT_NOT_EXIST,
@@ -8958,13 +8933,6 @@ impl BackendService {
 
         // 2. Parse owner_address from contract bytes (Java: any.unpack(UnfreezeAssetContract.class))
         //    UnfreezeAssetContract proto: bytes owner_address = 1;
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
-
         let owner_tron = Self::parse_unfreeze_asset_owner_address(contract_bytes)?;
 
         // Use parsed owner_address for validation; fall back to from_raw only if proto is empty
@@ -9179,7 +9147,7 @@ impl BackendService {
         let owner = transaction.from;
 
         // 1. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.UpdateAssetContract",
             Self::CONTRACT_NOT_EXIST,
@@ -9187,12 +9155,6 @@ impl BackendService {
         )?;
 
         // 2. Parse contract data (including owner_address for Java parity)
-        let contract_bytes = transaction
-            .metadata
-            .contract_parameter
-            .as_ref()
-            .map(|any| any.value.as_slice())
-            .unwrap_or(transaction.data.as_ref());
         let update_info = self.parse_update_asset_contract(contract_bytes)?;
 
         debug!(
@@ -9693,7 +9655,7 @@ impl BackendService {
         use revm::primitives::Address;
 
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.ExchangeCreateContract",
             Self::CONTRACT_NOT_EXIST,
@@ -9706,7 +9668,7 @@ impl BackendService {
         );
 
         // 1. Parse contract data
-        let create_info = self.parse_exchange_create_contract(&transaction.data)?;
+        let create_info = self.parse_exchange_create_contract(contract_bytes)?;
         debug!(
             "Parsed ExchangeCreate: first_token={}, second_token={}, balances={}/{}",
             String::from_utf8_lossy(&create_info.first_token_id),
@@ -10051,7 +10013,7 @@ impl BackendService {
         use contracts::proto::TransactionResultBuilder;
 
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.ExchangeInjectContract",
             Self::CONTRACT_NOT_EXIST,
@@ -10064,7 +10026,7 @@ impl BackendService {
         );
 
         // 1. Parse contract data
-        let inject_info = self.parse_exchange_inject_contract(&transaction.data)?;
+        let inject_info = self.parse_exchange_inject_contract(contract_bytes)?;
         debug!(
             "Parsed ExchangeInject: exchange_id={}, token={}, quant={}",
             inject_info.exchange_id,
@@ -10379,7 +10341,7 @@ impl BackendService {
         use contracts::proto::TransactionResultBuilder;
 
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.ExchangeWithdrawContract",
             Self::CONTRACT_NOT_EXIST,
@@ -10392,7 +10354,7 @@ impl BackendService {
         );
 
         // 1. Parse contract data
-        let withdraw_info = self.parse_exchange_withdraw_contract(&transaction.data)?;
+        let withdraw_info = self.parse_exchange_withdraw_contract(contract_bytes)?;
         debug!(
             "Parsed ExchangeWithdraw: exchange_id={}, token={}, quant={}",
             withdraw_info.exchange_id,
@@ -10663,7 +10625,7 @@ impl BackendService {
         use contracts::proto::TransactionResultBuilder;
 
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.ExchangeTransactionContract",
             Self::CONTRACT_NOT_EXIST,
@@ -10676,7 +10638,7 @@ impl BackendService {
         );
 
         // 1. Parse contract data
-        let tx_info = self.parse_exchange_transaction_contract(&transaction.data)?;
+        let tx_info = self.parse_exchange_transaction_contract(contract_bytes)?;
         debug!(
             "Parsed ExchangeTransaction: exchange_id={}, token={}, quant={}, expected={}",
             tx_info.exchange_id,
@@ -11218,7 +11180,7 @@ impl BackendService {
         debug!("Executing MARKET_CANCEL_ORDER_CONTRACT");
 
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.MarketCancelOrderContract",
             Self::CONTRACT_NOT_EXIST,
@@ -11229,7 +11191,7 @@ impl BackendService {
         let MarketCancelOrderInfo {
             owner_address,
             order_id,
-        } = self.parse_market_cancel_order_contract(&transaction.data)?;
+        } = self.parse_market_cancel_order_contract(contract_bytes)?;
         debug!("MarketCancelOrder: order_id={:?}", hex::encode(&order_id));
 
         // 1. Validate: market transactions must be enabled
@@ -11536,7 +11498,7 @@ impl BackendService {
         debug!("Executing MARKET_SELL_ASSET_CONTRACT");
 
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.MarketSellAssetContract",
             Self::CONTRACT_NOT_EXIST,
@@ -11544,7 +11506,7 @@ impl BackendService {
         )?;
 
         // Parse the contract
-        let tx_info = self.parse_market_sell_asset_contract(&transaction.data)?;
+        let tx_info = self.parse_market_sell_asset_contract(contract_bytes)?;
         debug!(
             "MarketSellAsset: owner={:?}, sell_token={:?}, sell_qty={}, buy_token={:?}, buy_qty={}",
             hex::encode(&tx_info.owner_address),
