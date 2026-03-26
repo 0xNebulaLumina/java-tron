@@ -15,7 +15,7 @@ use tron_backend_execution::protocol::{
     Account,
 };
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronExecutionContext, TronContractParameter, TronTransaction, TxMetadata,
 };
 use tron_backend_storage::StorageEngine;
 
@@ -363,7 +363,7 @@ fn test_delegate_resource_bandwidth_fails_when_usage_exceeds_available() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -371,6 +371,7 @@ fn test_delegate_resource_bandwidth_fails_when_usage_exceeds_available() {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
             from_raw: Some(owner_raw.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.DelegateResourceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -526,7 +527,7 @@ fn test_delegate_resource_bandwidth_succeeds_when_usage_allows_delegation() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -534,6 +535,7 @@ fn test_delegate_resource_bandwidth_succeeds_when_usage_allows_delegation() {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
             from_raw: Some(owner_raw.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.DelegateResourceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -695,7 +697,7 @@ fn test_delegate_resource_energy_fails_when_usage_exceeds_available() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -703,6 +705,7 @@ fn test_delegate_resource_energy_fails_when_usage_exceeds_available() {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
             from_raw: Some(owner_raw.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.DelegateResourceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -862,7 +865,7 @@ fn test_delegate_resource_energy_succeeds_when_usage_allows_delegation() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -870,6 +873,7 @@ fn test_delegate_resource_energy_succeeds_when_usage_allows_delegation() {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
             from_raw: Some(owner_raw.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.DelegateResourceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -1029,7 +1033,7 @@ fn test_delegate_resource_with_lock_fails_same_as_without_lock() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1037,6 +1041,7 @@ fn test_delegate_resource_with_lock_fails_same_as_without_lock() {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
             from_raw: Some(owner_raw.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.DelegateResourceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -1192,7 +1197,7 @@ fn test_delegate_resource_with_lock_succeeds_when_available() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1200,6 +1205,7 @@ fn test_delegate_resource_with_lock_succeeds_when_available() {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
             from_raw: Some(owner_raw.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.DelegateResourceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -1357,7 +1363,7 @@ fn test_delegate_resource_usage_decay_increases_available() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1365,6 +1371,7 @@ fn test_delegate_resource_usage_decay_increases_available() {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
             from_raw: Some(owner_raw.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.DelegateResourceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -1519,7 +1526,7 @@ fn test_delegate_resource_expired_usage_fully_resets() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1527,6 +1534,7 @@ fn test_delegate_resource_expired_usage_fully_resets() {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
             from_raw: Some(owner_raw.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.DelegateResourceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -1660,7 +1668,7 @@ fn test_delegate_resource_fails_below_minimum() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1668,6 +1676,7 @@ fn test_delegate_resource_fails_below_minimum() {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
             from_raw: Some(owner_raw.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.DelegateResourceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -1784,7 +1793,7 @@ fn test_delegate_resource_fails_self_delegation() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1792,6 +1801,7 @@ fn test_delegate_resource_fails_self_delegation() {
             contract_type: Some(tron_backend_execution::TronContractType::DelegateResourceContract),
             asset_id: None,
             from_raw: Some(owner_raw.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.DelegateResourceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };

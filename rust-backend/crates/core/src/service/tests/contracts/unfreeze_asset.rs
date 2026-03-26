@@ -16,7 +16,7 @@ use super::super::super::*;
 use super::common::{encode_varint, make_from_raw, new_test_context, seed_dynamic_properties};
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
+use tron_backend_execution::{EngineBackedEvmStateStore, TronContractParameter, TronTransaction, TxMetadata};
 use tron_backend_storage::StorageEngine;
 
 fn new_test_service_with_unfreeze_asset_enabled() -> BackendService {
@@ -225,6 +225,7 @@ fn test_unfreeze_asset_invalid_address_empty_from_proto() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeAssetContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -255,13 +256,14 @@ fn test_unfreeze_asset_invalid_address_wrong_length_in_proto() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_bytes),
+        data: Bytes::from(contract_bytes.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(make_from_raw(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeAssetContract".to_string(), value: contract_bytes.clone() }),
             ..Default::default()
         },
     };
@@ -292,13 +294,14 @@ fn test_unfreeze_asset_invalid_address_wrong_prefix_in_proto() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_bytes),
+        data: Bytes::from(contract_bytes.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(make_from_raw(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeAssetContract".to_string(), value: contract_bytes.clone() }),
             ..Default::default()
         },
     };
@@ -397,6 +400,7 @@ fn test_unfreeze_asset_account_not_exist() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeAssetContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -448,6 +452,7 @@ fn test_unfreeze_asset_no_frozen_supply() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeAssetContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -499,6 +504,7 @@ fn test_unfreeze_asset_no_asset_issued_name_legacy_mode() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeAssetContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -549,6 +555,7 @@ fn test_unfreeze_asset_no_asset_issued_id_new_mode() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeAssetContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -611,6 +618,7 @@ fn test_unfreeze_asset_not_time_yet() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeAssetContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeAssetContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };

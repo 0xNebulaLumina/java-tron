@@ -4,7 +4,7 @@ use super::super::super::*;
 use super::common::{new_test_context, seed_dynamic_properties};
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
+use tron_backend_execution::{EngineBackedEvmStateStore, TronContractParameter, TronTransaction, TxMetadata};
 
 fn new_test_service_with_trc10_enabled() -> BackendService {
     let exec_config = ExecutionConfig {
@@ -98,6 +98,7 @@ fn test_trc10_transfer_emits_recipient_account_creation() {
             asset_id: Some(asset_id),
             from_raw: Some(owner_tron_21),
             to_raw: Some(recipient_tron_21),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.TransferAssetContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };

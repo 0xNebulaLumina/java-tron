@@ -6,7 +6,7 @@ use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::protocol::permission::PermissionType;
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronExecutionContext, TronContractParameter, TronTransaction, TxMetadata,
 };
 
 fn create_service(witness_create_enabled: bool) -> BackendService {
@@ -51,6 +51,7 @@ fn create_witness_create_tx(owner_address: Address, url: &str) -> TronTransactio
             contract_type: Some(tron_backend_execution::TronContractType::WitnessCreateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessCreateContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     }

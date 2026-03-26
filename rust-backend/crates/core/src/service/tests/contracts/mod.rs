@@ -26,3 +26,5 @@ mod update_setting;
 mod vote_witness;
 mod witness_create;
 mod witness_update;
+
+mod contract_parameter;
