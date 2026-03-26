@@ -1,7 +1,7 @@
 //! WitnessCreateContract tests — permission parity with Java's setDefaultWitnessPermission.
 
 use super::super::super::*;
-use super::common::{make_from_raw, seed_dynamic_properties};
+use super::common::{encode_witness_create_contract, make_from_raw, seed_dynamic_properties};
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::protocol::permission::PermissionType;
@@ -39,6 +39,8 @@ fn create_context() -> TronExecutionContext {
 }
 
 fn create_witness_create_tx(owner_address: Address, url: &str) -> TronTransaction {
+    let owner_tron = make_from_raw(&owner_address);
+    let contract_proto = encode_witness_create_contract(&owner_tron, url.as_bytes());
     TronTransaction {
         from: owner_address,
         to: None,
@@ -50,8 +52,11 @@ fn create_witness_create_tx(owner_address: Address, url: &str) -> TronTransactio
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessCreateContract),
             asset_id: None,
-            from_raw: Some(make_from_raw(&owner_address)),
-            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessCreateContract".to_string(), value: vec![] }),
+            from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "protocol.WitnessCreateContract".to_string(),
+                value: contract_proto,
+            }),
             ..Default::default()
         },
     }
@@ -440,5 +445,120 @@ fn test_witness_create_preserves_existing_active_permission() {
     assert!(
         account_proto.witness_permission.is_some(),
         "witness_permission should be set"
+    );
+}
+
+/// Regression: when transaction.data contains a DIFFERENT URL than contract_parameter.value,
+/// the handler must use contract_parameter.value (the protobuf source of truth), NOT tx.data.
+#[test]
+fn test_witness_create_uses_contract_parameter_not_tx_data() {
+    use tron_backend_storage::StorageEngine;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    let owner_address = Address::from([0x33u8; 20]);
+    let owner_tron = make_from_raw(&owner_address);
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(10_000_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
+
+    let service = create_service(true);
+    let context = create_context();
+
+    // contract_parameter.value encodes "proto-url.com" as the URL
+    let proto_url = b"proto-url.com";
+    let contract_proto = encode_witness_create_contract(&owner_tron, proto_url);
+
+    // transaction.data contains a DIFFERENT URL — handler must ignore this
+    let tx = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(b"WRONG-tx-data-url.com".to_vec()),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::WitnessCreateContract),
+            asset_id: None,
+            from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "protocol.WitnessCreateContract".to_string(),
+                value: contract_proto,
+            }),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_witness_create_contract(&mut storage_adapter, &tx, &context);
+    assert!(result.is_ok(), "WitnessCreate should succeed: {:?}", result.err());
+
+    // Verify the witness was stored with the proto URL, not the tx.data URL
+    let witness = storage_adapter.get_witness(&owner_address).unwrap();
+    assert!(witness.is_some(), "Witness should exist");
+    let witness = witness.unwrap();
+    assert_eq!(
+        witness.url, "proto-url.com",
+        "Witness URL should come from contract_parameter.value, not transaction.data"
+    );
+}
+
+/// Regression: malformed contract_parameter.value should fail before account checks.
+#[test]
+fn test_witness_create_rejects_malformed_contract_parameter() {
+    use tron_backend_storage::StorageEngine;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    let owner_address = Address::from([0x34u8; 20]);
+    // No account seeded — malformed protobuf should fail before account check
+
+    let service = create_service(true);
+    let context = create_context();
+
+    // Malformed protobuf: claims 200-byte field but only has 2 bytes
+    let malformed = vec![0x12, 0xC8, 0x01, 0x41, 0x42];
+
+    let tx = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(b"valid-url.com".to_vec()),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::WitnessCreateContract),
+            asset_id: None,
+            from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "protocol.WitnessCreateContract".to_string(),
+                value: malformed,
+            }),
+            ..Default::default()
+        },
+    };
+
+    let result = service.execute_witness_create_contract(&mut storage_adapter, &tx, &context);
+    assert!(result.is_err(), "Malformed protobuf should fail");
+    let err = result.err().unwrap();
+    assert!(
+        err.contains("parsing") || err.contains("truncated"),
+        "Error should indicate protobuf decode failure, got: {}",
+        err,
     );
 }

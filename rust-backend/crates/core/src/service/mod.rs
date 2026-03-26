@@ -118,7 +118,42 @@ impl BackendService {
         }
     }
 
-    /// Validate that `data` is a valid protobuf-encoded `WitnessUpdateContract`.
+    /// Parse `WitnessCreateContract` protobuf to extract the URL.
+    ///
+    /// ```protobuf
+    /// message WitnessCreateContract {
+    ///   bytes owner_address = 1;  // wire type 2
+    ///   bytes url           = 2;  // wire type 2
+    /// }
+    /// ```
+    fn parse_witness_create_url(data: &[u8]) -> Result<Vec<u8>, String> {
+        let mut url: Option<Vec<u8>> = None;
+        let mut pos = 0;
+        while pos < data.len() {
+            let (field_number, wire_type, tag_len) = read_tag_typed(&data[pos..])
+                .map_err(|e| e.to_java_message().to_string())?;
+            pos += tag_len;
+            match (field_number, wire_type) {
+                (2, 2) => {
+                    let (payload, total_len) = read_length_delimited_typed(&data[pos..])
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    url = Some(payload.to_vec());
+                    pos += total_len;
+                }
+                _ => {
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    pos += skip_len;
+                }
+            }
+        }
+        // Proto3 default: missing field → empty bytes
+        Ok(url.unwrap_or_default())
+    }
+
+    /// Parse `WitnessUpdateContract` protobuf to extract the update URL and
+    /// validate decodability (Java parity: `any.unpack()` fails on malformed
+    /// protobuf).
     ///
     /// ```protobuf
     /// message WitnessUpdateContract {
@@ -126,22 +161,28 @@ impl BackendService {
     ///   bytes update_url   = 12;   // wire type 2
     /// }
     /// ```
-    ///
-    /// We walk the wire format and reject if any field header is malformed or a
-    /// length-delimited field extends past the buffer.  Unknown fields are
-    /// tolerated (protobuf forward-compatibility).
-    fn validate_witness_update_contract_bytes(data: &[u8]) -> Result<(), String> {
+    fn parse_witness_update_url(data: &[u8]) -> Result<Vec<u8>, String> {
+        let mut update_url: Option<Vec<u8>> = None;
         let mut pos = 0;
         while pos < data.len() {
-            let (_field_number, wire_type, tag_len) = read_tag_typed(&data[pos..])
+            let (field_number, wire_type, tag_len) = read_tag_typed(&data[pos..])
                 .map_err(|e| e.to_java_message().to_string())?;
             pos += tag_len;
-
-            let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
-                .map_err(|e| e.to_java_message().to_string())?;
-            pos += skip_len;
+            match (field_number, wire_type) {
+                (12, 2) => {
+                    let (payload, total_len) = read_length_delimited_typed(&data[pos..])
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    update_url = Some(payload.to_vec());
+                    pos += total_len;
+                }
+                _ => {
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    pos += skip_len;
+                }
+            }
         }
-        Ok(())
+        Ok(update_url.unwrap_or_default())
     }
 
     /// Parse `asset_name` (field 1, length-delimited) from a serialized
@@ -559,23 +600,12 @@ impl BackendService {
         transaction: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult, String> {
-        // Java sends `Transaction.Contract.parameter` bytes, which are encoded as
-        // `google.protobuf.Any { type_url, value }`. Most parsers below expect the inner
-        // contract protobuf bytes, so unwrap once here.
-        //
-        // Payload-style contracts where `tx.data` is NOT the contract proto but a raw
-        // payload (e.g. URL bytes) must be excluded to avoid accidentally unwrapping a
-        // crafted payload that looks like a valid `Any` wrapper.
+        // Legacy compatibility: unwrap Any wrapper from tx.data if present.
+        // All handlers now parse from contract_parameter.value directly, so this
+        // is only relevant for backward-compatible test paths.
         let mut tx = transaction.clone();
-        let is_payload_style = matches!(
-            tx.metadata.contract_type,
-            Some(tron_backend_execution::TronContractType::WitnessCreateContract)
-                | Some(tron_backend_execution::TronContractType::WitnessUpdateContract)
-        );
-        if !is_payload_style {
-            if let Ok(inner) = Self::unwrap_any_value_if_present(tx.data.as_ref()) {
-                tx.data = revm_primitives::Bytes::from(inner);
-            }
+        if let Ok(inner) = Self::unwrap_any_value_if_present(tx.data.as_ref()) {
+            tx.data = revm_primitives::Bytes::from(inner);
         }
         let transaction = &tx;
 
@@ -1535,7 +1565,7 @@ impl BackendService {
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
 
         // 0. Validate contract parameter presence and type (strict Java parity)
-        let _contract_bytes = Self::require_contract_parameter(
+        let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.WitnessCreateContract",
             Self::CONTRACT_NOT_EXIST,
@@ -1551,16 +1581,15 @@ impl BackendService {
 
         let readable_owner = hex::encode(owner_from_field);
 
-        // 2. Extract URL from transaction data
-        // For WitnessCreateContract, the data contains the URL bytes
-        let url_bytes = &transaction.data;
+        // 2. Parse URL from contract_parameter.value (WitnessCreateContract protobuf)
+        let url_bytes = Self::parse_witness_create_url(contract_bytes)?;
         // Validate URL format (java-tron TransactionUtil.validUrl with allowEmpty=false)
         if url_bytes.is_empty() || url_bytes.len() > 256 {
             return Err("Invalid url".to_string());
         }
 
         // Java uses ByteString#toStringUtf8(); accept non-UTF-8 bytes lossily for parity.
-        let url = String::from_utf8_lossy(url_bytes).to_string();
+        let url = String::from_utf8_lossy(&url_bytes).to_string();
 
         debug!("WitnessCreate URL: {}", url);
 
@@ -1873,19 +1902,16 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
-        // 0. Validate contract parameter presence and type (strict Java parity)
+        // 0. Validate contract parameter presence, type, and decodability (strict Java parity).
+        //    Java: any.unpack(WitnessUpdateContract.class) runs before account checks,
+        //    so malformed protobuf must fail here, not be masked by later errors.
         let contract_bytes = Self::require_contract_parameter(
             transaction,
             "protocol.WitnessUpdateContract",
             Self::CONTRACT_NOT_EXIST,
             "contract type error, expected type [WitnessUpdateContract],real type[class com.google.protobuf.Any]",
         )?;
-        // Validate that the value bytes are decodable as WitnessUpdateContract.
-        // WitnessUpdateContract { bytes owner_address = 1; bytes update_url = 12; }
-        // Java throws ContractValidateException(e.getMessage()) on decode failure.
-        if !contract_bytes.is_empty() {
-            Self::validate_witness_update_contract_bytes(contract_bytes)?;
-        }
+        let url_bytes = Self::parse_witness_update_url(contract_bytes)?;
 
         // 1. Validate owner address (java-tron: DecodeUtil.addressValid)
         let prefix = storage_adapter.address_prefix();
@@ -1911,8 +1937,7 @@ impl BackendService {
                 "account does not exist".to_string()
             })?;
 
-        // 3. Extract and validate URL from transaction.data (java-tron: TransactionUtil.validUrl)
-        let url_bytes = &transaction.data;
+        // 3. Validate URL format
         if url_bytes.is_empty() || url_bytes.len() > 256 {
             warn!(
                 "WITNESS_UPDATE_CONTRACT: Invalid url (empty={}, len={})",
@@ -1923,7 +1948,7 @@ impl BackendService {
         }
 
         // Java uses ByteString#toStringUtf8(); accept non-UTF-8 bytes lossily for parity.
-        let new_url = String::from_utf8_lossy(url_bytes).to_string();
+        let new_url = String::from_utf8_lossy(&url_bytes).to_string();
 
         debug!("WitnessUpdate: new URL = {}", new_url);
 
