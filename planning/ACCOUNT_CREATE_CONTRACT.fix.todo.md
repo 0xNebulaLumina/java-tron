@@ -55,18 +55,18 @@
 
 ## 4. Java fixture generation
 
-- [ ] Update `framework/src/test/java/org/tron/core/conformance/CoreAccountFixtureGeneratorTest.java`
-- [ ] Add fixture: `validate_fail_missing_create_new_account_fee_in_system_contract`
-- [ ] Add fixture: `validate_fail_missing_latest_block_header_timestamp`
-- [ ] Add fixture: `validate_fail_missing_allow_multi_sign`
-- [ ] Add fixture: `validate_fail_missing_allow_blackhole_optimization`
-- [ ] If tracked-bandwidth strict coverage is desired, add fixtures for:
-  - [ ] `validate_fail_missing_free_net_limit`
-  - [ ] `validate_fail_missing_create_new_account_bandwidth_rate`
-  - [ ] `validate_fail_missing_create_account_fee`
-  - [ ] `validate_fail_missing_total_create_account_cost`
-- [ ] Make sure each fixture removes the target key after common initialization and before `generator.generate(...)`
-- [ ] Assert each new fixture really fails on the intended missing-key branch
+- [x] Update `framework/src/test/java/org/tron/core/conformance/CoreAccountFixtureGeneratorTest.java`
+- [x] Add fixture: `validate_fail_missing_create_new_account_fee_in_system_contract`
+- [x] Add fixture: `validate_fail_missing_latest_block_header_timestamp`
+- [x] Add fixture: `validate_fail_missing_allow_multi_sign`
+- [x] Add fixture: `validate_fail_missing_allow_blackhole_optimization`
+- [x] If tracked-bandwidth strict coverage is desired, add fixtures for:
+  - [x] `validate_fail_missing_free_net_limit`
+  - [x] `validate_fail_missing_create_new_account_bandwidth_rate`
+  - [x] `validate_fail_missing_create_account_fee`
+  - [x] `validate_fail_missing_total_create_account_cost`
+- [x] Make sure each fixture removes the target key after common initialization and before `generator.generate(...)`
+- [x] Assert each new fixture really fails on the intended missing-key branch
 
 ## 5. Fixture metadata and schema
 
