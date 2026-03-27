@@ -11,7 +11,7 @@ use super::common::{
     make_from_raw, new_test_context, new_test_service_with_system_enabled, seed_dynamic_properties,
 };
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
+use tron_backend_execution::{EngineBackedEvmStateStore, TronContractParameter, TronTransaction, TxMetadata};
 
 /// Helper to seed ALLOW_UPDATE_ACCOUNT_NAME dynamic property
 fn seed_allow_update_account_name(
@@ -52,6 +52,7 @@ fn test_account_update_happy_path_with_valid_from_raw() {
 
     // Create transaction with proper 21-byte from_raw (0x41 prefix + 20-byte address)
     let account_name = "TestAccount";
+    let proto_value = build_account_update_contract_proto(&make_from_raw(&owner_address), account_name.as_bytes());
     let transaction = TronTransaction {
         from: owner_address,
         to: None,
@@ -63,6 +64,7 @@ fn test_account_update_happy_path_with_valid_from_raw() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: proto_value }),
             ..Default::default()
         },
     };
@@ -123,6 +125,7 @@ fn test_account_update_allows_empty_name() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -160,17 +163,19 @@ fn test_account_update_allows_200_byte_name() {
 
     // 200 bytes should succeed
     let name_200 = vec![b'a'; 200];
+    let proto_value = build_account_update_contract_proto(&make_from_raw(&owner_address), &name_200);
     let transaction = TronTransaction {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(name_200),
+        data: Bytes::from(name_200.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: proto_value }),
             ..Default::default()
         },
     };
@@ -208,17 +213,19 @@ fn test_account_update_rejects_201_byte_name() {
 
     // 201 bytes should fail
     let name_201 = vec![b'a'; 201];
+    let proto_value = build_account_update_contract_proto(&make_from_raw(&owner_address), &name_201);
     let transaction = TronTransaction {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(name_201),
+        data: Bytes::from(name_201.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: proto_value }),
             ..Default::default()
         },
     };
@@ -263,6 +270,7 @@ fn test_account_update_rejects_missing_from_raw() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: None, // Missing from_raw
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -307,6 +315,7 @@ fn test_account_update_rejects_20_byte_address() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(owner_address.as_slice().to_vec()), // 20 bytes only
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -354,6 +363,7 @@ fn test_account_update_rejects_wrong_prefix() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(from_raw_wrong_prefix),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -389,6 +399,7 @@ fn test_account_update_rejects_nonexistent_account() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -422,6 +433,7 @@ fn test_account_update_only_set_once_when_updates_disabled() {
         .is_ok());
 
     // First name set should succeed
+    let first_proto = build_account_update_contract_proto(&make_from_raw(&owner_address), b"FirstName");
     let first_tx = TronTransaction {
         from: owner_address,
         to: None,
@@ -433,6 +445,7 @@ fn test_account_update_only_set_once_when_updates_disabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: first_proto }),
             ..Default::default()
         },
     };
@@ -445,6 +458,7 @@ fn test_account_update_only_set_once_when_updates_disabled() {
     );
 
     // Second attempt should fail with Java error message
+    let second_proto = build_account_update_contract_proto(&make_from_raw(&owner_address), b"SecondName");
     let second_tx = TronTransaction {
         from: owner_address,
         to: None,
@@ -456,6 +470,7 @@ fn test_account_update_only_set_once_when_updates_disabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: second_proto }),
             ..Default::default()
         },
     };
@@ -496,6 +511,7 @@ fn test_account_update_allows_repeated_updates_when_enabled() {
         .is_ok());
 
     // First name set
+    let first_proto = build_account_update_contract_proto(&make_from_raw(&owner_address), b"FirstName");
     let first_tx = TronTransaction {
         from: owner_address,
         to: None,
@@ -507,6 +523,7 @@ fn test_account_update_allows_repeated_updates_when_enabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: first_proto }),
             ..Default::default()
         },
     };
@@ -515,6 +532,7 @@ fn test_account_update_allows_repeated_updates_when_enabled() {
     assert!(result.is_ok(), "First name set should succeed");
 
     // Second update should also succeed when ALLOW_UPDATE_ACCOUNT_NAME == 1
+    let second_proto = build_account_update_contract_proto(&make_from_raw(&owner_address), b"SecondName");
     let second_tx = TronTransaction {
         from: owner_address,
         to: None,
@@ -526,6 +544,7 @@ fn test_account_update_allows_repeated_updates_when_enabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: second_proto }),
             ..Default::default()
         },
     };
@@ -575,6 +594,7 @@ fn test_account_update_duplicate_name_check_when_updates_disabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner1)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -603,6 +623,7 @@ fn test_account_update_duplicate_name_check_when_updates_disabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner2)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -647,6 +668,7 @@ fn test_account_update_duplicate_name_allowed_when_updates_enabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner1)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -675,6 +697,7 @@ fn test_account_update_duplicate_name_allowed_when_updates_enabled() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountUpdateContract),
             from_raw: Some(make_from_raw(&owner2)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountUpdateContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };

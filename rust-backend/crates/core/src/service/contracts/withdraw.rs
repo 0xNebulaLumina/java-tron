@@ -243,16 +243,13 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         let owner_address = transaction.from;
 
-        // 0) Validate contract type_url in Any wrapper (java-tron: any.is(WithdrawBalanceContract.class))
-        //    If contract_parameter is provided, validate it matches the expected type.
-        if let Some(ref param) = transaction.metadata.contract_parameter {
-            if !param.type_url.ends_with("WithdrawBalanceContract") {
-                return Err(format!(
-                    "contract type error, expected type [WithdrawBalanceContract], real type[{}]",
-                    param.type_url
-                ));
-            }
-        }
+        // 0) Validate contract parameter presence and type (strict Java parity)
+        let _contract_bytes = Self::require_contract_parameter(
+            transaction,
+            "protocol.WithdrawBalanceContract",
+            Self::CONTRACT_NOT_EXIST,
+            "contract type error, expected type [WithdrawBalanceContract], real type[class com.google.protobuf.Any]",
+        )?;
 
         // 1) Validate owner address (java-tron: DecodeUtil.addressValid)
         let prefix = storage_adapter.address_prefix();

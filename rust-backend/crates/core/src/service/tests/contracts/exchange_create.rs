@@ -7,7 +7,7 @@ use super::common::{encode_varint, make_from_raw, seed_dynamic_properties};
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronContractType, TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronContractType, TronExecutionContext, TronContractParameter, TronTransaction, TxMetadata,
 };
 use tron_backend_storage::StorageEngine;
 
@@ -163,7 +163,7 @@ fn test_exchange_create_receipt_includes_fee_and_exchange_id() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -171,6 +171,7 @@ fn test_exchange_create_receipt_includes_fee_and_exchange_id() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -359,7 +360,7 @@ fn test_exchange_create_burns_fee_when_blackhole_optimization_enabled() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -367,6 +368,7 @@ fn test_exchange_create_burns_fee_when_blackhole_optimization_enabled() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -503,7 +505,7 @@ fn test_exchange_create_credits_blackhole_when_optimization_disabled() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -511,6 +513,7 @@ fn test_exchange_create_credits_blackhole_when_optimization_disabled() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -664,7 +667,7 @@ fn test_exchange_create_legacy_mode_reads_asset_map() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -672,6 +675,7 @@ fn test_exchange_create_legacy_mode_reads_asset_map() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -810,7 +814,7 @@ fn test_exchange_create_asset_optimization_reads_asset_store() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -818,6 +822,7 @@ fn test_exchange_create_asset_optimization_reads_asset_store() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -954,7 +959,7 @@ fn test_exchange_create_fails_insufficient_balance_for_fee() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -962,6 +967,7 @@ fn test_exchange_create_fails_insufficient_balance_for_fee() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -1065,7 +1071,7 @@ fn test_exchange_create_fails_same_tokens() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1073,6 +1079,7 @@ fn test_exchange_create_fails_same_tokens() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -1175,7 +1182,7 @@ fn test_exchange_create_fails_zero_balance() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1183,6 +1190,7 @@ fn test_exchange_create_fails_zero_balance() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -1288,7 +1296,7 @@ fn test_exchange_create_fails_balance_exceeds_limit() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1296,6 +1304,7 @@ fn test_exchange_create_fails_balance_exceeds_limit() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -1404,7 +1413,7 @@ fn test_exchange_create_fails_invalid_token_id() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1412,6 +1421,7 @@ fn test_exchange_create_fails_invalid_token_id() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -1526,7 +1536,7 @@ fn test_exchange_create_fails_insufficient_trx_for_deposit() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1534,6 +1544,7 @@ fn test_exchange_create_fails_insufficient_trx_for_deposit() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -1645,7 +1656,7 @@ fn test_exchange_create_fails_insufficient_trc10_balance() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1653,6 +1664,7 @@ fn test_exchange_create_fails_insufficient_trc10_balance() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -1759,7 +1771,7 @@ fn test_exchange_create_increments_exchange_id() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1767,6 +1779,7 @@ fn test_exchange_create_increments_exchange_id() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -1921,7 +1934,7 @@ fn test_exchange_create_receipt_matches_conformance_fixture() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -1929,6 +1942,7 @@ fn test_exchange_create_receipt_matches_conformance_fixture() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -2064,7 +2078,7 @@ fn test_exchange_create_deducts_owner_trx_balance() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -2072,6 +2086,7 @@ fn test_exchange_create_deducts_owner_trx_balance() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -2187,7 +2202,7 @@ fn test_exchange_create_deducts_owner_trc10_balance() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -2195,6 +2210,7 @@ fn test_exchange_create_deducts_owner_trc10_balance() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -2314,7 +2330,7 @@ fn test_exchange_create_stores_exchange_record() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -2322,6 +2338,7 @@ fn test_exchange_create_stores_exchange_record() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -2469,7 +2486,7 @@ fn test_exchange_create_token_to_token() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -2477,6 +2494,7 @@ fn test_exchange_create_token_to_token() {
             contract_type: Some(TronContractType::ExchangeCreateContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ExchangeCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };

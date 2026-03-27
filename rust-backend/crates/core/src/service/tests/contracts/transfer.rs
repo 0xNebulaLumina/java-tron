@@ -5,7 +5,7 @@ use super::common::{
     make_from_raw, new_test_context, new_test_service_with_system_enabled, seed_dynamic_properties,
 };
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
+use tron_backend_execution::{EngineBackedEvmStateStore, TronContractParameter, TronTransaction, TxMetadata};
 use tron_backend_storage::StorageEngine;
 
 /// Helper to create a 21-byte TRON address with given prefix
@@ -69,6 +69,7 @@ fn build_transfer_tx(
             contract_type: Some(tron_backend_execution::TronContractType::TransferContract),
             from_raw,
             to_raw,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.TransferContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     }

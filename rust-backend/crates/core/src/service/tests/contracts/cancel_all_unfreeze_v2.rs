@@ -409,7 +409,7 @@ fn test_cancel_all_unfreeze_v2_rejects_malformed_protobuf() {
     // The error should indicate a parsing failure
     let err = result.unwrap_err();
     assert!(
-        err.contains("Varint") || err.contains("Failed"),
+        err.contains("varint") || err.contains("Varint") || err.contains("Failed"),
         "Expected parse error, got: {}",
         err
     );

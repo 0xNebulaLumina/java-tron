@@ -2,7 +2,7 @@
 // V1 and V2 freeze/unfreeze balance operations
 
 use super::super::BackendService;
-use super::proto::{read_varint, TransactionResultBuilder};
+use super::proto::{read_tag_typed, read_length_delimited_typed, read_varint_typed, skip_protobuf_field_checked, ProtobufError, TransactionResultBuilder};
 use revm_primitives::{Address, Bytes, U256};
 use tracing::{debug, error, info, warn};
 use tron_backend_execution::{
@@ -70,19 +70,16 @@ impl BackendService {
     ) -> Result<TronExecutionResult, String> {
         use tron_backend_execution::{TronExecutionResult, TronStateChange};
 
-        // Java parity: Check type_url in Any wrapper (FreezeBalanceActuator.validate() line 194-198).
-        // If contract_parameter is provided, validate it matches the expected type.
-        if let Some(ref param) = transaction.metadata.contract_parameter {
-            if !param.type_url.ends_with("FreezeBalanceContract") {
-                return Err(format!(
-                    "contract type error,expected type [FreezeBalanceContract],real type[{}]",
-                    param.type_url
-                ));
-            }
-        }
+        // Validate contract parameter presence and type (strict Java parity)
+        let contract_bytes = Self::require_contract_parameter(
+            transaction,
+            "protocol.FreezeBalanceContract",
+            Self::CONTRACT_NOT_EXIST,
+            "contract type error,expected type [FreezeBalanceContract],real type[class com.google.protobuf.Any]",
+        )?;
 
-        // Parse freeze parameters from transaction data
-        let params = Self::parse_freeze_balance_params(&transaction.data)?;
+        // Parse freeze parameters from contract bytes
+        let params = Self::parse_freeze_balance_params(contract_bytes)?;
 
         info!(
             "FreezeBalance owner={} amount={} resource={:?} duration={}",
@@ -741,19 +738,16 @@ impl BackendService {
             transaction.data.len()
         );
 
-        // Java parity: Check type_url in Any wrapper (UnfreezeBalanceActuator.validate() line 339-343).
-        // If contract_parameter is provided, validate it matches the expected type.
-        if let Some(ref param) = transaction.metadata.contract_parameter {
-            if !param.type_url.ends_with("UnfreezeBalanceContract") {
-                return Err(format!(
-                    "contract type error, expected type [UnfreezeBalanceContract], real type[{}]",
-                    param.type_url
-                ));
-            }
-        }
+        // Validate contract parameter presence and type (strict Java parity)
+        let contract_bytes = Self::require_contract_parameter(
+            transaction,
+            "protocol.UnfreezeBalanceContract",
+            Self::CONTRACT_NOT_EXIST,
+            "contract type error, expected type [UnfreezeBalanceContract], real type[class com.google.protobuf.Any]",
+        )?;
 
-        // Parse unfreeze parameters from transaction data
-        let params = Self::parse_unfreeze_balance_params(&transaction.data)?;
+        // Parse unfreeze parameters from contract bytes
+        let params = Self::parse_unfreeze_balance_params(contract_bytes)?;
 
         debug!(
             "Parsed unfreeze params: resource={:?}, receiver_len={}",
@@ -1571,7 +1565,7 @@ impl BackendService {
     /// - resource: ResourceCode enum (field 10)
     /// - receiver_address: bytes (field 15) - optional, Phase 1 ignores
     pub(crate) fn parse_unfreeze_balance_params(
-        data: &revm_primitives::Bytes,
+        data: &[u8],
     ) -> Result<UnfreezeParams, String> {
         // Simple protobuf parser for the specific fields we need
         let mut resource: FreezeResource = FreezeResource::Bandwidth; // Default
@@ -1581,11 +1575,9 @@ impl BackendService {
 
         while pos < data.len() {
             // Read tag
-            let (tag, new_pos) = read_varint(&data[pos..])?;
-            pos = pos + new_pos;
-
-            let field_number = tag >> 3;
-            let wire_type = tag & 0x7;
+            let (field_number, wire_type, tag_len) = read_tag_typed(&data[pos..])
+                .map_err(|e| e.to_java_message().to_string())?;
+            pos += tag_len;
 
             match field_number {
                 1 => {
@@ -1593,8 +1585,9 @@ impl BackendService {
                     if wire_type != 2 {
                         return Err("Invalid wire type for owner_address".to_string());
                     }
-                    let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    let (_payload, total_len) = read_length_delimited_typed(&data[pos..])
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    pos += total_len;
                 }
                 10 => {
                     // resource (enum ResourceCode)
@@ -1602,7 +1595,8 @@ impl BackendService {
                     if wire_type != 0 {
                         return Err("Invalid wire type for resource".to_string());
                     }
-                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    let (value, new_pos) = read_varint_typed(&data[pos..])
+                        .map_err(|e| ProtobufError::from(e).to_java_message().to_string())?;
                     resource_raw = value as i64;
                     resource = match value {
                         0 => FreezeResource::Bandwidth,
@@ -1610,40 +1604,23 @@ impl BackendService {
                         2 => FreezeResource::TronPower,
                         _ => FreezeResource::Unknown,
                     };
-                    pos = pos + new_pos;
+                    pos += new_pos;
                 }
                 15 => {
                     // receiver_address (bytes)
                     if wire_type != 2 {
                         return Err("Invalid wire type for receiver_address".to_string());
                     }
-                    let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos;
-                    let len = len as usize;
-                    if pos + len > data.len() {
-                        return Err("Invalid receiver_address length".to_string());
-                    }
-                    receiver_address = data[pos..pos + len].to_vec();
-                    pos = pos + len;
+                    let (payload, total_len) = read_length_delimited_typed(&data[pos..])
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    receiver_address = payload.to_vec();
+                    pos += total_len;
                 }
                 _ => {
                     // Unknown field - skip
-                    match wire_type {
-                        0 => {
-                            let (_, new_pos) = read_varint(&data[pos..])?;
-                            pos = pos + new_pos;
-                        }
-                        2 => {
-                            let (len, new_pos) = read_varint(&data[pos..])?;
-                            pos = pos + new_pos + len as usize;
-                        }
-                        _ => {
-                            return Err(format!(
-                                "Unsupported wire type {} for field {}",
-                                wire_type, field_number
-                            ))
-                        }
-                    }
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    pos += skip_len;
                 }
             }
         }
@@ -1669,16 +1646,13 @@ impl BackendService {
             transaction.data.len()
         );
 
-        // Java parity: Check type_url in Any wrapper.
-        // If contract_parameter is provided, validate it matches the expected type.
-        if let Some(ref param) = transaction.metadata.contract_parameter {
-            if !param.type_url.ends_with("FreezeBalanceV2Contract") {
-                return Err(format!(
-                    "contract type error,expected type [FreezeBalanceV2Contract],real type[{}]",
-                    param.type_url
-                ));
-            }
-        }
+        // Validate contract parameter presence and type (strict Java parity)
+        let contract_bytes = Self::require_contract_parameter(
+            transaction,
+            "protocol.FreezeBalanceV2Contract",
+            Self::CONTRACT_NOT_EXIST,
+            "contract type error,expected type [FreezeBalanceV2Contract],real type[class com.google.protobuf.Any]",
+        )?;
 
         // === Validation (match java-tron FreezeBalanceV2Actuator messages) ===
         if !storage_adapter
@@ -1690,8 +1664,8 @@ impl BackendService {
             );
         }
 
-        // Parse freeze V2 parameters from transaction data
-        let params = Self::parse_freeze_balance_v2_params(&transaction.data)?;
+        // Parse freeze V2 parameters from contract bytes
+        let params = Self::parse_freeze_balance_v2_params(contract_bytes)?;
 
         debug!(
             "Parsed freeze V2 params: owner_len={}, frozen_balance={}, resource={:?}",
@@ -2019,19 +1993,16 @@ impl BackendService {
             transaction.data.len()
         );
 
-        // Java parity: Check type_url in Any wrapper.
-        // If contract_parameter is provided, validate it matches the expected type.
-        if let Some(ref param) = transaction.metadata.contract_parameter {
-            if !param.type_url.ends_with("UnfreezeBalanceV2Contract") {
-                return Err(format!(
-                    "contract type error, expected type [UnfreezeBalanceV2Contract], real type[{}]",
-                    param.type_url
-                ));
-            }
-        }
+        // Validate contract parameter presence and type (strict Java parity)
+        let contract_bytes = Self::require_contract_parameter(
+            transaction,
+            "protocol.UnfreezeBalanceV2Contract",
+            Self::CONTRACT_NOT_EXIST,
+            "contract type error, expected type [UnfreezeBalanceV2Contract], real type[class com.google.protobuf.Any]",
+        )?;
 
-        // Parse unfreeze V2 parameters from transaction data
-        let params = Self::parse_unfreeze_balance_v2_params(&transaction.data)?;
+        // Parse unfreeze V2 parameters from contract bytes
+        let params = Self::parse_unfreeze_balance_v2_params(contract_bytes)?;
 
         debug!(
             "Parsed unfreeze V2 params: unfreeze_balance={}, resource={:?}",
@@ -2670,7 +2641,7 @@ impl BackendService {
     /// - frozen_balance: int64 (field 2)
     /// - resource: ResourceCode enum (field 3)
     pub(crate) fn parse_freeze_balance_v2_params(
-        data: &revm_primitives::Bytes,
+        data: &[u8],
     ) -> Result<FreezeV2Params, String> {
         // Proto3 semantics: missing scalar fields read as 0.
         let mut owner_address: Vec<u8> = Vec::new();
@@ -2680,11 +2651,9 @@ impl BackendService {
 
         while pos < data.len() {
             // Read tag
-            let (tag, new_pos) = read_varint(&data[pos..])?;
-            pos = pos + new_pos;
-
-            let field_number = tag >> 3;
-            let wire_type = tag & 0x7;
+            let (field_number, wire_type, tag_len) = read_tag_typed(&data[pos..])
+                .map_err(|e| e.to_java_message().to_string())?;
+            pos += tag_len;
 
             match field_number {
                 1 => {
@@ -2692,56 +2661,41 @@ impl BackendService {
                     if wire_type != 2 {
                         return Err("Invalid wire type for owner_address".to_string());
                     }
-                    let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos;
-                    let len = len as usize;
-                    if pos + len > data.len() {
-                        return Err("Invalid owner_address length".to_string());
-                    }
-                    owner_address = data[pos..pos + len].to_vec();
-                    pos = pos + len;
+                    let (payload, total_len) = read_length_delimited_typed(&data[pos..])
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    owner_address = payload.to_vec();
+                    pos += total_len;
                 }
                 2 => {
                     // frozen_balance (int64)
                     if wire_type != 0 {
                         return Err("Invalid wire type for frozen_balance".to_string());
                     }
-                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    let (value, new_pos) = read_varint_typed(&data[pos..])
+                        .map_err(|e| ProtobufError::from(e).to_java_message().to_string())?;
                     frozen_balance = value as i64;
-                    pos = pos + new_pos;
+                    pos += new_pos;
                 }
                 3 => {
                     // resource (enum ResourceCode)
                     if wire_type != 0 {
                         return Err("Invalid wire type for resource".to_string());
                     }
-                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    let (value, new_pos) = read_varint_typed(&data[pos..])
+                        .map_err(|e| ProtobufError::from(e).to_java_message().to_string())?;
                     resource = match value {
                         0 => Some(FreezeResource::Bandwidth),
                         1 => Some(FreezeResource::Energy),
                         2 => Some(FreezeResource::TronPower),
                         _ => None,
                     };
-                    pos = pos + new_pos;
+                    pos += new_pos;
                 }
                 _ => {
                     // Unknown field - skip
-                    match wire_type {
-                        0 => {
-                            let (_, new_pos) = read_varint(&data[pos..])?;
-                            pos = pos + new_pos;
-                        }
-                        2 => {
-                            let (len, new_pos) = read_varint(&data[pos..])?;
-                            pos = pos + new_pos + len as usize;
-                        }
-                        _ => {
-                            return Err(format!(
-                                "Unsupported wire type {} for field {}",
-                                wire_type, field_number
-                            ))
-                        }
-                    }
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    pos += skip_len;
                 }
             }
         }
@@ -2760,7 +2714,7 @@ impl BackendService {
     /// - unfreeze_balance: int64 (field 2)
     /// - resource: ResourceCode enum (field 3)
     pub(crate) fn parse_unfreeze_balance_v2_params(
-        data: &revm_primitives::Bytes,
+        data: &[u8],
     ) -> Result<UnfreezeV2Params, String> {
         if data.is_empty() {
             return Err("UnfreezeBalanceV2 params cannot be empty".to_string());
@@ -2772,11 +2726,9 @@ impl BackendService {
 
         while pos < data.len() {
             // Read tag
-            let (tag, new_pos) = read_varint(&data[pos..])?;
-            pos = pos + new_pos;
-
-            let field_number = tag >> 3;
-            let wire_type = tag & 0x7;
+            let (field_number, wire_type, tag_len) = read_tag_typed(&data[pos..])
+                .map_err(|e| e.to_java_message().to_string())?;
+            pos += tag_len;
 
             match field_number {
                 1 => {
@@ -2784,50 +2736,40 @@ impl BackendService {
                     if wire_type != 2 {
                         return Err("Invalid wire type for owner_address".to_string());
                     }
-                    let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    let (_payload, total_len) = read_length_delimited_typed(&data[pos..])
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    pos += total_len;
                 }
                 2 => {
                     // unfreeze_balance (int64)
                     if wire_type != 0 {
                         return Err("Invalid wire type for unfreeze_balance".to_string());
                     }
-                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    let (value, new_pos) = read_varint_typed(&data[pos..])
+                        .map_err(|e| ProtobufError::from(e).to_java_message().to_string())?;
                     unfreeze_balance = Some(value as i64);
-                    pos = pos + new_pos;
+                    pos += new_pos;
                 }
                 3 => {
                     // resource (enum ResourceCode)
                     if wire_type != 0 {
                         return Err("Invalid wire type for resource".to_string());
                     }
-                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    let (value, new_pos) = read_varint_typed(&data[pos..])
+                        .map_err(|e| ProtobufError::from(e).to_java_message().to_string())?;
                     resource = match value {
                         0 => Some(FreezeResource::Bandwidth),
                         1 => Some(FreezeResource::Energy),
                         2 => Some(FreezeResource::TronPower),
                         _ => None,
                     };
-                    pos = pos + new_pos;
+                    pos += new_pos;
                 }
                 _ => {
                     // Unknown field - skip
-                    match wire_type {
-                        0 => {
-                            let (_, new_pos) = read_varint(&data[pos..])?;
-                            pos = pos + new_pos;
-                        }
-                        2 => {
-                            let (len, new_pos) = read_varint(&data[pos..])?;
-                            pos = pos + new_pos + len as usize;
-                        }
-                        _ => {
-                            return Err(format!(
-                                "Unsupported wire type {} for field {}",
-                                wire_type, field_number
-                            ))
-                        }
-                    }
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    pos += skip_len;
                 }
             }
         }
@@ -2850,7 +2792,7 @@ impl BackendService {
     /// - resource: ResourceCode enum (field 10)
     /// - receiver_address: bytes (field 15) - optional (delegate freeze when supportDR is enabled)
     pub(crate) fn parse_freeze_balance_params(
-        data: &revm_primitives::Bytes,
+        data: &[u8],
     ) -> Result<FreezeParams, String> {
         if data.is_empty() {
             return Err("FreezeBalance params cannot be empty".to_string());
@@ -2871,11 +2813,9 @@ impl BackendService {
         let mut pos = 0;
         while pos < data.len() {
             // Read tag
-            let (tag, new_pos) = read_varint(&data[pos..])?;
-            pos = pos + new_pos;
-
-            let field_number = tag >> 3;
-            let wire_type = tag & 0x7;
+            let (field_number, wire_type, tag_len) = read_tag_typed(&data[pos..])
+                .map_err(|e| e.to_java_message().to_string())?;
+            pos += tag_len;
 
             match field_number {
                 1 => {
@@ -2883,26 +2823,29 @@ impl BackendService {
                     if wire_type != 2 {
                         return Err("Invalid wire type for owner_address".to_string());
                     }
-                    let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos = pos + new_pos + len as usize;
+                    let (_payload, total_len) = read_length_delimited_typed(&data[pos..])
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    pos += total_len;
                 }
                 2 => {
                     // frozen_balance (int64)
                     if wire_type != 0 {
                         return Err("Invalid wire type for frozen_balance".to_string());
                     }
-                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    let (value, new_pos) = read_varint_typed(&data[pos..])
+                        .map_err(|e| ProtobufError::from(e).to_java_message().to_string())?;
                     frozen_balance = value as i64;
-                    pos = pos + new_pos;
+                    pos += new_pos;
                 }
                 3 => {
                     // frozen_duration (int64)
                     if wire_type != 0 {
                         return Err("Invalid wire type for frozen_duration".to_string());
                     }
-                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    let (value, new_pos) = read_varint_typed(&data[pos..])
+                        .map_err(|e| ProtobufError::from(e).to_java_message().to_string())?;
                     frozen_duration = value as i64;
-                    pos = pos + new_pos;
+                    pos += new_pos;
                 }
                 10 => {
                     // resource (enum ResourceCode)
@@ -2910,7 +2853,8 @@ impl BackendService {
                     if wire_type != 0 {
                         return Err("Invalid wire type for resource".to_string());
                     }
-                    let (value, new_pos) = read_varint(&data[pos..])?;
+                    let (value, new_pos) = read_varint_typed(&data[pos..])
+                        .map_err(|e| ProtobufError::from(e).to_java_message().to_string())?;
                     resource_raw = value as i64;
                     resource = match value {
                         0 => FreezeResource::Bandwidth,
@@ -2918,40 +2862,23 @@ impl BackendService {
                         2 => FreezeResource::TronPower,
                         _ => FreezeResource::Unknown,
                     };
-                    pos = pos + new_pos;
+                    pos += new_pos;
                 }
                 15 => {
                     // receiver_address (bytes)
                     if wire_type != 2 {
                         return Err("Invalid wire type for receiver_address".to_string());
                     }
-                    let (len, new_pos) = read_varint(&data[pos..])?;
-                    pos += new_pos;
-                    let len_usize = len as usize;
-                    if pos + len_usize > data.len() {
-                        return Err("receiver_address out of bounds".to_string());
-                    }
-                    receiver_address = data[pos..pos + len_usize].to_vec();
-                    pos += len_usize;
+                    let (payload, total_len) = read_length_delimited_typed(&data[pos..])
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    receiver_address = payload.to_vec();
+                    pos += total_len;
                 }
                 _ => {
                     // Unknown field - skip
-                    match wire_type {
-                        0 => {
-                            let (_, new_pos) = read_varint(&data[pos..])?;
-                            pos = pos + new_pos;
-                        }
-                        2 => {
-                            let (len, new_pos) = read_varint(&data[pos..])?;
-                            pos = pos + new_pos + len as usize;
-                        }
-                        _ => {
-                            return Err(format!(
-                                "Unsupported wire type {} for field {}",
-                                wire_type, field_number
-                            ))
-                        }
-                    }
+                    let skip_len = skip_protobuf_field_checked(&data[pos..], wire_type)
+                        .map_err(|e| e.to_java_message().to_string())?;
+                    pos += skip_len;
                 }
             }
         }

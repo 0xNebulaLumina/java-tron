@@ -1,11 +1,11 @@
 //! WitnessUpdateContract tests.
 
 use super::super::super::*;
-use super::common::{make_from_raw, seed_dynamic_properties};
+use super::common::{encode_varint, encode_witness_update_contract, make_from_raw, seed_dynamic_properties};
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronContractParameter, TronExecutionContext, TronTransaction, TxMetadata,
 };
 
 #[test]
@@ -51,6 +51,7 @@ fn test_witness_update_contract_happy_path() {
 
     // Create WitnessUpdateContract transaction with new URL
     let new_url = "new-url.example.com";
+    let contract_proto = encode_witness_update_contract(&make_from_raw(&owner_address), new_url.as_bytes());
     let transaction = TronTransaction {
         from: owner_address,
         to: None,
@@ -63,6 +64,7 @@ fn test_witness_update_contract_happy_path() {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessUpdateContract".to_string(), value: contract_proto }),
             ..Default::default()
         },
     };
@@ -167,6 +169,7 @@ fn test_witness_update_contract_validations() {
     assert!(storage_adapter.put_witness(&url_test_witness).is_ok());
 
     // Test 1: Empty URL should fail
+    let empty_url_proto = encode_witness_update_contract(&make_from_raw(&url_test_address), &[]);
     let empty_url_tx = TronTransaction {
         from: url_test_address,
         to: None,
@@ -179,6 +182,7 @@ fn test_witness_update_contract_validations() {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&url_test_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessUpdateContract".to_string(), value: empty_url_proto }),
             ..Default::default()
         },
     };
@@ -193,11 +197,22 @@ fn test_witness_update_contract_validations() {
 
     // Test 2: URL too long (>256 bytes) should fail
     let long_url_bytes: Vec<u8> = vec![b'x'; 257];
+    // Build proper WitnessUpdateContract protobuf with the long URL
+    let mut long_url_proto = Vec::new();
+    // Field 1: owner_address (bytes)
+    let owner_raw = make_from_raw(&url_test_address);
+    encode_varint(&mut long_url_proto, (1 << 3) | 2);
+    encode_varint(&mut long_url_proto, owner_raw.len() as u64);
+    long_url_proto.extend_from_slice(&owner_raw);
+    // Field 12: update_url (bytes)
+    encode_varint(&mut long_url_proto, (12 << 3) | 2);
+    encode_varint(&mut long_url_proto, long_url_bytes.len() as u64);
+    long_url_proto.extend_from_slice(&long_url_bytes);
     let long_url_tx = TronTransaction {
         from: url_test_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(long_url_bytes),
+        data: Bytes::from(long_url_bytes.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -205,6 +220,7 @@ fn test_witness_update_contract_validations() {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&url_test_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessUpdateContract".to_string(), value: long_url_proto }),
             ..Default::default()
         },
     };
@@ -218,6 +234,7 @@ fn test_witness_update_contract_validations() {
     );
 
     // Test 3: Missing owner account should fail
+    let missing_acct_proto = encode_witness_update_contract(&make_from_raw(&owner_address), "valid-url.com".as_bytes());
     let missing_account_tx = TronTransaction {
         from: owner_address, // Account doesn't exist in storage
         to: None,
@@ -230,6 +247,7 @@ fn test_witness_update_contract_validations() {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessUpdateContract".to_string(), value: missing_acct_proto }),
             ..Default::default()
         },
     };
@@ -256,6 +274,7 @@ fn test_witness_update_contract_validations() {
         .set_account(owner_address, owner_account)
         .is_ok());
 
+    let missing_witness_proto = encode_witness_update_contract(&make_from_raw(&owner_address), "valid-url.com".as_bytes());
     let missing_witness_tx = TronTransaction {
         from: owner_address,
         to: None,
@@ -268,6 +287,7 @@ fn test_witness_update_contract_validations() {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessUpdateContract".to_string(), value: missing_witness_proto }),
             ..Default::default()
         },
     };
@@ -287,11 +307,13 @@ fn test_witness_update_contract_validations() {
     let witness = tron_backend_execution::WitnessInfo::new(owner_address, "old-url".to_string(), 0);
     assert!(storage_adapter.put_witness(&witness).is_ok());
 
+    let invalid_utf8_bytes: Vec<u8> = vec![0xFF, 0xFE, 0xFD];
+    let invalid_utf8_proto = encode_witness_update_contract(&make_from_raw(&owner_address), &invalid_utf8_bytes);
     let invalid_utf8_tx = TronTransaction {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(vec![0xFF, 0xFE, 0xFD]), // Invalid UTF-8 bytes
+        data: Bytes::from(invalid_utf8_bytes), // Invalid UTF-8 bytes
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -299,6 +321,7 @@ fn test_witness_update_contract_validations() {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessUpdateContract".to_string(), value: invalid_utf8_proto }),
             ..Default::default()
         },
     };
@@ -353,6 +376,7 @@ fn test_witness_update_tracks_aext_when_enabled() {
     assert!(storage_adapter.put_witness(&witness).is_ok());
 
     // Create WitnessUpdateContract transaction
+    let contract_proto = encode_witness_update_contract(&make_from_raw(&owner_address), "new-tracked-url.com".as_bytes());
     let transaction = TronTransaction {
         from: owner_address,
         to: None,
@@ -365,6 +389,7 @@ fn test_witness_update_tracks_aext_when_enabled() {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessUpdateContract".to_string(), value: contract_proto }),
             ..Default::default()
         },
     };
@@ -482,6 +507,7 @@ fn test_witness_update_preserves_all_witness_fields() {
 
     // 3. Execute witness update with new URL
     let new_url = "brand-new-url.example.com";
+    let contract_proto = encode_witness_update_contract(&make_from_raw(&owner_address), new_url.as_bytes());
     let transaction = TronTransaction {
         from: owner_address,
         to: None,
@@ -494,6 +520,7 @@ fn test_witness_update_preserves_all_witness_fields() {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessUpdateContract".to_string(), value: contract_proto }),
             ..Default::default()
         },
     };
@@ -591,6 +618,7 @@ fn test_witness_update_any_type_url_mismatch() {
 
     let owner_address = Address::from([4u8; 20]);
 
+    let contract_proto = encode_witness_update_contract(&make_from_raw(&owner_address), "some-url.com".as_bytes());
     let transaction = TronTransaction {
         from: owner_address,
         to: None,
@@ -605,7 +633,7 @@ fn test_witness_update_any_type_url_mismatch() {
             from_raw: Some(make_from_raw(&owner_address)),
             contract_parameter: Some(TronContractParameter {
                 type_url: "type.googleapis.com/protocol.SomeOtherContract".to_string(),
-                value: vec![],
+                value: contract_proto,
             }),
             ..Default::default()
         },
@@ -664,6 +692,7 @@ fn test_witness_update_any_value_malformed() {
     let service = BackendService::new(module_manager);
 
     let owner_address = Address::from([8u8; 20]);
+    // No account seeded — malformed protobuf should fail before account check
 
     // Malformed protobuf: claims a length-delimited field of 200 bytes but only
     // provides 2 bytes of payload → truncation error.
@@ -710,8 +739,8 @@ fn test_witness_update_any_value_malformed() {
     assert!(result.is_err(), "Malformed value should fail");
     let err_msg = result.unwrap_err();
     assert!(
-        err_msg.contains("WitnessUpdateContract decode error"),
-        "Error should mention decode error, got: {}",
+        err_msg.contains("decode error") || err_msg.contains("truncated") || err_msg.contains("parsing"),
+        "Error should mention decode/parse error, got: {}",
         err_msg
     );
 }
@@ -754,6 +783,7 @@ fn test_witness_update_any_type_url_correct() {
         tron_backend_execution::WitnessInfo::new(owner_address, "existing.com".to_string(), 10);
     storage_adapter.put_witness(&witness).unwrap();
 
+    let contract_proto = encode_witness_update_contract(&make_from_raw(&owner_address), "updated-url.com".as_bytes());
     let transaction = TronTransaction {
         from: owner_address,
         to: None,
@@ -768,7 +798,7 @@ fn test_witness_update_any_type_url_correct() {
             from_raw: Some(make_from_raw(&owner_address)),
             contract_parameter: Some(TronContractParameter {
                 type_url: "type.googleapis.com/protocol.WitnessUpdateContract".to_string(),
-                value: vec![],
+                value: contract_proto,
             }),
             ..Default::default()
         },
@@ -857,6 +887,7 @@ fn test_witness_update_always_writes_even_same_url() {
         .unwrap();
 
     // Execute update with SAME URL
+    let contract_proto = encode_witness_update_contract(&make_from_raw(&owner_address), "same-url.com".as_bytes());
     let transaction = TronTransaction {
         from: owner_address,
         to: None,
@@ -869,6 +900,7 @@ fn test_witness_update_always_writes_even_same_url() {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessUpdateContract".to_string(), value: contract_proto }),
             ..Default::default()
         },
     };
@@ -962,6 +994,7 @@ fn test_witness_update_crafted_any_url_not_unwrapped() {
     };
 
     // Use execute_non_vm_contract (the public entry point that runs Any-unwrapping)
+    let contract_proto = encode_witness_update_contract(&make_from_raw(&owner_address), &crafted_url);
     let transaction = TronTransaction {
         from: owner_address,
         to: None,
@@ -974,6 +1007,7 @@ fn test_witness_update_crafted_any_url_not_unwrapped() {
             contract_type: Some(tron_backend_execution::TronContractType::WitnessUpdateContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.WitnessUpdateContract".to_string(), value: contract_proto }),
             ..Default::default()
         },
     };
