@@ -88,14 +88,14 @@
 
 ## 7. Java remote-execution validation
 
-- [ ] Add `framework/src/test/java/org/tron/core/execution/spi/RemoteExecutionSPIAccountCreateTest.java`
-- [ ] Assert `AccountCreateContract` maps to `TxKind.NON_VM`
-- [ ] Assert contract type maps to `ACCOUNT_CREATE_CONTRACT`
-- [ ] Assert `fromAddress` is the owner address
-- [ ] Assert `toAddress` is empty
-- [ ] Assert `data` contains the full serialized `AccountCreateContract`
-- [ ] Add one focused Java remote-vs-embedded account-create validation test
-- [ ] Do not rely on `DualStorageModeIntegrationTest` alone as proof of account-create parity
+- [x] Add `framework/src/test/java/org/tron/core/execution/spi/RemoteExecutionSPIAccountCreateTest.java`
+- [x] Assert `AccountCreateContract` maps to `TxKind.NON_VM`
+- [x] Assert contract type maps to `ACCOUNT_CREATE_CONTRACT`
+- [x] Assert `fromAddress` is the owner address
+- [x] Assert `toAddress` is empty
+- [x] Assert `data` contains the full serialized `AccountCreateContract`
+- [x] Add one focused Java remote-vs-embedded account-create validation test
+- [x] Do not rely on `DualStorageModeIntegrationTest` alone as proof of account-create parity
 
 ## 8. Fixture regeneration and verification
 
