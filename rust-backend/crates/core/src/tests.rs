@@ -12,8 +12,8 @@
 use revm_primitives::{Address, Bytes, U256};
 use tron_backend_common::ExecutionConfig;
 use tron_backend_execution::{
-    EvmStateStore, ExecutionModule, TronContractType, TronExecutionContext, TronStateChange,
-    TronTransaction, TxMetadata,
+    EvmStateStore, ExecutionModule, TronContractParameter, TronContractType,
+    TronExecutionContext, TronStateChange, TronTransaction, TxMetadata,
 };
 
 /// Create a test configuration for witness contract testing
@@ -848,17 +848,22 @@ fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
         )
         .unwrap();
 
+    let vote_data_1 = encode_vote_witness_contract(&owner_address, &witness_address, 4754);
     let tx1 = TronTransaction {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: encode_vote_witness_contract(&owner_address, &witness_address, 4754),
+        data: vote_data_1.clone(),
         gas_limit: 10000,
         gas_price: U256::ZERO,
         nonce: 1,
         metadata: TxMetadata {
             contract_type: Some(TronContractType::VoteWitnessContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter {
+                type_url: "protocol.VoteWitnessContract".to_string(),
+                value: vote_data_1.to_vec(),
+            }),
             ..Default::default()
         },
     };
@@ -878,17 +883,22 @@ fn test_vote_witness_does_not_shift_old_votes_within_epoch() {
     assert_eq!(votes_after_1.new_votes[0].vote_address, witness_address);
     assert_eq!(votes_after_1.new_votes[0].vote_count, 4754);
 
+    let vote_data_2 = encode_vote_witness_contract(&owner_address, &witness_address, 4838);
     let tx2 = TronTransaction {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: encode_vote_witness_contract(&owner_address, &witness_address, 4838),
+        data: vote_data_2.clone(),
         gas_limit: 10000,
         gas_price: U256::ZERO,
         nonce: 2,
         metadata: TxMetadata {
             contract_type: Some(TronContractType::VoteWitnessContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter {
+                type_url: "protocol.VoteWitnessContract".to_string(),
+                value: vote_data_2.to_vec(),
+            }),
             ..Default::default()
         },
     };
