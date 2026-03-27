@@ -4,7 +4,7 @@ use super::super::super::*;
 use super::common::{encode_varint, new_test_context, seed_dynamic_properties};
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
-use tron_backend_execution::{EngineBackedEvmStateStore, TronTransaction, TxMetadata};
+use tron_backend_execution::{EngineBackedEvmStateStore, TronContractParameter, TronTransaction, TxMetadata};
 use tron_backend_storage::StorageEngine;
 
 /// Helper function to create BackendService with account_create_enabled
@@ -128,12 +128,13 @@ fn test_account_create_reject_wrong_prefix_owner_address() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -187,12 +188,13 @@ fn test_account_create_reject_wrong_prefix_target_address() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -243,12 +245,13 @@ fn test_account_create_reject_wrong_length_owner_address() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -299,12 +302,13 @@ fn test_account_create_reject_wrong_length_target_address() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -369,12 +373,13 @@ fn test_account_create_type_normal_default() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -446,12 +451,13 @@ fn test_account_create_type_contract_persisted() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -538,12 +544,13 @@ fn test_account_create_bandwidth_path_free_net() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -648,12 +655,13 @@ fn test_account_create_fee_fallback_updates_total_cost() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -723,12 +731,13 @@ fn test_account_create_receipt_contains_fee() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -840,12 +849,13 @@ fn test_account_create_insufficient_bandwidth_and_balance() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AccountCreateContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };

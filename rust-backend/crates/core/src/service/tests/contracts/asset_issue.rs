@@ -5,7 +5,7 @@ use super::common::{encode_varint, new_test_context, seed_dynamic_properties};
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronContractParameter, TronExecutionContext, TronTransaction, TxMetadata,
 };
 use tron_backend_storage::StorageEngine;
 
@@ -180,13 +180,14 @@ fn test_asset_issue_contract_trc10_change_emission() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_data),
+        data: Bytes::from(contract_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data.clone() }),
             ..Default::default()
         },
     };
@@ -307,13 +308,14 @@ fn test_asset_issue_contract_disabled() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_data),
+        data: Bytes::from(contract_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data.clone() }),
             ..Default::default()
         },
     };
@@ -434,13 +436,14 @@ fn test_asset_issue_contract_phase2_fields() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_data),
+        data: Bytes::from(contract_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data.clone() }),
             ..Default::default()
         },
     };
@@ -519,13 +522,14 @@ fn test_asset_issue_validate_fail_insufficient_balance_message() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -581,13 +585,14 @@ fn test_asset_issue_validate_fail_owner_already_issued() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -634,13 +639,14 @@ fn test_asset_issue_validate_fail_total_supply_zero() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -691,13 +697,14 @@ fn test_asset_issue_validate_fail_invalid_name_trx() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -751,13 +758,14 @@ fn test_asset_issue_validate_fail_start_time_before_head_block_time() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -807,13 +815,14 @@ fn test_asset_issue_validate_fail_end_time_not_greater_than_start_time() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -869,13 +878,14 @@ fn test_asset_issue_validate_fail_owner_address_empty() {
         from: Address::ZERO,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_bytes),
+        data: Bytes::from(contract_bytes.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_bytes.clone() }),
             ..Default::default()
         },
     };
@@ -935,13 +945,14 @@ fn test_asset_issue_validate_fail_frozen_supply_amount_zero() {
         from: Address::from([1u8; 20]),
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_bytes),
+        data: Bytes::from(contract_bytes.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_bytes.clone() }),
             ..Default::default()
         },
     };
@@ -1004,13 +1015,14 @@ fn test_asset_issue_validate_fail_frozen_supply_days_out_of_range_message() {
         from: Address::from([1u8; 20]),
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_bytes),
+        data: Bytes::from(contract_bytes.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_bytes.clone() }),
             ..Default::default()
         },
     };
@@ -1071,13 +1083,14 @@ fn test_asset_issue_validate_fail_wrong_address_prefix() {
         from: Address::from([1u8; 20]),
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_bytes),
+        data: Bytes::from(contract_bytes.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_bytes.clone() }),
             ..Default::default()
         },
     };
@@ -1127,13 +1140,14 @@ fn test_asset_issue_token_id_populated_in_trc10_change() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -1211,13 +1225,14 @@ fn test_asset_issue_token_id_num_persisted_alongside_token_id() {
         from: owner1,
         to: None,
         value: U256::ZERO,
-        data: contract_data1,
+        data: contract_data1.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data1.to_vec() }),
             ..Default::default()
         },
     };
@@ -1275,13 +1290,14 @@ fn test_asset_issue_token_id_num_persisted_alongside_token_id() {
         from: owner2,
         to: None,
         value: U256::ZERO,
-        data: contract_data2,
+        data: contract_data2.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_data2.to_vec() }),
             ..Default::default()
         },
     };
@@ -1362,13 +1378,14 @@ fn test_asset_issue_malformed_utf8_name_invalid_asset_name() {
         from: Address::from([1u8; 20]),
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_bytes),
+        data: Bytes::from(contract_bytes.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_bytes.clone() }),
             ..Default::default()
         },
     };
@@ -1433,13 +1450,14 @@ fn test_asset_issue_name_with_control_characters_fails() {
         from: Address::from([1u8; 20]),
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_bytes),
+        data: Bytes::from(contract_bytes.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_bytes.clone() }),
             ..Default::default()
         },
     };
@@ -1500,13 +1518,14 @@ fn test_asset_issue_high_ascii_bytes_in_name_fails() {
         from: Address::from([1u8; 20]),
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(contract_bytes),
+        data: Bytes::from(contract_bytes.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.AssetIssueContract".to_string(), value: contract_bytes.clone() }),
             ..Default::default()
         },
     };

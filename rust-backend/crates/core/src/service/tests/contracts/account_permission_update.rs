@@ -155,6 +155,7 @@ fn test_account_permission_update_strict_contract_parameter_required() {
                 tron_backend_execution::TronContractType::AccountPermissionUpdateContract,
             ),
             // contract_parameter intentionally omitted — must be rejected
+            contract_parameter: None,
             ..Default::default()
         },
     };
@@ -162,9 +163,9 @@ fn test_account_permission_update_strict_contract_parameter_required() {
     let err = service
         .execute_account_permission_update_contract(&mut storage_adapter, &transaction, &context)
         .unwrap_err();
-    assert!(
-        err.contains("contract type error"),
-        "Expected type mismatch error, got: {}",
+    assert_eq!(
+        err, "No contract!",
+        "Missing contract_parameter should produce 'No contract!' error, got: {}",
         err
     );
 }

@@ -6,7 +6,7 @@ use revm_primitives::{AccountInfo, Address, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::protocol::AssetIssueContractData;
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronContractType, TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronContractType, TronExecutionContext, TronContractParameter, TronTransaction, TxMetadata,
 };
 use tron_backend_storage::StorageEngine;
 
@@ -186,7 +186,7 @@ fn test_market_sell_burns_fee_when_blackhole_optimization_enabled() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data.into(),
+        data: contract_data.clone().into(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -194,6 +194,7 @@ fn test_market_sell_burns_fee_when_blackhole_optimization_enabled() {
             contract_type: Some(TronContractType::MarketSellAssetContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.MarketSellAssetContract".to_string(), value: contract_data.clone() }),
             ..Default::default()
         },
     };
@@ -333,7 +334,7 @@ fn test_market_sell_credits_blackhole_when_optimization_disabled() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: contract_data.into(),
+        data: contract_data.clone().into(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -341,6 +342,7 @@ fn test_market_sell_credits_blackhole_when_optimization_disabled() {
             contract_type: Some(TronContractType::MarketSellAssetContract),
             asset_id: None,
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.MarketSellAssetContract".to_string(), value: contract_data.clone() }),
             ..Default::default()
         },
     };

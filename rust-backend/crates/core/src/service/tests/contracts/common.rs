@@ -58,6 +58,39 @@ pub fn new_test_service_with_system_enabled() -> BackendService {
     BackendService::new(module_manager)
 }
 
+/// Encode a WitnessCreateContract protobuf: { bytes owner_address = 1; bytes url = 2; }
+pub fn encode_witness_create_contract(owner_tron: &[u8], url: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if !owner_tron.is_empty() {
+        buf.push(0x0a); // field 1, wire type 2
+        encode_varint(&mut buf, owner_tron.len() as u64);
+        buf.extend_from_slice(owner_tron);
+    }
+    if !url.is_empty() {
+        buf.push(0x12); // field 2, wire type 2
+        encode_varint(&mut buf, url.len() as u64);
+        buf.extend_from_slice(url);
+    }
+    buf
+}
+
+/// Encode a WitnessUpdateContract protobuf: { bytes owner_address = 1; bytes update_url = 12; }
+pub fn encode_witness_update_contract(owner_tron: &[u8], update_url: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if !owner_tron.is_empty() {
+        buf.push(0x0a); // field 1, wire type 2
+        encode_varint(&mut buf, owner_tron.len() as u64);
+        buf.extend_from_slice(owner_tron);
+    }
+    if !update_url.is_empty() {
+        // field 12, wire type 2 → tag = (12 << 3) | 2 = 98 = 0x62
+        buf.push(0x62);
+        encode_varint(&mut buf, update_url.len() as u64);
+        buf.extend_from_slice(update_url);
+    }
+    buf
+}
+
 /// Create a default test context
 pub fn new_test_context() -> TronExecutionContext {
     TronExecutionContext {

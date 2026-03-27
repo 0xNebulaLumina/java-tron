@@ -11,7 +11,7 @@ use super::common::{encode_varint, make_from_raw, new_test_context, seed_dynamic
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronContractType, TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronContractType, TronExecutionContext, TronContractParameter, TronTransaction, TxMetadata,
     WitnessInfo,
 };
 use tron_backend_storage::StorageEngine;
@@ -75,13 +75,14 @@ fn make_vote_tx(owner: Address, owner_tron: Vec<u8>, data: Vec<u8>) -> TronTrans
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(data),
+        data: Bytes::from(data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(TronContractType::VoteWitnessContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.VoteWitnessContract".to_string(), value: data.clone() }),
             ..Default::default()
         },
     }
@@ -856,13 +857,14 @@ fn test_vote_witness_validation_invalid_owner() {
         from: owner,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(data),
+        data: Bytes::from(data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(TronContractType::VoteWitnessContract),
             from_raw: Some(make_from_raw(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.VoteWitnessContract".to_string(), value: data.clone() }),
             ..Default::default()
         },
     };

@@ -12,7 +12,7 @@ use super::common::{encode_varint, make_from_raw, new_test_context, seed_dynamic
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronExecutionContext, TronContractParameter, TronTransaction, TxMetadata,
 };
 use tron_backend_storage::StorageEngine;
 
@@ -101,7 +101,7 @@ fn test_participate_validate_fail_owner_address_empty() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -111,6 +111,7 @@ fn test_participate_validate_fail_owner_address_empty() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -151,7 +152,7 @@ fn test_participate_validate_fail_owner_address_too_short() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -161,6 +162,7 @@ fn test_participate_validate_fail_owner_address_too_short() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -204,7 +206,7 @@ fn test_participate_validate_fail_owner_address_wrong_prefix() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -214,6 +216,7 @@ fn test_participate_validate_fail_owner_address_wrong_prefix() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -261,7 +264,7 @@ fn test_participate_validate_fail_to_address_empty() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -271,6 +274,7 @@ fn test_participate_validate_fail_to_address_empty() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -311,7 +315,7 @@ fn test_participate_validate_fail_to_address_too_short() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -321,6 +325,7 @@ fn test_participate_validate_fail_to_address_too_short() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -364,7 +369,7 @@ fn test_participate_validate_fail_to_address_wrong_prefix() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -374,6 +379,7 @@ fn test_participate_validate_fail_to_address_wrong_prefix() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -433,7 +439,7 @@ fn test_participate_validate_fail_empty_asset_name_message_parity() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -443,6 +449,7 @@ fn test_participate_validate_fail_empty_asset_name_message_parity() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -487,7 +494,7 @@ fn test_participate_validate_fail_amount_zero() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -497,6 +504,7 @@ fn test_participate_validate_fail_amount_zero() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -532,7 +540,7 @@ fn test_participate_validate_fail_self_participation() {
         from: owner,
         to: Some(owner),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -542,6 +550,7 @@ fn test_participate_validate_fail_self_participation() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -581,7 +590,7 @@ fn test_participate_validate_fail_owner_account_not_exist() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -591,6 +600,7 @@ fn test_participate_validate_fail_owner_account_not_exist() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -642,7 +652,7 @@ fn test_participate_validate_fail_insufficient_balance() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -652,6 +662,7 @@ fn test_participate_validate_fail_insufficient_balance() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -702,7 +713,7 @@ fn test_participate_validate_fail_asset_not_exist() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -712,6 +723,7 @@ fn test_participate_validate_fail_asset_not_exist() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };
@@ -805,7 +817,7 @@ fn test_participate_happy_path() {
         from: owner,
         to: Some(issuer),
         value: U256::ZERO,
-        data: contract_data,
+        data: contract_data.clone(),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -815,6 +827,7 @@ fn test_participate_happy_path() {
             ),
             asset_id: None,
             from_raw: Some(make_tron_address(&owner)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.ParticipateAssetIssueContract".to_string(), value: contract_data.to_vec() }),
             ..Default::default()
         },
     };

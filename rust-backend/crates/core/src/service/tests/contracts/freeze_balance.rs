@@ -5,7 +5,7 @@ use super::common::{encode_varint, make_from_raw, seed_dynamic_properties};
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronExecutionContext, TronContractParameter, TronTransaction, TxMetadata,
 };
 use tron_backend_storage::StorageEngine;
 
@@ -50,7 +50,7 @@ fn test_freeze_balance_success_basic() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -58,6 +58,7 @@ fn test_freeze_balance_success_basic() {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -158,7 +159,7 @@ fn test_freeze_balance_insufficient_balance() {
         from: owner_address,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(proto_data),
+        data: Bytes::from(proto_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -166,6 +167,7 @@ fn test_freeze_balance_insufficient_balance() {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_address)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: proto_data.clone() }),
             ..Default::default()
         },
     };
@@ -236,6 +238,7 @@ fn test_freeze_balance_bad_params() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -303,7 +306,7 @@ fn test_freeze_balance_emits_freeze_changes_when_enabled() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 100_000,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -311,6 +314,7 @@ fn test_freeze_balance_emits_freeze_changes_when_enabled() {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_addr)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -408,7 +412,7 @@ fn test_freeze_balance_no_emission_when_disabled() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 100_000,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -416,6 +420,7 @@ fn test_freeze_balance_no_emission_when_disabled() {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_addr)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -520,7 +525,7 @@ fn test_unfreeze_balance_emits_freeze_changes_when_enabled() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 100_000,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -528,6 +533,7 @@ fn test_unfreeze_balance_emits_freeze_changes_when_enabled() {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_addr)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -649,7 +655,7 @@ fn test_freeze_balance_v2_emits_with_v2_flag() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 100_000,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -657,6 +663,7 @@ fn test_freeze_balance_v2_emits_with_v2_flag() {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceV2Contract),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_addr)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceV2Contract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -783,7 +790,7 @@ fn test_unfreeze_balance_v2_partial_unfreeze() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 100_000,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -793,6 +800,7 @@ fn test_unfreeze_balance_v2_partial_unfreeze() {
             ),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_addr)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceV2Contract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -915,7 +923,7 @@ fn test_unfreeze_balance_v2_full_unfreeze() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 100_000,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -925,6 +933,7 @@ fn test_unfreeze_balance_v2_full_unfreeze() {
             ),
             asset_id: None,
             from_raw: Some(make_from_raw(&owner_addr)),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceV2Contract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -1043,13 +1052,14 @@ fn test_freeze_initializes_old_tron_power_when_new_resource_model_enabled() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -1150,13 +1160,14 @@ fn test_freeze_initializes_old_tron_power_to_minus_one_when_legacy_power_is_zero
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -1238,13 +1249,14 @@ fn test_freeze_unknown_resource_returns_java_error_message() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -1348,13 +1360,14 @@ fn test_freeze_weight_delta_without_new_reward() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -1455,13 +1468,14 @@ fn test_freeze_weight_delta_with_new_reward() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             from_raw: Some(owner_tron),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -1587,13 +1601,14 @@ fn test_freeze_delegation_writes_optimized_keys() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -1736,13 +1751,14 @@ fn test_freeze_delegation_writes_legacy_keys_without_optimization() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -1892,13 +1908,14 @@ fn test_freeze_delegation_optimized_preserves_ordering() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data1),
+        data: Bytes::from(params_data1.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data1.clone() }),
             ..Default::default()
         },
     };
@@ -1948,13 +1965,14 @@ fn test_freeze_delegation_optimized_preserves_ordering() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data2),
+        data: Bytes::from(params_data2.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: params_data2.clone() }),
             ..Default::default()
         },
     };
@@ -2136,13 +2154,14 @@ fn test_unfreeze_balance_withdraw_reward_updates_allowance() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -2273,13 +2292,14 @@ fn test_unfreeze_balance_no_reward_when_delegation_disabled() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -2391,6 +2411,7 @@ fn test_unfreeze_balance_weight_clamping_with_allow_new_reward() {
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceContract".to_string(), value: vec![] }),
             ..Default::default()
         },
     };
@@ -2474,13 +2495,14 @@ fn test_unfreeze_balance_weight_clamping_with_allow_new_reward() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceContract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -2596,13 +2618,14 @@ fn test_unfreeze_delegated_optimized_deletes_prefixed_keys() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(freeze_data),
+        data: Bytes::from(freeze_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::FreezeBalanceContract),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.FreezeBalanceContract".to_string(), value: freeze_data.clone() }),
             ..Default::default()
         },
     };
@@ -2686,13 +2709,14 @@ fn test_unfreeze_delegated_optimized_deletes_prefixed_keys() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(unfreeze_params),
+        data: Bytes::from(unfreeze_params.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
         metadata: TxMetadata {
             contract_type: Some(tron_backend_execution::TronContractType::UnfreezeBalanceContract),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceContract".to_string(), value: unfreeze_params.clone() }),
             ..Default::default()
         },
     };
@@ -2836,7 +2860,7 @@ fn test_unfreeze_v2_new_resource_model_bandwidth_does_not_touch_votes() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -2845,6 +2869,7 @@ fn test_unfreeze_v2_new_resource_model_bandwidth_does_not_touch_votes() {
                 tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract,
             ),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceV2Contract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -2968,7 +2993,7 @@ fn test_unfreeze_v2_new_resource_model_energy_does_not_touch_votes() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -2977,6 +3002,7 @@ fn test_unfreeze_v2_new_resource_model_energy_does_not_touch_votes() {
                 tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract,
             ),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceV2Contract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -3097,7 +3123,7 @@ fn test_unfreeze_v2_new_resource_model_tron_power_can_rescale_votes() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -3106,6 +3132,7 @@ fn test_unfreeze_v2_new_resource_model_tron_power_can_rescale_votes() {
                 tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract,
             ),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceV2Contract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -3269,7 +3296,7 @@ fn test_unfreeze_v2_withdraw_reward_updates_allowance() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -3278,6 +3305,7 @@ fn test_unfreeze_v2_withdraw_reward_updates_allowance() {
                 tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract,
             ),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceV2Contract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -3397,7 +3425,7 @@ fn test_unfreeze_v2_no_reward_when_delegation_disabled() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -3406,6 +3434,7 @@ fn test_unfreeze_v2_no_reward_when_delegation_disabled() {
                 tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract,
             ),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceV2Contract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
@@ -3507,7 +3536,7 @@ fn test_unfreeze_v2_freeze_ledger_expiration_always_zero() {
         from: owner_addr,
         to: None,
         value: U256::ZERO,
-        data: Bytes::from(params_data),
+        data: Bytes::from(params_data.clone()),
         gas_limit: 0,
         gas_price: U256::ZERO,
         nonce: 0,
@@ -3516,6 +3545,7 @@ fn test_unfreeze_v2_freeze_ledger_expiration_always_zero() {
                 tron_backend_execution::TronContractType::UnfreezeBalanceV2Contract,
             ),
             from_raw: Some(owner_tron.clone()),
+            contract_parameter: Some(TronContractParameter { type_url: "protocol.UnfreezeBalanceV2Contract".to_string(), value: params_data.clone() }),
             ..Default::default()
         },
     };
