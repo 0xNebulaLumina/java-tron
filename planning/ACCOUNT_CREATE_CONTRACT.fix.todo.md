@@ -38,20 +38,20 @@
 
 ## 3. Rust unit tests
 
-- [ ] Update `rust-backend/crates/core/src/service/tests/contracts/account_create.rs`
-- [ ] Add helper to build a test service with:
-  - [ ] `account_create_enabled=true`
-  - [ ] `strict_dynamic_properties=true`
-- [ ] Add strict missing-key test for `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`
-- [ ] Add strict missing-key test for `LATEST_BLOCK_HEADER_TIMESTAMP`
-- [ ] Add strict missing-key test for `ALLOW_MULTI_SIGN`
-- [ ] Add strict missing-key test for `ALLOW_BLACKHOLE_OPTIMIZATION`
-- [ ] Add tracked-path strict missing-key test for `FREE_NET_LIMIT`
-- [ ] Add tracked-path strict missing-key test for `CREATE_NEW_ACCOUNT_BANDWIDTH_RATE`
-- [ ] Add tracked-path strict missing-key test for `CREATE_ACCOUNT_FEE`
-- [ ] Add tracked-path strict missing-key test for `TOTAL_CREATE_ACCOUNT_COST`
-- [ ] Add control tests proving fallback behavior still works when strict mode is off
-- [ ] Re-run the existing account-create parity tests after the new strict tests are added
+- [x] Update `rust-backend/crates/core/src/service/tests/contracts/account_create.rs`
+- [x] Add helper to build a test service with:
+  - [x] `account_create_enabled=true`
+  - [x] `strict_dynamic_properties=true`
+- [x] Add strict missing-key test for `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`
+- [x] Add strict missing-key test for `LATEST_BLOCK_HEADER_TIMESTAMP`
+- [x] Add strict missing-key test for `ALLOW_MULTI_SIGN`
+- [x] Add strict missing-key test for `ALLOW_BLACKHOLE_OPTIMIZATION`
+- [x] Add tracked-path strict missing-key test for `FREE_NET_LIMIT`
+- [x] Add tracked-path strict missing-key test for `CREATE_NEW_ACCOUNT_BANDWIDTH_RATE`
+- [x] Add tracked-path strict missing-key test for `CREATE_ACCOUNT_FEE`
+- [x] Add tracked-path strict missing-key test for `TOTAL_CREATE_ACCOUNT_COST`
+- [x] Add control tests proving fallback behavior still works when strict mode is off
+- [x] Re-run the existing account-create parity tests after the new strict tests are added
 
 ## 4. Java fixture generation
 

@@ -887,3 +887,308 @@ fn test_account_create_insufficient_bandwidth_and_balance() {
         error_msg
     );
 }
+
+// -----------------------------------------------------------------------------
+// Strict Dynamic-Property Missing-Key Tests
+// -----------------------------------------------------------------------------
+
+/// Helper function to create BackendService with account_create + strict_dynamic_properties
+fn new_test_service_with_account_create_strict() -> BackendService {
+    let exec_config = ExecutionConfig {
+        remote: RemoteExecutionConfig {
+            system_enabled: true,
+            account_create_enabled: true,
+            strict_dynamic_properties: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut module_manager = ModuleManager::new();
+    let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+    module_manager.register("execution", Box::new(exec_module));
+    BackendService::new(module_manager)
+}
+
+/// Helper function to create BackendService with account_create + strict + AEXT tracking
+fn new_test_service_with_account_create_strict_and_aext() -> BackendService {
+    let exec_config = ExecutionConfig {
+        remote: RemoteExecutionConfig {
+            system_enabled: true,
+            account_create_enabled: true,
+            strict_dynamic_properties: true,
+            accountinfo_aext_mode: "tracked".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut module_manager = ModuleManager::new();
+    let exec_module = tron_backend_execution::ExecutionModule::new(exec_config);
+    module_manager.register("execution", Box::new(exec_module));
+    BackendService::new(module_manager)
+}
+
+/// Set up a common test storage with owner account, mainnet prefix, and a basic transaction.
+/// Seeds ONLY the specified dynamic properties — caller controls which keys are present.
+fn setup_strict_test_env(
+    seed_props: impl FnOnce(&StorageEngine),
+) -> (
+    EngineBackedEvmStateStore,
+    TronTransaction,
+    Address,
+) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    // Leak the tempdir so it stays alive for the duration of the test
+    let temp_dir = Box::leak(Box::new(temp_dir));
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+
+    // Seed caller-specified properties
+    seed_props(&storage_engine);
+
+    // Set up mainnet prefix detection
+    let mainnet_owner = make_tron_address_21(0x41, [0x11u8; 20]);
+    storage_engine
+        .put("account", &mainnet_owner, b"dummy_account_data")
+        .unwrap();
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    let owner_address = Address::from([0x11u8; 20]);
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(10_000_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
+
+    let owner_tron = make_tron_address_21(0x41, [0x11u8; 20]);
+    let target_tron = make_tron_address_21(0x41, [0x99u8; 20]);
+    let contract_data = build_account_create_contract_data(&owner_tron, &target_tron, None);
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data.clone(),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AccountCreateContract),
+            contract_parameter: Some(TronContractParameter {
+                type_url: "protocol.AccountCreateContract".to_string(),
+                value: contract_data.to_vec(),
+            }),
+            ..Default::default()
+        },
+    };
+
+    (storage_adapter, transaction, owner_address)
+}
+
+/// Seed all required dynamic properties for a successful account-create execution.
+fn seed_all_account_create_props(se: &StorageEngine) {
+    se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
+    se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+    se.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+    se.put("properties", b"FREE_NET_LIMIT", &100000i64.to_be_bytes()).unwrap();
+    se.put("properties", b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", &1i64.to_be_bytes()).unwrap();
+    se.put("properties", b"CREATE_ACCOUNT_FEE", &100000u64.to_be_bytes()).unwrap();
+    se.put("properties", b"TOTAL_CREATE_ACCOUNT_COST", &0i64.to_be_bytes()).unwrap();
+}
+
+#[test]
+fn test_strict_missing_create_new_account_fee_in_system_contract() {
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // Seed everything EXCEPT CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+    });
+    let service = new_test_service_with_account_create_strict();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(
+        err.contains("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT"),
+        "Error should mention missing key: got '{}'", err
+    );
+}
+
+#[test]
+fn test_strict_missing_latest_block_header_timestamp() {
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // Seed everything EXCEPT latest_block_header_timestamp
+        se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+    });
+    let service = new_test_service_with_account_create_strict();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(
+        err.contains("LATEST_BLOCK_HEADER_TIMESTAMP"),
+        "Error should mention missing key: got '{}'", err
+    );
+}
+
+#[test]
+fn test_strict_missing_allow_multi_sign() {
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // Seed everything EXCEPT ALLOW_MULTI_SIGN
+        se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+    });
+    let service = new_test_service_with_account_create_strict();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(
+        err.contains("ALLOW_MULTI_SIGN"),
+        "Error should mention missing key: got '{}'", err
+    );
+}
+
+#[test]
+fn test_strict_missing_allow_blackhole_optimization() {
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // Seed everything EXCEPT ALLOW_BLACKHOLE_OPTIMIZATION
+        // Need fee > 0 to trigger blackhole read
+        se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &1000000u64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+    });
+    let service = new_test_service_with_account_create_strict();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(
+        err.contains("ALLOW_BLACKHOLE_OPTIMIZATION"),
+        "Error should mention missing key: got '{}'", err
+    );
+}
+
+// --- Tracked-bandwidth strict missing-key tests ---
+
+#[test]
+fn test_strict_tracked_missing_free_net_limit() {
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // Seed all actuator-path keys but NOT FREE_NET_LIMIT
+        se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+        se.put("properties", b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", &1i64.to_be_bytes()).unwrap();
+    });
+    let service = new_test_service_with_account_create_strict_and_aext();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(
+        err.contains("FREE_NET_LIMIT"),
+        "Error should mention missing key: got '{}'", err
+    );
+}
+
+#[test]
+fn test_strict_tracked_missing_create_new_account_bandwidth_rate() {
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // Seed all actuator-path keys but NOT CREATE_NEW_ACCOUNT_BANDWIDTH_RATE
+        se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+        se.put("properties", b"FREE_NET_LIMIT", &100000i64.to_be_bytes()).unwrap();
+    });
+    let service = new_test_service_with_account_create_strict_and_aext();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(
+        err.contains("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE"),
+        "Error should mention missing key: got '{}'", err
+    );
+}
+
+#[test]
+fn test_strict_tracked_missing_create_account_fee() {
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // Seed all keys but NOT CREATE_ACCOUNT_FEE; force fee path with FREE_NET_LIMIT=0
+        se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+        se.put("properties", b"FREE_NET_LIMIT", &0i64.to_be_bytes()).unwrap();
+        se.put("properties", b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"TOTAL_CREATE_ACCOUNT_COST", &0i64.to_be_bytes()).unwrap();
+    });
+    let service = new_test_service_with_account_create_strict_and_aext();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(
+        err.contains("CREATE_ACCOUNT_FEE"),
+        "Error should mention missing key: got '{}'", err
+    );
+}
+
+#[test]
+fn test_strict_tracked_missing_total_create_account_cost() {
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // Seed all keys but NOT TOTAL_CREATE_ACCOUNT_COST; force fee path with FREE_NET_LIMIT=0
+        se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+        se.put("properties", b"FREE_NET_LIMIT", &0i64.to_be_bytes()).unwrap();
+        se.put("properties", b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"CREATE_ACCOUNT_FEE", &100000u64.to_be_bytes()).unwrap();
+    });
+    let service = new_test_service_with_account_create_strict_and_aext();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(
+        err.contains("TOTAL_CREATE_ACCOUNT_COST"),
+        "Error should mention missing key: got '{}'", err
+    );
+}
+
+// --- Control tests: non-strict mode still falls back ---
+
+#[test]
+fn test_nonstrict_missing_keys_still_succeeds() {
+    // With strict=false (default), missing keys use defaults — should succeed
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // Seed ONLY ALLOW_MULTI_SIGN (already strict in all modes)
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        // All other keys are missing — non-strict mode should default them
+    });
+    let service = new_test_service_with_account_create_enabled(); // strict=false
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(
+        result.is_ok(),
+        "Non-strict mode should succeed with missing keys: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_strict_all_keys_present_succeeds() {
+    // With strict=true but all keys present, should succeed
+    let (mut sa, tx, _) = setup_strict_test_env(seed_all_account_create_props);
+    let service = new_test_service_with_account_create_strict();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(
+        result.is_ok(),
+        "Strict mode should succeed when all keys are present: {:?}",
+        result.err()
+    );
+}
