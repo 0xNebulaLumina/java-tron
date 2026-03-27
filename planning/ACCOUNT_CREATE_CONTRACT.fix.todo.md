@@ -79,12 +79,12 @@
 
 ## 6. Conformance runner
 
-- [ ] Update `rust-backend/crates/core/src/conformance/runner.rs`
-- [ ] Replace the static `create_conformance_config()` with a metadata-aware config builder
-- [ ] When fixture metadata requests strict mode, set `strict_dynamic_properties=true`
-- [ ] When fixture metadata requests tracked-bandwidth semantics, set `accountinfo_aext_mode="tracked"`
-- [ ] Keep non-strict fixtures on the current default behavior
-- [ ] Verify account-create missing-key fixtures are not filtered out by `scripts/ci/run_fixture_conformance.sh`
+- [x] Update `rust-backend/crates/core/src/conformance/runner.rs`
+- [x] Replace the static `create_conformance_config()` with a metadata-aware config builder
+- [x] When fixture metadata requests strict mode, set `strict_dynamic_properties=true`
+- [x] When fixture metadata requests tracked-bandwidth semantics, set `accountinfo_aext_mode="tracked"`
+- [x] Keep non-strict fixtures on the current default behavior
+- [x] Verify account-create missing-key fixtures are not filtered out by `scripts/ci/run_fixture_conformance.sh`
 
 ## 7. Java remote-execution validation
 

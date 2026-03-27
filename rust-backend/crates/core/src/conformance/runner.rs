@@ -207,7 +207,15 @@ impl ConformanceRunner {
     }
 
     /// Create an execution configuration with all contracts enabled for conformance testing.
-    fn create_conformance_config() -> ExecutionConfig {
+    /// When metadata specifies overrides (strict_dynamic_properties, accountinfo_aext_mode),
+    /// those are applied on top of the base config.
+    fn create_conformance_config(metadata: &super::metadata::FixtureMetadata) -> ExecutionConfig {
+        let strict = metadata.strict_dynamic_properties.unwrap_or(false);
+        let aext_mode = metadata
+            .accountinfo_aext_mode
+            .clone()
+            .unwrap_or_else(|| "none".to_string());
+
         ExecutionConfig {
             remote: RemoteExecutionConfig {
                 system_enabled: true,
@@ -257,6 +265,9 @@ impl ConformanceRunner {
                 account_create_enabled: true,
                 trc10_enabled: true,
                 delegation_reward_enabled: true,
+                // Metadata-driven overrides
+                strict_dynamic_properties: strict,
+                accountinfo_aext_mode: aext_mode,
                 ..Default::default()
             },
             ..Default::default()
@@ -677,7 +688,8 @@ impl ConformanceRunner {
 
         // Create a BackendService instance configured for conformance.
         // This ensures we exercise the same NON_VM dispatch path as the gRPC server.
-        let config = Self::create_conformance_config();
+        // Metadata-driven overrides (strict_dynamic_properties, accountinfo_aext_mode) are applied.
+        let config = Self::create_conformance_config(&metadata);
         let mut module_manager = ModuleManager::new();
         module_manager.register("execution", Box::new(ExecutionModule::new(config.clone())));
         let backend_service = BackendService::new(module_manager);
