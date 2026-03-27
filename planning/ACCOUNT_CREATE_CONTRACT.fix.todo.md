@@ -21,20 +21,20 @@
 
 ## 2. Rust account-create service wiring
 
-- [ ] Update `rust-backend/crates/core/src/service/mod.rs`
-- [ ] Read `self.get_execution_config()?.remote.strict_dynamic_properties` inside `execute_account_create_contract()`
-- [ ] Route actuator-fee reads through strict getters when strict mode is on:
-  - [ ] `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`
-  - [ ] `LATEST_BLOCK_HEADER_TIMESTAMP`
-  - [ ] `ALLOW_MULTI_SIGN`
-  - [ ] `ALLOW_BLACKHOLE_OPTIMIZATION`
-- [ ] Route tracked-bandwidth reads through strict getters when strict mode is on:
-  - [ ] `FREE_NET_LIMIT`
-  - [ ] `CREATE_NEW_ACCOUNT_BANDWIDTH_RATE`
-  - [ ] `CREATE_ACCOUNT_FEE`
-  - [ ] `TOTAL_CREATE_ACCOUNT_COST`
-- [ ] Keep current fallback getters when strict mode is off
-- [ ] Preserve current happy-path behavior for existing fixtures and tests
+- [x] Update `rust-backend/crates/core/src/service/mod.rs`
+- [x] Read `self.get_execution_config()?.remote.strict_dynamic_properties` inside `execute_account_create_contract()`
+- [x] Route actuator-fee reads through strict getters when strict mode is on:
+  - [x] `CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT`
+  - [x] `LATEST_BLOCK_HEADER_TIMESTAMP`
+  - [x] `ALLOW_MULTI_SIGN`
+  - [x] `ALLOW_BLACKHOLE_OPTIMIZATION`
+- [x] Route tracked-bandwidth reads through strict getters when strict mode is on:
+  - [x] `FREE_NET_LIMIT`
+  - [x] `CREATE_NEW_ACCOUNT_BANDWIDTH_RATE`
+  - [x] `CREATE_ACCOUNT_FEE`
+  - [x] `TOTAL_CREATE_ACCOUNT_COST`
+- [x] Keep current fallback getters when strict mode is off
+- [x] Preserve current happy-path behavior for existing fixtures and tests
 
 ## 3. Rust unit tests
 

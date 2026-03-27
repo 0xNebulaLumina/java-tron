@@ -2834,14 +2834,30 @@ impl BackendService {
         }
 
         // 4. Get fee from dynamic properties
-        let fee = storage_adapter
-            .get_create_new_account_fee_in_system_contract()
-            .map_err(|e| {
-                format!(
-                    "Failed to get CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: {}",
-                    e
-                )
-            })?;
+        let execution_config_for_strict = self.get_execution_config()?;
+        let strict = execution_config_for_strict
+            .remote
+            .strict_dynamic_properties;
+
+        let fee = if strict {
+            storage_adapter
+                .get_create_new_account_fee_in_system_contract_strict()
+                .map_err(|e| {
+                    format!(
+                        "Failed to get CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: {}",
+                        e
+                    )
+                })?
+        } else {
+            storage_adapter
+                .get_create_new_account_fee_in_system_contract()
+                .map_err(|e| {
+                    format!(
+                        "Failed to get CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: {}",
+                        e
+                    )
+                })?
+        };
 
         info!("AccountCreate fee: {} SUN", fee);
 
@@ -2856,9 +2872,15 @@ impl BackendService {
         }
 
         // 6. Get blackhole optimization flag
-        let support_blackhole = storage_adapter
-            .support_black_hole_optimization()
-            .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
+        let support_blackhole = if strict {
+            storage_adapter
+                .support_black_hole_optimization_strict()
+                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
+        } else {
+            storage_adapter
+                .support_black_hole_optimization()
+                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
+        };
 
         info!(
             "AccountCreate: fee={} SUN, support_blackhole={}",
@@ -2909,9 +2931,15 @@ impl BackendService {
         // Java's AccountCapsule(AccountCreateContract, ...) stores the contract's type field.
         use tron_backend_execution::protocol::permission::PermissionType;
         use tron_backend_execution::protocol::{Account as ProtoAccount, Key, Permission};
-        let create_time = storage_adapter
-            .get_latest_block_header_timestamp()
-            .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?;
+        let create_time = if strict {
+            storage_adapter
+                .get_latest_block_header_timestamp_strict()
+                .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?
+        } else {
+            storage_adapter
+                .get_latest_block_header_timestamp()
+                .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?
+        };
         let target_address_bytes = storage_adapter.to_tron_address_21(&target_address).to_vec();
 
         let allow_multi_sign = storage_adapter
@@ -3026,9 +3054,15 @@ impl BackendService {
         // 12. Calculate bandwidth usage with CREATE_NEW_ACCOUNT_BANDWIDTH_RATE multiplier
         // Java BandwidthProcessor: netCost = bytes * createNewAccountBandwidthRatio
         let raw_bandwidth_bytes = Self::calculate_bandwidth_usage(transaction);
-        let bandwidth_rate = storage_adapter
-            .get_create_new_account_bandwidth_rate()
-            .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?;
+        let bandwidth_rate = if strict {
+            storage_adapter
+                .get_create_new_account_bandwidth_rate_strict()
+                .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?
+        } else {
+            storage_adapter
+                .get_create_new_account_bandwidth_rate()
+                .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?
+        };
         let net_cost = (raw_bandwidth_bytes as i64).saturating_mul(bandwidth_rate);
 
         info!(
@@ -3057,9 +3091,15 @@ impl BackendService {
                 .unwrap_or_else(|| AccountAext::with_defaults());
 
             // Get FREE_NET_LIMIT from dynamic properties
-            let free_net_limit = storage_adapter
-                .get_free_net_limit()
-                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
+            let free_net_limit = if strict {
+                storage_adapter
+                    .get_free_net_limit_strict()
+                    .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?
+            } else {
+                storage_adapter
+                    .get_free_net_limit()
+                    .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?
+            };
 
             // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
             let now_slot = (context.block_timestamp / 3000) as i64;
@@ -3084,9 +3124,15 @@ impl BackendService {
             // If fee path is used, charge CREATE_ACCOUNT_FEE and update TOTAL_CREATE_ACCOUNT_COST
             // This is separate from CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT
             if path == BandwidthPath::Fee {
-                create_account_fee_charged = storage_adapter
-                    .get_create_account_fee()
-                    .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?;
+                create_account_fee_charged = if strict {
+                    storage_adapter
+                        .get_create_account_fee_strict()
+                        .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?
+                } else {
+                    storage_adapter
+                        .get_create_account_fee()
+                        .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?
+                };
 
                 // Validate owner has sufficient balance for CREATE_ACCOUNT_FEE
                 // This matches Java BandwidthProcessor.payFee() which checks balance before deduction
@@ -3117,6 +3163,12 @@ impl BackendService {
                 );
 
                 // Update TOTAL_CREATE_ACCOUNT_COST dynamic property
+                // In strict mode, verify the key exists before updating
+                if strict {
+                    let _ = storage_adapter
+                        .get_total_create_account_cost_strict()
+                        .map_err(|e| format!("Failed to get TOTAL_CREATE_ACCOUNT_COST: {}", e))?;
+                }
                 storage_adapter
                     .add_total_create_account_cost(create_account_fee_charged)
                     .map_err(|e| format!("Failed to update TOTAL_CREATE_ACCOUNT_COST: {}", e))?;
