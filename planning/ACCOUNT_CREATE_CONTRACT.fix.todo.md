@@ -70,12 +70,12 @@
 
 ## 5. Fixture metadata and schema
 
-- [ ] Update fixture metadata model to carry strict-dynamic-property intent
-- [ ] Update `framework/src/test/java/org/tron/core/conformance/FixtureMetadata.java`
-- [ ] Update `rust-backend/crates/core/src/conformance/metadata.rs`
-- [ ] Update `conformance/schema/metadata_schema.json`
-- [ ] Decide whether metadata also needs an `accountinfo_aext_mode` override for tracked-path fixtures
-- [ ] Update `conformance/README.md` if new metadata fields are added
+- [x] Update fixture metadata model to carry strict-dynamic-property intent
+- [x] Update `framework/src/test/java/org/tron/core/conformance/FixtureMetadata.java`
+- [x] Update `rust-backend/crates/core/src/conformance/metadata.rs`
+- [x] Update `conformance/schema/metadata_schema.json`
+- [x] Decide whether metadata also needs an `accountinfo_aext_mode` override for tracked-path fixtures
+- [x] Update `conformance/README.md` if new metadata fields are added
 
 ## 6. Conformance runner
 

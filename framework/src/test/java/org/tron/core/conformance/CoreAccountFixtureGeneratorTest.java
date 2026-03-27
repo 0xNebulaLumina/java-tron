@@ -606,7 +606,7 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT")
-        .note("strict_dynamic_properties=true")
+        .strictDynamicProperties(true)
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
@@ -643,7 +643,7 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found LATEST_BLOCK_HEADER_TIMESTAMP")
-        .note("strict_dynamic_properties=true")
+        .strictDynamicProperties(true)
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
@@ -679,7 +679,7 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found ALLOW_MULTI_SIGN")
-        .note("strict_dynamic_properties=true")
+        .strictDynamicProperties(true)
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
@@ -719,7 +719,7 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found ALLOW_BLACKHOLE_OPTIMIZATION")
-        .note("strict_dynamic_properties=true")
+        .strictDynamicProperties(true)
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
@@ -757,8 +757,8 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found FREE_NET_LIMIT")
-        .note("strict_dynamic_properties=true")
-        .note("accountinfo_aext_mode=tracked")
+        .strictDynamicProperties(true)
+        .accountinfoAextMode("tracked")
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
@@ -795,8 +795,8 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found CREATE_NEW_ACCOUNT_BANDWIDTH_RATE")
-        .note("strict_dynamic_properties=true")
-        .note("accountinfo_aext_mode=tracked")
+        .strictDynamicProperties(true)
+        .accountinfoAextMode("tracked")
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
@@ -835,8 +835,8 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found CREATE_ACCOUNT_FEE")
-        .note("strict_dynamic_properties=true")
-        .note("accountinfo_aext_mode=tracked")
+        .strictDynamicProperties(true)
+        .accountinfoAextMode("tracked")
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
@@ -875,8 +875,8 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found TOTAL_CREATE_ACCOUNT_COST")
-        .note("strict_dynamic_properties=true")
-        .note("accountinfo_aext_mode=tracked")
+        .strictDynamicProperties(true)
+        .accountinfoAextMode("tracked")
         .build();
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);

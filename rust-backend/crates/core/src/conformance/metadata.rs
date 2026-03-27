@@ -65,6 +65,16 @@ pub struct FixtureMetadata {
     #[serde(rename = "dynamicProperties", default)]
     pub dynamic_properties: HashMap<String, serde_json::Value>,
 
+    /// When true, the conformance runner should enable strict_dynamic_properties
+    /// so missing keys cause errors instead of using fallback defaults.
+    #[serde(rename = "strictDynamicProperties", default)]
+    pub strict_dynamic_properties: Option<bool>,
+
+    /// Override for accountinfo_aext_mode in the conformance runner.
+    /// When set (e.g., "tracked"), the runner uses this mode for AEXT handling.
+    #[serde(rename = "accountinfoAextMode", default)]
+    pub accountinfo_aext_mode: Option<String>,
+
     /// Additional notes
     #[serde(default)]
     pub notes: Vec<String>,
@@ -119,6 +129,8 @@ impl FixtureMetadata {
             expected_error_message: None,
             owner_address: None,
             dynamic_properties: Default::default(),
+            strict_dynamic_properties: None,
+            accountinfo_aext_mode: None,
             notes: Vec::new(),
         }
     }

@@ -1001,6 +1001,8 @@ impl ConformanceRunner {
                         expected_error_message: None,
                         owner_address: None,
                         dynamic_properties: Default::default(),
+                        strict_dynamic_properties: None,
+                        accountinfo_aext_mode: None,
                         notes: Vec::new(),
                     },
                     passed: false,

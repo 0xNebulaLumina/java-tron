@@ -97,6 +97,15 @@
       },
       "description": "Key dynamic properties set for this test"
     },
+    "strict_dynamic_properties": {
+      "type": "boolean",
+      "description": "When true, the runner enables strict_dynamic_properties so missing keys cause errors"
+    },
+    "accountinfo_aext_mode": {
+      "type": "string",
+      "enum": ["none", "hybrid", "tracked"],
+      "description": "Override for accountinfo_aext_mode in the conformance runner"
+    },
     "notes": {
       "type": "array",
       "items": {

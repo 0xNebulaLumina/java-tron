@@ -50,6 +50,14 @@ conformance/
 }
 ```
 
+#### Optional metadata fields
+
+- `strictDynamicProperties` (boolean): When `true`, the conformance runner enables
+  `strict_dynamic_properties` so missing dynamic-property keys cause errors instead
+  of falling back to defaults. Used for missing-key parity fixtures.
+- `accountinfoAextMode` (string): Override for `accountinfo_aext_mode` in the runner.
+  Set to `"tracked"` for fixtures that exercise bandwidth/AEXT tracking paths.
+
 ### KV File Format (*.kv)
 
 Binary format for deterministic key-value storage:
