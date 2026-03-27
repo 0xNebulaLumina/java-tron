@@ -1121,6 +1121,111 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
+    // ── Strict dynamic-property helpers for account-create parity ───────
+    //
+    // When `strict_dynamic_properties=true`, these return an error when the
+    // key is absent or the stored value is too short, matching Java's
+    // `IllegalArgumentException("not found <KEY>")` semantics.
+
+    /// Internal helper: read a big-endian i64 from a dynamic property key,
+    /// returning `Err("not found <key_label>")` when missing or too short.
+    fn get_dynamic_property_i64_strict(&self, key: &[u8], key_label: &str) -> Result<i64> {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ])),
+            _ => Err(anyhow::anyhow!("not found {}", key_label)),
+        }
+    }
+
+    /// Internal helper: read a big-endian u64 from a dynamic property key,
+    /// returning `Err("not found <key_label>")` when missing or too short.
+    fn get_dynamic_property_u64_strict(&self, key: &[u8], key_label: &str) -> Result<u64> {
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
+            Some(data) if data.len() >= 8 => Ok(u64::from_be_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ])),
+            _ => Err(anyhow::anyhow!("not found {}", key_label)),
+        }
+    }
+
+    /// Strict variant of `get_create_new_account_fee_in_system_contract()`.
+    /// Returns error when the key is absent (Java throws IllegalArgumentException).
+    pub fn get_create_new_account_fee_in_system_contract_strict(&self) -> Result<u64> {
+        self.get_dynamic_property_u64_strict(
+            b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
+            "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
+        )
+    }
+
+    /// Strict variant of `get_latest_block_header_timestamp()`.
+    /// Returns error when the key is absent.
+    pub fn get_latest_block_header_timestamp_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(
+            b"latest_block_header_timestamp",
+            "LATEST_BLOCK_HEADER_TIMESTAMP",
+        )
+    }
+
+    /// Strict variant of `support_black_hole_optimization()`.
+    /// Returns error when the key is absent.
+    pub fn support_black_hole_optimization_strict(&self) -> Result<bool> {
+        let key = b"ALLOW_BLACKHOLE_OPTIMIZATION";
+        match self
+            .storage_engine
+            .get(self.dynamic_properties_database(), key)?
+        {
+            Some(data) if data.len() >= 8 => {
+                let val = i64::from_be_bytes([
+                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                ]);
+                Ok(val == 1)
+            }
+            Some(data) if !data.is_empty() => Ok(data[data.len() - 1] == 1),
+            _ => Err(anyhow::anyhow!("not found ALLOW_BLACKHOLE_OPTIMIZATION")),
+        }
+    }
+
+    /// Strict variant of `get_create_new_account_bandwidth_rate()`.
+    /// Returns error when the key is absent.
+    pub fn get_create_new_account_bandwidth_rate_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(
+            b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE",
+            "CREATE_NEW_ACCOUNT_BANDWIDTH_RATE",
+        )
+    }
+
+    /// Strict variant of `get_free_net_limit()`.
+    /// Returns error when the key is absent.
+    pub fn get_free_net_limit_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(b"FREE_NET_LIMIT", "FREE_NET_LIMIT")
+    }
+
+    /// Strict variant of `get_create_account_fee()`.
+    /// Returns error when the key is absent.
+    pub fn get_create_account_fee_strict(&self) -> Result<u64> {
+        self.get_dynamic_property_u64_strict(b"CREATE_ACCOUNT_FEE", "CREATE_ACCOUNT_FEE")
+    }
+
+    /// Strict variant of `get_total_create_account_cost()`.
+    /// Returns error when the key is absent.
+    pub fn get_total_create_account_cost_strict(&self) -> Result<i64> {
+        // Note: uses buffered_get to match the non-strict variant
+        let key = b"TOTAL_CREATE_ACCOUNT_COST";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ])),
+            _ => Err(anyhow::anyhow!("not found TOTAL_CREATE_ACCOUNT_COST")),
+        }
+    }
+
     /// Get AllowMultiSign dynamic property
     /// Java-tron uses strict `== 1` check (not just `!= 0`) for parity.
     /// Java throws `IllegalArgumentException("not found ALLOW_MULTI_SIGN")` if missing.

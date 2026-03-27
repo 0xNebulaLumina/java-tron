@@ -8,16 +8,16 @@
 
 ## 1. Rust dynamic-property layer
 
-- [ ] Update `rust-backend/crates/execution/src/storage_adapter/engine.rs`
-- [ ] Add `get_create_new_account_fee_in_system_contract_strict()`
-- [ ] Add `get_latest_block_header_timestamp_strict()`
-- [ ] Add `get_allow_black_hole_optimization_strict()` or `support_black_hole_optimization_strict()`
-- [ ] Add `get_create_new_account_bandwidth_rate_strict()`
-- [ ] Add `get_free_net_limit_strict()`
-- [ ] Add `get_create_account_fee_strict()`
-- [ ] Add `get_total_create_account_cost_strict()`
-- [ ] Reuse existing strict `get_allow_multi_sign()` instead of duplicating it
-- [ ] If repetition gets high, add one internal helper for strict dynamic-property decoding/error construction
+- [x] Update `rust-backend/crates/execution/src/storage_adapter/engine.rs`
+- [x] Add `get_create_new_account_fee_in_system_contract_strict()`
+- [x] Add `get_latest_block_header_timestamp_strict()`
+- [x] Add `get_allow_black_hole_optimization_strict()` or `support_black_hole_optimization_strict()`
+- [x] Add `get_create_new_account_bandwidth_rate_strict()`
+- [x] Add `get_free_net_limit_strict()`
+- [x] Add `get_create_account_fee_strict()`
+- [x] Add `get_total_create_account_cost_strict()`
+- [x] Reuse existing strict `get_allow_multi_sign()` instead of duplicating it
+- [x] If repetition gets high, add one internal helper for strict dynamic-property decoding/error construction
 
 ## 2. Rust account-create service wiring
 
