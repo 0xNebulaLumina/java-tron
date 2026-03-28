@@ -67,6 +67,13 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
     dbManager.getDynamicPropertiesStore().saveCreateNewAccountFeeInSystemContract(CREATE_ACCOUNT_FEE);
     dbManager.getDynamicPropertiesStore().saveCreateAccountFee(CREATE_ACCOUNT_FEE);
 
+    // Seed bandwidth-related properties needed by strict mode tracked-bandwidth fixtures.
+    // These are not set by initCommonDynamicPropsV1 because Java defaults them internally,
+    // but Rust strict mode requires them to be present in the DB.
+    dbManager.getDynamicPropertiesStore().saveFreeNetLimit(5000L);
+    dbManager.getDynamicPropertiesStore().saveCreateNewAccountBandwidthRate(1L);
+    dbManager.getDynamicPropertiesStore().saveTotalCreateAccountFee(0L);
+
     // Create owner account with sufficient balance
     putAccount(dbManager, OWNER_ADDRESS, INITIAL_BALANCE, "owner");
 
@@ -808,8 +815,9 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
   public void generateAccountCreate_validateFailMissingCreateAccountFee() throws Exception {
     String newAccountAddress = generateAddress("new_acc_mcaf_01");
 
-    // Set fee=0 so actuator succeeds, then force fee path via zero bandwidth
+    // Set fee=0 so actuator succeeds; force FEE path via zero free bandwidth
     dbManager.getDynamicPropertiesStore().saveCreateNewAccountFeeInSystemContract(0);
+    dbManager.getDynamicPropertiesStore().saveFreeNetLimit(0L);
 
     AccountCreateContract contract = AccountCreateContract.newBuilder()
         .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
@@ -848,8 +856,9 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
   public void generateAccountCreate_validateFailMissingTotalCreateAccountCost() throws Exception {
     String newAccountAddress = generateAddress("new_acc_mtcc_01");
 
-    // Set fee=0 so actuator succeeds, then force fee path via zero bandwidth
+    // Set fee=0 so actuator succeeds; force FEE path via zero free bandwidth
     dbManager.getDynamicPropertiesStore().saveCreateNewAccountFeeInSystemContract(0);
+    dbManager.getDynamicPropertiesStore().saveFreeNetLimit(0L);
 
     AccountCreateContract contract = AccountCreateContract.newBuilder()
         .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))

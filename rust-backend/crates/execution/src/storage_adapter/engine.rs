@@ -1166,10 +1166,11 @@ impl EngineBackedEvmStateStore {
 
     /// Strict variant of `get_latest_block_header_timestamp()`.
     /// Returns error when the key is absent.
+    /// Note: Java uses lowercase key name in error: "not found latest block header timestamp"
     pub fn get_latest_block_header_timestamp_strict(&self) -> Result<i64> {
         self.get_dynamic_property_i64_strict(
             b"latest_block_header_timestamp",
-            "LATEST_BLOCK_HEADER_TIMESTAMP",
+            "latest block header timestamp",
         )
     }
 

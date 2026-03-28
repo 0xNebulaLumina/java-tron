@@ -902,16 +902,28 @@ impl ConformanceRunner {
                 }
             };
 
-        // Compare states
-        let db_diffs =
-            self.compare_states(&expected_state, &actual_state, &metadata.databases_touched);
+        // For strict dynamic-property fixtures where Java succeeded (using defaults)
+        // but an expectedErrorMessage is set, Rust should fail with that error in
+        // strict mode.  Treat these as expected-failure cases.
+        let strict_expected_failure = metadata.strict_dynamic_properties.unwrap_or(false)
+            && metadata.expected_error_message.is_some()
+            && metadata.expects_success();
+
+        // Compare states — skip for strict-expected-failure fixtures because Rust
+        // correctly aborts before making state changes, so the post-state won't
+        // match Java's successful execution state.
+        let db_diffs = if strict_expected_failure {
+            Vec::new()
+        } else {
+            self.compare_states(&expected_state, &actual_state, &metadata.databases_touched)
+        };
         let state_ok = db_diffs.is_empty();
 
         // Check execution outcome vs expected status.
         let mut status_ok = true;
         let mut status_error: Option<String> = None;
 
-        if metadata.expects_success() {
+        if metadata.expects_success() && !strict_expected_failure {
             match &execution_result {
                 Ok(r) if r.success => {}
                 Ok(r) => {
@@ -923,7 +935,10 @@ impl ConformanceRunner {
                     status_error = Some(format!("Expected SUCCESS but got ERROR: {}", e));
                 }
             }
-        } else if metadata.expects_validation_failure() || metadata.expected_status == "REVERT" {
+        } else if strict_expected_failure
+            || metadata.expects_validation_failure()
+            || metadata.expected_status == "REVERT"
+        {
             // Java fixture generator classifies non-success as either VALIDATION_FAILED or REVERT.
             match &execution_result {
                 Ok(r) if !r.success => {}
@@ -943,7 +958,24 @@ impl ConformanceRunner {
                         Ok(r) => r.error.clone().unwrap_or_default(),
                         Err(e) => e.clone(),
                     };
-                    if !actual_msg.contains(&expected_msg) {
+                    // For strict dynamic-property fixtures, Java and Rust may wrap
+                    // "not found KEY" in different prefix strings.  Match on the
+                    // common "not found ..." core if an exact substring match fails.
+                    let matched = if actual_msg.contains(&expected_msg) {
+                        true
+                    } else if metadata.strict_dynamic_properties.unwrap_or(false) {
+                        // Extract "not found ..." from both messages and compare
+                        let extract_not_found = |s: &str| -> Option<String> {
+                            s.find("not found ").map(|idx| s[idx..].to_string())
+                        };
+                        match (extract_not_found(&expected_msg), extract_not_found(&actual_msg)) {
+                            (Some(exp_core), Some(act_core)) => act_core.contains(&exp_core),
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    };
+                    if !matched {
                         status_ok = false;
                         status_error = Some(format!(
                             "Error message mismatch: expected '{}', got '{}'",

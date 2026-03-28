@@ -1033,7 +1033,7 @@ fn test_strict_missing_latest_block_header_timestamp() {
     assert!(result.is_err());
     let err = result.err().unwrap();
     assert!(
-        err.contains("LATEST_BLOCK_HEADER_TIMESTAMP"),
+        err.contains("latest block header timestamp"),
         "Error should mention missing key: got '{}'", err
     );
 }

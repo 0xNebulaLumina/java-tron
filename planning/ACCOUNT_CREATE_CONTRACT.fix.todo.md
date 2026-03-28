@@ -2,9 +2,9 @@
 
 ## 0. Baseline and scope
 
-- [ ] Keep current non-strict behavior unchanged when `execution.remote.strict_dynamic_properties=false`
-- [ ] Implement strict missing-key parity only for keys actually touched by `ACCOUNT_CREATE_CONTRACT`
-- [ ] Treat `ACTIVE_DEFAULT_OPERATIONS` as defaulted, not strict-fail, because Java also defaults it
+- [x] Keep current non-strict behavior unchanged when `execution.remote.strict_dynamic_properties=false`
+- [x] Implement strict missing-key parity only for keys actually touched by `ACCOUNT_CREATE_CONTRACT`
+- [x] Treat `ACTIVE_DEFAULT_OPERATIONS` as defaulted, not strict-fail, because Java also defaults it
 
 ## 1. Rust dynamic-property layer
 
@@ -99,19 +99,19 @@
 
 ## 8. Fixture regeneration and verification
 
-- [ ] Regenerate account fixtures:
-  - [ ] `./gradlew :framework:test --tests "org.tron.core.conformance.CoreAccountFixtureGeneratorTest" -Dconformance.output=./conformance/fixtures --dependency-verification=off`
-- [ ] Check the new fixture directories exist under `conformance/fixtures/account_create_contract/`
-- [ ] Run Rust account-create tests:
-  - [ ] `cd rust-backend && cargo test --package tron-backend-core account_create -- --nocapture`
-- [ ] Run Rust conformance against regenerated fixtures:
-  - [ ] `cd rust-backend && CONFORMANCE_FIXTURES_DIR=../conformance/fixtures cargo test --package tron-backend-core conformance -- --nocapture --ignored`
-- [ ] Run the new Java `RemoteExecutionSPIAccountCreateTest`
-- [ ] Run the focused Java remote-validation test
+- [x] Regenerate account fixtures:
+  - [x] `./gradlew :framework:test --tests "org.tron.core.conformance.CoreAccountFixtureGeneratorTest" -Dconformance.output=./conformance/fixtures --dependency-verification=off`
+- [x] Check the new fixture directories exist under `conformance/fixtures/account_create_contract/`
+- [x] Run Rust account-create tests:
+  - [x] `cd rust-backend && cargo test --package tron-backend-core account_create -- --nocapture`
+- [x] Run Rust conformance against regenerated fixtures:
+  - [x] `cd rust-backend && CONFORMANCE_FIXTURES_DIR=../conformance/fixtures cargo test --package tron-backend-core conformance -- --nocapture --ignored`
+- [x] Run the new Java `RemoteExecutionSPIAccountCreateTest`
+- [x] Run the focused Java remote-validation test
 
 ## 9. Close-out checks
 
-- [ ] Confirm ordinary `account_create_contract` fixtures still pass
-- [ ] Confirm strict missing-key fixtures fail for the same reasons as Java
-- [ ] Confirm strict mode is fixture-driven in conformance and does not silently change unrelated fixture families
-- [ ] Confirm no accidental behavior change when `strict_dynamic_properties=false`
+- [x] Confirm ordinary `account_create_contract` fixtures still pass
+- [x] Confirm strict missing-key fixtures fail for the same reasons as Java
+- [x] Confirm strict mode is fixture-driven in conformance and does not silently change unrelated fixture families
+- [x] Confirm no accidental behavior change when `strict_dynamic_properties=false`

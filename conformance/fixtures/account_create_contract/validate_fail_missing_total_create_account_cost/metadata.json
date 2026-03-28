@@ -1,0 +1,22 @@
+{
+  "contractType": "ACCOUNT_CREATE_CONTRACT",
+  "contractTypeNum": 0,
+  "caseName": "validate_fail_missing_total_create_account_cost",
+  "caseCategory": "validate_fail",
+  "description": "Fail when TOTAL_CREATE_ACCOUNT_COST is missing (fee fallback path in tracked bandwidth)",
+  "generatedAt": "2026-03-28T04:30:15.756Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "expectedErrorMessage": "not found TOTAL_CREATE_ACCOUNT_COST",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049150",
+  "dynamicProperties": {},
+  "strictDynamicProperties": true,
+  "accountinfoAextMode": "tracked",
+  "notes": []
+}
