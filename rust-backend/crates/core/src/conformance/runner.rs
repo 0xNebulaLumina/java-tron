@@ -909,11 +909,12 @@ impl ConformanceRunner {
             && metadata.expected_error_message.is_some()
             && metadata.expects_success();
 
-        // Compare states — skip for strict-expected-failure fixtures because Rust
-        // correctly aborts before making state changes, so the post-state won't
-        // match Java's successful execution state.
+        // Compare states.  For strict-expected-failure fixtures Rust correctly
+        // aborts before making state changes, so the expected post-state (from
+        // Java's successful execution) won't match.  Instead, compare actual
+        // post-state against the pre-state to verify no accidental writes.
         let db_diffs = if strict_expected_failure {
-            Vec::new()
+            self.compare_states(&pre_state, &actual_state, &metadata.databases_touched)
         } else {
             self.compare_states(&expected_state, &actual_state, &metadata.databases_touched)
         };

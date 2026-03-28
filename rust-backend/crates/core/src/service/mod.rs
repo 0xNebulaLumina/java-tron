@@ -3051,24 +3051,8 @@ impl BackendService {
             _ => std::cmp::Ordering::Equal,
         });
 
-        // 12. Calculate bandwidth usage with CREATE_NEW_ACCOUNT_BANDWIDTH_RATE multiplier
-        // Java BandwidthProcessor: netCost = bytes * createNewAccountBandwidthRatio
+        // 12. Calculate raw bandwidth usage (always needed for bandwidth_used field)
         let raw_bandwidth_bytes = Self::calculate_bandwidth_usage(transaction);
-        let bandwidth_rate = if strict {
-            storage_adapter
-                .get_create_new_account_bandwidth_rate_strict()
-                .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?
-        } else {
-            storage_adapter
-                .get_create_new_account_bandwidth_rate()
-                .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?
-        };
-        let net_cost = (raw_bandwidth_bytes as i64).saturating_mul(bandwidth_rate);
-
-        info!(
-            "AccountCreate bandwidth: raw_bytes={}, rate={}, netCost={}",
-            raw_bandwidth_bytes, bandwidth_rate, net_cost
-        );
 
         // 13. Track AEXT for bandwidth if in tracked mode
         // Implements Java BandwidthProcessor create-account path selection:
@@ -3100,6 +3084,23 @@ impl BackendService {
                     .get_free_net_limit()
                     .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?
             };
+
+            // Calculate net_cost inside tracked block — bandwidth rate is a tracked-path key
+            let bandwidth_rate = if strict {
+                storage_adapter
+                    .get_create_new_account_bandwidth_rate_strict()
+                    .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?
+            } else {
+                storage_adapter
+                    .get_create_new_account_bandwidth_rate()
+                    .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?
+            };
+            let net_cost = (raw_bandwidth_bytes as i64).saturating_mul(bandwidth_rate);
+
+            info!(
+                "AccountCreate bandwidth: raw_bytes={}, rate={}, netCost={}",
+                raw_bandwidth_bytes, bandwidth_rate, net_cost
+            );
 
             // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
             let now_slot = (context.block_timestamp / 3000) as i64;

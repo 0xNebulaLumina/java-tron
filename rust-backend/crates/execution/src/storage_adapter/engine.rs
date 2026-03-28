@@ -1128,30 +1128,54 @@ impl EngineBackedEvmStateStore {
     // `IllegalArgumentException("not found <KEY>")` semantics.
 
     /// Internal helper: read a big-endian i64 from a dynamic property key,
-    /// returning `Err("not found <key_label>")` when missing or too short.
+    /// returning `Err("not found <key_label>")` only when the key is absent.
+    /// Present-but-short/empty values are decoded like Java's `ByteArray.toLong`
+    /// (empty → 0, short → zero-padded big-endian).
     fn get_dynamic_property_i64_strict(&self, key: &[u8], key_label: &str) -> Result<i64> {
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
-                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-            ])),
-            _ => Err(anyhow::anyhow!("not found {}", key_label)),
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(i64::from_be_bytes([
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.is_empty() {
+                    Ok(0) // Java: ByteArray.toLong(empty) → 0
+                } else {
+                    // Java: BigInteger(1, data).longValue() — zero-pad left
+                    let mut buf = [0u8; 8];
+                    buf[8 - data.len()..].copy_from_slice(&data);
+                    Ok(i64::from_be_bytes(buf))
+                }
+            }
+            None => Err(anyhow::anyhow!("not found {}", key_label)),
         }
     }
 
     /// Internal helper: read a big-endian u64 from a dynamic property key,
-    /// returning `Err("not found <key_label>")` when missing or too short.
+    /// returning `Err("not found <key_label>")` only when the key is absent.
+    /// Present-but-short/empty values are decoded like Java's `ByteArray.toLong`.
     fn get_dynamic_property_u64_strict(&self, key: &[u8], key_label: &str) -> Result<u64> {
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) if data.len() >= 8 => Ok(u64::from_be_bytes([
-                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-            ])),
-            _ => Err(anyhow::anyhow!("not found {}", key_label)),
+            Some(data) => {
+                if data.len() >= 8 {
+                    Ok(u64::from_be_bytes([
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                    ]))
+                } else if data.is_empty() {
+                    Ok(0)
+                } else {
+                    let mut buf = [0u8; 8];
+                    buf[8 - data.len()..].copy_from_slice(&data);
+                    Ok(u64::from_be_bytes(buf))
+                }
+            }
+            None => Err(anyhow::anyhow!("not found {}", key_label)),
         }
     }
 
