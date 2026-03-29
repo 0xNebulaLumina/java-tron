@@ -4,7 +4,7 @@
   "caseName": "edge_sweep_multiple_expired_unfrozen_v2_entries",
   "caseCategory": "edge",
   "description": "Sweep multiple expired unfrozenV2 entries (sum: 45 TRX)",
-  "generatedAt": "2026-03-10T11:52:25.978Z",
+  "generatedAt": "2026-03-29T03:55:39.786Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "edge_unknown_selector_revert",
   "caseCategory": "edge",
   "description": "Trigger contract with unknown function selector (0xdeadbeef)",
-  "generatedAt": "2026-03-10T11:52:36.296Z",
+  "generatedAt": "2026-03-29T03:55:51.451Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

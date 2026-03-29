@@ -4,7 +4,7 @@
   "caseName": "validate_fail_frozen_amount_sum_exceeds_total_supply",
   "caseCategory": "validate_fail",
   "description": "Fail when cumulative frozen amounts exceed total_supply",
-  "generatedAt": "2026-03-10T11:52:19.279Z",
+  "generatedAt": "2026-03-29T03:55:32.843Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

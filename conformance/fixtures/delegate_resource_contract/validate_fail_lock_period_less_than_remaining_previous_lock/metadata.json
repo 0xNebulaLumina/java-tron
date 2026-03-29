@@ -4,7 +4,7 @@
   "caseName": "validate_fail_lock_period_less_than_remaining_previous_lock",
   "caseCategory": "validate_fail",
   "description": "Fail when new lock period is less than remaining time of previous lock",
-  "generatedAt": "2026-03-10T11:52:29.126Z",
+  "generatedAt": "2026-03-29T03:55:43.484Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

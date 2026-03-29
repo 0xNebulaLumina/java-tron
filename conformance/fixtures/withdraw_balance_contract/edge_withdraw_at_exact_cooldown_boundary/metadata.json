@@ -4,7 +4,7 @@
   "caseName": "edge_withdraw_at_exact_cooldown_boundary",
   "caseCategory": "edge",
   "description": "Edge case: withdraw exactly at cooldown boundary (tests < vs <= validation)",
-  "generatedAt": "2026-03-10T11:53:04.899Z",
+  "generatedAt": "2026-03-29T03:56:21.579Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -4,7 +4,7 @@
   "caseName": "validate_fail_missing_create_account_fee",
   "caseCategory": "validate_fail",
   "description": "Fail when CREATE_ACCOUNT_FEE is missing (fee fallback path in tracked bandwidth)",
-  "generatedAt": "2026-03-28T04:30:15.784Z",
+  "generatedAt": "2026-03-29T03:55:36.480Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

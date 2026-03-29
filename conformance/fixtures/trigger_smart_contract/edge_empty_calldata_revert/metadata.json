@@ -4,7 +4,7 @@
   "caseName": "edge_empty_calldata_revert",
   "caseCategory": "edge",
   "description": "Trigger contract with empty calldata (no function selector)",
-  "generatedAt": "2026-03-10T11:53:03.990Z",
+  "generatedAt": "2026-03-29T03:56:20.671Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

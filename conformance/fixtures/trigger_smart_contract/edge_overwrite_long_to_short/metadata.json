@@ -4,7 +4,7 @@
   "caseName": "edge_overwrite_long_to_short",
   "caseCategory": "edge",
   "description": "Overwrite long string (>31 bytes) with short string (<31 bytes)",
-  "generatedAt": "2026-03-10T11:52:59.894Z",
+  "generatedAt": "2026-03-29T03:56:16.770Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

@@ -4,7 +4,7 @@
   "caseName": "edge_gcd_price_key_collision_same_ratio",
   "caseCategory": "edge",
   "description": "Orders with same ratio (1:2 and 2:4) share the same pairPriceKey",
-  "generatedAt": "2026-03-10T11:52:27.079Z",
+  "generatedAt": "2026-03-29T03:55:41.035Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,
