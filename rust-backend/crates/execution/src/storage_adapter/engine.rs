@@ -1085,10 +1085,8 @@ impl EngineBackedEvmStateStore {
     pub fn get_total_create_account_cost(&self) -> Result<i64> {
         let key = b"TOTAL_CREATE_ACCOUNT_COST";
         match self.buffered_get(self.dynamic_properties_database(), key)? {
-            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
-                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-            ])),
-            _ => Ok(0),
+            Some(data) => Ok(Self::decode_i64_java(&data)),
+            None => Ok(0),
         }
     }
 
@@ -1124,57 +1122,57 @@ impl EngineBackedEvmStateStore {
     // ── Strict dynamic-property helpers for account-create parity ───────
     //
     // When `strict_dynamic_properties=true`, these return an error when the
-    // key is absent or the stored value is too short, matching Java's
-    // `IllegalArgumentException("not found <KEY>")` semantics.
+    // key is absent, matching Java's `IllegalArgumentException("not found
+    // <KEY>")` semantics.  Present-but-short/empty values are decoded like
+    // Java's `ByteArray.toLong` (empty → 0, short → zero-padded BE).
 
-    /// Internal helper: read a big-endian i64 from a dynamic property key,
-    /// returning `Err("not found <key_label>")` only when the key is absent.
-    /// Present-but-short/empty values are decoded like Java's `ByteArray.toLong`
-    /// (empty → 0, short → zero-padded big-endian).
+    /// Decode bytes the way Java's `ByteArray.toLong` does: empty → 0,
+    /// short → zero-padded big-endian, ≥8 → first 8 bytes as signed i64.
+    fn decode_i64_java(data: &[u8]) -> i64 {
+        if data.len() >= 8 {
+            i64::from_be_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ])
+        } else if data.is_empty() {
+            0
+        } else {
+            let mut buf = [0u8; 8];
+            buf[8 - data.len()..].copy_from_slice(data);
+            i64::from_be_bytes(buf)
+        }
+    }
+
+    /// Unsigned variant of `decode_i64_java`.
+    fn decode_u64_java(data: &[u8]) -> u64 {
+        if data.len() >= 8 {
+            u64::from_be_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ])
+        } else if data.is_empty() {
+            0
+        } else {
+            let mut buf = [0u8; 8];
+            buf[8 - data.len()..].copy_from_slice(data);
+            u64::from_be_bytes(buf)
+        }
+    }
+
     fn get_dynamic_property_i64_strict(&self, key: &[u8], key_label: &str) -> Result<i64> {
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) => {
-                if data.len() >= 8 {
-                    Ok(i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]))
-                } else if data.is_empty() {
-                    Ok(0) // Java: ByteArray.toLong(empty) → 0
-                } else {
-                    // Java: BigInteger(1, data).longValue() — zero-pad left
-                    let mut buf = [0u8; 8];
-                    buf[8 - data.len()..].copy_from_slice(&data);
-                    Ok(i64::from_be_bytes(buf))
-                }
-            }
+            Some(data) => Ok(Self::decode_i64_java(&data)),
             None => Err(anyhow::anyhow!("not found {}", key_label)),
         }
     }
 
-    /// Internal helper: read a big-endian u64 from a dynamic property key,
-    /// returning `Err("not found <key_label>")` only when the key is absent.
-    /// Present-but-short/empty values are decoded like Java's `ByteArray.toLong`.
     fn get_dynamic_property_u64_strict(&self, key: &[u8], key_label: &str) -> Result<u64> {
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) => {
-                if data.len() >= 8 {
-                    Ok(u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]))
-                } else if data.is_empty() {
-                    Ok(0)
-                } else {
-                    let mut buf = [0u8; 8];
-                    buf[8 - data.len()..].copy_from_slice(&data);
-                    Ok(u64::from_be_bytes(buf))
-                }
-            }
+            Some(data) => Ok(Self::decode_u64_java(&data)),
             None => Err(anyhow::anyhow!("not found {}", key_label)),
         }
     }
@@ -1199,21 +1197,17 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Strict variant of `support_black_hole_optimization()`.
-    /// Returns error when the key is absent.
+    /// Returns error only when the key is absent.
+    /// Present-but-empty values decode as 0 (false), matching Java's
+    /// `ByteArray.toLong(empty) → 0` then `== 1` → false.
     pub fn support_black_hole_optimization_strict(&self) -> Result<bool> {
         let key = b"ALLOW_BLACKHOLE_OPTIMIZATION";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) if data.len() >= 8 => {
-                let val = i64::from_be_bytes([
-                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                ]);
-                Ok(val == 1)
-            }
-            Some(data) if !data.is_empty() => Ok(data[data.len() - 1] == 1),
-            _ => Err(anyhow::anyhow!("not found ALLOW_BLACKHOLE_OPTIMIZATION")),
+            Some(data) => Ok(Self::decode_i64_java(&data) == 1),
+            None => Err(anyhow::anyhow!("not found ALLOW_BLACKHOLE_OPTIMIZATION")),
         }
     }
 
@@ -1240,14 +1234,13 @@ impl EngineBackedEvmStateStore {
 
     /// Strict variant of `get_total_create_account_cost()`.
     /// Returns error when the key is absent.
+    /// Uses buffered_get for read-your-writes consistency (this key is
+    /// updated within the same transaction by `add_total_create_account_cost`).
     pub fn get_total_create_account_cost_strict(&self) -> Result<i64> {
-        // Note: uses buffered_get to match the non-strict variant
         let key = b"TOTAL_CREATE_ACCOUNT_COST";
         match self.buffered_get(self.dynamic_properties_database(), key)? {
-            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
-                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-            ])),
-            _ => Err(anyhow::anyhow!("not found TOTAL_CREATE_ACCOUNT_COST")),
+            Some(data) => Ok(Self::decode_i64_java(&data)),
+            None => Err(anyhow::anyhow!("not found TOTAL_CREATE_ACCOUNT_COST")),
         }
     }
 
