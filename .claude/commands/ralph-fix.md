@@ -1,4 +1,4 @@
-Use the `ralph-loop` plugin to fix the problem below via an iterative fix-review loop.
+Help me write a `ralph-loop` the problem below.
 
 ## Problem
 
