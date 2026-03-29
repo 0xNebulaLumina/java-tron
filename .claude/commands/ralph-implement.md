@@ -1,4 +1,4 @@
-Use Ralph Loop to implement tasks from design doc $1 and progress tracker $2.
+Use the `ralph-loop` plugin to implement tasks from design doc $1 and progress tracker $2.
 
 ## Workflow per iteration
 
@@ -34,3 +34,6 @@ Use Ralph Loop to implement tasks from design doc $1 and progress tracker $2.
 - ALWAYS commit after each task so progress is durable across iterations
 - If a task is blocked by a prior task that isn't done, do the blocker first
 - Follow commit conventions from CLAUDE.md: `<type>(<scope>): <subject>`
+
+**Important:** Do NOT fix the problem directly. Instead, invoke the ralph-loop skill (`/ralph-loop`) and let it drive the fix-review cycle.
+
