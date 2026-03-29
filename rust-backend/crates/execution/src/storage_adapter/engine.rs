@@ -1124,32 +1124,54 @@ impl EngineBackedEvmStateStore {
     // Java's `ByteArray.toLong` (empty → 0, short → zero-padded BE).
 
     /// Decode bytes the way Java's `ByteArray.toLong` does: empty → 0,
-    /// short → zero-padded big-endian, ≥8 → first 8 bytes as signed i64.
+    /// short → zero-padded big-endian, ≥8 → last 8 bytes as signed i64.
+    ///
+    /// Java uses `new BigInteger(1, b).longValue()` which interprets the
+    /// full array as an unsigned big-endian integer and truncates to the
+    /// lowest 64 bits — equivalent to taking the **last** 8 bytes.
     fn decode_i64_java(data: &[u8]) -> i64 {
-        if data.len() >= 8 {
+        let len = data.len();
+        if len >= 8 {
+            let off = len - 8;
             i64::from_be_bytes([
-                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                data[off],
+                data[off + 1],
+                data[off + 2],
+                data[off + 3],
+                data[off + 4],
+                data[off + 5],
+                data[off + 6],
+                data[off + 7],
             ])
         } else if data.is_empty() {
             0
         } else {
             let mut buf = [0u8; 8];
-            buf[8 - data.len()..].copy_from_slice(data);
+            buf[8 - len..].copy_from_slice(data);
             i64::from_be_bytes(buf)
         }
     }
 
-    /// Unsigned variant of `decode_i64_java`.
+    /// Unsigned variant of `decode_i64_java` — same last-8-byte semantics.
     fn decode_u64_java(data: &[u8]) -> u64 {
-        if data.len() >= 8 {
+        let len = data.len();
+        if len >= 8 {
+            let off = len - 8;
             u64::from_be_bytes([
-                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+                data[off],
+                data[off + 1],
+                data[off + 2],
+                data[off + 3],
+                data[off + 4],
+                data[off + 5],
+                data[off + 6],
+                data[off + 7],
             ])
         } else if data.is_empty() {
             0
         } else {
             let mut buf = [0u8; 8];
-            buf[8 - data.len()..].copy_from_slice(data);
+            buf[8 - len..].copy_from_slice(data);
             u64::from_be_bytes(buf)
         }
     }

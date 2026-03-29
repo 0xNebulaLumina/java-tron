@@ -980,16 +980,22 @@ impl ConformanceRunner {
                     };
                     // For strict dynamic-property fixtures, Java and Rust may wrap
                     // "not found KEY" in different prefix strings.  Match on the
-                    // common "not found ..." core if an exact substring match fails.
+                    // exact "not found ..." tail if a full substring match fails.
+                    // This applies to both strictDynamicProperties and
+                    // strictExpectedFailure fixtures that hit missing-key paths.
                     let matched = if actual_msg.contains(&expected_msg) {
                         true
-                    } else if metadata.strict_dynamic_properties.unwrap_or(false) {
-                        // Extract "not found ..." from both messages and compare
+                    } else if metadata.strict_dynamic_properties.unwrap_or(false)
+                        || metadata.strict_expected_failure.unwrap_or(false)
+                    {
+                        // Extract "not found ..." from both messages and require
+                        // exact equality so that a wrong-key with a similar prefix
+                        // cannot pass.
                         let extract_not_found = |s: &str| -> Option<String> {
-                            s.find("not found ").map(|idx| s[idx..].to_string())
+                            s.find("not found ").map(|idx| s[idx..].trim().to_string())
                         };
                         match (extract_not_found(&expected_msg), extract_not_found(&actual_msg)) {
-                            (Some(exp_core), Some(act_core)) => act_core.contains(&exp_core),
+                            (Some(exp_core), Some(act_core)) => act_core == exp_core,
                             _ => false,
                         }
                     } else {
