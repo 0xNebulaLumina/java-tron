@@ -1161,6 +1161,120 @@ fn test_strict_tracked_missing_total_create_account_cost() {
     );
 }
 
+// --- Non-strict short-value decode regression tests ---
+// These verify that present-but-short DB values are decoded via Java-parity
+// helpers (decode_u64_java / decode_i64_java) rather than falling back to defaults.
+
+/// Helper: create a minimal storage adapter with only the specified dynamic property set.
+fn make_adapter_with_prop(key: &[u8], value: &[u8]) -> EngineBackedEvmStateStore {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = Box::leak(Box::new(temp_dir));
+    let se = StorageEngine::new(temp_dir.path()).unwrap();
+    se.put("properties", key, value).unwrap();
+    EngineBackedEvmStateStore::new(se)
+}
+
+/// Helper: create a minimal storage adapter with NO dynamic properties.
+fn make_adapter_without_props() -> EngineBackedEvmStateStore {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_dir = Box::leak(Box::new(temp_dir));
+    let se = StorageEngine::new(temp_dir.path()).unwrap();
+    EngineBackedEvmStateStore::new(se)
+}
+
+#[test]
+fn test_nonstrict_short_value_create_new_account_fee_in_system_contract() {
+    // 4-byte value: 0x00000005 → should decode to 5, not fall back to default 1_000_000
+    let sa = make_adapter_with_prop(
+        b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
+        &5u32.to_be_bytes(),
+    );
+    let fee = sa.get_create_new_account_fee_in_system_contract().unwrap();
+    assert_eq!(fee, 5, "Short 4-byte value should decode to 5 via Java parity, not default");
+}
+
+#[test]
+fn test_nonstrict_empty_value_create_new_account_fee_in_system_contract() {
+    // Empty value → Java's ByteArray.toLong returns 0
+    let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &[]);
+    let fee = sa.get_create_new_account_fee_in_system_contract().unwrap();
+    assert_eq!(fee, 0, "Empty value should decode to 0 via Java parity");
+}
+
+#[test]
+fn test_nonstrict_absent_create_new_account_fee_in_system_contract() {
+    // Key absent → should use default 1_000_000
+    let sa = make_adapter_without_props();
+    let fee = sa.get_create_new_account_fee_in_system_contract().unwrap();
+    assert_eq!(fee, 1_000_000, "Absent key should use default 1_000_000");
+}
+
+#[test]
+fn test_nonstrict_short_value_create_new_account_bandwidth_rate() {
+    // 3-byte value: [0x00, 0x00, 0x07] → should decode to 7
+    let sa = make_adapter_with_prop(
+        b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE",
+        &[0x00, 0x00, 0x07],
+    );
+    let rate = sa.get_create_new_account_bandwidth_rate().unwrap();
+    assert_eq!(rate, 7, "Short 3-byte value should decode to 7 via Java parity, not default");
+}
+
+#[test]
+fn test_nonstrict_empty_value_create_new_account_bandwidth_rate() {
+    let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", &[]);
+    let rate = sa.get_create_new_account_bandwidth_rate().unwrap();
+    assert_eq!(rate, 0, "Empty value should decode to 0 via Java parity");
+}
+
+#[test]
+fn test_nonstrict_absent_create_new_account_bandwidth_rate() {
+    let sa = make_adapter_without_props();
+    let rate = sa.get_create_new_account_bandwidth_rate().unwrap();
+    assert_eq!(rate, 1, "Absent key should use default 1");
+}
+
+#[test]
+fn test_nonstrict_short_value_create_account_fee() {
+    // 2-byte value: [0x01, 0xF4] = 500 → should decode to 500
+    let sa = make_adapter_with_prop(b"CREATE_ACCOUNT_FEE", &[0x01, 0xF4]);
+    let fee = sa.get_create_account_fee().unwrap();
+    assert_eq!(fee, 500, "Short 2-byte value should decode to 500 via Java parity, not default");
+}
+
+#[test]
+fn test_nonstrict_empty_value_create_account_fee() {
+    let sa = make_adapter_with_prop(b"CREATE_ACCOUNT_FEE", &[]);
+    let fee = sa.get_create_account_fee().unwrap();
+    assert_eq!(fee, 0, "Empty value should decode to 0 via Java parity");
+}
+
+#[test]
+fn test_nonstrict_absent_create_account_fee() {
+    let sa = make_adapter_without_props();
+    let fee = sa.get_create_account_fee().unwrap();
+    assert_eq!(fee, 100_000, "Absent key should use default 100_000");
+}
+
+#[test]
+fn test_nonstrict_full_8byte_values_still_work() {
+    // Full 8-byte values should still decode correctly
+    let sa = make_adapter_with_prop(
+        b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
+        &42u64.to_be_bytes(),
+    );
+    assert_eq!(sa.get_create_new_account_fee_in_system_contract().unwrap(), 42);
+
+    let sa = make_adapter_with_prop(
+        b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE",
+        &99i64.to_be_bytes(),
+    );
+    assert_eq!(sa.get_create_new_account_bandwidth_rate().unwrap(), 99);
+
+    let sa = make_adapter_with_prop(b"CREATE_ACCOUNT_FEE", &200000u64.to_be_bytes());
+    assert_eq!(sa.get_create_account_fee().unwrap(), 200000);
+}
+
 // --- Control tests: non-strict mode still falls back ---
 
 #[test]

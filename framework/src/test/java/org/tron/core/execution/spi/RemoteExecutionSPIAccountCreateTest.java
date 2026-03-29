@@ -6,11 +6,15 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.tron.common.utils.Sha256Hash;
+import org.tron.core.capsule.BlockCapsule;
 import org.tron.core.capsule.TransactionCapsule;
+import org.tron.core.db.TransactionContext;
 import org.tron.protos.Protocol;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
 import org.tron.protos.contract.AccountContract.AccountCreateContract;
+import tron.backend.BackendOuterClass.*;
 
 /**
  * Test class for RemoteExecutionSPI's AccountCreateContract mapping.
@@ -23,6 +27,7 @@ public class RemoteExecutionSPIAccountCreateTest {
   private RemoteExecutionSPI remoteSPI;
   private static final byte[] OWNER_ADDRESS = new byte[21];
   private static final byte[] TARGET_ADDRESS = new byte[21];
+  private static final byte[] WITNESS_ADDRESS = new byte[21];
 
   static {
     // Initialize owner address with TRON mainnet prefix (0x41)
@@ -35,15 +40,23 @@ public class RemoteExecutionSPIAccountCreateTest {
     for (int i = 1; i < TARGET_ADDRESS.length; i++) {
       TARGET_ADDRESS[i] = (byte) (i + 0x20);
     }
+    // Initialize witness address
+    WITNESS_ADDRESS[0] = 0x41;
+    for (int i = 1; i < WITNESS_ADDRESS.length; i++) {
+      WITNESS_ADDRESS[i] = (byte) (i + 0x30);
+    }
   }
 
   @Before
   public void setUp() {
+    // Disable AEXT collection so tests don't need AccountStore
+    System.setProperty("remote.exec.preexec.aext.enabled", "false");
     remoteSPI = new RemoteExecutionSPI("localhost", 50011);
   }
 
   @After
   public void tearDown() {
+    System.clearProperty("remote.exec.preexec.aext.enabled");
     if (remoteSPI != null) {
       remoteSPI.shutdown();
     }
@@ -77,92 +90,122 @@ public class RemoteExecutionSPIAccountCreateTest {
     return new TransactionCapsule(transaction);
   }
 
+  /**
+   * Helper to build a TransactionContext with a dummy BlockCapsule (no StoreFactory).
+   */
+  private TransactionContext buildContext(TransactionCapsule trxCap) {
+    BlockCapsule blockCap = new BlockCapsule(
+        100L,
+        Sha256Hash.ZERO_HASH,
+        System.currentTimeMillis(),
+        ByteString.copyFrom(WITNESS_ADDRESS));
+    return new TransactionContext(blockCap, trxCap, null, false, false);
+  }
+
   // ==========================================================================
-  // Request mapping assertions
+  // Request mapping assertions — these exercise buildExecuteTransactionRequest
   // ==========================================================================
 
   /**
-   * Verify AccountCreateContract maps to TxKind.NON_VM.
-   * System contracts are non-VM; they don't run on TVM/EVM.
+   * Verify AccountCreateContract maps to TxKind.NON_VM in the actual request.
    */
   @Test
-  public void testAccountCreateContractMapsToNonVM() throws Exception {
+  public void testAccountCreateMapsToNonVmTxKind() throws Exception {
     TransactionCapsule trxCap = createAccountCreateTransaction(
         OWNER_ADDRESS, TARGET_ADDRESS, AccountType.Normal);
+    TransactionContext ctx = buildContext(trxCap);
 
-    Protocol.Transaction.Contract contract =
-        trxCap.getInstance().getRawData().getContract(0);
+    ExecuteTransactionRequest request = remoteSPI.buildExecuteTransactionRequest(ctx);
+    TronTransaction tx = request.getTransaction();
 
-    // ContractType tells RemoteExecutionSPI switch-case which branch to take
     Assert.assertEquals(
-        "Contract type must be AccountCreateContract",
-        ContractType.AccountCreateContract,
-        contract.getType());
-
-    // Per RemoteExecutionSPI line 691: txKind = TxKind.NON_VM
-    // We verify the contract structure is correctly formed for this path.
-    AccountCreateContract acc = contract.getParameter().unpack(AccountCreateContract.class);
-    Assert.assertNotNull("Contract must unpack successfully", acc);
+        "TxKind must be NON_VM for system contracts",
+        TxKind.NON_VM,
+        tx.getTxKind());
   }
 
   /**
-   * Verify fromAddress is the owner address from the contract.
+   * Verify the request carries ACCOUNT_CREATE_CONTRACT as the contract type.
+   */
+  @Test
+  public void testAccountCreateContractTypeMapping() throws Exception {
+    TransactionCapsule trxCap = createAccountCreateTransaction(
+        OWNER_ADDRESS, TARGET_ADDRESS, AccountType.Normal);
+    TransactionContext ctx = buildContext(trxCap);
+
+    ExecuteTransactionRequest request = remoteSPI.buildExecuteTransactionRequest(ctx);
+    TronTransaction tx = request.getTransaction();
+
+    Assert.assertEquals(
+        "ContractType must be ACCOUNT_CREATE_CONTRACT",
+        tron.backend.BackendOuterClass.ContractType.ACCOUNT_CREATE_CONTRACT,
+        tx.getContractType());
+  }
+
+  /**
+   * Verify fromAddress in the request is the owner address.
    */
   @Test
   public void testFromAddressIsOwnerAddress() throws Exception {
     TransactionCapsule trxCap = createAccountCreateTransaction(
         OWNER_ADDRESS, TARGET_ADDRESS, AccountType.Normal);
+    TransactionContext ctx = buildContext(trxCap);
 
-    Protocol.Transaction.Contract contract =
-        trxCap.getInstance().getRawData().getContract(0);
-    AccountCreateContract acc = contract.getParameter().unpack(AccountCreateContract.class);
+    ExecuteTransactionRequest request = remoteSPI.buildExecuteTransactionRequest(ctx);
+    TronTransaction tx = request.getTransaction();
 
     Assert.assertArrayEquals(
-        "fromAddress must be the owner address",
+        "from must be the owner address",
         OWNER_ADDRESS,
-        acc.getOwnerAddress().toByteArray());
+        tx.getFrom().toByteArray());
   }
 
   /**
-   * Verify toAddress is empty for AccountCreateContract (system contract, no recipient).
-   * Per RemoteExecutionSPI line 689: toAddress = new byte[0]
+   * Verify toAddress in the request is empty (system contract, no recipient).
    */
   @Test
   public void testToAddressIsEmpty() throws Exception {
-    // Per RemoteExecutionSPI mapping, toAddress is set to new byte[0] for AccountCreateContract.
-    // The target account address is inside the contract proto (account_address field), not toAddress.
     TransactionCapsule trxCap = createAccountCreateTransaction(
         OWNER_ADDRESS, TARGET_ADDRESS, AccountType.Normal);
+    TransactionContext ctx = buildContext(trxCap);
 
-    Protocol.Transaction.Contract contract =
-        trxCap.getInstance().getRawData().getContract(0);
-    AccountCreateContract acc = contract.getParameter().unpack(AccountCreateContract.class);
+    ExecuteTransactionRequest request = remoteSPI.buildExecuteTransactionRequest(ctx);
+    TronTransaction tx = request.getTransaction();
 
-    // The target address is carried inside the contract proto, not as a top-level toAddress
-    Assert.assertArrayEquals(
-        "account_address field must contain the target",
-        TARGET_ADDRESS,
-        acc.getAccountAddress().toByteArray());
+    Assert.assertEquals(
+        "toAddress must be empty for AccountCreateContract",
+        0,
+        tx.getTo().toByteArray().length);
   }
 
   /**
-   * Verify data contains the full serialized AccountCreateContract proto bytes.
-   * Per RemoteExecutionSPI line 690: data = accountCreateContract.toByteArray()
+   * Verify data contains the full serialized AccountCreateContract proto bytes,
+   * and the bytes round-trip correctly.
    */
   @Test
-  public void testDataContainsFullSerializedContract() throws Exception {
+  public void testDataContainsSerializedContract() throws Exception {
     TransactionCapsule trxCap = createAccountCreateTransaction(
         OWNER_ADDRESS, TARGET_ADDRESS, AccountType.Normal);
+    TransactionContext ctx = buildContext(trxCap);
 
-    Protocol.Transaction.Contract contract =
-        trxCap.getInstance().getRawData().getContract(0);
-    AccountCreateContract acc = contract.getParameter().unpack(AccountCreateContract.class);
+    ExecuteTransactionRequest request = remoteSPI.buildExecuteTransactionRequest(ctx);
+    TronTransaction tx = request.getTransaction();
 
-    byte[] dataPayload = acc.toByteArray();
-    Assert.assertNotNull("Data payload must not be null", dataPayload);
+    byte[] dataPayload = tx.getData().toByteArray();
     Assert.assertTrue("Data payload must not be empty", dataPayload.length > 0);
 
-    // Verify round-trip: deserialize and check all fields
+    // Byte-for-byte: data must be the exact serialized AccountCreateContract
+    AccountCreateContract expectedContract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(OWNER_ADDRESS))
+        .setAccountAddress(ByteString.copyFrom(TARGET_ADDRESS))
+        .setType(AccountType.Normal)
+        .build();
+    Assert.assertArrayEquals(
+        "data must be exact serialized AccountCreateContract bytes",
+        expectedContract.toByteArray(),
+        dataPayload);
+
+    // Also verify round-trip deserialization
     AccountCreateContract deserialized = AccountCreateContract.parseFrom(dataPayload);
     Assert.assertArrayEquals(
         "Deserialized owner must match",
@@ -179,73 +222,55 @@ public class RemoteExecutionSPIAccountCreateTest {
   }
 
   /**
-   * Verify contract type maps to ACCOUNT_CREATE_CONTRACT in the remote backend enum.
-   * Per RemoteExecutionSPI line 692: contractType = ContractType.ACCOUNT_CREATE_CONTRACT
+   * Verify the contractParameter (raw Any) is preserved in the request
+   * so Rust can use any.is/any.unpack for compatibility.
    */
   @Test
-  public void testContractTypeMapsToAccountCreateContract() throws Exception {
+  public void testContractParameterPreserved() throws Exception {
     TransactionCapsule trxCap = createAccountCreateTransaction(
         OWNER_ADDRESS, TARGET_ADDRESS, AccountType.Normal);
+    TransactionContext ctx = buildContext(trxCap);
 
-    Protocol.Transaction.Contract contract =
-        trxCap.getInstance().getRawData().getContract(0);
+    ExecuteTransactionRequest request = remoteSPI.buildExecuteTransactionRequest(ctx);
+    TronTransaction tx = request.getTransaction();
 
-    // The Java ContractType enum value for remote mapping
-    Assert.assertEquals(
-        "Java contract type must be AccountCreateContract",
-        ContractType.AccountCreateContract,
-        contract.getType());
-
-    // Verify the contract can be unpacked (validates type_url)
-    AccountCreateContract acc = contract.getParameter().unpack(AccountCreateContract.class);
-    Assert.assertNotNull(acc);
+    // contractParameter should be the original Any
+    Assert.assertTrue(
+        "contractParameter must be set",
+        tx.hasContractParameter());
+    AccountCreateContract unpacked =
+        tx.getContractParameter().unpack(AccountCreateContract.class);
+    Assert.assertArrayEquals(
+        "Unpacked owner from contractParameter must match",
+        OWNER_ADDRESS,
+        unpacked.getOwnerAddress().toByteArray());
   }
 
-  // ==========================================================================
-  // Focused remote-vs-embedded validation
-  // ==========================================================================
-
   /**
-   * Focused test verifying the complete request structure that RemoteExecutionSPI
-   * would build for AccountCreateContract. This validates the mapping without
-   * requiring a running Rust backend.
+   * End-to-end: verify the complete request structure for AccountCreateContract.
+   * This catches regressions in any field mapping in RemoteExecutionSPI.
    */
   @Test
-  public void testAccountCreateRemoteRequestStructure() throws Exception {
+  public void testAccountCreateFullRequestStructure() throws Exception {
     TransactionCapsule trxCap = createAccountCreateTransaction(
         OWNER_ADDRESS, TARGET_ADDRESS, AccountType.Normal);
+    TransactionContext ctx = buildContext(trxCap);
 
-    Protocol.Transaction transaction = trxCap.getInstance();
-    Protocol.Transaction.Contract contract = transaction.getRawData().getContract(0);
+    ExecuteTransactionRequest request = remoteSPI.buildExecuteTransactionRequest(ctx);
 
-    // 1. Contract type determines the switch-case branch
-    Assert.assertEquals(ContractType.AccountCreateContract, contract.getType());
+    // Transaction-level assertions
+    TronTransaction tx = request.getTransaction();
+    Assert.assertEquals(TxKind.NON_VM, tx.getTxKind());
+    Assert.assertEquals(
+        tron.backend.BackendOuterClass.ContractType.ACCOUNT_CREATE_CONTRACT,
+        tx.getContractType());
+    Assert.assertArrayEquals(OWNER_ADDRESS, tx.getFrom().toByteArray());
+    Assert.assertEquals(0, tx.getTo().toByteArray().length);
+    Assert.assertTrue(tx.getData().toByteArray().length > 0);
 
-    // 2. Unpack to verify all fields that RemoteExecutionSPI reads
-    AccountCreateContract acc = contract.getParameter().unpack(AccountCreateContract.class);
-
-    // 3. owner_address -> fromAddress (21-byte TRON address)
-    byte[] ownerBytes = acc.getOwnerAddress().toByteArray();
-    Assert.assertEquals("Owner address must be 21 bytes", 21, ownerBytes.length);
-    Assert.assertEquals("Owner must have TRON mainnet prefix", 0x41, ownerBytes[0]);
-
-    // 4. toAddress is empty (line 689: toAddress = new byte[0])
-    // Verified by the fact that account_address is in the contract, not top-level
-
-    // 5. data = accountCreateContract.toByteArray() (line 690)
-    byte[] data = acc.toByteArray();
-    Assert.assertTrue("Serialized contract must be non-empty", data.length > 0);
-
-    // 6. txKind = NON_VM (line 691)
-    // 7. contractType = ACCOUNT_CREATE_CONTRACT (line 692)
-    // These are set in RemoteExecutionSPI and verified by the switch-case path
-
-    // 8. Verify account_address field (the target account to create)
-    byte[] targetBytes = acc.getAccountAddress().toByteArray();
-    Assert.assertEquals("Target address must be 21 bytes", 21, targetBytes.length);
-    Assert.assertEquals("Target must have TRON mainnet prefix", 0x41, targetBytes[0]);
-
-    // 9. Verify account type is carried through
-    Assert.assertEquals("Account type must be Normal", AccountType.Normal, acc.getType());
+    // Context-level assertions
+    ExecutionContext execCtx = request.getContext();
+    Assert.assertEquals(100L, execCtx.getBlockNumber());
+    Assert.assertTrue(execCtx.getBlockTimestamp() > 0);
   }
 }

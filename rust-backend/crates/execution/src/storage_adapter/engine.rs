@@ -1007,20 +1007,13 @@ impl EngineBackedEvmStateStore {
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                if data.len() >= 8 {
-                    let fee = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    tracing::debug!(
-                        "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT from DB: {} SUN",
-                        fee
-                    );
-                    Ok(fee)
-                } else {
-                    // Use default value if data is too short
-                    tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT has invalid length, using default 1000000 SUN");
-                    Ok(1_000_000) // 1 TRX in SUN (default from TRON)
-                }
+                let fee = Self::decode_u64_java(&data);
+                tracing::debug!(
+                    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT from DB: {} SUN (len={})",
+                    fee,
+                    data.len()
+                );
+                Ok(fee)
             }
             None => {
                 // Use default value if not found
@@ -1040,14 +1033,16 @@ impl EngineBackedEvmStateStore {
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) if data.len() >= 8 => {
-                let rate = i64::from_be_bytes([
-                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                ]);
-                tracing::debug!("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE from DB: {}", rate);
+            Some(data) => {
+                let rate = Self::decode_i64_java(&data);
+                tracing::debug!(
+                    "CREATE_NEW_ACCOUNT_BANDWIDTH_RATE from DB: {} (len={})",
+                    rate,
+                    data.len()
+                );
                 Ok(rate)
             }
-            _ => {
+            None => {
                 tracing::debug!("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE not found, using default 1");
                 Ok(1) // Default: no multiplier
             }
@@ -1064,14 +1059,16 @@ impl EngineBackedEvmStateStore {
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) if data.len() >= 8 => {
-                let fee = u64::from_be_bytes([
-                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                ]);
-                tracing::debug!("CREATE_ACCOUNT_FEE from DB: {} SUN", fee);
+            Some(data) => {
+                let fee = Self::decode_u64_java(&data);
+                tracing::debug!(
+                    "CREATE_ACCOUNT_FEE from DB: {} SUN (len={})",
+                    fee,
+                    data.len()
+                );
                 Ok(fee)
             }
-            _ => {
+            None => {
                 tracing::debug!("CREATE_ACCOUNT_FEE not found, using default 100000 SUN");
                 Ok(100_000) // 0.1 TRX in SUN (default from TRON)
             }

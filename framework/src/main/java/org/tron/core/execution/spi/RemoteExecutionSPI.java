@@ -376,7 +376,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
   }
 
   /** Build ExecuteTransactionRequest from TransactionContext. */
-  private ExecuteTransactionRequest buildExecuteTransactionRequest(TransactionContext context) {
+  // Package-private for testing (RemoteExecutionSPIAccountCreateTest)
+  ExecuteTransactionRequest buildExecuteTransactionRequest(TransactionContext context) {
     try {
       TransactionCapsule trxCap = context.getTrxCap();
       Transaction transaction = trxCap.getInstance();
