@@ -902,12 +902,31 @@ impl ConformanceRunner {
                 }
             };
 
-        // For strict dynamic-property fixtures where Java succeeded (using defaults)
-        // but an expectedErrorMessage is set, Rust should fail with that error in
-        // strict mode.  Treat these as expected-failure cases.
-        let strict_expected_failure = metadata.strict_dynamic_properties.unwrap_or(false)
-            && metadata.expected_error_message.is_some()
-            && metadata.expects_success();
+        // Use the explicit metadata flag to identify strict-expected-failure fixtures.
+        // These are cases where Rust correctly rejects missing dynamic properties
+        // while Java succeeded using fallback defaults.
+        let strict_expected_failure = metadata.strict_expected_failure.unwrap_or(false);
+
+        if strict_expected_failure {
+            if !metadata.strict_dynamic_properties.unwrap_or(false) {
+                eprintln!(
+                    "WARNING: Fixture {} has strictExpectedFailure=true but strictDynamicProperties is not set",
+                    metadata.case_name
+                );
+            }
+            if metadata.expected_error_message.is_none() {
+                eprintln!(
+                    "WARNING: Fixture {} has strictExpectedFailure=true but no expectedErrorMessage",
+                    metadata.case_name
+                );
+            }
+            if !metadata.expects_success() {
+                eprintln!(
+                    "WARNING: Fixture {} has strictExpectedFailure=true but expectedStatus is '{}', not 'SUCCESS'",
+                    metadata.case_name, metadata.expected_status
+                );
+            }
+        }
 
         // Compare states.  For strict-expected-failure fixtures Rust correctly
         // aborts before making state changes, so the expected post-state (from
@@ -1047,6 +1066,7 @@ impl ConformanceRunner {
                         owner_address: None,
                         dynamic_properties: Default::default(),
                         strict_dynamic_properties: None,
+                        strict_expected_failure: None,
                         accountinfo_aext_mode: None,
                         notes: Vec::new(),
                     },

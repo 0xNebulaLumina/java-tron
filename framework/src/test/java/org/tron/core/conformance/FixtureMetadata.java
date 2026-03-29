@@ -46,6 +46,7 @@ public class FixtureMetadata {
   private String ownerAddress;
   private Map<String, Object> dynamicProperties;
   private Boolean strictDynamicProperties;
+  private Boolean strictExpectedFailure;
   private String accountinfoAextMode;
   private List<String> notes;
 
@@ -236,6 +237,14 @@ public class FixtureMetadata {
     this.strictDynamicProperties = strictDynamicProperties;
   }
 
+  public Boolean getStrictExpectedFailure() {
+    return strictExpectedFailure;
+  }
+
+  public void setStrictExpectedFailure(Boolean strictExpectedFailure) {
+    this.strictExpectedFailure = strictExpectedFailure;
+  }
+
   public String getAccountinfoAextMode() {
     return accountinfoAextMode;
   }
@@ -342,6 +351,11 @@ public class FixtureMetadata {
 
     public Builder strictDynamicProperties(boolean strict) {
       metadata.setStrictDynamicProperties(strict);
+      return this;
+    }
+
+    public Builder strictExpectedFailure(boolean strict) {
+      metadata.setStrictExpectedFailure(strict);
       return this;
     }
 

@@ -765,6 +765,7 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found FREE_NET_LIMIT")
         .strictDynamicProperties(true)
+        .strictExpectedFailure(true)
         .accountinfoAextMode("tracked")
         .build();
 
@@ -803,6 +804,7 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found CREATE_NEW_ACCOUNT_BANDWIDTH_RATE")
         .strictDynamicProperties(true)
+        .strictExpectedFailure(true)
         .accountinfoAextMode("tracked")
         .build();
 
@@ -844,6 +846,7 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found CREATE_ACCOUNT_FEE")
         .strictDynamicProperties(true)
+        .strictExpectedFailure(true)
         .accountinfoAextMode("tracked")
         .build();
 
@@ -885,6 +888,7 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .ownerAddress(OWNER_ADDRESS)
         .expectedError("not found TOTAL_CREATE_ACCOUNT_COST")
         .strictDynamicProperties(true)
+        .strictExpectedFailure(true)
         .accountinfoAextMode("tracked")
         .build();
 

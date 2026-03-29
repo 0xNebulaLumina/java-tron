@@ -17,6 +17,7 @@
   "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049150",
   "dynamicProperties": {},
   "strictDynamicProperties": true,
+  "strictExpectedFailure": true,
   "accountinfoAextMode": "tracked",
   "notes": []
 }
