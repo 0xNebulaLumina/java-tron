@@ -1337,79 +1337,53 @@ fn test_long_value_i64_signed_last_8_bytes() {
 }
 
 // --- Negative-value rejection tests ---
-// Fee getters now decode via i64 and reject negative values (high bit set),
-// matching the fact that Java's signed long would yield a negative fee which
-// causes different control flow (e.g. `fee > 0` → false in Java).
+// Java parity: fee getters decode via i64 and cast to u64 without rejecting
+// negative values.  Java's ByteArray.toLong returns signed long and the
+// DynamicPropertiesStore getters pass the value through unchanged.
 
 #[test]
-fn test_negative_fee_create_new_account_fee_rejected() {
-    // 8-byte value with high bit set: 0x80..00 → i64 = i64::MIN (negative)
+fn test_negative_fee_create_new_account_fee_accepted() {
+    // 0x80..00 → i64::MIN → cast to u64 = 9223372036854775808
     let value: &[u8] = &[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
     let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", value);
     let result = sa.get_create_new_account_fee_in_system_contract();
-    assert!(
-        result.is_err(),
-        "High-bit fee should be rejected as negative, got: {:?}",
-        result
-    );
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("negative"),
-        "Error should mention negative: '{}'",
-        err_msg
-    );
+    assert_eq!(result.unwrap(), i64::MIN as u64);
 }
 
 #[test]
-fn test_negative_fee_create_account_fee_rejected() {
-    // All-ones byte pattern: i64 = -1 (negative)
+fn test_negative_fee_create_account_fee_accepted() {
+    // All-ones → i64 = -1 → cast to u64 = u64::MAX
     let value: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
     let sa = make_adapter_with_prop(b"CREATE_ACCOUNT_FEE", value);
     let result = sa.get_create_account_fee();
-    assert!(
-        result.is_err(),
-        "All-ones fee should be rejected as negative (-1), got: {:?}",
-        result
-    );
+    assert_eq!(result.unwrap(), u64::MAX);
 }
 
 #[test]
-fn test_negative_fee_strict_mode_rejected() {
-    // Strict getter should also reject negative values
+fn test_negative_fee_strict_mode_accepted() {
+    // Strict getter also accepts negative i64 values (Java parity)
     let value: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
     let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", value);
     let result = sa.get_create_new_account_fee_in_system_contract_strict();
-    assert!(
-        result.is_err(),
-        "Strict getter should also reject negative fee, got: {:?}",
-        result
-    );
+    assert_eq!(result.unwrap(), u64::MAX);
 }
 
 #[test]
-fn test_negative_fee_account_upgrade_cost_rejected() {
-    // ACCOUNT_UPGRADE_COST with high bit set → negative i64 → error
+fn test_negative_fee_account_upgrade_cost_accepted() {
+    // 0x80..00 → i64::MIN → cast to u64
     let value: &[u8] = &[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
     let sa = make_adapter_with_prop(b"ACCOUNT_UPGRADE_COST", value);
     let result = sa.get_account_upgrade_cost();
-    assert!(
-        result.is_err(),
-        "ACCOUNT_UPGRADE_COST with high bit should be rejected as negative, got: {:?}",
-        result
-    );
+    assert_eq!(result.unwrap(), i64::MIN as u64);
 }
 
 #[test]
-fn test_negative_fee_asset_issue_fee_rejected() {
-    // ASSET_ISSUE_FEE with all-ones → i64 = -1 → error
+fn test_negative_fee_asset_issue_fee_accepted() {
+    // All-ones → i64 = -1 → cast to u64 = u64::MAX
     let value: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
     let sa = make_adapter_with_prop(b"ASSET_ISSUE_FEE", value);
     let result = sa.get_asset_issue_fee();
-    assert!(
-        result.is_err(),
-        "ASSET_ISSUE_FEE all-ones should be rejected as negative, got: {:?}",
-        result
-    );
+    assert_eq!(result.unwrap(), u64::MAX);
 }
 
 // --- Control tests: non-strict mode still falls back ---
@@ -1476,8 +1450,9 @@ fn test_strict_fee_zero_missing_blackhole_key_fails() {
 
 #[test]
 fn test_nonstrict_fee_zero_missing_blackhole_key_succeeds() {
-    // In non-strict mode, when fee=0 the blackhole flag read is skipped as an
-    // optimization — the result would be unused anyway.
+    // In non-strict mode the blackhole flag is read unconditionally (matching
+    // Java's control flow), but missing keys default to false instead of
+    // erroring.  With fee=0 the flag value is unused, so the test still passes.
     let (mut sa, tx, _) = setup_strict_test_env(|se| {
         se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
         se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();

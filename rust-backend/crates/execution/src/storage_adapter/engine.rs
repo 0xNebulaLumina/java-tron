@@ -945,22 +945,15 @@ impl EngineBackedEvmStateStore {
 
     /// Get AccountUpgradeCost dynamic property
     /// Default value for witness creation cost in SUN
+    /// Java parity: returns signed i64 cast to u64, no negative rejection
+    /// (Java's ByteArray.toLong returns signed long; callers don't reject negatives)
     pub fn get_account_upgrade_cost(&self) -> Result<u64> {
         let key = b"ACCOUNT_UPGRADE_COST";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) => {
-                let signed = Self::decode_i64_java(&data);
-                if signed < 0 {
-                    return Err(anyhow::anyhow!(
-                        "ACCOUNT_UPGRADE_COST decoded as negative: {}",
-                        signed
-                    ));
-                }
-                Ok(signed as u64)
-            }
+            Some(data) => Ok(Self::decode_i64_java(&data) as u64),
             None => {
                 // Use default value for AccountUpgradeCost
                 Ok(9999000000) // 9999 TRX in SUN (default from TRON)
@@ -971,22 +964,14 @@ impl EngineBackedEvmStateStore {
     /// Get AssetIssueFee dynamic property
     /// Default value for TRC-10 asset issuance cost in SUN
     /// Java reference: DynamicPropertiesStore.java:1554, 1568
+    /// Java parity: returns signed i64 cast to u64, no negative rejection
     pub fn get_asset_issue_fee(&self) -> Result<u64> {
         let key = b"ASSET_ISSUE_FEE";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) => {
-                let signed = Self::decode_i64_java(&data);
-                if signed < 0 {
-                    return Err(anyhow::anyhow!(
-                        "ASSET_ISSUE_FEE decoded as negative: {}",
-                        signed
-                    ));
-                }
-                Ok(signed as u64)
-            }
+            Some(data) => Ok(Self::decode_i64_java(&data) as u64),
             None => {
                 // Use default value for AssetIssueFee
                 Ok(1024000000) // 1024 TRX in SUN (default from TRON mainnet)
@@ -1005,14 +990,8 @@ impl EngineBackedEvmStateStore {
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                let signed = Self::decode_i64_java(&data);
-                if signed < 0 {
-                    return Err(anyhow::anyhow!(
-                        "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT decoded as negative: {}",
-                        signed
-                    ));
-                }
-                let fee = signed as u64;
+                // Java parity: no negative rejection (Java's toLong returns signed)
+                let fee = Self::decode_i64_java(&data) as u64;
                 tracing::debug!(
                     "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT from DB: {} SUN (len={})",
                     fee,
@@ -1065,14 +1044,8 @@ impl EngineBackedEvmStateStore {
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                let signed = Self::decode_i64_java(&data);
-                if signed < 0 {
-                    return Err(anyhow::anyhow!(
-                        "CREATE_ACCOUNT_FEE decoded as negative: {}",
-                        signed
-                    ));
-                }
-                let fee = signed as u64;
+                // Java parity: no negative rejection (Java's toLong returns signed)
+                let fee = Self::decode_i64_java(&data) as u64;
                 tracing::debug!(
                     "CREATE_ACCOUNT_FEE from DB: {} SUN (len={})",
                     fee,
@@ -1170,10 +1143,6 @@ impl EngineBackedEvmStateStore {
     /// reinterprets those same bits as `u64`.  For data whose high bit is set
     /// (≥ 0x80 in the most-significant decoded byte) the signed value would be
     /// negative in Java, while the `u64` value here is a large positive number.
-    ///
-    /// Fee-specific getters (e.g. `get_create_account_fee`) validate
-    /// non-negative *before* returning, so callers never silently receive a
-    /// huge positive `u64` for what Java sees as a negative `long`.
     fn decode_u64_java(data: &[u8]) -> u64 {
         Self::decode_i64_java(data) as u64
     }
@@ -1185,19 +1154,12 @@ impl EngineBackedEvmStateStore {
         }
     }
 
+    /// Java parity: decode as signed i64 and cast to u64 without rejecting
+    /// negatives.  Java's `ByteArray.toLong` returns a signed long and the
+    /// DynamicPropertiesStore getters do NOT enforce non-negativity.
     fn get_dynamic_property_u64_strict(&self, key: &[u8], key_label: &str) -> Result<u64> {
         match self.buffered_get(self.dynamic_properties_database(), key)? {
-            Some(data) => {
-                let signed = Self::decode_i64_java(&data);
-                if signed < 0 {
-                    return Err(anyhow::anyhow!(
-                        "{} decoded as negative: {}",
-                        key_label,
-                        signed
-                    ));
-                }
-                Ok(signed as u64)
-            }
+            Some(data) => Ok(Self::decode_i64_java(&data) as u64),
             None => Err(anyhow::anyhow!("not found {}", key_label)),
         }
     }
@@ -1369,20 +1331,9 @@ impl EngineBackedEvmStateStore {
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                // Java writes a long; interpret big-endian i64 when length >= 8.
+                // Use decode_i64_java for consistent decoding with strict variant.
                 // Java: supportBlackHoleOptimization() checks value == 1 (strict).
-                if data.len() >= 8 {
-                    let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(val == 1)
-                } else if !data.is_empty() {
-                    // Fallback: treat last byte as the value (edge case)
-                    Ok(data[data.len() - 1] == 1)
-                } else {
-                    // Empty value → treat as disabled (credit blackhole)
-                    Ok(false)
-                }
+                Ok(Self::decode_i64_java(&data) == 1)
             }
             None => {
                 // Absent key → default to disabled (credit blackhole) for early heights

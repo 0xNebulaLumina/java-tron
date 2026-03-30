@@ -2977,20 +2977,14 @@ impl BackendService {
         // Java's CreateAccountActuator.execute() reads
         // supportBlackHoleOptimization() unconditionally (even when fee=0).
         // If ALLOW_BLACKHOLE_OPTIMIZATION is missing, Java throws
-        // IllegalArgumentException.  In strict mode we must mirror that:
-        // always read the flag so a missing key produces the same error.
-        // In non-strict mode we can safely skip the read when fee=0.
+        // IllegalArgumentException.  Both strict and non-strict modes read
+        // the flag unconditionally to match Java's control-flow semantics.
+        // The difference: strict errors on missing key; non-strict defaults
+        // to false (matching early-chain behavior when key is absent).
         let support_blackhole = if strict {
-            // Strict: always read to match Java's unconditional read
             storage_adapter
                 .support_black_hole_optimization_strict()
                 .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
-        } else if fee == 0 {
-            // Non-strict with zero fee: skip the read as a shortcut.
-            // This is NOT full behavioral equivalence with Java (which
-            // still reads the flag), but in non-strict mode the result
-            // is unused when fee=0, so the divergence is harmless.
-            false
         } else {
             storage_adapter
                 .support_black_hole_optimization()
