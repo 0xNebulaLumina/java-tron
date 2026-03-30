@@ -1038,6 +1038,12 @@ impl ConformanceRunner {
 
             if status_ok {
                 if let Some(expected_msg) = metadata.expected_error_message.clone() {
+                    if expected_msg.trim().is_empty() {
+                        panic!(
+                            "Fixture '{}': expectedErrorMessage is blank — this would match any error",
+                            metadata.case_name
+                        );
+                    }
                     let actual_msg = match &execution_result {
                         Ok(r) => r.error.clone().unwrap_or_default(),
                         Err(e) => e.clone(),
