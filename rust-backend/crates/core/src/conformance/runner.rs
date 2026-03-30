@@ -209,7 +209,7 @@ impl ConformanceRunner {
     /// Create an execution configuration with all contracts enabled for conformance testing.
     /// When metadata specifies overrides (strict_dynamic_properties, accountinfo_aext_mode),
     /// those are applied on top of the base config.
-    fn create_conformance_config(metadata: &super::metadata::FixtureMetadata) -> ExecutionConfig {
+    fn create_conformance_config(metadata: &super::metadata::FixtureMetadata) -> Result<ExecutionConfig, String> {
         let strict = metadata.strict_dynamic_properties.unwrap_or(false);
         let aext_mode = metadata
             .accountinfo_aext_mode
@@ -219,13 +219,13 @@ impl ConformanceRunner {
         // Validate aext_mode to catch typos early
         match aext_mode.as_str() {
             "none" | "tracked" | "hybrid" | "zeros" | "defaults" => {}
-            other => panic!(
+            other => return Err(format!(
                 "Fixture '{}': invalid accountinfoAextMode '{}' (valid: none, tracked, hybrid, zeros, defaults)",
                 metadata.case_name, other
-            ),
+            )),
         }
 
-        ExecutionConfig {
+        Ok(ExecutionConfig {
             remote: RemoteExecutionConfig {
                 system_enabled: true,
                 // Conformance runner executes against an isolated RocksDB instance, so Rust must
@@ -280,7 +280,7 @@ impl ConformanceRunner {
                 ..Default::default()
             },
             ..Default::default()
-        }
+        })
     }
 
     /// Map fixture DB aliases to the actual storage DB names used by the adapter.
@@ -698,7 +698,10 @@ impl ConformanceRunner {
         // Create a BackendService instance configured for conformance.
         // This ensures we exercise the same NON_VM dispatch path as the gRPC server.
         // Metadata-driven overrides (strict_dynamic_properties, accountinfo_aext_mode) are applied.
-        let config = Self::create_conformance_config(&metadata);
+        let config = match Self::create_conformance_config(&metadata) {
+            Ok(c) => c,
+            Err(e) => return ConformanceResult::failure(metadata, e),
+        };
         let mut module_manager = ModuleManager::new();
         module_manager.register("execution", Box::new(ExecutionModule::new(config.clone())));
         let backend_service = BackendService::new(module_manager);
@@ -906,26 +909,30 @@ impl ConformanceRunner {
 
         if strict_expected_failure {
             if !metadata.strict_dynamic_properties.unwrap_or(false) {
-                panic!(
-                    "Fixture '{}': strictExpectedFailure=true requires strictDynamicProperties=true",
-                    metadata.case_name
+                return ConformanceResult::failure(
+                    metadata,
+                    "strictExpectedFailure=true requires strictDynamicProperties=true".to_string(),
                 );
             }
             match &metadata.expected_error_message {
-                None => panic!(
-                    "Fixture '{}': strictExpectedFailure=true requires expectedErrorMessage to be set",
-                    metadata.case_name
+                None => return ConformanceResult::failure(
+                    metadata,
+                    "strictExpectedFailure=true requires expectedErrorMessage to be set".to_string(),
                 ),
-                Some(msg) if msg.trim().is_empty() => panic!(
-                    "Fixture '{}': strictExpectedFailure=true requires non-blank expectedErrorMessage",
-                    metadata.case_name
+                Some(msg) if msg.trim().is_empty() => return ConformanceResult::failure(
+                    metadata,
+                    "strictExpectedFailure=true requires non-blank expectedErrorMessage".to_string(),
                 ),
                 _ => {}
             }
             if !metadata.expects_success() {
-                panic!(
-                    "Fixture '{}': strictExpectedFailure=true requires expectedStatus='SUCCESS', got '{}'",
-                    metadata.case_name, metadata.expected_status
+                let status = metadata.expected_status.clone();
+                return ConformanceResult::failure(
+                    metadata,
+                    format!(
+                        "strictExpectedFailure=true requires expectedStatus='SUCCESS', got '{}'",
+                        status
+                    ),
                 );
             }
         }
@@ -1039,9 +1046,9 @@ impl ConformanceRunner {
             if status_ok {
                 if let Some(expected_msg) = metadata.expected_error_message.clone() {
                     if expected_msg.trim().is_empty() {
-                        panic!(
-                            "Fixture '{}': expectedErrorMessage is blank — this would match any error",
-                            metadata.case_name
+                        return ConformanceResult::failure(
+                            metadata,
+                            "expectedErrorMessage is blank — this would match any error".to_string(),
                         );
                     }
                     let actual_msg = match &execution_result {

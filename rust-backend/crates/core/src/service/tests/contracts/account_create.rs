@@ -1275,6 +1275,67 @@ fn test_nonstrict_full_8byte_values_still_work() {
     assert_eq!(sa.get_create_account_fee().unwrap(), 200000);
 }
 
+// --- >8-byte decode parity tests ---
+// Java's `ByteArray.toLong` uses `new BigInteger(1, b).longValue()`, which
+// interprets the full array as unsigned big-endian then truncates to the low
+// 64 bits — equivalent to taking the **last** 8 bytes.  These tests lock that
+// behaviour for both the signed (decode_i64_java) and unsigned (decode_u64_java)
+// paths.
+
+#[test]
+fn test_long_value_u64_takes_last_8_bytes() {
+    // 10-byte value: [0xFF, 0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A]
+    // Last 8 bytes: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A] = 42
+    let value: &[u8] = &[0xFF, 0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A];
+    let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", value);
+    assert_eq!(
+        sa.get_create_new_account_fee_in_system_contract().unwrap(),
+        42,
+        ">8-byte value should use last 8 bytes (u64 path)"
+    );
+}
+
+#[test]
+fn test_long_value_i64_takes_last_8_bytes() {
+    // 9-byte value: [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63]
+    // Last 8 bytes: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63] = 99
+    let value: &[u8] = &[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63];
+    let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", value);
+    assert_eq!(
+        sa.get_create_new_account_bandwidth_rate().unwrap(),
+        99,
+        ">8-byte value should use last 8 bytes (i64 path)"
+    );
+}
+
+#[test]
+fn test_long_value_u64_high_bits_ignored() {
+    // 10-byte value where leading bytes are large but last 8 bytes form a small number.
+    // Leading [0xAB, 0xCD] should be ignored.
+    let value: &[u8] = &[0xAB, 0xCD, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x86, 0xA0];
+    // Last 8: [0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x86, 0xA0] = 100000
+    let sa = make_adapter_with_prop(b"CREATE_ACCOUNT_FEE", value);
+    assert_eq!(
+        sa.get_create_account_fee().unwrap(),
+        100_000,
+        ">8-byte value with high leading bytes should use last 8 bytes (u64 path)"
+    );
+}
+
+#[test]
+fn test_long_value_i64_signed_last_8_bytes() {
+    // 9-byte value: last 8 bytes represent a negative i64 (high bit set)
+    // [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+    // Last 8: [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF] = -1 as i64
+    let value: &[u8] = &[0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+    let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", value);
+    assert_eq!(
+        sa.get_create_new_account_bandwidth_rate().unwrap(),
+        -1,
+        ">8-byte value with signed last-8-bytes should decode correctly (i64 path)"
+    );
+}
+
 // --- Control tests: non-strict mode still falls back ---
 
 #[test]
@@ -1303,6 +1364,32 @@ fn test_strict_all_keys_present_succeeds() {
     assert!(
         result.is_ok(),
         "Strict mode should succeed when all keys are present: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_strict_fee_zero_missing_blackhole_key_succeeds() {
+    // When fee=0 the blackhole optimization flag is irrelevant — Rust should
+    // NOT read it, even in strict mode.  This regresses the fix for the false
+    // rejection where strict mode errored on a missing ALLOW_BLACKHOLE_OPTIMIZATION
+    // key despite fee being zero (Java succeeds because the read result is unused).
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // fee = 0 (CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT = 0)
+        se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        // Deliberately omit ALLOW_BLACKHOLE_OPTIMIZATION
+        se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+        se.put("properties", b"FREE_NET_LIMIT", &100000i64.to_be_bytes()).unwrap();
+        se.put("properties", b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"CREATE_ACCOUNT_FEE", &100000u64.to_be_bytes()).unwrap();
+        se.put("properties", b"TOTAL_CREATE_ACCOUNT_COST", &0i64.to_be_bytes()).unwrap();
+    });
+    let service = new_test_service_with_account_create_strict();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(
+        result.is_ok(),
+        "Strict mode with fee=0 should succeed even when ALLOW_BLACKHOLE_OPTIMIZATION is missing: {:?}",
         result.err()
     );
 }

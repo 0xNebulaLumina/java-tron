@@ -107,7 +107,7 @@
     },
     "accountinfoAextMode": {
       "type": "string",
-      "enum": ["none", "hybrid", "tracked"],
+      "enum": ["none", "hybrid", "tracked", "zeros", "defaults"],
       "description": "Override for accountinfo_aext_mode in the conformance runner"
     },
     "notes": {

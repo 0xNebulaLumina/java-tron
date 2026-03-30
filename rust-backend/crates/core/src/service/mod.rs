@@ -2871,21 +2871,7 @@ impl BackendService {
             return Err("Validate CreateAccountActuator error, insufficient fee.".to_string());
         }
 
-        // 6. Get blackhole optimization flag
-        let support_blackhole = if strict {
-            storage_adapter
-                .support_black_hole_optimization_strict()
-                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
-        } else {
-            storage_adapter
-                .support_black_hole_optimization()
-                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
-        };
-
-        info!(
-            "AccountCreate: fee={} SUN, support_blackhole={}",
-            fee, support_blackhole
-        );
+        info!("AccountCreate: fee={} SUN", fee);
 
         // 7. Prepare state changes
         let mut state_changes = Vec::new();
@@ -2988,53 +2974,71 @@ impl BackendService {
             .map_err(|e| format!("Failed to persist new account proto: {}", e))?;
 
         // 10. Handle fee burning/crediting (only if fee > 0)
+        // NOTE: Java's CreateAccountActuator.execute() reads
+        // supportBlackHoleOptimization() unconditionally, but when fee=0 the
+        // flag value is irrelevant — burn(0) and credit(0) are both no-ops.
+        // In Rust strict mode, reading a missing ALLOW_BLACKHOLE_OPTIMIZATION
+        // key would error, causing a false rejection that Java does not.  We
+        // intentionally skip the read when fee=0 to avoid this false negative.
         let fee_destination: String;
         if fee == 0 {
             // No fee to process
             fee_destination = String::from("none(fee=0)");
-        } else if support_blackhole {
-            // Burn mode - no additional account change needed
-            info!("Burning {} SUN (blackhole optimization)", fee);
-            storage_adapter
-                .burn_trx(fee)
-                .map_err(|e| format!("Failed to burn TRX: {}", e))?;
-            fee_destination = String::from("burn");
         } else {
-            // Credit blackhole account
-            if let Some(blackhole_addr) = storage_adapter
-                .get_blackhole_address()
-                .map_err(|e| format!("Failed to get blackhole address: {}", e))?
-            {
-                let blackhole_account = storage_adapter
-                    .get_account(&blackhole_addr)
-                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
-                    .unwrap_or_default();
-
-                let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: blackhole_account.balance + fee_u256,
-                    nonce: blackhole_account.nonce,
-                    code_hash: blackhole_account.code_hash,
-                    code: blackhole_account.code.clone(),
-                };
-
-                // Emit account change for blackhole
-                state_changes.push(TronStateChange::AccountChange {
-                    address: blackhole_addr,
-                    old_account: Some(blackhole_account),
-                    new_account: Some(new_blackhole_account.clone()),
-                });
-
-                // Persist blackhole account update
+            let support_blackhole = if strict {
                 storage_adapter
-                    .set_account(blackhole_addr, new_blackhole_account)
-                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
-
-                let bh_tron = tron_backend_common::to_tron_address(&blackhole_addr);
-                info!("Credited {} SUN to blackhole address {}", fee, bh_tron);
-                fee_destination = format!("blackhole:{}", bh_tron);
+                    .support_black_hole_optimization_strict()
+                    .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
             } else {
-                warn!("No blackhole address configured, burning {} SUN", fee);
-                fee_destination = String::from("burn(no_addr)");
+                storage_adapter
+                    .support_black_hole_optimization()
+                    .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
+            };
+
+            if support_blackhole {
+                // Burn mode - no additional account change needed
+                info!("Burning {} SUN (blackhole optimization)", fee);
+                storage_adapter
+                    .burn_trx(fee)
+                    .map_err(|e| format!("Failed to burn TRX: {}", e))?;
+                fee_destination = String::from("burn");
+            } else {
+                // Credit blackhole account
+                if let Some(blackhole_addr) = storage_adapter
+                    .get_blackhole_address()
+                    .map_err(|e| format!("Failed to get blackhole address: {}", e))?
+                {
+                    let blackhole_account = storage_adapter
+                        .get_account(&blackhole_addr)
+                        .map_err(|e| format!("Failed to load blackhole account: {}", e))?
+                        .unwrap_or_default();
+
+                    let new_blackhole_account = revm_primitives::AccountInfo {
+                        balance: blackhole_account.balance + fee_u256,
+                        nonce: blackhole_account.nonce,
+                        code_hash: blackhole_account.code_hash,
+                        code: blackhole_account.code.clone(),
+                    };
+
+                    // Emit account change for blackhole
+                    state_changes.push(TronStateChange::AccountChange {
+                        address: blackhole_addr,
+                        old_account: Some(blackhole_account),
+                        new_account: Some(new_blackhole_account.clone()),
+                    });
+
+                    // Persist blackhole account update
+                    storage_adapter
+                        .set_account(blackhole_addr, new_blackhole_account)
+                        .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
+
+                    let bh_tron = tron_backend_common::to_tron_address(&blackhole_addr);
+                    info!("Credited {} SUN to blackhole address {}", fee, bh_tron);
+                    fee_destination = format!("blackhole:{}", bh_tron);
+                } else {
+                    warn!("No blackhole address configured, burning {} SUN", fee);
+                    fee_destination = String::from("burn(no_addr)");
+                }
             }
         }
 

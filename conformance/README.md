@@ -56,7 +56,13 @@ conformance/
   `strict_dynamic_properties` so missing dynamic-property keys cause errors instead
   of falling back to defaults. Used for missing-key parity fixtures.
 - `accountinfoAextMode` (string): Override for `accountinfo_aext_mode` in the runner.
+  Valid values: `"none"`, `"hybrid"`, `"tracked"`, `"zeros"`, `"defaults"`.
   Set to `"tracked"` for fixtures that exercise bandwidth/AEXT tracking paths.
+- `strictExpectedFailure` (boolean): When `true`, marks this fixture as an expected-failure
+  case under strict dynamic-property mode. The runner verifies that execution fails with
+  the `expectedErrorMessage` and that post-state equals pre-state (no accidental writes).
+  Requires `strictDynamicProperties=true`, `expectedStatus="SUCCESS"` (the Java outcome),
+  and a non-blank `expectedErrorMessage`.
 
 ### KV File Format (*.kv)
 
