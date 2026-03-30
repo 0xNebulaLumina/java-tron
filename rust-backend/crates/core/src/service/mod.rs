@@ -2973,28 +2973,35 @@ impl BackendService {
             .put_account_proto(&target_address, &target_proto)
             .map_err(|e| format!("Failed to persist new account proto: {}", e))?;
 
-        // 10. Handle fee burning/crediting (only if fee > 0)
-        // NOTE: Java's CreateAccountActuator.execute() reads
-        // supportBlackHoleOptimization() unconditionally, but when fee=0 the
-        // flag value is irrelevant — burn(0) and credit(0) are both no-ops.
-        // In Rust strict mode, reading a missing ALLOW_BLACKHOLE_OPTIMIZATION
-        // key would error, causing a false rejection that Java does not.  We
-        // intentionally skip the read when fee=0 to avoid this false negative.
+        // 10. Handle fee burning/crediting
+        // Java's CreateAccountActuator.execute() reads
+        // supportBlackHoleOptimization() unconditionally (even when fee=0).
+        // If ALLOW_BLACKHOLE_OPTIMIZATION is missing, Java throws
+        // IllegalArgumentException.  In strict mode we must mirror that:
+        // always read the flag so a missing key produces the same error.
+        // In non-strict mode we can safely skip the read when fee=0.
+        let support_blackhole = if strict {
+            // Strict: always read to match Java's unconditional read
+            storage_adapter
+                .support_black_hole_optimization_strict()
+                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
+        } else if fee == 0 {
+            // Non-strict with zero fee: skip the read as a shortcut.
+            // This is NOT full behavioral equivalence with Java (which
+            // still reads the flag), but in non-strict mode the result
+            // is unused when fee=0, so the divergence is harmless.
+            false
+        } else {
+            storage_adapter
+                .support_black_hole_optimization()
+                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
+        };
+
         let fee_destination: String;
         if fee == 0 {
             // No fee to process
             fee_destination = String::from("none(fee=0)");
         } else {
-            let support_blackhole = if strict {
-                storage_adapter
-                    .support_black_hole_optimization_strict()
-                    .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
-            } else {
-                storage_adapter
-                    .support_black_hole_optimization()
-                    .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
-            };
-
             if support_blackhole {
                 // Burn mode - no additional account change needed
                 info!("Burning {} SUN (blackhole optimization)", fee);

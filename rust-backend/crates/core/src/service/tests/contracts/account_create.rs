@@ -1445,11 +1445,10 @@ fn test_strict_all_keys_present_succeeds() {
 }
 
 #[test]
-fn test_strict_fee_zero_missing_blackhole_key_succeeds() {
-    // When fee=0 the blackhole optimization flag is irrelevant — Rust should
-    // NOT read it, even in strict mode.  This regresses the fix for the false
-    // rejection where strict mode errored on a missing ALLOW_BLACKHOLE_OPTIMIZATION
-    // key despite fee being zero (Java succeeds because the read result is unused).
+fn test_strict_fee_zero_missing_blackhole_key_fails() {
+    // Java's CreateAccountActuator.execute() reads supportBlackHoleOptimization()
+    // unconditionally — even when fee=0.  If the key is missing, Java throws
+    // IllegalArgumentException.  Strict mode must mirror this failure.
     let (mut sa, tx, _) = setup_strict_test_env(|se| {
         // fee = 0 (CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT = 0)
         se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
@@ -1464,8 +1463,36 @@ fn test_strict_fee_zero_missing_blackhole_key_succeeds() {
     let service = new_test_service_with_account_create_strict();
     let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
     assert!(
+        result.is_err(),
+        "Strict mode with fee=0 should fail when ALLOW_BLACKHOLE_OPTIMIZATION is missing (Java parity)"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("ALLOW_BLACKHOLE_OPTIMIZATION"),
+        "Error should reference the missing ALLOW_BLACKHOLE_OPTIMIZATION key, got: {}",
+        err
+    );
+}
+
+#[test]
+fn test_nonstrict_fee_zero_missing_blackhole_key_succeeds() {
+    // In non-strict mode, when fee=0 the blackhole flag read is skipped as an
+    // optimization — the result would be unused anyway.
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        // Deliberately omit ALLOW_BLACKHOLE_OPTIMIZATION
+        se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+        se.put("properties", b"FREE_NET_LIMIT", &100000i64.to_be_bytes()).unwrap();
+        se.put("properties", b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"CREATE_ACCOUNT_FEE", &100000u64.to_be_bytes()).unwrap();
+        se.put("properties", b"TOTAL_CREATE_ACCOUNT_COST", &0i64.to_be_bytes()).unwrap();
+    });
+    let service = new_test_service_with_account_create_enabled();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(
         result.is_ok(),
-        "Strict mode with fee=0 should succeed even when ALLOW_BLACKHOLE_OPTIMIZATION is missing: {:?}",
+        "Non-strict mode with fee=0 should succeed even when ALLOW_BLACKHOLE_OPTIMIZATION is missing: {:?}",
         result.err()
     );
 }
