@@ -216,6 +216,15 @@ impl ConformanceRunner {
             .clone()
             .unwrap_or_else(|| "none".to_string());
 
+        // Validate aext_mode to catch typos early
+        match aext_mode.as_str() {
+            "none" | "tracked" | "hybrid" | "zeros" | "defaults" => {}
+            other => panic!(
+                "Fixture '{}': invalid accountinfoAextMode '{}' (valid: none, tracked, hybrid, zeros, defaults)",
+                metadata.case_name, other
+            ),
+        }
+
         ExecutionConfig {
             remote: RemoteExecutionConfig {
                 system_enabled: true,
@@ -897,20 +906,25 @@ impl ConformanceRunner {
 
         if strict_expected_failure {
             if !metadata.strict_dynamic_properties.unwrap_or(false) {
-                eprintln!(
-                    "WARNING: Fixture {} has strictExpectedFailure=true but strictDynamicProperties is not set",
+                panic!(
+                    "Fixture '{}': strictExpectedFailure=true requires strictDynamicProperties=true",
                     metadata.case_name
                 );
             }
-            if metadata.expected_error_message.is_none() {
-                eprintln!(
-                    "WARNING: Fixture {} has strictExpectedFailure=true but no expectedErrorMessage",
+            match &metadata.expected_error_message {
+                None => panic!(
+                    "Fixture '{}': strictExpectedFailure=true requires expectedErrorMessage to be set",
                     metadata.case_name
-                );
+                ),
+                Some(msg) if msg.trim().is_empty() => panic!(
+                    "Fixture '{}': strictExpectedFailure=true requires non-blank expectedErrorMessage",
+                    metadata.case_name
+                ),
+                _ => {}
             }
             if !metadata.expects_success() {
-                eprintln!(
-                    "WARNING: Fixture {} has strictExpectedFailure=true but expectedStatus is '{}', not 'SUCCESS'",
+                panic!(
+                    "Fixture '{}': strictExpectedFailure=true requires expectedStatus='SUCCESS', got '{}'",
                     metadata.case_name, metadata.expected_status
                 );
             }
