@@ -1273,20 +1273,9 @@ impl EngineBackedEvmStateStore {
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                // Java stores dynamic properties as big-endian i64.
-                // Java: getAllowMultiSign() != 1 is "not allowed", so we need strict == 1 check.
-                if data.len() >= 8 {
-                    let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(val == 1)
-                } else if !data.is_empty() {
-                    // Fallback for short data (edge case)
-                    Ok(data[data.len() - 1] == 1)
-                } else {
-                    // Empty data treated as missing for strict parity
-                    Err(anyhow::anyhow!("not found ALLOW_MULTI_SIGN"))
-                }
+                // Use the Java-parity decode helper: empty → 0, >8 → last 8 bytes.
+                // Java: getAllowMultiSign() returns the stored long; callers check == 1.
+                Ok(Self::decode_i64_java(&data) == 1)
             }
             None => {
                 // Java throws IllegalArgumentException when key is missing

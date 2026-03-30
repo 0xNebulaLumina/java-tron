@@ -890,18 +890,6 @@ impl ConformanceRunner {
             Err(e) => format!("ERROR: {}", e),
         };
 
-        // Dump actual post-state (even for failure cases) and compare against fixture oracle.
-        let actual_state =
-            match self.dump_storage_state(&storage_engine, &metadata.databases_touched) {
-                Ok(s) => s,
-                Err(e) => {
-                    return ConformanceResult::failure(
-                        metadata,
-                        format!("Failed to dump post-state: {}", e),
-                    );
-                }
-            };
-
         // Use the explicit metadata flag to identify strict-expected-failure fixtures.
         // These are cases where Rust correctly rejects missing dynamic properties
         // while Java succeeded using fallback defaults.
@@ -928,12 +916,74 @@ impl ConformanceRunner {
             }
         }
 
+        // Dump actual post-state.  For strict-expected-failure we dump ALL
+        // engine databases (using canonical names) so we can detect accidental
+        // writes outside the declared databasesTouched list.  For normal
+        // fixtures we only dump the databases the fixture declares.
+        let (actual_state, compare_pre_state) = if strict_expected_failure {
+            let all_engine_dbs = match storage_engine.list_databases() {
+                Ok(dbs) => dbs,
+                Err(_) => metadata.databases_touched.iter()
+                    .map(|n| Self::canonical_db_name(n).to_string())
+                    .collect(),
+            };
+            // Dump using canonical engine names so keys are consistent.
+            let actual = match self.dump_storage_state(&storage_engine, &all_engine_dbs) {
+                Ok(s) => s,
+                Err(e) => {
+                    return ConformanceResult::failure(
+                        metadata,
+                        format!("Failed to dump post-state: {}", e),
+                    );
+                }
+            };
+            // Canonicalize pre_state keys to match the engine namespace scheme.
+            // Fail explicitly if two fixture names map to the same canonical
+            // name — BTreeMap::collect would silently take last-write-wins.
+            let mut canonical_pre: BTreeMap<String, BTreeMap<Vec<u8>, Vec<u8>>> = BTreeMap::new();
+            for (k, v) in &pre_state {
+                let canon = Self::canonical_db_name(k).to_string();
+                if canonical_pre.contains_key(&canon) {
+                    return ConformanceResult::failure(
+                        metadata,
+                        format!(
+                            "Fixture has duplicate canonical DB name '{}' (from '{}')",
+                            canon, k
+                        ),
+                    );
+                }
+                canonical_pre.insert(canon, v.clone());
+            }
+            (actual, canonical_pre)
+        } else {
+            let actual = match self.dump_storage_state(&storage_engine, &metadata.databases_touched) {
+                Ok(s) => s,
+                Err(e) => {
+                    return ConformanceResult::failure(
+                        metadata,
+                        format!("Failed to dump post-state: {}", e),
+                    );
+                }
+            };
+            // Not used for normal fixtures; placeholder to satisfy the binding.
+            (actual, BTreeMap::new())
+        };
+
         // Compare states.  For strict-expected-failure fixtures Rust correctly
         // aborts before making state changes, so the expected post-state (from
         // Java's successful execution) won't match.  Instead, compare actual
-        // post-state against the pre-state to verify no accidental writes.
+        // post-state against the canonicalized pre-state to verify no
+        // accidental writes across ALL engine databases.
         let db_diffs = if strict_expected_failure {
-            self.compare_states(&pre_state, &actual_state, &metadata.databases_touched)
+            // Union all DB namespaces from both maps so we catch writes in
+            // databases that exist only in actual_state (not in pre_state).
+            let all_dbs: Vec<String> = {
+                let mut keys: std::collections::BTreeSet<String> =
+                    compare_pre_state.keys().cloned().collect();
+                keys.extend(actual_state.keys().cloned());
+                keys.into_iter().collect()
+            };
+            self.compare_states(&compare_pre_state, &actual_state, &all_dbs)
         } else {
             self.compare_states(&expected_state, &actual_state, &metadata.databases_touched)
         };
