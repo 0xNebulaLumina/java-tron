@@ -952,15 +952,14 @@ impl EngineBackedEvmStateStore {
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                if data.len() >= 8 {
-                    let cost = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(cost)
-                } else {
-                    // Use default value for AccountUpgradeCost
-                    Ok(9999000000) // 9999 TRX in SUN (default from TRON)
+                let signed = Self::decode_i64_java(&data);
+                if signed < 0 {
+                    return Err(anyhow::anyhow!(
+                        "ACCOUNT_UPGRADE_COST decoded as negative: {}",
+                        signed
+                    ));
                 }
+                Ok(signed as u64)
             }
             None => {
                 // Use default value for AccountUpgradeCost
@@ -979,15 +978,14 @@ impl EngineBackedEvmStateStore {
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                if data.len() >= 8 {
-                    let fee = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(fee)
-                } else {
-                    // Use default value for AssetIssueFee
-                    Ok(1024000000) // 1024 TRX in SUN (default from TRON mainnet)
+                let signed = Self::decode_i64_java(&data);
+                if signed < 0 {
+                    return Err(anyhow::anyhow!(
+                        "ASSET_ISSUE_FEE decoded as negative: {}",
+                        signed
+                    ));
                 }
+                Ok(signed as u64)
             }
             None => {
                 // Use default value for AssetIssueFee
@@ -1007,7 +1005,14 @@ impl EngineBackedEvmStateStore {
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                let fee = Self::decode_u64_java(&data);
+                let signed = Self::decode_i64_java(&data);
+                if signed < 0 {
+                    return Err(anyhow::anyhow!(
+                        "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT decoded as negative: {}",
+                        signed
+                    ));
+                }
+                let fee = signed as u64;
                 tracing::debug!(
                     "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT from DB: {} SUN (len={})",
                     fee,
@@ -1060,7 +1065,14 @@ impl EngineBackedEvmStateStore {
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                let fee = Self::decode_u64_java(&data);
+                let signed = Self::decode_i64_java(&data);
+                if signed < 0 {
+                    return Err(anyhow::anyhow!(
+                        "CREATE_ACCOUNT_FEE decoded as negative: {}",
+                        signed
+                    ));
+                }
+                let fee = signed as u64;
                 tracing::debug!(
                     "CREATE_ACCOUNT_FEE from DB: {} SUN (len={})",
                     fee,
@@ -1152,28 +1164,18 @@ impl EngineBackedEvmStateStore {
         }
     }
 
-    /// Unsigned variant of `decode_i64_java` — same last-8-byte semantics.
+    /// Unsigned reinterpretation of [`decode_i64_java`].
+    ///
+    /// Java's `ByteArray.toLong` returns a **signed** `long`.  This helper
+    /// reinterprets those same bits as `u64`.  For data whose high bit is set
+    /// (≥ 0x80 in the most-significant decoded byte) the signed value would be
+    /// negative in Java, while the `u64` value here is a large positive number.
+    ///
+    /// Fee-specific getters (e.g. `get_create_account_fee`) validate
+    /// non-negative *before* returning, so callers never silently receive a
+    /// huge positive `u64` for what Java sees as a negative `long`.
     fn decode_u64_java(data: &[u8]) -> u64 {
-        let len = data.len();
-        if len >= 8 {
-            let off = len - 8;
-            u64::from_be_bytes([
-                data[off],
-                data[off + 1],
-                data[off + 2],
-                data[off + 3],
-                data[off + 4],
-                data[off + 5],
-                data[off + 6],
-                data[off + 7],
-            ])
-        } else if data.is_empty() {
-            0
-        } else {
-            let mut buf = [0u8; 8];
-            buf[8 - len..].copy_from_slice(data);
-            u64::from_be_bytes(buf)
-        }
+        Self::decode_i64_java(data) as u64
     }
 
     fn get_dynamic_property_i64_strict(&self, key: &[u8], key_label: &str) -> Result<i64> {
@@ -1185,7 +1187,17 @@ impl EngineBackedEvmStateStore {
 
     fn get_dynamic_property_u64_strict(&self, key: &[u8], key_label: &str) -> Result<u64> {
         match self.buffered_get(self.dynamic_properties_database(), key)? {
-            Some(data) => Ok(Self::decode_u64_java(&data)),
+            Some(data) => {
+                let signed = Self::decode_i64_java(&data);
+                if signed < 0 {
+                    return Err(anyhow::anyhow!(
+                        "{} decoded as negative: {}",
+                        key_label,
+                        signed
+                    ));
+                }
+                Ok(signed as u64)
+            }
             None => Err(anyhow::anyhow!("not found {}", key_label)),
         }
     }
@@ -6412,20 +6424,7 @@ impl EngineBackedEvmStateStore {
     /// Get AssetIssueFee with strict mode (errors when missing).
     /// Java: "not found ASSET_ISSUE_FEE"
     pub fn get_asset_issue_fee_strict(&self) -> Result<u64> {
-        let key = b"ASSET_ISSUE_FEE";
-        match self.buffered_get(self.dynamic_properties_database(), key)? {
-            Some(data) => {
-                if data.len() >= 8 {
-                    let fee = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(fee)
-                } else {
-                    Err(anyhow::anyhow!("not found ASSET_ISSUE_FEE"))
-                }
-            }
-            None => Err(anyhow::anyhow!("not found ASSET_ISSUE_FEE")),
-        }
+        self.get_dynamic_property_u64_strict(b"ASSET_ISSUE_FEE", "ASSET_ISSUE_FEE")
     }
 
     /// Get AllowSameTokenName with strict mode (errors when missing).

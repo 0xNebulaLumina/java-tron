@@ -1336,6 +1336,82 @@ fn test_long_value_i64_signed_last_8_bytes() {
     );
 }
 
+// --- Negative-value rejection tests ---
+// Fee getters now decode via i64 and reject negative values (high bit set),
+// matching the fact that Java's signed long would yield a negative fee which
+// causes different control flow (e.g. `fee > 0` → false in Java).
+
+#[test]
+fn test_negative_fee_create_new_account_fee_rejected() {
+    // 8-byte value with high bit set: 0x80..00 → i64 = i64::MIN (negative)
+    let value: &[u8] = &[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", value);
+    let result = sa.get_create_new_account_fee_in_system_contract();
+    assert!(
+        result.is_err(),
+        "High-bit fee should be rejected as negative, got: {:?}",
+        result
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("negative"),
+        "Error should mention negative: '{}'",
+        err_msg
+    );
+}
+
+#[test]
+fn test_negative_fee_create_account_fee_rejected() {
+    // All-ones byte pattern: i64 = -1 (negative)
+    let value: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+    let sa = make_adapter_with_prop(b"CREATE_ACCOUNT_FEE", value);
+    let result = sa.get_create_account_fee();
+    assert!(
+        result.is_err(),
+        "All-ones fee should be rejected as negative (-1), got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_negative_fee_strict_mode_rejected() {
+    // Strict getter should also reject negative values
+    let value: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+    let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", value);
+    let result = sa.get_create_new_account_fee_in_system_contract_strict();
+    assert!(
+        result.is_err(),
+        "Strict getter should also reject negative fee, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_negative_fee_account_upgrade_cost_rejected() {
+    // ACCOUNT_UPGRADE_COST with high bit set → negative i64 → error
+    let value: &[u8] = &[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let sa = make_adapter_with_prop(b"ACCOUNT_UPGRADE_COST", value);
+    let result = sa.get_account_upgrade_cost();
+    assert!(
+        result.is_err(),
+        "ACCOUNT_UPGRADE_COST with high bit should be rejected as negative, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_negative_fee_asset_issue_fee_rejected() {
+    // ASSET_ISSUE_FEE with all-ones → i64 = -1 → error
+    let value: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+    let sa = make_adapter_with_prop(b"ASSET_ISSUE_FEE", value);
+    let result = sa.get_asset_issue_fee();
+    assert!(
+        result.is_err(),
+        "ASSET_ISSUE_FEE all-ones should be rejected as negative, got: {:?}",
+        result
+    );
+}
+
 // --- Control tests: non-strict mode still falls back ---
 
 #[test]
