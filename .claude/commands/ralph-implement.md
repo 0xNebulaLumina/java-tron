@@ -1,4 +1,4 @@
-Use the `ralph-loop` plugin to implement tasks from design doc $1 and progress tracker $2.
+Help me write a `ralph-loop` to implement tasks from design doc $1 and progress tracker $2.
 
 ## Workflow per iteration
 
@@ -36,4 +36,3 @@ Use the `ralph-loop` plugin to implement tasks from design doc $1 and progress t
 - Follow commit conventions from CLAUDE.md: `<type>(<scope>): <subject>`
 
 **Important:** Do NOT fix the problem directly. Instead, invoke the ralph-loop skill (`/ralph-loop`) and let it drive the fix-review cycle.
-

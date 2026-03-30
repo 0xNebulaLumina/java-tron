@@ -1,4 +1,4 @@
-Help me write a `ralph-loop` the problem below.
+Help me write a `ralph-loop` to fix the problem below.
 
 ## Problem
 
