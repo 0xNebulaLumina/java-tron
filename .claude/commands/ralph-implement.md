@@ -1,4 +1,4 @@
-Help me write a `ralph-loop` to implement tasks from design doc $1 and progress tracker $2.
+Help me write a `ralph-loop:ralph-loop` to implement tasks from design doc $1 and progress tracker $2.
 
 ## Workflow per iteration
 
