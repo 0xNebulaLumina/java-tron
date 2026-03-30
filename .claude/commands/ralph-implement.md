@@ -1,14 +1,38 @@
-使用 Ralph Loop 根据设计文档 $1 和进度文档 $2 进行实现。
+Help me write a `ralph-loop` to implement tasks from design doc $1 and progress tracker $2.
 
-## 工作流程
+## Workflow per iteration
 
-1. **阅读规划与进度**：读取 $1（设计规划）和 $2（TODO/进度追踪），理解需求与当前进度。
+### Step 1: Read planning & progress
+- Read $1 (design planning) and $2 (TODO/progress tracker)
+- Identify the FIRST unchecked `- [ ]` task in $2 — that is your target for this iteration
+- If ALL tasks are checked `- [x]`, proceed to Step 4 (final validation)
 
-2. **逐步实现**：按 $2 中的任务逐项实现，每完成一项立即更新 $2 中对应的进度状态。
+### Step 2: Implement the target task
+- Implement ONLY the single target task identified in Step 1
+- Follow the design guidance in $1 for how to implement it
+- After implementation, run `cargo check` (for Rust changes) or the relevant build command to verify compilation
+- If the task involves tests, run the specific test(s) to verify they pass
+- On success: mark the task as `- [x]` in $2 and commit both code changes and $2 update
+- On failure: fix the issue within this iteration; do NOT move on to the next task until the current one compiles and passes
 
-3. **代码审查**：使用 `/codex-review-code` 对实现的代码进行 review，确保没有引入 bug。
+### Step 3: Exit iteration
+- After completing and committing one task, output: `Done with this iteration.`
+- The Ralph Loop will restart you at Step 1 with the next unchecked task
 
-4. **完整性校验**：使用 `/codex-ask` 对 $2 进行三项交叉验证：
-   - **无多标**：$2 中标记为完成的任务确实已实现
-   - **无漏标**：已实现的内容均已在 $2 中标记
-   - **无遗漏**：$2 中应完成的任务均已执行，不存在未完成就停止的情况
+### Step 4: Final validation (when all tasks are checked)
+- Run `/codex-review-code` on all uncommitted or recently committed changes
+- Run `/codex-ask` to cross-validate $2:
+  - **No over-marking**: every `- [x]` task in $2 is actually implemented
+  - **No under-marking**: every implemented change has its corresponding task marked in $2
+  - **No skips**: no unchecked tasks remain that should have been done
+- If validation passes, output: `<promise>IMPLEMENTATION COMPLETE</promise>`
+- If validation finds issues, fix them and re-validate
+
+## Rules
+- ONE task per iteration — do not batch multiple tasks
+- ALWAYS update $2 after completing a task — this is how the next iteration knows where to resume
+- ALWAYS commit after each task so progress is durable across iterations
+- If a task is blocked by a prior task that isn't done, do the blocker first
+- Follow commit conventions from CLAUDE.md: `<type>(<scope>): <subject>`
+
+**Important:** Do NOT fix the problem directly. Instead, invoke the ralph-loop skill (`/ralph-loop`) and let it drive the fix-review cycle.
