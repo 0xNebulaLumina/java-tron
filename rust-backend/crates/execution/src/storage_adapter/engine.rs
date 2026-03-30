@@ -1177,20 +1177,14 @@ impl EngineBackedEvmStateStore {
     }
 
     fn get_dynamic_property_i64_strict(&self, key: &[u8], key_label: &str) -> Result<i64> {
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => Ok(Self::decode_i64_java(&data)),
             None => Err(anyhow::anyhow!("not found {}", key_label)),
         }
     }
 
     fn get_dynamic_property_u64_strict(&self, key: &[u8], key_label: &str) -> Result<u64> {
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => Ok(Self::decode_u64_java(&data)),
             None => Err(anyhow::anyhow!("not found {}", key_label)),
         }
@@ -1221,10 +1215,7 @@ impl EngineBackedEvmStateStore {
     /// `ByteArray.toLong(empty) → 0` then `== 1` → false.
     pub fn support_black_hole_optimization_strict(&self) -> Result<bool> {
         let key = b"ALLOW_BLACKHOLE_OPTIMIZATION";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => Ok(Self::decode_i64_java(&data) == 1),
             None => Err(anyhow::anyhow!("not found ALLOW_BLACKHOLE_OPTIMIZATION")),
         }
@@ -6422,10 +6413,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found ASSET_ISSUE_FEE"
     pub fn get_asset_issue_fee_strict(&self) -> Result<u64> {
         let key = b"ASSET_ISSUE_FEE";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     let fee = u64::from_be_bytes([
@@ -6444,10 +6432,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found ALLOW_SAME_TOKEN_NAME"
     pub fn get_allow_same_token_name_strict(&self) -> Result<i64> {
         let key = b" ALLOW_SAME_TOKEN_NAME";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
@@ -6585,10 +6570,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found TOKEN_ID_NUM"
     pub fn get_token_id_num_strict(&self) -> Result<i64> {
         let key = b"TOKEN_ID_NUM";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
@@ -6606,10 +6588,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found ONE_DAY_NET_LIMIT"
     pub fn get_one_day_net_limit_strict(&self) -> Result<i64> {
         let key = b"ONE_DAY_NET_LIMIT";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
@@ -6628,10 +6607,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found MAX_FROZEN_SUPPLY_NUMBER"
     pub fn get_max_frozen_supply_number_strict(&self) -> Result<i64> {
         let key = b"MAX_FROZEN_SUPPLY_NUMBER";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
@@ -6653,10 +6629,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found MAX_FROZEN_SUPPLY_TIME"
     pub fn get_max_frozen_supply_time_strict(&self) -> Result<i64> {
         let key = b"MAX_FROZEN_SUPPLY_TIME";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
@@ -6678,10 +6651,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found MIN_FROZEN_SUPPLY_TIME"
     pub fn get_min_frozen_supply_time_strict(&self) -> Result<i64> {
         let key = b"MIN_FROZEN_SUPPLY_TIME";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
