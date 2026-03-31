@@ -983,15 +983,17 @@ impl EngineBackedEvmStateStore {
     /// Fee charged when creating a new account via system contract (AccountCreateContract)
     /// Java reference: DynamicPropertiesStore.java getCreateNewAccountFeeInSystemContract()
     /// Default value: 1_000_000 SUN (1 TRX)
-    pub fn get_create_new_account_fee_in_system_contract(&self) -> Result<u64> {
+    pub fn get_create_new_account_fee_in_system_contract(&self) -> Result<i64> {
         let key = b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                // Java parity: no negative rejection (Java's toLong returns signed)
-                let fee = Self::decode_i64_java(&data) as u64;
+                // Java parity: returns signed i64, matching Java's long return type.
+                // Java's DynamicPropertiesStore.getCreateNewAccountFeeInSystemContract()
+                // returns long (signed) and callers use signed arithmetic throughout.
+                let fee = Self::decode_i64_java(&data);
                 tracing::debug!(
                     "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT from DB: {} SUN (len={})",
                     fee,
@@ -1037,15 +1039,17 @@ impl EngineBackedEvmStateStore {
     /// Fee charged as fallback when bandwidth is insufficient for account creation.
     /// Java reference: DynamicPropertiesStore.getCreateAccountFee()
     /// Default value: 100_000 SUN (0.1 TRX)
-    pub fn get_create_account_fee(&self) -> Result<u64> {
+    pub fn get_create_account_fee(&self) -> Result<i64> {
         let key = b"CREATE_ACCOUNT_FEE";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                // Java parity: no negative rejection (Java's toLong returns signed)
-                let fee = Self::decode_i64_java(&data) as u64;
+                // Java parity: returns signed i64, matching Java's long return type.
+                // Java's DynamicPropertiesStore.getCreateAccountFee() returns long (signed)
+                // and callers use signed arithmetic throughout.
+                let fee = Self::decode_i64_java(&data);
                 tracing::debug!(
                     "CREATE_ACCOUNT_FEE from DB: {} SUN (len={})",
                     fee,
@@ -1074,14 +1078,12 @@ impl EngineBackedEvmStateStore {
 
     /// Add to TOTAL_CREATE_ACCOUNT_COST dynamic property (java: addTotalCreateAccountCost()).
     /// Called when bandwidth is insufficient and fee fallback is used for account creation.
-    pub fn add_total_create_account_cost(&self, fee: u64) -> Result<()> {
+    pub fn add_total_create_account_cost(&self, fee: i64) -> Result<()> {
         if fee == 0 {
             return Ok(());
         }
 
-        let delta: i64 = fee
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("fee exceeds i64::MAX"))?;
+        let delta: i64 = fee;
         let current = self.get_total_create_account_cost()?;
         let new_value = current
             .checked_add(delta)
@@ -1166,8 +1168,8 @@ impl EngineBackedEvmStateStore {
 
     /// Strict variant of `get_create_new_account_fee_in_system_contract()`.
     /// Returns error when the key is absent (Java throws IllegalArgumentException).
-    pub fn get_create_new_account_fee_in_system_contract_strict(&self) -> Result<u64> {
-        self.get_dynamic_property_u64_strict(
+    pub fn get_create_new_account_fee_in_system_contract_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(
             b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
             "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
         )
@@ -1212,8 +1214,8 @@ impl EngineBackedEvmStateStore {
 
     /// Strict variant of `get_create_account_fee()`.
     /// Returns error when the key is absent.
-    pub fn get_create_account_fee_strict(&self) -> Result<u64> {
-        self.get_dynamic_property_u64_strict(b"CREATE_ACCOUNT_FEE", "CREATE_ACCOUNT_FEE")
+    pub fn get_create_account_fee_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(b"CREATE_ACCOUNT_FEE", "CREATE_ACCOUNT_FEE")
     }
 
     /// Strict variant of `get_total_create_account_cost()`.
@@ -1394,14 +1396,13 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Burn TRX by incrementing BURN_TRX_AMOUNT (java: burnTrx()).
-    pub fn burn_trx(&self, amount: u64) -> Result<()> {
-        if amount == 0 {
+    /// Java parity: `if (amount <= 0) return;` — negative amounts are no-ops.
+    pub fn burn_trx(&self, amount: i64) -> Result<()> {
+        if amount <= 0 {
             return Ok(());
         }
 
-        let delta: i64 = amount
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("burn amount exceeds i64::MAX"))?;
+        let delta: i64 = amount;
         let current = self.get_burn_trx_amount()?;
         let new_value = current
             .checked_add(delta)

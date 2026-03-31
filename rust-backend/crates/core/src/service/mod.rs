@@ -1186,7 +1186,7 @@ impl BackendService {
 
         // Validate sender has enough balance for amount + fees (java: addExact(amount, fee)).
         // fee = create_account_fee (TRANSFER_FEE is always 0 in Java's TransferActuator).
-        let fee_i64 = i64::try_from(create_account_fee).map_err(|_| "long overflow".to_string())?;
+        let fee_i64 = create_account_fee;
         let total_cost_i64 = amount_i64
             .checked_add(fee_i64)
             .ok_or_else(|| "long overflow".to_string())?;
@@ -1431,6 +1431,8 @@ impl BackendService {
         }
 
         // Handle create-account-fee (burn or credit blackhole based on dynamic properties)
+        // Java parity: fee is signed i64. Java's adjustBalance(blackhole, fee)
+        // uses signed arithmetic; burnTrx also takes signed long.
         if create_account_fee > 0 {
             let support_blackhole = storage_adapter
                 .support_black_hole_optimization()
@@ -1452,13 +1454,13 @@ impl BackendService {
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
-                let fee_u256 = revm_primitives::U256::from(create_account_fee);
-                let new_blackhole_balance = blackhole_account
-                    .balance
-                    .checked_add(fee_u256)
-                    .ok_or("Blackhole balance overflow")?;
+                let blackhole_balance_i64 = blackhole_account.balance.as_limbs()[0] as i64;
+                let new_blackhole_balance = blackhole_balance_i64
+                    .checked_add(create_account_fee)
+                    .ok_or("long overflow")?;
+                debug_assert!(new_blackhole_balance >= 0, "blackhole balance must be non-negative");
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: new_blackhole_balance,
+                    balance: revm_primitives::U256::from(new_blackhole_balance as u64),
                     nonce: blackhole_account.nonce,
                     code_hash: blackhole_account.code_hash,
                     code: blackhole_account.code.clone(),
@@ -1745,7 +1747,7 @@ impl BackendService {
                 account_upgrade_cost
             );
             storage_adapter
-                .burn_trx(account_upgrade_cost)
+                .burn_trx(account_upgrade_cost as i64)
                 .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             fee_destination = String::from("burn");
         } else {
@@ -2861,12 +2863,16 @@ impl BackendService {
 
         info!("AccountCreate fee: {} SUN", fee);
 
-        // 5. Validate sufficient balance
-        let fee_u256 = revm_primitives::U256::from(fee);
-        if owner_account.balance < fee_u256 {
+        // 5. Validate sufficient balance (Java parity: signed i64 comparison)
+        // Java's CreateAccountActuator.validate():
+        //   long fee = calcFee();  // signed long
+        //   if (accountCapsule.getBalance() < fee) throw ...
+        // Both balance and fee are signed longs in Java.
+        let owner_balance_i64 = owner_account.balance.as_limbs()[0] as i64;
+        if owner_balance_i64 < fee {
             warn!(
                 "Validate CreateAccountActuator error, insufficient fee. need={}, have={}",
-                fee, owner_account.balance
+                fee, owner_balance_i64
             );
             return Err("Validate CreateAccountActuator error, insufficient fee.".to_string());
         }
@@ -2876,10 +2882,28 @@ impl BackendService {
         // 7. Prepare state changes
         let mut state_changes = Vec::new();
 
-        // 8. Update owner account - deduct fee (only if fee > 0)
-        if fee > 0 {
+        // 8. Update owner account - deduct fee
+        // Java parity: CreateAccountActuator.execute() calls adjustBalance(owner, -fee)
+        // which uses Math.addExact(balance, -fee).  When fee != 0, Java always adjusts.
+        if fee != 0 {
+            if fee < 0 {
+                warn!("AccountCreate: negative fee {} SUN — unusual, adding to owner balance", fee);
+            }
+            // Java: adjustBalance(owner, -fee)  →  newBalance = balance + (-fee)
+            // Using signed arithmetic to match Java's addExact semantics.
+            let new_balance_i64 = owner_balance_i64
+                .checked_sub(fee)
+                .ok_or_else(|| "long overflow".to_string())?;
+            // Java: balance must not go negative (adjustBalance checks amount < 0 && balance < -amount)
+            // This is implicitly guaranteed by the validate check above when fee > 0.
+            // When fee < 0, -fee is positive so adjustBalance adds to balance (no underflow check).
+            debug_assert!(
+                new_balance_i64 >= 0,
+                "new_balance_i64 must be non-negative after fee deduction, got {}",
+                new_balance_i64
+            );
             let new_owner_account = revm_primitives::AccountInfo {
-                balance: owner_account.balance - fee_u256,
+                balance: revm_primitives::U256::from(new_balance_i64 as u64),
                 nonce: owner_account.nonce,
                 code_hash: owner_account.code_hash,
                 code: owner_account.code.clone(),
@@ -2997,7 +3021,8 @@ impl BackendService {
             fee_destination = String::from("none(fee=0)");
         } else {
             if support_blackhole {
-                // Burn mode - no additional account change needed
+                // Burn mode: Java calls dynamicStore.burnTrx(fee) with signed long.
+                // Java's burnTrx adds fee to BURN_TRX_AMOUNT (signed addition).
                 info!("Burning {} SUN (blackhole optimization)", fee);
                 storage_adapter
                     .burn_trx(fee)
@@ -3005,6 +3030,8 @@ impl BackendService {
                 fee_destination = String::from("burn");
             } else {
                 // Credit blackhole account
+                // Java: adjustBalance(blackhole, fee) — signed addition to blackhole balance.
+                // If fee is negative, this subtracts from blackhole (may throw BalanceInsufficient).
                 if let Some(blackhole_addr) = storage_adapter
                     .get_blackhole_address()
                     .map_err(|e| format!("Failed to get blackhole address: {}", e))?
@@ -3014,8 +3041,28 @@ impl BackendService {
                         .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                         .unwrap_or_default();
 
+                    // Java parity: adjustBalance(blackhole, fee) uses signed arithmetic.
+                    // adjustBalance checks: if (amount < 0 && balance < -amount) throw
+                    let blackhole_balance_i64 = blackhole_account.balance.as_limbs()[0] as i64;
+                    if fee < 0 {
+                        let neg_fee = fee.checked_neg().ok_or_else(|| "long overflow".to_string())?;
+                        if blackhole_balance_i64 < neg_fee {
+                            return Err(format!(
+                                "insufficient balance, balance: {}, amount: {}",
+                                blackhole_balance_i64, neg_fee
+                            ));
+                        }
+                    }
+                    let new_blackhole_balance = blackhole_balance_i64
+                        .checked_add(fee)
+                        .ok_or_else(|| "long overflow".to_string())?;
+                    debug_assert!(
+                        new_blackhole_balance >= 0,
+                        "blackhole balance must be non-negative, got {}",
+                        new_blackhole_balance
+                    );
                     let new_blackhole_account = revm_primitives::AccountInfo {
-                        balance: blackhole_account.balance + fee_u256,
+                        balance: revm_primitives::U256::from(new_blackhole_balance as u64),
                         nonce: blackhole_account.nonce,
                         code_hash: blackhole_account.code_hash,
                         code: blackhole_account.code.clone(),
@@ -3068,7 +3115,7 @@ impl BackendService {
         let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
         let mut aext_map = std::collections::HashMap::new();
         let mut bandwidth_path_used = "none";
-        let mut create_account_fee_charged: u64 = 0;
+        let mut create_account_fee_charged: i64 = 0;
 
         if aext_mode == "tracked" {
             use tron_backend_execution::{AccountAext, BandwidthPath, ResourceTracker};
@@ -3142,11 +3189,11 @@ impl BackendService {
 
                 // Validate owner has sufficient balance for CREATE_ACCOUNT_FEE
                 // This matches Java BandwidthProcessor.payFee() which checks balance before deduction
-                // Get current owner balance (after actuator fee deduction if any)
+                // Get current owner balance as signed i64 (after actuator fee deduction if any)
                 let current_owner_balance = storage_adapter
                     .get_account(&owner)
                     .map_err(|e| format!("Failed to reload owner account: {}", e))?
-                    .map(|acc| acc.balance.as_limbs()[0]) // Get u64 balance
+                    .map(|acc| acc.balance.as_limbs()[0] as i64)
                     .unwrap_or(0);
 
                 if current_owner_balance < create_account_fee_charged {
@@ -4407,7 +4454,7 @@ impl BackendService {
             if support_blackhole_optimization {
                 // Burn mode: increment BURN_TRX_AMOUNT (matches Java's burnTrx())
                 storage_adapter
-                    .burn_trx(fee as u64)
+                    .burn_trx(fee)
                     .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             } else {
                 // Credit blackhole account (use get_blackhole_address for consistency)
@@ -4736,7 +4783,7 @@ impl BackendService {
             0
         };
 
-        if create_account_fee > 0 && owner_account_proto.balance < create_account_fee as i64 {
+        if create_account_fee > 0 && owner_account_proto.balance < create_account_fee {
             return Err("Validate TransferAssetActuator error, insufficient fee.".to_string());
         }
 
@@ -4837,7 +4884,7 @@ impl BackendService {
         if create_account_fee > 0 {
             owner_account_proto.balance = owner_account_proto
                 .balance
-                .checked_sub(create_account_fee as i64)
+                .checked_sub(create_account_fee)
                 .ok_or("Validate TransferAssetActuator error, insufficient fee.".to_string())?;
         }
 
@@ -4858,12 +4905,14 @@ impl BackendService {
         if create_account_fee > 0 {
             // Also deduct create-account fee from owner EVM AccountInfo balance
             // so state_changes reflect the real delta.
-            let fee_u256 = revm_primitives::U256::from(create_account_fee);
+            // Java parity: signed i64 arithmetic for fee deduction.
+            let old_owner_balance_i64 = old_owner_account.balance.as_limbs()[0] as i64;
+            let new_owner_balance_i64 = old_owner_balance_i64
+                .checked_sub(create_account_fee)
+                .ok_or("Owner balance underflow for create-account fee".to_string())?;
+            debug_assert!(new_owner_balance_i64 >= 0, "owner balance must be non-negative after fee deduction");
             let new_owner_evm = revm_primitives::AccountInfo {
-                balance: old_owner_account
-                    .balance
-                    .checked_sub(fee_u256)
-                    .ok_or("Owner balance underflow for create-account fee".to_string())?,
+                balance: revm_primitives::U256::from(new_owner_balance_i64 as u64),
                 nonce: old_owner_account.nonce,
                 code_hash: old_owner_account.code_hash,
                 code: old_owner_account.code.clone(),
@@ -4888,12 +4937,13 @@ impl BackendService {
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
-                let new_blackhole_balance = old_blackhole_account
-                    .balance
-                    .checked_add(fee_u256)
-                    .ok_or("Blackhole balance overflow")?;
+                let old_bh_balance_i64 = old_blackhole_account.balance.as_limbs()[0] as i64;
+                let new_blackhole_balance = old_bh_balance_i64
+                    .checked_add(create_account_fee)
+                    .ok_or("long overflow")?;
+                debug_assert!(new_blackhole_balance >= 0, "blackhole balance must be non-negative");
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: new_blackhole_balance,
+                    balance: revm_primitives::U256::from(new_blackhole_balance as u64),
                     nonce: old_blackhole_account.nonce,
                     code_hash: old_blackhole_account.code_hash,
                     code: old_blackhole_account.code.clone(),
@@ -5387,7 +5437,7 @@ impl BackendService {
 
         if support_blackhole {
             storage_adapter
-                .burn_trx(asset_issue_fee)
+                .burn_trx(asset_issue_fee as i64)
                 .map_err(|e| format!("Failed to burn trx: {}", e))?;
         } else {
             // Credit blackhole account
@@ -10014,7 +10064,7 @@ impl BackendService {
         if support_black_hole {
             // Burn the fee by incrementing BURN_TRX_AMOUNT
             storage_adapter
-                .burn_trx(exchange_create_fee as u64)
+                .burn_trx(exchange_create_fee)
                 .map_err(|e| format!("Failed to burn fee: {}", e))?;
         } else {
             // Credit blackhole account
@@ -11340,7 +11390,7 @@ impl BackendService {
         let state_changes = if fee > 0 {
             if support_blackhole {
                 storage_adapter
-                    .burn_trx(fee as u64)
+                    .burn_trx(fee)
                     .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             } else {
                 let blackhole = storage_adapter.get_blackhole_address_evm();
@@ -11736,7 +11786,7 @@ impl BackendService {
         if fee > 0 {
             if support_blackhole {
                 storage_adapter
-                    .burn_trx(fee as u64)
+                    .burn_trx(fee)
                     .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             } else {
                 let blackhole = storage_adapter.get_blackhole_address_evm();

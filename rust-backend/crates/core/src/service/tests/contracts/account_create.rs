@@ -1336,36 +1336,38 @@ fn test_long_value_i64_signed_last_8_bytes() {
     );
 }
 
-// --- Negative-value rejection tests ---
-// Java parity: fee getters decode via i64 and cast to u64 without rejecting
-// negative values.  Java's ByteArray.toLong returns signed long and the
-// DynamicPropertiesStore getters pass the value through unchanged.
+// --- Negative-value tests ---
+// Java parity: fee getters decode as signed i64, matching Java's long return type.
+// Java's ByteArray.toLong returns signed long and the DynamicPropertiesStore
+// getters pass the value through unchanged.
 
 #[test]
 fn test_negative_fee_create_new_account_fee_accepted() {
-    // 0x80..00 → i64::MIN → cast to u64 = 9223372036854775808
+    // 0x80..00 → i64::MIN = -9223372036854775808
+    // Java parity: returns signed i64, matching Java's long return type.
     let value: &[u8] = &[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
     let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", value);
     let result = sa.get_create_new_account_fee_in_system_contract();
-    assert_eq!(result.unwrap(), i64::MIN as u64);
+    assert_eq!(result.unwrap(), i64::MIN);
 }
 
 #[test]
 fn test_negative_fee_create_account_fee_accepted() {
-    // All-ones → i64 = -1 → cast to u64 = u64::MAX
+    // All-ones → i64 = -1
+    // Java parity: returns signed i64, matching Java's long return type.
     let value: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
     let sa = make_adapter_with_prop(b"CREATE_ACCOUNT_FEE", value);
     let result = sa.get_create_account_fee();
-    assert_eq!(result.unwrap(), u64::MAX);
+    assert_eq!(result.unwrap(), -1i64);
 }
 
 #[test]
 fn test_negative_fee_strict_mode_accepted() {
-    // Strict getter also accepts negative i64 values (Java parity)
+    // Strict getter also returns signed i64 (Java parity)
     let value: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
     let sa = make_adapter_with_prop(b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", value);
     let result = sa.get_create_new_account_fee_in_system_contract_strict();
-    assert_eq!(result.unwrap(), u64::MAX);
+    assert_eq!(result.unwrap(), -1i64);
 }
 
 #[test]
