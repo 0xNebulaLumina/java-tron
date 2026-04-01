@@ -34,6 +34,29 @@ use grpc::address::{
 const MAX_VOTE_NUMBER: usize = 30;
 const TRX_PRECISION: u64 = 1_000_000; // 1 TRX = 1,000,000 SUN
 
+/// Safely convert a U256 balance to i64, matching Java's signed-long semantics.
+/// Returns Err("long overflow") if the value has upper limbs set or exceeds i64::MAX.
+fn u256_to_i64(val: revm_primitives::U256) -> Result<i64, String> {
+    let limbs = val.as_limbs();
+    if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
+        return Err("long overflow".to_string());
+    }
+    let low = limbs[0];
+    if low > i64::MAX as u64 {
+        return Err("long overflow".to_string());
+    }
+    Ok(low as i64)
+}
+
+/// Safely convert a non-negative i64 to U256.
+/// Returns Err("long overflow") if the value is negative.
+fn i64_to_u256(val: i64) -> Result<revm_primitives::U256, String> {
+    if val < 0 {
+        return Err("long overflow".to_string());
+    }
+    Ok(revm_primitives::U256::from(val as u64))
+}
+
 pub struct BackendService {
     module_manager: ModuleManager,
     start_time: SystemTime,
@@ -1057,13 +1080,7 @@ impl BackendService {
 
         // TransferContract amount is a signed long; fixtures encode it into the low 8 bytes of
         // `value` (big-endian) and conformance conversion preserves the raw bits in U256.
-        let amount_i64 = {
-            let limbs = transaction.value.as_limbs();
-            if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
-                return Err("long overflow".to_string());
-            }
-            limbs[0] as i64
-        };
+        let amount_i64 = u256_to_i64(transaction.value)?;
 
         // Validation parity with java-tron TransferActuator.validate()
         // Java checks: DecodeUtil.addressValid(ownerAddress) then DecodeUtil.addressValid(toAddress)
@@ -1191,20 +1208,25 @@ impl BackendService {
             .checked_add(fee_i64)
             .ok_or_else(|| "long overflow".to_string())?;
 
-        let sender_balance_i64 = sender_account.balance.as_limbs()[0] as i64;
+        let sender_balance_i64 = u256_to_i64(sender_account.balance)?;
         if sender_balance_i64 < total_cost_i64 {
             return Err("Validate TransferContract error, balance is not sufficient.".to_string());
         }
 
         // Recipient balance overflow check (java: addExact(toBalance, amount) when toAccount != null).
         if recipient_opt.is_some() {
-            let recipient_balance_i64 = recipient_account.balance.as_limbs()[0] as i64;
+            let recipient_balance_i64 = u256_to_i64(recipient_account.balance)?;
             recipient_balance_i64
                 .checked_add(amount_i64)
                 .ok_or_else(|| "long overflow".to_string())?;
         }
 
-        let total_cost = revm_primitives::U256::from(total_cost_i64 as u64);
+        // Compute new sender balance in i64 space (avoids negative-to-U256 wrapping).
+        // sender_balance_i64 >= total_cost_i64 is guaranteed by the check above.
+        let new_sender_balance_i64 = sender_balance_i64
+            .checked_sub(total_cost_i64)
+            .ok_or_else(|| "long overflow".to_string())?;
+        let new_sender_balance_u256 = i64_to_u256(new_sender_balance_i64)?;
 
         // Track AEXT for bandwidth if in tracked mode (after validation to ensure validate_fail has 0 writes)
         let mut aext_map = std::collections::HashMap::new();
@@ -1324,9 +1346,8 @@ impl BackendService {
         }
 
         // Update sender account: balance -= (value + fee)
-        let new_sender_balance = sender_account.balance - total_cost;
         let new_sender_account = revm_primitives::AccountInfo {
-            balance: new_sender_balance,
+            balance: new_sender_balance_u256,
             nonce: sender_account.nonce, // Phase 3 Fix: Do NOT increment nonce for non-VM TRX transfers
             code_hash: sender_account.code_hash,
             code: sender_account.code.clone(),
@@ -1383,7 +1404,7 @@ impl BackendService {
 
             let mut recipient_proto = ProtoAccount {
                 address: recipient_address_bytes.clone(),
-                balance: new_recipient_account.balance.as_limbs()[0] as i64,
+                balance: u256_to_i64(new_recipient_account.balance)?,
                 create_time,
                 ..Default::default()
             };
@@ -1454,13 +1475,12 @@ impl BackendService {
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
-                let blackhole_balance_i64 = blackhole_account.balance.as_limbs()[0] as i64;
+                let blackhole_balance_i64 = u256_to_i64(blackhole_account.balance)?;
                 let new_blackhole_balance = blackhole_balance_i64
                     .checked_add(create_account_fee)
                     .ok_or("long overflow")?;
-                debug_assert!(new_blackhole_balance >= 0, "blackhole balance must be non-negative");
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: revm_primitives::U256::from(new_blackhole_balance as u64),
+                    balance: i64_to_u256(new_blackhole_balance)?,
                     nonce: blackhole_account.nonce,
                     code_hash: blackhole_account.code_hash,
                     code: blackhole_account.code.clone(),
@@ -2868,7 +2888,7 @@ impl BackendService {
         //   long fee = calcFee();  // signed long
         //   if (accountCapsule.getBalance() < fee) throw ...
         // Both balance and fee are signed longs in Java.
-        let owner_balance_i64 = owner_account.balance.as_limbs()[0] as i64;
+        let owner_balance_i64 = u256_to_i64(owner_account.balance)?;
         if owner_balance_i64 < fee {
             warn!(
                 "Validate CreateAccountActuator error, insufficient fee. need={}, have={}",
@@ -2878,6 +2898,25 @@ impl BackendService {
         }
 
         info!("AccountCreate: fee={} SUN", fee);
+
+        // 6. Read blackhole flag BEFORE any writes so strict-mode errors don't
+        //    leave partial state mutations.
+        // Java's CreateAccountActuator.execute() reads
+        // supportBlackHoleOptimization() unconditionally (even when fee=0).
+        // If ALLOW_BLACKHOLE_OPTIMIZATION is missing, Java throws
+        // IllegalArgumentException.  Both strict and non-strict modes read
+        // the flag unconditionally to match Java's control-flow semantics.
+        // The difference: strict errors on missing key; non-strict defaults
+        // to false (matching early-chain behavior when key is absent).
+        let support_blackhole = if strict {
+            storage_adapter
+                .support_black_hole_optimization_strict()
+                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
+        } else {
+            storage_adapter
+                .support_black_hole_optimization()
+                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
+        };
 
         // 7. Prepare state changes
         let mut state_changes = Vec::new();
@@ -2897,13 +2936,8 @@ impl BackendService {
             // Java: balance must not go negative (adjustBalance checks amount < 0 && balance < -amount)
             // This is implicitly guaranteed by the validate check above when fee > 0.
             // When fee < 0, -fee is positive so adjustBalance adds to balance (no underflow check).
-            debug_assert!(
-                new_balance_i64 >= 0,
-                "new_balance_i64 must be non-negative after fee deduction, got {}",
-                new_balance_i64
-            );
             let new_owner_account = revm_primitives::AccountInfo {
-                balance: revm_primitives::U256::from(new_balance_i64 as u64),
+                balance: i64_to_u256(new_balance_i64)?,
                 nonce: owner_account.nonce,
                 code_hash: owner_account.code_hash,
                 code: owner_account.code.clone(),
@@ -2997,24 +3031,7 @@ impl BackendService {
             .put_account_proto(&target_address, &target_proto)
             .map_err(|e| format!("Failed to persist new account proto: {}", e))?;
 
-        // 10. Handle fee burning/crediting
-        // Java's CreateAccountActuator.execute() reads
-        // supportBlackHoleOptimization() unconditionally (even when fee=0).
-        // If ALLOW_BLACKHOLE_OPTIMIZATION is missing, Java throws
-        // IllegalArgumentException.  Both strict and non-strict modes read
-        // the flag unconditionally to match Java's control-flow semantics.
-        // The difference: strict errors on missing key; non-strict defaults
-        // to false (matching early-chain behavior when key is absent).
-        let support_blackhole = if strict {
-            storage_adapter
-                .support_black_hole_optimization_strict()
-                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
-        } else {
-            storage_adapter
-                .support_black_hole_optimization()
-                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
-        };
-
+        // 10. Handle fee burning/crediting (support_blackhole was read in step 6)
         let fee_destination: String;
         if fee == 0 {
             // No fee to process
@@ -3043,7 +3060,7 @@ impl BackendService {
 
                     // Java parity: adjustBalance(blackhole, fee) uses signed arithmetic.
                     // adjustBalance checks: if (amount < 0 && balance < -amount) throw
-                    let blackhole_balance_i64 = blackhole_account.balance.as_limbs()[0] as i64;
+                    let blackhole_balance_i64 = u256_to_i64(blackhole_account.balance)?;
                     if fee < 0 {
                         let neg_fee = fee.checked_neg().ok_or_else(|| "long overflow".to_string())?;
                         if blackhole_balance_i64 < neg_fee {
@@ -3056,13 +3073,8 @@ impl BackendService {
                     let new_blackhole_balance = blackhole_balance_i64
                         .checked_add(fee)
                         .ok_or_else(|| "long overflow".to_string())?;
-                    debug_assert!(
-                        new_blackhole_balance >= 0,
-                        "blackhole balance must be non-negative, got {}",
-                        new_blackhole_balance
-                    );
                     let new_blackhole_account = revm_primitives::AccountInfo {
-                        balance: revm_primitives::U256::from(new_blackhole_balance as u64),
+                        balance: i64_to_u256(new_blackhole_balance)?,
                         nonce: blackhole_account.nonce,
                         code_hash: blackhole_account.code_hash,
                         code: blackhole_account.code.clone(),
@@ -3193,7 +3205,8 @@ impl BackendService {
                 let current_owner_balance = storage_adapter
                     .get_account(&owner)
                     .map_err(|e| format!("Failed to reload owner account: {}", e))?
-                    .map(|acc| acc.balance.as_limbs()[0] as i64)
+                    .map(|acc| u256_to_i64(acc.balance))
+                    .transpose()?
                     .unwrap_or(0);
 
                 if current_owner_balance < create_account_fee_charged {
@@ -4906,13 +4919,12 @@ impl BackendService {
             // Also deduct create-account fee from owner EVM AccountInfo balance
             // so state_changes reflect the real delta.
             // Java parity: signed i64 arithmetic for fee deduction.
-            let old_owner_balance_i64 = old_owner_account.balance.as_limbs()[0] as i64;
+            let old_owner_balance_i64 = u256_to_i64(old_owner_account.balance)?;
             let new_owner_balance_i64 = old_owner_balance_i64
                 .checked_sub(create_account_fee)
                 .ok_or("Owner balance underflow for create-account fee".to_string())?;
-            debug_assert!(new_owner_balance_i64 >= 0, "owner balance must be non-negative after fee deduction");
             let new_owner_evm = revm_primitives::AccountInfo {
-                balance: revm_primitives::U256::from(new_owner_balance_i64 as u64),
+                balance: i64_to_u256(new_owner_balance_i64)?,
                 nonce: old_owner_account.nonce,
                 code_hash: old_owner_account.code_hash,
                 code: old_owner_account.code.clone(),
@@ -4937,13 +4949,12 @@ impl BackendService {
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
-                let old_bh_balance_i64 = old_blackhole_account.balance.as_limbs()[0] as i64;
+                let old_bh_balance_i64 = u256_to_i64(old_blackhole_account.balance)?;
                 let new_blackhole_balance = old_bh_balance_i64
                     .checked_add(create_account_fee)
                     .ok_or("long overflow")?;
-                debug_assert!(new_blackhole_balance >= 0, "blackhole balance must be non-negative");
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: revm_primitives::U256::from(new_blackhole_balance as u64),
+                    balance: i64_to_u256(new_blackhole_balance)?,
                     nonce: old_blackhole_account.nonce,
                     code_hash: old_blackhole_account.code_hash,
                     code: old_blackhole_account.code.clone(),
