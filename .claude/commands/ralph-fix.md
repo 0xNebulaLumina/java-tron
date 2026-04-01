@@ -23,7 +23,7 @@ $ARGUMENTS
 The ralph-loop skill runs a shell setup script that cannot handle backticks, special characters, or long multi-line arguments passed directly. To work around this:
 
 1. **Write the prompt to a file first:**
-   Write the full problem description (the "Problem" section above plus the "Loop behavior" section) to `.claude/.ralph-loop-prompt.local.md` using the Write tool.
+   Write the full problem description (the "Problem" section above plus the "Loop behavior" section) to `.claude/ralph-loop-prompt.local.md` using the Write tool.
 
 2. **Invoke ralph-loop with a short, shell-safe argument:**
    Call `/ralph-loop:ralph-loop` with a simple argument like: `See .claude/.ralph-loop-prompt.local.md for full task`
