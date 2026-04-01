@@ -2929,9 +2929,11 @@ impl BackendService {
                 warn!("AccountCreate: negative fee {} SUN — unusual, adding to owner balance", fee);
             }
             // Java: adjustBalance(owner, -fee)  →  newBalance = balance + (-fee)
-            // Using signed arithmetic to match Java's addExact semantics.
+            // Java's unary minus uses wrapping negation (important for i64::MIN),
+            // then Math.addExact(balance, -fee) uses checked addition.
+            let neg_fee = fee.wrapping_neg();
             let new_balance_i64 = owner_balance_i64
-                .checked_sub(fee)
+                .checked_add(neg_fee)
                 .ok_or_else(|| "long overflow".to_string())?;
             // Java: balance must not go negative (adjustBalance checks amount < 0 && balance < -amount)
             // This is implicitly guaranteed by the validate check above when fee > 0.
@@ -3060,9 +3062,10 @@ impl BackendService {
 
                     // Java parity: adjustBalance(blackhole, fee) uses signed arithmetic.
                     // adjustBalance checks: if (amount < 0 && balance < -amount) throw
+                    // Java's unary minus uses wrapping negation (for i64::MIN, -MIN wraps to MIN).
                     let blackhole_balance_i64 = u256_to_i64(blackhole_account.balance)?;
                     if fee < 0 {
-                        let neg_fee = fee.checked_neg().ok_or_else(|| "long overflow".to_string())?;
+                        let neg_fee = fee.wrapping_neg();
                         if blackhole_balance_i64 < neg_fee {
                             return Err(format!(
                                 "insufficient balance, balance: {}, amount: {}",

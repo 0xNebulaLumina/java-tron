@@ -649,7 +649,7 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
         .database("account")
         .database("dynamic-properties")
         .ownerAddress(OWNER_ADDRESS)
-        .expectedError("not found LATEST_BLOCK_HEADER_TIMESTAMP")
+        .expectedError("not found latest block header timestamp")
         .strictDynamicProperties(true)
         .build();
 
