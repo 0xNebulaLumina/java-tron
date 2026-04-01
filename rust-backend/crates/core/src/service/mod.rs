@@ -2916,7 +2916,125 @@ impl BackendService {
                 .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
         };
 
-        // 7. Prepare state changes
+        // 7. Prefetch all remaining strict-required dynamic properties BEFORE
+        //    any writes, so that a strict-mode failure cannot leave partial
+        //    state mutations (e.g. owner balance already deducted).
+        let create_time = if strict {
+            storage_adapter
+                .get_latest_block_header_timestamp_strict()
+                .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?
+        } else {
+            storage_adapter
+                .get_latest_block_header_timestamp()
+                .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?
+        };
+
+        let allow_multi_sign = storage_adapter
+            .get_allow_multi_sign()
+            .map_err(|e| format!("Failed to get ALLOW_MULTI_SIGN: {}", e))?;
+
+        // Prefetch tracked-mode properties if applicable (before any writes).
+        // We also resolve the bandwidth path here so that fee-path-only keys
+        // (CREATE_ACCOUNT_FEE, TOTAL_CREATE_ACCOUNT_COST) are only validated
+        // when the fee path is actually needed — avoiding false strict failures
+        // when non-fee bandwidth paths are taken.
+        let execution_config_for_prefetch = self.get_execution_config()?;
+        let aext_mode_prefetch = execution_config_for_prefetch
+            .remote
+            .accountinfo_aext_mode
+            .clone();
+
+        // Holds pre-resolved tracked-mode state: (free_net_limit, bandwidth_rate,
+        // path, before_aext, after_aext, create_account_fee_if_fee_path)
+        struct TrackedPrefetch {
+            free_net_limit: i64,
+            bandwidth_rate: i64,
+            path: tron_backend_execution::BandwidthPath,
+            before_aext: tron_backend_execution::AccountAext,
+            after_aext: tron_backend_execution::AccountAext,
+            create_account_fee: i64, // only meaningful when path == Fee
+        }
+
+        let prefetched_tracked = if aext_mode_prefetch == "tracked" {
+            use tron_backend_execution::{AccountAext, BandwidthPath, ResourceTracker};
+
+            let free_net_limit = if strict {
+                storage_adapter
+                    .get_free_net_limit_strict()
+                    .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?
+            } else {
+                storage_adapter
+                    .get_free_net_limit()
+                    .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?
+            };
+            let bandwidth_rate = if strict {
+                storage_adapter
+                    .get_create_new_account_bandwidth_rate_strict()
+                    .map_err(|e| {
+                        format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e)
+                    })?
+            } else {
+                storage_adapter
+                    .get_create_new_account_bandwidth_rate()
+                    .map_err(|e| {
+                        format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e)
+                    })?
+            };
+
+            // Resolve bandwidth path before any writes.
+            let raw_bw = Self::calculate_bandwidth_usage(transaction);
+            let net_cost = (raw_bw as i64).saturating_mul(bandwidth_rate);
+            let now_slot = (context.block_timestamp / 3000) as i64;
+            let current_aext = storage_adapter
+                .get_account_aext(&owner)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &owner,
+                net_cost,
+                now_slot,
+                &current_aext,
+                free_net_limit,
+            )
+            .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Only validate fee-path keys when the fee path is actually taken.
+            let create_account_fee = if path == BandwidthPath::Fee {
+                let caf = if strict {
+                    storage_adapter
+                        .get_create_account_fee_strict()
+                        .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?
+                } else {
+                    storage_adapter
+                        .get_create_account_fee()
+                        .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?
+                };
+                if strict {
+                    let _ = storage_adapter
+                        .get_total_create_account_cost_strict()
+                        .map_err(|e| {
+                            format!("Failed to get TOTAL_CREATE_ACCOUNT_COST: {}", e)
+                        })?;
+                }
+                caf
+            } else {
+                0 // unused
+            };
+
+            Some(TrackedPrefetch {
+                free_net_limit,
+                bandwidth_rate,
+                path,
+                before_aext,
+                after_aext,
+                create_account_fee,
+            })
+        } else {
+            None
+        };
+
+        // 7b. Prepare state changes
         let mut state_changes = Vec::new();
 
         // 8. Update owner account - deduct fee
@@ -2973,22 +3091,10 @@ impl BackendService {
 
         // Persist new account (include create_time and account_type for fixture parity).
         // Java's AccountCapsule(AccountCreateContract, ...) stores the contract's type field.
+        // create_time and allow_multi_sign were prefetched in step 7.
         use tron_backend_execution::protocol::permission::PermissionType;
         use tron_backend_execution::protocol::{Account as ProtoAccount, Key, Permission};
-        let create_time = if strict {
-            storage_adapter
-                .get_latest_block_header_timestamp_strict()
-                .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?
-        } else {
-            storage_adapter
-                .get_latest_block_header_timestamp()
-                .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?
-        };
         let target_address_bytes = storage_adapter.to_tron_address_21(&target_address).to_vec();
-
-        let allow_multi_sign = storage_adapter
-            .get_allow_multi_sign()
-            .map_err(|e| format!("Failed to get ALLOW_MULTI_SIGN: {}", e))?;
 
         let mut target_proto = ProtoAccount {
             address: target_address_bytes.clone(),
@@ -3119,68 +3225,21 @@ impl BackendService {
         // 12. Calculate raw bandwidth usage (always needed for bandwidth_used field)
         let raw_bandwidth_bytes = Self::calculate_bandwidth_usage(transaction);
 
-        // 13. Track AEXT for bandwidth if in tracked mode
-        // Implements Java BandwidthProcessor create-account path selection:
-        // 1. Try ACCOUNT_NET (if account has frozen bandwidth)
-        // 2. Try FREE_NET (if public bandwidth available)
-        // 3. Fall back to FEE (charge CREATE_ACCOUNT_FEE)
-        let execution_config = self.get_execution_config()?;
-        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
+        // 13. Apply tracked AEXT bandwidth using pre-resolved path from step 7.
         let mut aext_map = std::collections::HashMap::new();
         let mut bandwidth_path_used = "none";
         let mut create_account_fee_charged: i64 = 0;
 
-        if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, BandwidthPath, ResourceTracker};
+        if let Some(tp) = &prefetched_tracked {
+            use tron_backend_execution::BandwidthPath;
 
-            // Get current AEXT for owner (or initialize with defaults)
-            let current_aext = storage_adapter
-                .get_account_aext(&owner)
-                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
-                .unwrap_or_else(|| AccountAext::with_defaults());
-
-            // Get FREE_NET_LIMIT from dynamic properties
-            let free_net_limit = if strict {
-                storage_adapter
-                    .get_free_net_limit_strict()
-                    .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?
-            } else {
-                storage_adapter
-                    .get_free_net_limit()
-                    .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?
-            };
-
-            // Calculate net_cost inside tracked block — bandwidth rate is a tracked-path key
-            let bandwidth_rate = if strict {
-                storage_adapter
-                    .get_create_new_account_bandwidth_rate_strict()
-                    .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?
-            } else {
-                storage_adapter
-                    .get_create_new_account_bandwidth_rate()
-                    .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?
-            };
-            let net_cost = (raw_bandwidth_bytes as i64).saturating_mul(bandwidth_rate);
-
+            let net_cost = (raw_bandwidth_bytes as i64).saturating_mul(tp.bandwidth_rate);
             info!(
                 "AccountCreate bandwidth: raw_bytes={}, rate={}, netCost={}",
-                raw_bandwidth_bytes, bandwidth_rate, net_cost
+                raw_bandwidth_bytes, tp.bandwidth_rate, net_cost
             );
 
-            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
-            let now_slot = (context.block_timestamp / 3000) as i64;
-
-            // Track bandwidth usage with netCost (not raw bytes) - matches Java semantics
-            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
-                &owner,
-                net_cost, // Use netCost (bytes * rate) for create-account
-                now_slot,
-                &current_aext,
-                free_net_limit,
-            )
-            .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
-
-            bandwidth_path_used = match path {
+            bandwidth_path_used = match tp.path {
                 BandwidthPath::AccountNet => "ACCOUNT_NET",
                 BandwidthPath::CreateAccount => "CREATE_ACCOUNT",
                 BandwidthPath::FreeNet => "FREE_NET",
@@ -3189,16 +3248,8 @@ impl BackendService {
 
             // If fee path is used, charge CREATE_ACCOUNT_FEE and update TOTAL_CREATE_ACCOUNT_COST
             // This is separate from CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT
-            if path == BandwidthPath::Fee {
-                create_account_fee_charged = if strict {
-                    storage_adapter
-                        .get_create_account_fee_strict()
-                        .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?
-                } else {
-                    storage_adapter
-                        .get_create_account_fee()
-                        .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?
-                };
+            if tp.path == BandwidthPath::Fee {
+                create_account_fee_charged = tp.create_account_fee;
 
                 // Validate owner has sufficient balance for CREATE_ACCOUNT_FEE
                 // This matches Java BandwidthProcessor.payFee() which checks balance before deduction
@@ -3213,7 +3264,7 @@ impl BackendService {
                 if current_owner_balance < create_account_fee_charged {
                     // Calculate available bandwidth for error message
                     let available_bandwidth =
-                        free_net_limit.saturating_sub(after_aext.free_net_usage);
+                        tp.free_net_limit.saturating_sub(tp.after_aext.free_net_usage);
                     let error_msg = format!(
                         "account [{}] has insufficient bandwidth[{}] and balance[{}] to create new account",
                         owner_tron,
@@ -3230,12 +3281,7 @@ impl BackendService {
                 );
 
                 // Update TOTAL_CREATE_ACCOUNT_COST dynamic property
-                // In strict mode, verify the key exists before updating
-                if strict {
-                    let _ = storage_adapter
-                        .get_total_create_account_cost_strict()
-                        .map_err(|e| format!("Failed to get TOTAL_CREATE_ACCOUNT_COST: {}", e))?;
-                }
+                // (strict-mode key existence was already validated in step 7 prefetch)
                 storage_adapter
                     .add_total_create_account_cost(create_account_fee_charged)
                     .map_err(|e| format!("Failed to update TOTAL_CREATE_ACCOUNT_COST: {}", e))?;
@@ -3247,20 +3293,20 @@ impl BackendService {
 
             // Persist after AEXT to storage
             storage_adapter
-                .set_account_aext(&owner, &after_aext)
+                .set_account_aext(&owner, &tp.after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
             storage_adapter
-                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .apply_bandwidth_aext_to_account_proto(&owner, &tp.after_aext)
                 .map_err(|e| {
                     format!("Failed to persist bandwidth usage to account proto: {}", e)
                 })?;
 
             // Add to aext_map
-            aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
+            aext_map.insert(owner, (tp.before_aext.clone(), tp.after_aext.clone()));
 
             debug!(
                 "AEXT tracked for account_create: owner={:?}, path={}, netCost={}, before_net_usage={}, after_net_usage={}",
-                owner, bandwidth_path_used, net_cost, before_aext.net_usage, after_aext.net_usage
+                owner, bandwidth_path_used, net_cost, tp.before_aext.net_usage, tp.after_aext.net_usage
             );
         }
 

@@ -1002,6 +1002,24 @@ fn seed_all_account_create_props(se: &StorageEngine) {
     se.put("properties", b"TOTAL_CREATE_ACCOUNT_COST", &0i64.to_be_bytes()).unwrap();
 }
 
+/// Assert that a strict-mode failure did not mutate storage:
+/// owner balance unchanged, target account not created.
+fn assert_no_writes(sa: &EngineBackedEvmStateStore) {
+    use tron_backend_execution::EvmStateStore;
+    let owner = Address::from([0x11u8; 20]);
+    let target = Address::from([0x99u8; 20]);
+    let owner_acc = sa.get_account(&owner).unwrap().expect("owner must still exist");
+    assert_eq!(
+        owner_acc.balance,
+        U256::from(10_000_000_000u64),
+        "owner balance must be unchanged after strict failure"
+    );
+    assert!(
+        sa.get_account(&target).unwrap().is_none(),
+        "target account must not exist after strict failure"
+    );
+}
+
 #[test]
 fn test_strict_missing_create_new_account_fee_in_system_contract() {
     let (mut sa, tx, _) = setup_strict_test_env(|se| {
@@ -1018,6 +1036,7 @@ fn test_strict_missing_create_new_account_fee_in_system_contract() {
         err.contains("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT"),
         "Error should mention missing key: got '{}'", err
     );
+    assert_no_writes(&sa);
 }
 
 #[test]
@@ -1036,6 +1055,7 @@ fn test_strict_missing_latest_block_header_timestamp() {
         err.contains("latest block header timestamp"),
         "Error should mention missing key: got '{}'", err
     );
+    assert_no_writes(&sa);
 }
 
 #[test]
@@ -1054,6 +1074,7 @@ fn test_strict_missing_allow_multi_sign() {
         err.contains("ALLOW_MULTI_SIGN"),
         "Error should mention missing key: got '{}'", err
     );
+    assert_no_writes(&sa);
 }
 
 #[test]
@@ -1073,6 +1094,7 @@ fn test_strict_missing_allow_blackhole_optimization() {
         err.contains("ALLOW_BLACKHOLE_OPTIMIZATION"),
         "Error should mention missing key: got '{}'", err
     );
+    assert_no_writes(&sa);
 }
 
 // --- Tracked-bandwidth strict missing-key tests ---
@@ -1095,6 +1117,7 @@ fn test_strict_tracked_missing_free_net_limit() {
         err.contains("FREE_NET_LIMIT"),
         "Error should mention missing key: got '{}'", err
     );
+    assert_no_writes(&sa);
 }
 
 #[test]
@@ -1115,6 +1138,7 @@ fn test_strict_tracked_missing_create_new_account_bandwidth_rate() {
         err.contains("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE"),
         "Error should mention missing key: got '{}'", err
     );
+    assert_no_writes(&sa);
 }
 
 #[test]
@@ -1137,6 +1161,7 @@ fn test_strict_tracked_missing_create_account_fee() {
         err.contains("CREATE_ACCOUNT_FEE"),
         "Error should mention missing key: got '{}'", err
     );
+    assert_no_writes(&sa);
 }
 
 #[test]
@@ -1158,6 +1183,31 @@ fn test_strict_tracked_missing_total_create_account_cost() {
     assert!(
         err.contains("TOTAL_CREATE_ACCOUNT_COST"),
         "Error should mention missing key: got '{}'", err
+    );
+    assert_no_writes(&sa);
+}
+
+// --- Tracked non-fee path: fee-only keys missing should NOT cause strict failure ---
+
+#[test]
+fn test_strict_tracked_non_fee_path_succeeds_without_create_account_fee() {
+    // When FREE_NET_LIMIT is large enough, bandwidth path != Fee, so
+    // CREATE_ACCOUNT_FEE and TOTAL_CREATE_ACCOUNT_COST should not be required.
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        se.put("properties", b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT", &0u64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &1i64.to_be_bytes()).unwrap();
+        se.put("properties", b"latest_block_header_timestamp", &1000i64.to_be_bytes()).unwrap();
+        se.put("properties", b"FREE_NET_LIMIT", &100000i64.to_be_bytes()).unwrap();
+        se.put("properties", b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE", &1i64.to_be_bytes()).unwrap();
+        // Deliberately omit CREATE_ACCOUNT_FEE and TOTAL_CREATE_ACCOUNT_COST
+    });
+    let service = new_test_service_with_account_create_strict_and_aext();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(
+        result.is_ok(),
+        "Non-fee bandwidth path should succeed without fee-only keys, got: {:?}",
+        result.err()
     );
 }
 
@@ -1448,6 +1498,7 @@ fn test_strict_fee_zero_missing_blackhole_key_fails() {
         "Error should reference the missing ALLOW_BLACKHOLE_OPTIMIZATION key, got: {}",
         err
     );
+    assert_no_writes(&sa);
 }
 
 #[test]
