@@ -1,4 +1,4 @@
-Help me write a `ralph-loop:ralph-loop` to fix the problem below.
+Use the ralph-loop plugin to fix the problem below via an iterative fix-review loop.
 
 ## Problem
 
@@ -18,4 +18,15 @@ $ARGUMENTS
    - If all remaining feedback was discarded (no new changes) → done.
 6. **Repeat** until converged (no new changes made in a round).
 
-**Important:** Do NOT fix the problem directly. Instead, invoke the ralph-loop skill (`/ralph-loop`) and let it drive the fix-review cycle.
+## How to invoke ralph-loop
+
+The ralph-loop skill runs a shell setup script that cannot handle backticks, special characters, or long multi-line arguments passed directly. To work around this:
+
+1. **Write the prompt to a file first:**
+   Write the full problem description (the "Problem" section above plus the "Loop behavior" section) to `.claude/.ralph-loop-prompt.local.md` using the Write tool.
+
+2. **Invoke ralph-loop with a short, shell-safe argument:**
+   Call `/ralph-loop:ralph-loop` with a simple argument like: `See .claude/.ralph-loop-prompt.local.md for full task`
+   Do NOT pass the raw $ARGUMENTS text to ralph-loop — it will break if the text contains backticks, quotes, or other shell metacharacters.
+
+**Important:** Do NOT fix the problem directly. Write the prompt file, then invoke `/ralph-loop` and let it drive the fix-review cycle.
