@@ -266,6 +266,31 @@ fn test_transfer_zero_amount_rejected() {
     assert_eq!(result.err().unwrap(), "Amount must be greater than 0.");
 }
 
+#[test]
+fn test_transfer_negative_amount_rejected_not_overflow() {
+    // Regression: u256_to_i64 must reinterpret bits as signed (Java semantics),
+    // so a negative amount should fail with "Amount must be greater than 0."
+    // and NOT "long overflow".
+    let (mut storage_adapter, owner_addr) = setup_storage_with_owner(10_000_000_000);
+    let service = new_test_service_with_system_enabled();
+
+    let to_addr = Address::from([0x22u8; 20]);
+    let owner_raw = make_from_raw(&owner_addr);
+    let to_raw = make_tron_address_21(0x41, [0x22u8; 20]);
+
+    let tx = build_transfer_tx(
+        owner_addr,
+        Some(owner_raw),
+        Some(to_raw),
+        Some(to_addr),
+        -1, // negative amount — low 64 bits = 0xFFFFFFFFFFFFFFFF
+    );
+
+    let result = service.execute_transfer_contract(&mut storage_adapter, &tx, &new_test_context());
+    assert!(result.is_err());
+    assert_eq!(result.err().unwrap(), "Amount must be greater than 0.");
+}
+
 // -----------------------------------------------------------------------------
 // Successful Transfer Tests
 // -----------------------------------------------------------------------------

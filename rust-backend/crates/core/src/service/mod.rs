@@ -34,18 +34,16 @@ use grpc::address::{
 const MAX_VOTE_NUMBER: usize = 30;
 const TRX_PRECISION: u64 = 1_000_000; // 1 TRX = 1,000,000 SUN
 
-/// Safely convert a U256 balance to i64, matching Java's signed-long semantics.
-/// Returns Err("long overflow") if the value has upper limbs set or exceeds i64::MAX.
+/// Convert a U256 to i64, matching Java's signed-long semantics.
+/// The low 64 bits are reinterpreted as a signed two's-complement i64,
+/// exactly like Java's `(long)` cast. Only values that exceed 64 bits
+/// (upper limbs non-zero) are rejected as overflow.
 fn u256_to_i64(val: revm_primitives::U256) -> Result<i64, String> {
     let limbs = val.as_limbs();
     if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
         return Err("long overflow".to_string());
     }
-    let low = limbs[0];
-    if low > i64::MAX as u64 {
-        return Err("long overflow".to_string());
-    }
-    Ok(low as i64)
+    Ok(limbs[0] as i64)
 }
 
 /// Safely convert a non-negative i64 to U256.
