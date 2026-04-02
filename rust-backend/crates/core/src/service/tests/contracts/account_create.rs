@@ -1431,11 +1431,11 @@ fn test_negative_fee_account_upgrade_cost_accepted() {
 
 #[test]
 fn test_negative_fee_asset_issue_fee_accepted() {
-    // All-ones → i64 = -1 → cast to u64 = u64::MAX
+    // All-ones → i64 = -1, matching Java's signed long semantics
     let value: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
     let sa = make_adapter_with_prop(b"ASSET_ISSUE_FEE", value);
     let result = sa.get_asset_issue_fee();
-    assert_eq!(result.unwrap(), u64::MAX);
+    assert_eq!(result.unwrap(), -1i64);
 }
 
 // --- Control tests: non-strict mode still falls back ---

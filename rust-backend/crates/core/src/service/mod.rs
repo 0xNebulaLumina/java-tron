@@ -5461,15 +5461,14 @@ impl BackendService {
             return Err("An account can only issue one asset".to_string());
         }
 
-        // 4. Get asset issue fee from dynamic properties
+        // 4. Get asset issue fee from dynamic properties (signed i64, Java parity)
         let asset_issue_fee = storage_adapter
             .get_asset_issue_fee()
             .map_err(|e| format!("Failed to get AssetIssueFee: {}", e))?;
 
         debug!("AssetIssueFee: {} SUN", asset_issue_fee);
 
-        let fee_i64 =
-            i64::try_from(asset_issue_fee).map_err(|_| "AssetIssueFee overflow".to_string())?;
+        let fee_i64 = asset_issue_fee;
         if owner_account_proto.balance < fee_i64 {
             return Err("No enough balance for fee!".to_string());
         }
@@ -5513,9 +5512,9 @@ impl BackendService {
                 .map_err(|e| format!("Failed to persist AssetIssue (V2): {}", e))?;
         }
 
-        // 7. Deduct fee from owner
+        // 7. Deduct fee from owner (signed i64 → u64 for U256, safe after balance check)
         let owner_balance_u256 = owner_account.balance;
-        let fee_u256 = revm_primitives::U256::from(asset_issue_fee);
+        let fee_u256 = revm_primitives::U256::from(fee_i64 as u64);
         let new_owner_balance = owner_balance_u256 - fee_u256;
         let new_owner_account = revm_primitives::AccountInfo {
             balance: new_owner_balance,
@@ -5578,7 +5577,7 @@ impl BackendService {
 
         if support_blackhole {
             storage_adapter
-                .burn_trx(asset_issue_fee as i64)
+                .burn_trx(asset_issue_fee)
                 .map_err(|e| format!("Failed to burn trx: {}", e))?;
         } else {
             // Credit blackhole account

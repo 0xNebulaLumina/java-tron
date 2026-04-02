@@ -964,14 +964,14 @@ impl EngineBackedEvmStateStore {
     /// Get AssetIssueFee dynamic property
     /// Default value for TRC-10 asset issuance cost in SUN
     /// Java reference: DynamicPropertiesStore.java:1554, 1568
-    /// Java parity: returns signed i64 cast to u64, no negative rejection
-    pub fn get_asset_issue_fee(&self) -> Result<u64> {
+    /// Java parity: returns signed i64, matching Java's long return type
+    pub fn get_asset_issue_fee(&self) -> Result<i64> {
         let key = b"ASSET_ISSUE_FEE";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) => Ok(Self::decode_i64_java(&data) as u64),
+            Some(data) => Ok(Self::decode_i64_java(&data)),
             None => {
                 // Use default value for AssetIssueFee
                 Ok(1024000000) // 1024 TRX in SUN (default from TRON mainnet)
@@ -6373,8 +6373,8 @@ impl EngineBackedEvmStateStore {
 
     /// Get AssetIssueFee with strict mode (errors when missing).
     /// Java: "not found ASSET_ISSUE_FEE"
-    pub fn get_asset_issue_fee_strict(&self) -> Result<u64> {
-        self.get_dynamic_property_u64_strict(b"ASSET_ISSUE_FEE", "ASSET_ISSUE_FEE")
+    pub fn get_asset_issue_fee_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(b"ASSET_ISSUE_FEE", "ASSET_ISSUE_FEE")
     }
 
     /// Get AllowSameTokenName with strict mode (errors when missing).
