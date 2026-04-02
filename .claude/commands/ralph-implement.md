@@ -1,4 +1,4 @@
-Help me write a `ralph-loop:ralph-loop` to implement tasks from design doc $1 and progress tracker $2.
+Use the ralph-loop plugin to implement tasks from design doc $1 and progress tracker $2 via an iterative implement-review loop.
 
 ## Workflow per iteration
 
@@ -44,4 +44,15 @@ Help me write a `ralph-loop:ralph-loop` to implement tasks from design doc $1 an
 - If a task is blocked by a prior task that isn't done, do the blocker first
 - Follow commit conventions from CLAUDE.md: `<type>(<scope>): <subject>`
 
-**Important:** Do NOT fix the problem directly. Instead, invoke the ralph-loop skill (`/ralph-loop`) and let it drive the fix-review cycle.
+## How to invoke ralph-loop
+
+The ralph-loop skill runs a shell setup script that cannot handle backticks, special characters, or long multi-line arguments passed directly. To work around this:
+
+1. **Write the prompt to a file first:**
+   Write the full workflow description (the "Workflow per iteration" and "Rules" sections above, plus the resolved values of $1 and $2) to `.claude/ralph-loop-prompt.local.md` using the Write tool.
+
+2. **Invoke ralph-loop with a short, shell-safe argument:**
+   Run the setup script directly via Bash tool: ·CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}" /root/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh See.claude/ralph-loop-prompt.local.md`
+   Do NOT pass the raw $1 or $2 text to ralph-loop — it will break if the text contains backticks, quotes, or other shell metacharacters.
+
+**Important:** Do NOT implement tasks directly. Write the prompt file, then invoke `/ralph-loop` and let it drive the implement-review cycle.
