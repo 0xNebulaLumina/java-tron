@@ -48,8 +48,8 @@ Determine the mode from the user's request. Each mode uses a different sandbox l
 
 | Mode | Sandbox | Why |
 |------|---------|-----|
-| Question | `-s read-only` | Only needs to read code, no writes needed |
-| Plan | `-s read-only` | Only needs to read code to design a plan |
+| Question | `-s danger-full-access` | May need to run tests, execute build commands |
+| Plan | `-s danger-full-access` | May need to run tests, execute build commands |
 | Debug | `-s danger-full-access` | May need to run tests, try fixes, execute build commands |
 
 ### Choosing the mode
@@ -61,19 +61,19 @@ Determine the mode from the user's request. Each mode uses a different sandbox l
 ### Mode 1: Question (ask)
 
 For general questions about the codebase, architecture, or implementation approach.
-**Sandbox:** `read-only`
+**Sandbox:** `danger-full-access`
 
 ### Mode 2: Plan
 
 For implementation planning — designing a feature, migration strategy, or refactoring approach.
-**Sandbox:** `read-only`
+**Sandbox:** `danger-full-access`
 
 ### Mode 3: Debug
 
 For debugging — diagnosing failures, unexpected behavior, or test failures. Codex gets full access so it can run tests, try compilation, execute the failing code, and actively investigate.
 **Sandbox:** `danger-full-access`
 
-**Note:** The third sandbox option `workspace-write` (read broadly, write within workspace) is available but not used by default. Override manually if a question or plan mode needs limited write access.
+**Note:** The other 2 sandbox options `read-only` & `workspace-write` (read broadly, write within workspace) is available but not used by default. Override manually if a question or plan mode needs limited write access.
 
 ## Constructing the Prompt
 
