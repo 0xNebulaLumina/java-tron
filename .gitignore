@@ -77,4 +77,4 @@ start.log
 /remote-*.log
 
 .claude/ralph-loop.local.md
-.claude/ralph-loop.prompt.local.md
+.claude/ralph-loop-prompt.local.md
