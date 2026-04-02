@@ -1524,3 +1524,46 @@ fn test_nonstrict_fee_zero_missing_blackhole_key_succeeds() {
         result.err()
     );
 }
+
+// --- i64::MIN fee rejection tests ---
+
+#[test]
+fn test_fee_i64_min_rejected_with_long_overflow() {
+    // fee == i64::MIN should be rejected early with "long overflow" because
+    // wrapping negation of i64::MIN produces i64::MIN, causing degenerate
+    // behavior in Java's adjustBalance that Rust's U256 cannot reproduce.
+    let (mut sa, tx, _) = setup_strict_test_env(|se| {
+        // Seed fee = i64::MIN
+        se.put(
+            "properties",
+            b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
+            &i64::MIN.to_be_bytes(),
+        )
+        .unwrap();
+        se.put("properties", b"ALLOW_MULTI_SIGN", &1i64.to_be_bytes())
+            .unwrap();
+        se.put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
+        se.put(
+            "properties",
+            b"latest_block_header_timestamp",
+            &1000i64.to_be_bytes(),
+        )
+        .unwrap();
+    });
+    let service = new_test_service_with_account_create_enabled();
+    let result = service.execute_account_create_contract(&mut sa, &tx, &new_test_context());
+    assert!(result.is_err(), "fee == i64::MIN must be rejected");
+    let err = result.unwrap_err();
+    assert_eq!(
+        err, "long overflow",
+        "Expected 'long overflow' error for i64::MIN fee, got: {}",
+        err
+    );
+    // Verify no state mutation occurred
+    assert_no_writes(&sa);
+}

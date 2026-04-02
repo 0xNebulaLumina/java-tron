@@ -2854,8 +2854,8 @@ impl BackendService {
         }
 
         // 4. Get fee from dynamic properties
-        let execution_config_for_strict = self.get_execution_config()?;
-        let strict = execution_config_for_strict
+        let execution_config = self.get_execution_config()?;
+        let strict = execution_config
             .remote
             .strict_dynamic_properties;
 
@@ -2880,6 +2880,17 @@ impl BackendService {
         };
 
         info!("AccountCreate fee: {} SUN", fee);
+
+        // 4b. Guard: i64::MIN cannot be safely negated in two's complement.
+        // Java's -Long.MIN_VALUE wraps to Long.MIN_VALUE, causing degenerate
+        // behavior in adjustBalance's insufficient-balance check (balance <
+        // -amount becomes balance < Long.MIN_VALUE, always false).  Java then
+        // stores a negative balance via Math.addExact.  Rust uses U256 for
+        // balances and cannot represent negative values, so we reject this
+        // pathological fee value explicitly.
+        if fee == i64::MIN {
+            return Err("long overflow".to_string());
+        }
 
         // 5. Validate sufficient balance (Java parity: signed i64 comparison)
         // Java's CreateAccountActuator.validate():
@@ -2938,8 +2949,7 @@ impl BackendService {
         // (CREATE_ACCOUNT_FEE, TOTAL_CREATE_ACCOUNT_COST) are only validated
         // when the fee path is actually needed — avoiding false strict failures
         // when non-fee bandwidth paths are taken.
-        let execution_config_for_prefetch = self.get_execution_config()?;
-        let aext_mode_prefetch = execution_config_for_prefetch
+        let aext_mode_prefetch = execution_config
             .remote
             .accountinfo_aext_mode
             .clone();
@@ -3045,15 +3055,11 @@ impl BackendService {
                 warn!("AccountCreate: negative fee {} SUN — unusual, adding to owner balance", fee);
             }
             // Java: adjustBalance(owner, -fee)  →  newBalance = balance + (-fee)
-            // Java's unary minus uses wrapping negation (important for i64::MIN),
-            // then Math.addExact(balance, -fee) uses checked addition.
+            // Java's unary minus uses wrapping negation, then Math.addExact uses
+            // checked addition.  Note: fee == i64::MIN is rejected earlier (step 4b).
             // Java also checks: if (amount < 0 && balance < -amount) throw BalanceInsufficient
             let neg_fee = fee.wrapping_neg();
             // Mirror Java's insufficient-balance guard before arithmetic.
-            // For fee == i64::MIN, wrapping_neg() produces i64::MIN and the Java
-            // check degenerates (balance < i64::MIN is always false), but the
-            // resulting negative balance would fail i64_to_u256.  Catch that case
-            // with an explicit post-add negative-balance check below.
             if neg_fee < 0 && owner_balance_i64 < neg_fee.wrapping_neg() {
                 let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&owner));
                 return Err(format!(
@@ -3064,10 +3070,9 @@ impl BackendService {
             let new_balance_i64 = owner_balance_i64
                 .checked_add(neg_fee)
                 .ok_or_else(|| "long overflow".to_string())?;
-            // Guard against negative result (e.g. fee == i64::MIN where Java's
-            // wrapping-negation check above degenerates).  Java would store a
-            // negative balance, but U256 cannot represent it; return an
-            // insufficient-balance error for closest parity.
+            // Guard against negative result (e.g. pathological fee values).
+            // U256 cannot represent negative balances; return insufficient-balance
+            // error.  Note: fee == i64::MIN is already rejected in step 4b.
             if new_balance_i64 < 0 {
                 let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&owner));
                 return Err(format!(
@@ -3187,7 +3192,8 @@ impl BackendService {
 
                     // Java parity: adjustBalance(blackhole, fee) uses signed arithmetic.
                     // adjustBalance checks: if (amount < 0 && balance < -amount) throw
-                    // Java's unary minus uses wrapping negation (for i64::MIN, -MIN wraps to MIN).
+                    // Java's unary minus uses wrapping negation.
+                    // Note: fee == i64::MIN is already rejected in step 4b.
                     let blackhole_balance_i64 = u256_to_i64(blackhole_account.balance)?;
                     if fee < 0 {
                         let neg_fee = fee.wrapping_neg();
@@ -3202,8 +3208,8 @@ impl BackendService {
                     let new_blackhole_balance = blackhole_balance_i64
                         .checked_add(fee)
                         .ok_or_else(|| "long overflow".to_string())?;
-                    // Guard against negative result (e.g. pathological fee values
-                    // where wrapping negation degenerates).
+                    // Guard against negative result (e.g. pathological fee values).
+                    // fee == i64::MIN is already rejected in step 4b.
                     if new_blackhole_balance < 0 {
                         let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
                         return Err(format!(
