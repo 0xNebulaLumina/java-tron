@@ -5593,9 +5593,25 @@ impl BackendService {
                     .unwrap_or_default();
 
                 let bh_balance_i64 = u256_to_i64(blackhole_account.balance)?;
+                // Mirror Java's insufficient-balance guard: if fee is negative
+                // (i.e. we're subtracting from blackhole), check balance first.
+                if fee_i64 < 0 && bh_balance_i64 < fee_i64.wrapping_neg() {
+                    let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
+                    return Err(format!(
+                        "{} insufficient balance, balance: {}, amount: {}",
+                        bh_hex, bh_balance_i64, fee_i64.wrapping_neg()
+                    ));
+                }
                 let new_bh_balance_i64 = bh_balance_i64
                     .checked_add(fee_i64)
                     .ok_or_else(|| "long overflow".to_string())?;
+                if new_bh_balance_i64 < 0 {
+                    let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
+                    return Err(format!(
+                        "{} insufficient balance, balance: {}, amount: {}",
+                        bh_hex, bh_balance_i64, fee_i64
+                    ));
+                }
                 let new_blackhole_account = revm_primitives::AccountInfo {
                     balance: i64_to_u256(new_bh_balance_i64)?,
                     nonce: blackhole_account.nonce,
