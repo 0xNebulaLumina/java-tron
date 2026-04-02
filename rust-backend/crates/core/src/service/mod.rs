@@ -1643,8 +1643,17 @@ impl BackendService {
             account_upgrade_cost, allow_multi_sign, support_blackhole
         );
 
-        // 6. Validate sufficient balance
-        if owner_account.balance < revm_primitives::U256::from(account_upgrade_cost) {
+        // 5b. Guard: i64::MIN cannot be safely negated in two's complement.
+        // Java's -Long.MIN_VALUE wraps to Long.MIN_VALUE, causing degenerate
+        // behavior in adjustBalance.  Reject this pathological value explicitly.
+        if account_upgrade_cost == i64::MIN {
+            return Err("long overflow".to_string());
+        }
+
+        // 6. Validate sufficient balance (Java parity: signed i64 comparison)
+        // Java: if (accountCapsule.getBalance() < dynamicStore.getAccountUpgradeCost())
+        let owner_balance_i64 = u256_to_i64(owner_account.balance)?;
+        if owner_balance_i64 < account_upgrade_cost {
             return Err("balance < AccountUpgradeCost".to_string());
         }
 
@@ -1738,8 +1747,29 @@ impl BackendService {
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
         // 10. Update owner account - deduct cost
+        // Java parity: adjustBalance(owner, -cost) uses signed arithmetic.
+        // Note: account_upgrade_cost == i64::MIN is rejected in step 5b.
+        let neg_cost = account_upgrade_cost.wrapping_neg();
+        // Mirror Java's insufficient-balance guard: if (amount < 0 && balance < -amount)
+        if neg_cost < 0 && owner_balance_i64 < neg_cost.wrapping_neg() {
+            let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&transaction.from));
+            return Err(format!(
+                "{} insufficient balance, balance: {}, amount: {}",
+                owner_hex, owner_balance_i64, neg_cost.wrapping_neg()
+            ));
+        }
+        let new_balance_i64 = owner_balance_i64
+            .checked_add(neg_cost)
+            .ok_or_else(|| "long overflow".to_string())?;
+        if new_balance_i64 < 0 {
+            let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&transaction.from));
+            return Err(format!(
+                "{} insufficient balance, balance: {}, amount: {}",
+                owner_hex, owner_balance_i64, account_upgrade_cost
+            ));
+        }
         let new_owner_account = revm_primitives::AccountInfo {
-            balance: owner_account.balance - revm_primitives::U256::from(account_upgrade_cost),
+            balance: i64_to_u256(new_balance_i64)?,
             nonce: owner_account.nonce,
             code_hash: owner_account.code_hash,
             code: owner_account.code.clone(),
@@ -1757,19 +1787,21 @@ impl BackendService {
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
         // 10. Handle fee burning/crediting
+        // Java parity: uses signed long for cost throughout burn/blackhole path.
         let fee_destination: String;
         if support_blackhole {
-            // Burn mode - no additional account change needed
+            // Burn mode: Java calls dynamicStore.burnTrx(cost) with signed long.
             info!(
                 "Burning {} SUN (blackhole optimization)",
                 account_upgrade_cost
             );
             storage_adapter
-                .burn_trx(account_upgrade_cost as i64)
+                .burn_trx(account_upgrade_cost)
                 .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             fee_destination = String::from("burn");
         } else {
             // Credit blackhole account
+            // Java: adjustBalance(blackhole, cost) — signed addition to blackhole balance.
             if let Some(blackhole_addr) = storage_adapter
                 .get_blackhole_address()
                 .map_err(|e| format!("Failed to get blackhole address: {}", e))?
@@ -1779,9 +1811,23 @@ impl BackendService {
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
+                // Java parity: adjustBalance(blackhole, cost) uses signed arithmetic.
+                let blackhole_balance_i64 = u256_to_i64(blackhole_account.balance)?;
+                if account_upgrade_cost < 0 {
+                    let neg_amount = account_upgrade_cost.wrapping_neg();
+                    if blackhole_balance_i64 < neg_amount {
+                        let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
+                        return Err(format!(
+                            "{} insufficient balance, balance: {}, amount: {}",
+                            bh_hex, blackhole_balance_i64, neg_amount
+                        ));
+                    }
+                }
+                let new_blackhole_balance = blackhole_balance_i64
+                    .checked_add(account_upgrade_cost)
+                    .ok_or_else(|| "long overflow".to_string())?;
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: blackhole_account.balance
-                        + revm_primitives::U256::from(account_upgrade_cost),
+                    balance: i64_to_u256(new_blackhole_balance)?,
                     nonce: blackhole_account.nonce,
                     code_hash: blackhole_account.code_hash,
                     code: blackhole_account.code.clone(),

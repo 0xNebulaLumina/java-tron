@@ -945,15 +945,15 @@ impl EngineBackedEvmStateStore {
 
     /// Get AccountUpgradeCost dynamic property
     /// Default value for witness creation cost in SUN
-    /// Java parity: returns signed i64 cast to u64, no negative rejection
-    /// (Java's ByteArray.toLong returns signed long; callers don't reject negatives)
-    pub fn get_account_upgrade_cost(&self) -> Result<u64> {
+    /// Java parity: returns signed i64 (Java's long), matching Java's
+    /// DynamicPropertiesStore.getAccountUpgradeCost() which returns long.
+    pub fn get_account_upgrade_cost(&self) -> Result<i64> {
         let key = b"ACCOUNT_UPGRADE_COST";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) => Ok(Self::decode_i64_java(&data) as u64),
+            Some(data) => Ok(Self::decode_i64_java(&data)),
             None => {
                 // Use default value for AccountUpgradeCost
                 Ok(9999000000) // 9999 TRX in SUN (default from TRON)
@@ -1360,14 +1360,13 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Add to TOTAL_CREATE_WITNESS_FEE dynamic property (java: addTotalCreateWitnessCost()).
-    pub fn add_total_create_witness_cost(&self, fee: u64) -> Result<()> {
+    /// Java parity: accepts signed long matching DynamicPropertiesStore.addTotalCreateWitnessCost(long).
+    pub fn add_total_create_witness_cost(&self, fee: i64) -> Result<()> {
         if fee == 0 {
             return Ok(());
         }
 
-        let delta: i64 = fee
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("fee exceeds i64::MAX"))?;
+        let delta: i64 = fee;
         let current = self.get_total_create_witness_cost()?;
         let new_value = current
             .checked_add(delta)

@@ -1422,11 +1422,11 @@ fn test_negative_fee_strict_mode_accepted() {
 
 #[test]
 fn test_negative_fee_account_upgrade_cost_accepted() {
-    // 0x80..00 → i64::MIN → cast to u64
+    // 0x80..00 → i64::MIN (Java parity: returns signed i64)
     let value: &[u8] = &[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
     let sa = make_adapter_with_prop(b"ACCOUNT_UPGRADE_COST", value);
     let result = sa.get_account_upgrade_cost();
-    assert_eq!(result.unwrap(), i64::MIN as u64);
+    assert_eq!(result.unwrap(), i64::MIN);
 }
 
 #[test]
