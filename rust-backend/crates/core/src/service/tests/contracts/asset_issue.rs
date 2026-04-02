@@ -2001,3 +2001,290 @@ fn test_strict_getters_succeed_when_keys_present() {
         2
     );
 }
+
+// =============================================================================
+// Negative ASSET_ISSUE_FEE signed-parity tests
+// =============================================================================
+
+/// Helper: set up storage + service for a negative-fee asset issue test.
+/// Returns (storage_adapter, transaction, context, owner_address, initial_owner_balance_i64).
+fn setup_negative_fee_asset_issue(
+    blackhole_optimization: bool,
+) -> (
+    EngineBackedEvmStateStore,
+    TronTransaction,
+    TronExecutionContext,
+    Address,
+    i64,
+) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    // Leak so the directory lives long enough (tests are short-lived)
+    let temp_dir = Box::leak(Box::new(temp_dir));
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+
+    // Seed required dynamic properties
+    seed_dynamic_properties(&storage_engine);
+
+    // Override blackhole optimization flag
+    let bh_flag: i64 = if blackhole_optimization { 1 } else { 0 };
+    storage_engine
+        .put(
+            "properties",
+            b"ALLOW_BLACKHOLE_OPTIMIZATION",
+            &bh_flag.to_be_bytes(),
+        )
+        .unwrap();
+
+    // Enable ALLOW_SAME_TOKEN_NAME
+    storage_engine
+        .put(
+            "properties",
+            b" ALLOW_SAME_TOKEN_NAME",
+            &1i64.to_be_bytes(),
+        )
+        .unwrap();
+
+    // Set a negative ASSET_ISSUE_FEE (-100 SUN)
+    let negative_fee: i64 = -100;
+    storage_engine
+        .put(
+            "properties",
+            b"ASSET_ISSUE_FEE",
+            &negative_fee.to_be_bytes(),
+        )
+        .unwrap();
+
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+
+    let owner_address = Address::from([
+        0xab, 0xd4, 0xb9, 0x36, 0x77, 0x99, 0xea, 0xa3, 0x19, 0x7f, 0xec, 0xb1, 0x44, 0xeb,
+        0x71, 0xde, 0x1e, 0x04, 0x91, 0x50,
+    ]);
+    let initial_balance: i64 = 2_000_000_000; // 2000 TRX in SUN
+    let owner_account = AccountInfo {
+        balance: U256::from(initial_balance as u64),
+        nonce: 0,
+        code_hash: revm::primitives::B256::ZERO,
+        code: None,
+    };
+    storage_adapter
+        .set_account(owner_address, owner_account)
+        .unwrap();
+
+    // If blackhole optimization is off, seed the blackhole account so it can receive the fee
+    if !blackhole_optimization {
+        let blackhole_addr = storage_adapter.get_blackhole_address().unwrap().unwrap();
+        let blackhole_account = AccountInfo {
+            balance: U256::from(500_000_000u64), // 500 TRX
+            nonce: 0,
+            code_hash: revm::primitives::B256::ZERO,
+            code: None,
+        };
+        storage_adapter
+            .set_account(blackhole_addr, blackhole_account)
+            .unwrap();
+    }
+
+    // Build a valid AssetIssueContract
+    let mut contract_data = Vec::new();
+
+    // Field 1: owner_address
+    contract_data.push(10u8);
+    contract_data.push(21u8);
+    contract_data.push(0x41u8);
+    contract_data.extend_from_slice(owner_address.as_slice());
+
+    // Field 2: name
+    let name = b"NegFeeToken";
+    contract_data.push(18u8);
+    contract_data.push(name.len() as u8);
+    contract_data.extend_from_slice(name);
+
+    // Field 3: abbr
+    let abbr = b"NFT";
+    contract_data.push(26u8);
+    contract_data.push(abbr.len() as u8);
+    contract_data.extend_from_slice(abbr);
+
+    // Field 4: total_supply
+    contract_data.push(32u8);
+    encode_varint(&mut contract_data, 1_000_000);
+
+    // Field 6: trx_num
+    contract_data.push(48u8);
+    encode_varint(&mut contract_data, 1);
+
+    // Field 8: num
+    contract_data.push(64u8);
+    encode_varint(&mut contract_data, 1);
+
+    // Field 9: start_time (must be > block_timestamp)
+    contract_data.push(72u8);
+    encode_varint(&mut contract_data, 2_000_000);
+
+    // Field 10: end_time (must be > start_time)
+    contract_data.push(80u8);
+    encode_varint(&mut contract_data, 3_000_000);
+
+    // Field 21: url
+    let url = b"https://negfee.test";
+    contract_data.push(170u8);
+    contract_data.push(1u8);
+    contract_data.push(url.len() as u8);
+    contract_data.extend_from_slice(url);
+
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: Bytes::from(contract_data.clone()),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            contract_parameter: Some(TronContractParameter {
+                type_url: "protocol.AssetIssueContract".to_string(),
+                value: contract_data,
+            }),
+            ..Default::default()
+        },
+    };
+
+    let context = TronExecutionContext {
+        block_number: 1,
+        block_timestamp: 1_000_000,
+        block_coinbase: Address::ZERO,
+        block_difficulty: U256::ZERO,
+        block_gas_limit: 100_000_000,
+        chain_id: 1,
+        energy_price: 420,
+        bandwidth_price: 1000,
+        transaction_id: None,
+    };
+
+    (
+        storage_adapter,
+        transaction,
+        context,
+        owner_address,
+        initial_balance,
+    )
+}
+
+#[test]
+fn test_negative_asset_issue_fee_blackhole_optimization_enabled() {
+    // When ASSET_ISSUE_FEE is negative and blackhole optimization is ON,
+    // the fee is "burned" (via burn_trx). The owner's balance should INCREASE
+    // because subtracting a negative fee is adding.
+    // Java semantics: owner.balance -= fee (where fee is negative → balance goes up).
+    let (mut storage_adapter, transaction, context, owner_address, initial_balance) =
+        setup_negative_fee_asset_issue(true);
+
+    let service = new_test_service_with_trc10_enabled();
+    let result =
+        service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &context);
+
+    assert!(
+        result.is_ok(),
+        "Should succeed with negative fee: {:?}",
+        result.err()
+    );
+    let exec_result = result.unwrap();
+    assert!(exec_result.success, "Execution should succeed");
+
+    // Owner balance should have increased by 100 SUN (subtracting -100 = adding 100)
+    let expected_owner_balance = initial_balance - (-100i64); // 2_000_000_100
+    let owner_change = exec_result
+        .state_changes
+        .iter()
+        .find(|sc| matches!(sc, tron_backend_execution::TronStateChange::AccountChange { address, .. } if *address == owner_address))
+        .expect("Should have owner AccountChange");
+
+    if let tron_backend_execution::TronStateChange::AccountChange {
+        new_account: Some(new_acc),
+        ..
+    } = owner_change
+    {
+        assert_eq!(
+            new_acc.balance,
+            U256::from(expected_owner_balance as u64),
+            "Owner balance should increase when fee is negative (signed i64 parity)"
+        );
+    } else {
+        panic!("Expected AccountChange with new_account");
+    }
+}
+
+#[test]
+fn test_negative_asset_issue_fee_blackhole_credit_path() {
+    // When ASSET_ISSUE_FEE is negative and blackhole optimization is OFF,
+    // the blackhole account is "credited" the fee. With a negative fee,
+    // Java semantics: blackhole.balance += fee (where fee is negative → balance goes down).
+    let (mut storage_adapter, transaction, context, owner_address, initial_balance) =
+        setup_negative_fee_asset_issue(false);
+
+    let blackhole_addr = storage_adapter.get_blackhole_address().unwrap().unwrap();
+    let blackhole_before = storage_adapter
+        .get_account(&blackhole_addr)
+        .unwrap()
+        .unwrap();
+    let bh_initial_balance_i64 = blackhole_before.balance.as_limbs()[0] as i64;
+
+    let service = new_test_service_with_trc10_enabled();
+    let result =
+        service.execute_asset_issue_contract(&mut storage_adapter, &transaction, &context);
+
+    assert!(
+        result.is_ok(),
+        "Should succeed with negative fee (blackhole path): {:?}",
+        result.err()
+    );
+    let exec_result = result.unwrap();
+    assert!(exec_result.success, "Execution should succeed");
+
+    // Owner balance should increase (subtracting negative fee)
+    let expected_owner_balance = initial_balance - (-100i64);
+    let owner_change = exec_result
+        .state_changes
+        .iter()
+        .find(|sc| matches!(sc, tron_backend_execution::TronStateChange::AccountChange { address, .. } if *address == owner_address))
+        .expect("Should have owner AccountChange");
+
+    if let tron_backend_execution::TronStateChange::AccountChange {
+        new_account: Some(new_acc),
+        ..
+    } = owner_change
+    {
+        assert_eq!(
+            new_acc.balance,
+            U256::from(expected_owner_balance as u64),
+            "Owner balance should increase when fee is negative"
+        );
+    } else {
+        panic!("Expected owner AccountChange with new_account");
+    }
+
+    // Blackhole balance should decrease (adding a negative fee)
+    let expected_bh_balance = bh_initial_balance_i64 + (-100i64); // 500_000_000 - 100 = 499_999_900
+    let bh_change = exec_result
+        .state_changes
+        .iter()
+        .find(|sc| matches!(sc, tron_backend_execution::TronStateChange::AccountChange { address, .. } if *address == blackhole_addr))
+        .expect("Should have blackhole AccountChange");
+
+    if let tron_backend_execution::TronStateChange::AccountChange {
+        new_account: Some(new_acc),
+        ..
+    } = bh_change
+    {
+        assert_eq!(
+            new_acc.balance,
+            U256::from(expected_bh_balance as u64),
+            "Blackhole balance should decrease when fee is negative (signed i64 parity)"
+        );
+    } else {
+        panic!("Expected blackhole AccountChange with new_account");
+    }
+}

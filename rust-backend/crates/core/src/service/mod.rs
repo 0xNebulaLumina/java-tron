@@ -5512,10 +5512,12 @@ impl BackendService {
                 .map_err(|e| format!("Failed to persist AssetIssue (V2): {}", e))?;
         }
 
-        // 7. Deduct fee from owner (signed i64 → u64 for U256, safe after balance check)
-        let owner_balance_u256 = owner_account.balance;
-        let fee_u256 = revm_primitives::U256::from(fee_i64 as u64);
-        let new_owner_balance = owner_balance_u256 - fee_u256;
+        // 7. Deduct fee from owner using signed i64 arithmetic (Java parity)
+        let owner_balance_i64 = u256_to_i64(owner_account.balance)?;
+        let new_owner_balance_i64 = owner_balance_i64
+            .checked_sub(fee_i64)
+            .ok_or_else(|| "long overflow".to_string())?;
+        let new_owner_balance = i64_to_u256(new_owner_balance_i64)?;
         let new_owner_account = revm_primitives::AccountInfo {
             balance: new_owner_balance,
             nonce: owner_account.nonce,
@@ -5590,8 +5592,12 @@ impl BackendService {
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
+                let bh_balance_i64 = u256_to_i64(blackhole_account.balance)?;
+                let new_bh_balance_i64 = bh_balance_i64
+                    .checked_add(fee_i64)
+                    .ok_or_else(|| "long overflow".to_string())?;
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: blackhole_account.balance + fee_u256,
+                    balance: i64_to_u256(new_bh_balance_i64)?,
                     nonce: blackhole_account.nonce,
                     code_hash: blackhole_account.code_hash,
                     code: blackhole_account.code.clone(),
