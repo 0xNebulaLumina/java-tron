@@ -1,0 +1,23 @@
+{
+  "contractType": "ACCOUNT_CREATE_CONTRACT",
+  "contractTypeNum": 0,
+  "caseName": "validate_fail_missing_free_net_limit",
+  "caseCategory": "validate_fail",
+  "description": "Fail when FREE_NET_LIMIT is missing (tracked bandwidth mode)",
+  "generatedAt": "2026-03-29T03:55:36.417Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "SUCCESS",
+  "expectedErrorMessage": "not found FREE_NET_LIMIT",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049150",
+  "dynamicProperties": {},
+  "strictDynamicProperties": true,
+  "strictExpectedFailure": true,
+  "accountinfoAextMode": "tracked",
+  "notes": []
+}

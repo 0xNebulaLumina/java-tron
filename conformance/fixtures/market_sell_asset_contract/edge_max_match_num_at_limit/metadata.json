@@ -4,7 +4,7 @@
   "caseName": "edge_max_match_num_at_limit",
   "caseCategory": "edge",
   "description": "MAX_MATCH_NUM boundary: exactly at limit should succeed",
-  "generatedAt": "2026-03-10T11:52:26.977Z",
+  "generatedAt": "2026-03-29T03:55:40.923Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

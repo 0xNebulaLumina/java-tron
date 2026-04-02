@@ -4,7 +4,7 @@
   "caseName": "validate_fail_feature_not_enabled",
   "caseCategory": "validate_fail",
   "description": "Fail V2 unfreeze when unfreezeDelayDays = 0 (V2 disabled)",
-  "generatedAt": "2026-03-10T11:52:26.039Z",
+  "generatedAt": "2026-03-29T03:55:39.847Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

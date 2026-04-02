@@ -65,6 +65,24 @@ pub struct FixtureMetadata {
     #[serde(rename = "dynamicProperties", default)]
     pub dynamic_properties: HashMap<String, serde_json::Value>,
 
+    /// When true, the conformance runner should enable strict_dynamic_properties
+    /// so missing keys cause errors instead of using fallback defaults.
+    #[serde(rename = "strictDynamicProperties", default)]
+    pub strict_dynamic_properties: Option<bool>,
+
+    /// When true, marks this fixture as an expected-failure case under strict
+    /// dynamic-property mode.  Rust correctly rejects missing keys, so
+    /// post-state is compared to pre-state (no state changes expected).
+    /// Use this instead of relying on the runner to infer expected failure
+    /// from the combination of other fields.
+    #[serde(rename = "strictExpectedFailure", default)]
+    pub strict_expected_failure: Option<bool>,
+
+    /// Override for accountinfo_aext_mode in the conformance runner.
+    /// When set (e.g., "tracked"), the runner uses this mode for AEXT handling.
+    #[serde(rename = "accountinfoAextMode", default)]
+    pub accountinfo_aext_mode: Option<String>,
+
     /// Additional notes
     #[serde(default)]
     pub notes: Vec<String>,
@@ -119,6 +137,9 @@ impl FixtureMetadata {
             expected_error_message: None,
             owner_address: None,
             dynamic_properties: Default::default(),
+            strict_dynamic_properties: None,
+            strict_expected_failure: None,
+            accountinfo_aext_mode: None,
             notes: Vec::new(),
         }
     }

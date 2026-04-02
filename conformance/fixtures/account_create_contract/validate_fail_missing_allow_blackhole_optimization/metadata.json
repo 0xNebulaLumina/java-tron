@@ -1,0 +1,21 @@
+{
+  "contractType": "ACCOUNT_CREATE_CONTRACT",
+  "contractTypeNum": 0,
+  "caseName": "validate_fail_missing_allow_blackhole_optimization",
+  "caseCategory": "validate_fail",
+  "description": "Fail when ALLOW_BLACKHOLE_OPTIMIZATION is missing (fee > 0 so flag is read)",
+  "generatedAt": "2026-03-29T03:55:36.422Z",
+  "generatorVersion": "1.0.0",
+  "blockNumber": 1700000001,
+  "blockTimestamp": 1700000003000,
+  "databasesTouched": [
+    "account",
+    "dynamic-properties"
+  ],
+  "expectedStatus": "REVERT",
+  "expectedErrorMessage": "Unexpected error: not found ALLOW_BLACKHOLE_OPTIMIZATION",
+  "ownerAddress": "a0abd4b9367799eaa3197fecb144eb71de1e049150",
+  "dynamicProperties": {},
+  "strictDynamicProperties": true,
+  "notes": []
+}

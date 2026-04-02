@@ -4,7 +4,7 @@
   "caseName": "edge_receiver_address_ignored_when_delegation_off",
   "caseCategory": "edge",
   "description": "Receiver address is ignored when delegation is OFF (self-unfreeze)",
-  "generatedAt": "2026-03-10T11:52:25.043Z",
+  "generatedAt": "2026-03-29T03:55:38.768Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

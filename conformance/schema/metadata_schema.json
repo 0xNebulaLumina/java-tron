@@ -97,6 +97,19 @@
       },
       "description": "Key dynamic properties set for this test"
     },
+    "strictDynamicProperties": {
+      "type": "boolean",
+      "description": "When true, the runner enables strict_dynamic_properties so missing keys cause errors"
+    },
+    "strictExpectedFailure": {
+      "type": "boolean",
+      "description": "When true, marks this fixture as an expected-failure case under strict dynamic-property mode. Post-state is compared to pre-state instead of expected post-state."
+    },
+    "accountinfoAextMode": {
+      "type": "string",
+      "enum": ["none", "hybrid", "tracked", "zeros", "defaults"],
+      "description": "Override for accountinfo_aext_mode in the conformance runner"
+    },
     "notes": {
       "type": "array",
       "items": {
