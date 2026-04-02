@@ -52,7 +52,7 @@ The ralph-loop skill runs a shell setup script that cannot handle backticks, spe
    Write the full workflow description (the "Workflow per iteration" and "Rules" sections above, plus the resolved values of $1 and $2) to `.claude/ralph-loop-prompt.local.md` using the Write tool.
 
 2. **Invoke ralph-loop with a short, shell-safe argument:**
-   Call `/ralph-loop:ralph-loop` with a simple argument like: `See .claude/ralph-loop-prompt.local.md for full task`
+   Run the setup script directly via Bash tool: ·CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}" /root/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh See.claude/ralph-loop-prompt.local.md`
    Do NOT pass the raw $1 or $2 text to ralph-loop — it will break if the text contains backticks, quotes, or other shell metacharacters.
 
 **Important:** Do NOT implement tasks directly. Write the prompt file, then invoke `/ralph-loop` and let it drive the implement-review cycle.

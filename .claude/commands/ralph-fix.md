@@ -26,7 +26,7 @@ The ralph-loop skill runs a shell setup script that cannot handle backticks, spe
    Write the full problem description (the "Problem" section above plus the "Loop behavior" section) to `.claude/ralph-loop-prompt.local.md` using the Write tool.
 
 2. **Invoke ralph-loop with a short, shell-safe argument:**
-   Call `/ralph-loop:ralph-loop` with a simple argument like: `See .claude/ralph-loop-prompt.local.md for full task`
+   Run the setup script directly via Bash tool: ·CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}" /root/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh See.claude/ralph-loop-prompt.local.md`
    Do NOT pass the raw $ARGUMENTS text to ralph-loop — it will break if the text contains backticks, quotes, or other shell metacharacters.
 
 **Important:** Do NOT fix the problem directly. Write the prompt file, then invoke `/ralph-loop` and let it drive the fix-review cycle.
