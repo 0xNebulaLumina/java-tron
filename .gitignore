@@ -76,4 +76,5 @@ start.log
 /*.embedded-java.log
 /remote-*.log
 
-.claude/*ralph-loop*.local.md
+.claude/ralph-loop.local.md
+.claude/ralph-loop.prompt.local.md

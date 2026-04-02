@@ -49,10 +49,10 @@ Use the ralph-loop plugin to implement tasks from design doc $1 and progress tra
 The ralph-loop skill runs a shell setup script that cannot handle backticks, special characters, or long multi-line arguments passed directly. To work around this:
 
 1. **Write the prompt to a file first:**
-   Write the full workflow description (the "Workflow per iteration" and "Rules" sections above, plus the resolved values of $1 and $2) to `.claude/.ralph-loop-prompt.local.md` using the Write tool.
+   Write the full workflow description (the "Workflow per iteration" and "Rules" sections above, plus the resolved values of $1 and $2) to `.claude/ralph-loop-prompt.local.md` using the Write tool.
 
 2. **Invoke ralph-loop with a short, shell-safe argument:**
-   Call `/ralph-loop:ralph-loop` with a simple argument like: `See .claude/.ralph-loop-prompt.local.md for full task`
+   Call `/ralph-loop:ralph-loop` with a simple argument like: `See .claude/ralph-loop-prompt.local.md for full task`
    Do NOT pass the raw $1 or $2 text to ralph-loop — it will break if the text contains backticks, quotes, or other shell metacharacters.
 
 **Important:** Do NOT implement tasks directly. Write the prompt file, then invoke `/ralph-loop` and let it drive the implement-review cycle.
