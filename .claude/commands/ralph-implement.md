@@ -48,11 +48,24 @@ Use the ralph-loop plugin to implement tasks from design doc $1 and progress tra
 
 The ralph-loop skill runs a shell setup script that cannot handle backticks, special characters, or long multi-line arguments passed directly. To work around this:
 
-1. **Write the prompt to a file first:**
+1. **Clean up stale loop files first:**
+   Remove any leftover files from previous runs so the user isn't prompted for permission on files that already exist:
+   ```
+   rm -f .claude/ralph-loop-prompt.local.md .claude/ralph-loop.local.md
+   ```
+
+2. **Write the prompt to a file:**
    Write the full workflow description (the "Workflow per iteration" and "Rules" sections above, plus the resolved values of $1 and $2) to `.claude/ralph-loop-prompt.local.md` using the Write tool.
 
-2. **Invoke ralph-loop with a short, shell-safe argument:**
-   Run the setup script directly via Bash tool: ·CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}" /root/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh See.claude/ralph-loop-prompt.local.md`
+3. **Invoke ralph-loop with a short, shell-safe argument:**
+   Run the setup script directly via Bash tool: `CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}" /root/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh "See .claude/ralph-loop-prompt.local.md"`
    Do NOT pass the raw $1 or $2 text to ralph-loop — it will break if the text contains backticks, quotes, or other shell metacharacters.
+
+## When the loop ends
+
+After the implement-review cycle completes, clean up the loop files:
+```
+rm -f .claude/ralph-loop-prompt.local.md .claude/ralph-loop.local.md
+```
 
 **Important:** Do NOT implement tasks directly. Write the prompt file, then invoke `/ralph-loop` and let it drive the implement-review cycle.
