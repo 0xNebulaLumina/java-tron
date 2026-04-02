@@ -3047,13 +3047,32 @@ impl BackendService {
             // Java: adjustBalance(owner, -fee)  →  newBalance = balance + (-fee)
             // Java's unary minus uses wrapping negation (important for i64::MIN),
             // then Math.addExact(balance, -fee) uses checked addition.
+            // Java also checks: if (amount < 0 && balance < -amount) throw BalanceInsufficient
             let neg_fee = fee.wrapping_neg();
+            // Mirror Java's insufficient-balance guard before arithmetic.
+            // For fee == i64::MIN, wrapping_neg() produces i64::MIN and the Java
+            // check degenerates (balance < i64::MIN is always false), but the
+            // resulting negative balance would fail i64_to_u256.  Catch that case
+            // with an explicit post-add negative-balance check below.
+            if neg_fee < 0 && owner_balance_i64 < neg_fee.wrapping_neg() {
+                return Err(format!(
+                    "insufficient balance, balance: {}, amount: {}",
+                    owner_balance_i64, neg_fee.wrapping_neg()
+                ));
+            }
             let new_balance_i64 = owner_balance_i64
                 .checked_add(neg_fee)
                 .ok_or_else(|| "long overflow".to_string())?;
-            // Java: balance must not go negative (adjustBalance checks amount < 0 && balance < -amount)
-            // This is implicitly guaranteed by the validate check above when fee > 0.
-            // When fee < 0, -fee is positive so adjustBalance adds to balance (no underflow check).
+            // Guard against negative result (e.g. fee == i64::MIN where Java's
+            // wrapping-negation check above degenerates).  Java would store a
+            // negative balance, but U256 cannot represent it; return an
+            // insufficient-balance error for closest parity.
+            if new_balance_i64 < 0 {
+                return Err(format!(
+                    "insufficient balance, balance: {}, amount: {}",
+                    owner_balance_i64, fee
+                ));
+            }
             let new_owner_account = revm_primitives::AccountInfo {
                 balance: i64_to_u256(new_balance_i64)?,
                 nonce: owner_account.nonce,
@@ -3180,6 +3199,14 @@ impl BackendService {
                     let new_blackhole_balance = blackhole_balance_i64
                         .checked_add(fee)
                         .ok_or_else(|| "long overflow".to_string())?;
+                    // Guard against negative result (e.g. pathological fee values
+                    // where wrapping negation degenerates).
+                    if new_blackhole_balance < 0 {
+                        return Err(format!(
+                            "insufficient balance, balance: {}, amount: {}",
+                            blackhole_balance_i64, fee
+                        ));
+                    }
                     let new_blackhole_account = revm_primitives::AccountInfo {
                         balance: i64_to_u256(new_blackhole_balance)?,
                         nonce: blackhole_account.nonce,

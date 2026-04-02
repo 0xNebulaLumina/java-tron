@@ -695,6 +695,38 @@ impl ConformanceRunner {
             return ConformanceResult::failure(metadata, e);
         }
 
+        // Compute strict_expected_failure early so we can capture a pre-exec
+        // snapshot before execution modifies state.
+        let strict_expected_failure = metadata.strict_expected_failure.unwrap_or(false);
+
+        // Snapshot the actual pre-execution DB state.  This captures any
+        // implicit/default keys the engine may have injected during
+        // load_pre_state_into_storage, so strict-expected-failure comparisons
+        // use a real baseline instead of the fixture's declared pre_state.
+        let pre_exec_snapshot: Option<BTreeMap<String, BTreeMap<Vec<u8>, Vec<u8>>>> =
+            if strict_expected_failure {
+                let all_engine_dbs = match storage_engine.list_databases() {
+                    Ok(dbs) => dbs,
+                    Err(e) => {
+                        return ConformanceResult::failure(
+                            metadata,
+                            format!("Failed to list engine databases for pre-exec snapshot: {}", e),
+                        );
+                    }
+                };
+                match self.dump_storage_state(&storage_engine, &all_engine_dbs) {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        return ConformanceResult::failure(
+                            metadata,
+                            format!("Failed to dump pre-exec snapshot: {}", e),
+                        );
+                    }
+                }
+            } else {
+                None
+            };
+
         // Create a BackendService instance configured for conformance.
         // This ensures we exercise the same NON_VM dispatch path as the gRPC server.
         // Metadata-driven overrides (strict_dynamic_properties, accountinfo_aext_mode) are applied.
@@ -902,11 +934,9 @@ impl ConformanceRunner {
             Err(e) => format!("ERROR: {}", e),
         };
 
-        // Use the explicit metadata flag to identify strict-expected-failure fixtures.
+        // Validate strict-expected-failure fixture requirements.
         // These are cases where Rust correctly rejects missing dynamic properties
         // while Java succeeded using fallback defaults.
-        let strict_expected_failure = metadata.strict_expected_failure.unwrap_or(false);
-
         if strict_expected_failure {
             if !metadata.strict_dynamic_properties.unwrap_or(false) {
                 return ConformanceResult::failure(
@@ -944,9 +974,12 @@ impl ConformanceRunner {
         let (actual_state, compare_pre_state) = if strict_expected_failure {
             let all_engine_dbs = match storage_engine.list_databases() {
                 Ok(dbs) => dbs,
-                Err(_) => metadata.databases_touched.iter()
-                    .map(|n| Self::canonical_db_name(n).to_string())
-                    .collect(),
+                Err(e) => {
+                    return ConformanceResult::failure(
+                        metadata,
+                        format!("Failed to list engine databases for post-state dump: {}", e),
+                    );
+                }
             };
             // Dump using canonical engine names so keys are consistent.
             let actual = match self.dump_storage_state(&storage_engine, &all_engine_dbs) {
@@ -958,24 +991,20 @@ impl ConformanceRunner {
                     );
                 }
             };
-            // Canonicalize pre_state keys to match the engine namespace scheme.
-            // Fail explicitly if two fixture names map to the same canonical
-            // name — BTreeMap::collect would silently take last-write-wins.
-            let mut canonical_pre: BTreeMap<String, BTreeMap<Vec<u8>, Vec<u8>>> = BTreeMap::new();
-            for (k, v) in &pre_state {
-                let canon = Self::canonical_db_name(k).to_string();
-                if canonical_pre.contains_key(&canon) {
-                    return ConformanceResult::failure(
-                        metadata,
-                        format!(
-                            "Fixture has duplicate canonical DB name '{}' (from '{}')",
-                            canon, k
-                        ),
-                    );
+            // Use the real pre-exec snapshot (captured after loading fixture
+            // DBs) instead of the fixture's declared pre_state.  This avoids
+            // false diffs from implicit/default keys the engine may inject.
+            let baseline = pre_exec_snapshot.unwrap_or_else(|| {
+                // Fallback: canonicalize fixture pre_state (should not happen
+                // since we always populate pre_exec_snapshot for strict mode).
+                let mut canonical_pre: BTreeMap<String, BTreeMap<Vec<u8>, Vec<u8>>> = BTreeMap::new();
+                for (k, v) in &pre_state {
+                    let canon = Self::canonical_db_name(k).to_string();
+                    canonical_pre.insert(canon, v.clone());
                 }
-                canonical_pre.insert(canon, v.clone());
-            }
-            (actual, canonical_pre)
+                canonical_pre
+            });
+            (actual, baseline)
         } else {
             let actual = match self.dump_storage_state(&storage_engine, &metadata.databases_touched) {
                 Ok(s) => s,
