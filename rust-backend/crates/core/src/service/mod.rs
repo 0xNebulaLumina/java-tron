@@ -3055,9 +3055,10 @@ impl BackendService {
             // resulting negative balance would fail i64_to_u256.  Catch that case
             // with an explicit post-add negative-balance check below.
             if neg_fee < 0 && owner_balance_i64 < neg_fee.wrapping_neg() {
+                let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&owner));
                 return Err(format!(
-                    "insufficient balance, balance: {}, amount: {}",
-                    owner_balance_i64, neg_fee.wrapping_neg()
+                    "{} insufficient balance, balance: {}, amount: {}",
+                    owner_hex, owner_balance_i64, neg_fee.wrapping_neg()
                 ));
             }
             let new_balance_i64 = owner_balance_i64
@@ -3068,9 +3069,10 @@ impl BackendService {
             // negative balance, but U256 cannot represent it; return an
             // insufficient-balance error for closest parity.
             if new_balance_i64 < 0 {
+                let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&owner));
                 return Err(format!(
-                    "insufficient balance, balance: {}, amount: {}",
-                    owner_balance_i64, fee
+                    "{} insufficient balance, balance: {}, amount: {}",
+                    owner_hex, owner_balance_i64, fee
                 ));
             }
             let new_owner_account = revm_primitives::AccountInfo {
@@ -3190,9 +3192,10 @@ impl BackendService {
                     if fee < 0 {
                         let neg_fee = fee.wrapping_neg();
                         if blackhole_balance_i64 < neg_fee {
+                            let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
                             return Err(format!(
-                                "insufficient balance, balance: {}, amount: {}",
-                                blackhole_balance_i64, neg_fee
+                                "{} insufficient balance, balance: {}, amount: {}",
+                                bh_hex, blackhole_balance_i64, neg_fee
                             ));
                         }
                     }
@@ -3202,9 +3205,10 @@ impl BackendService {
                     // Guard against negative result (e.g. pathological fee values
                     // where wrapping negation degenerates).
                     if new_blackhole_balance < 0 {
+                        let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
                         return Err(format!(
-                            "insufficient balance, balance: {}, amount: {}",
-                            blackhole_balance_i64, fee
+                            "{} insufficient balance, balance: {}, amount: {}",
+                            bh_hex, blackhole_balance_i64, fee
                         ));
                     }
                     let new_blackhole_account = revm_primitives::AccountInfo {
