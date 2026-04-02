@@ -8,6 +8,7 @@ allowed-tools:
   - Grep
   - Edit
   - Write
+  - Agent
   - AskUserQuestion
 ---
 
@@ -15,32 +16,47 @@ Get an independent answer, implementation plan, or debugging analysis from OpenA
 
 ## Invoking Codex
 
-Use `codex exec` to run a one-shot query. Always write output to a temp file for reliable capture. Select the sandbox level based on the mode.
+Use a **subagent** to run Codex CLI so that Codex's stdout noise (progress indicators, metadata, thinking output) stays out of your main context. You construct the prompt, the subagent executes Codex and returns only the clean response text, and you process the results.
 
-```bash
+### Spawning the subagent
+
+Use the **Agent tool** to run Codex. Pass the subagent a prompt like this (substitute your actual `$PROMPT` and `$SANDBOX`):
+
+```
+Run OpenAI Codex CLI to answer a question. Execute this command:
+
 TMPFILE=$(mktemp /tmp/codex-ask.XXXXXXXX)
+ERRFILE=$(mktemp /tmp/codex-ask-err.XXXXXXXX)
+PROMPT_FILE=$(mktemp /tmp/codex-prompt.XXXXXXXX)
+trap 'rm -f "$TMPFILE" "$ERRFILE" "$PROMPT_FILE"' EXIT
+
+cat > "$PROMPT_FILE" <<'CODEX_PROMPT_EOF'
+<THE CODEX PROMPT>
+CODEX_PROMPT_EOF
+
 [ -f "$HOME/.codex/.env" ] && . "$HOME/.codex/.env"
 codex exec \
   -m gpt-5.4 \
   -c 'model_reasoning_effort="xhigh"' \
-  -s "$SANDBOX" \
+  -s $SANDBOX \
   --ephemeral \
   -o "$TMPFILE" \
-  "$PROMPT"
-cat "$TMPFILE"
-rm "$TMPFILE"
+  "$(cat "$PROMPT_FILE")" 2> "$ERRFILE"
+
+After the command completes:
+- If exit code is 0: read $TMPFILE and return its FULL contents verbatim.
+- If exit code is non-zero: read $ERRFILE and return its exact contents. Do not retry.
+
+The trap handles cleanup in both cases — do not manually delete temp files.
+
+Critical: use mktemp exactly as shown — do NOT add a file extension after the X's.
+Return ONLY the response content or the error. No commentary, no summary, no wrapping.
 ```
 
-**Flags explained:**
-- `-m gpt-5.4` — model selection
-- `-c 'model_reasoning_effort="xhigh"'` — maximum thinking effort
-- `-s "$SANDBOX"` — sandbox level, varies by mode (see below)
-- `--ephemeral` — no conversation persistence, clean context
-- `-o "$TMPFILE"` — write output to file (avoids noisy stdout metadata)
-
-**Critical — temp file creation:** Use `mktemp` exactly as shown. Do NOT add a file extension after the X's — `mktemp` only replaces trailing X's. The template `/tmp/codex-ask.XXXXXXXX` (no extension) must be used verbatim.
-
-**Error handling:** If codex returns a non-zero exit code, read stderr, report the error to the user, and do not retry automatically.
+**Important notes on the subagent call:**
+- Use `description: "Run Codex ask"` (or similar short description)
+- Select the sandbox level (`$SANDBOX`) based on the mode (see below)
+- If the subagent returns an error, report it to the user and do not retry — there may be an auth or config issue they need to resolve
 
 ## Three Modes
 
@@ -256,3 +272,4 @@ Report the error clearly. Do NOT retry automatically. Suggest what the user migh
 - Do not call Codex repeatedly in a loop trying to get different answers.
 - Do not embed large file contents in the prompt — let Codex read them itself.
 - Do not skip your own assessment — the user relies on your judgment to filter and contextualize.
+- Do not run `codex exec` directly in your own context — always use the subagent to contain stdout noise.
