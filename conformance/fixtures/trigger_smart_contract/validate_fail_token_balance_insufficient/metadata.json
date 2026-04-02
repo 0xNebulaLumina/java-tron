@@ -4,7 +4,7 @@
   "caseName": "validate_fail_token_balance_insufficient",
   "caseCategory": "validate_fail",
   "description": "Trigger with callTokenValue > owner's token balance should fail",
-  "generatedAt": "2026-03-10T11:52:56.066Z",
+  "generatedAt": "2026-03-29T03:56:12.943Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 0,
   "blockTimestamp": 0,

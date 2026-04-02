@@ -34,6 +34,27 @@ use grpc::address::{
 const MAX_VOTE_NUMBER: usize = 30;
 const TRX_PRECISION: u64 = 1_000_000; // 1 TRX = 1,000,000 SUN
 
+/// Convert a U256 to i64, matching Java's signed-long semantics.
+/// The low 64 bits are reinterpreted as a signed two's-complement i64,
+/// exactly like Java's `(long)` cast. Only values that exceed 64 bits
+/// (upper limbs non-zero) are rejected as overflow.
+fn u256_to_i64(val: revm_primitives::U256) -> Result<i64, String> {
+    let limbs = val.as_limbs();
+    if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
+        return Err("long overflow".to_string());
+    }
+    Ok(limbs[0] as i64)
+}
+
+/// Safely convert a non-negative i64 to U256.
+/// Returns Err("long overflow") if the value is negative.
+fn i64_to_u256(val: i64) -> Result<revm_primitives::U256, String> {
+    if val < 0 {
+        return Err("long overflow".to_string());
+    }
+    Ok(revm_primitives::U256::from(val as u64))
+}
+
 pub struct BackendService {
     module_manager: ModuleManager,
     start_time: SystemTime,
@@ -1057,13 +1078,7 @@ impl BackendService {
 
         // TransferContract amount is a signed long; fixtures encode it into the low 8 bytes of
         // `value` (big-endian) and conformance conversion preserves the raw bits in U256.
-        let amount_i64 = {
-            let limbs = transaction.value.as_limbs();
-            if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
-                return Err("long overflow".to_string());
-            }
-            limbs[0] as i64
-        };
+        let amount_i64 = u256_to_i64(transaction.value)?;
 
         // Validation parity with java-tron TransferActuator.validate()
         // Java checks: DecodeUtil.addressValid(ownerAddress) then DecodeUtil.addressValid(toAddress)
@@ -1186,25 +1201,30 @@ impl BackendService {
 
         // Validate sender has enough balance for amount + fees (java: addExact(amount, fee)).
         // fee = create_account_fee (TRANSFER_FEE is always 0 in Java's TransferActuator).
-        let fee_i64 = i64::try_from(create_account_fee).map_err(|_| "long overflow".to_string())?;
+        let fee_i64 = create_account_fee;
         let total_cost_i64 = amount_i64
             .checked_add(fee_i64)
             .ok_or_else(|| "long overflow".to_string())?;
 
-        let sender_balance_i64 = sender_account.balance.as_limbs()[0] as i64;
+        let sender_balance_i64 = u256_to_i64(sender_account.balance)?;
         if sender_balance_i64 < total_cost_i64 {
             return Err("Validate TransferContract error, balance is not sufficient.".to_string());
         }
 
         // Recipient balance overflow check (java: addExact(toBalance, amount) when toAccount != null).
         if recipient_opt.is_some() {
-            let recipient_balance_i64 = recipient_account.balance.as_limbs()[0] as i64;
+            let recipient_balance_i64 = u256_to_i64(recipient_account.balance)?;
             recipient_balance_i64
                 .checked_add(amount_i64)
                 .ok_or_else(|| "long overflow".to_string())?;
         }
 
-        let total_cost = revm_primitives::U256::from(total_cost_i64 as u64);
+        // Compute new sender balance in i64 space (avoids negative-to-U256 wrapping).
+        // sender_balance_i64 >= total_cost_i64 is guaranteed by the check above.
+        let new_sender_balance_i64 = sender_balance_i64
+            .checked_sub(total_cost_i64)
+            .ok_or_else(|| "long overflow".to_string())?;
+        let new_sender_balance_u256 = i64_to_u256(new_sender_balance_i64)?;
 
         // Track AEXT for bandwidth if in tracked mode (after validation to ensure validate_fail has 0 writes)
         let mut aext_map = std::collections::HashMap::new();
@@ -1324,9 +1344,8 @@ impl BackendService {
         }
 
         // Update sender account: balance -= (value + fee)
-        let new_sender_balance = sender_account.balance - total_cost;
         let new_sender_account = revm_primitives::AccountInfo {
-            balance: new_sender_balance,
+            balance: new_sender_balance_u256,
             nonce: sender_account.nonce, // Phase 3 Fix: Do NOT increment nonce for non-VM TRX transfers
             code_hash: sender_account.code_hash,
             code: sender_account.code.clone(),
@@ -1383,7 +1402,7 @@ impl BackendService {
 
             let mut recipient_proto = ProtoAccount {
                 address: recipient_address_bytes.clone(),
-                balance: new_recipient_account.balance.as_limbs()[0] as i64,
+                balance: u256_to_i64(new_recipient_account.balance)?,
                 create_time,
                 ..Default::default()
             };
@@ -1431,6 +1450,8 @@ impl BackendService {
         }
 
         // Handle create-account-fee (burn or credit blackhole based on dynamic properties)
+        // Java parity: fee is signed i64. Java's adjustBalance(blackhole, fee)
+        // uses signed arithmetic; burnTrx also takes signed long.
         if create_account_fee > 0 {
             let support_blackhole = storage_adapter
                 .support_black_hole_optimization()
@@ -1452,13 +1473,12 @@ impl BackendService {
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
-                let fee_u256 = revm_primitives::U256::from(create_account_fee);
-                let new_blackhole_balance = blackhole_account
-                    .balance
-                    .checked_add(fee_u256)
-                    .ok_or("Blackhole balance overflow")?;
+                let blackhole_balance_i64 = u256_to_i64(blackhole_account.balance)?;
+                let new_blackhole_balance = blackhole_balance_i64
+                    .checked_add(create_account_fee)
+                    .ok_or("long overflow")?;
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: new_blackhole_balance,
+                    balance: i64_to_u256(new_blackhole_balance)?,
                     nonce: blackhole_account.nonce,
                     code_hash: blackhole_account.code_hash,
                     code: blackhole_account.code.clone(),
@@ -1623,8 +1643,17 @@ impl BackendService {
             account_upgrade_cost, allow_multi_sign, support_blackhole
         );
 
-        // 6. Validate sufficient balance
-        if owner_account.balance < revm_primitives::U256::from(account_upgrade_cost) {
+        // 5b. Guard: i64::MIN cannot be safely negated in two's complement.
+        // Java's -Long.MIN_VALUE wraps to Long.MIN_VALUE, causing degenerate
+        // behavior in adjustBalance.  Reject this pathological value explicitly.
+        if account_upgrade_cost == i64::MIN {
+            return Err("long overflow".to_string());
+        }
+
+        // 6. Validate sufficient balance (Java parity: signed i64 comparison)
+        // Java: if (accountCapsule.getBalance() < dynamicStore.getAccountUpgradeCost())
+        let owner_balance_i64 = u256_to_i64(owner_account.balance)?;
+        if owner_balance_i64 < account_upgrade_cost {
             return Err("balance < AccountUpgradeCost".to_string());
         }
 
@@ -1718,8 +1747,29 @@ impl BackendService {
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
         // 10. Update owner account - deduct cost
+        // Java parity: adjustBalance(owner, -cost) uses signed arithmetic.
+        // Note: account_upgrade_cost == i64::MIN is rejected in step 5b.
+        let neg_cost = account_upgrade_cost.wrapping_neg();
+        // Mirror Java's insufficient-balance guard: if (amount < 0 && balance < -amount)
+        if neg_cost < 0 && owner_balance_i64 < neg_cost.wrapping_neg() {
+            let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&transaction.from));
+            return Err(format!(
+                "{} insufficient balance, balance: {}, amount: {}",
+                owner_hex, owner_balance_i64, neg_cost.wrapping_neg()
+            ));
+        }
+        let new_balance_i64 = owner_balance_i64
+            .checked_add(neg_cost)
+            .ok_or_else(|| "long overflow".to_string())?;
+        if new_balance_i64 < 0 {
+            let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&transaction.from));
+            return Err(format!(
+                "{} insufficient balance, balance: {}, amount: {}",
+                owner_hex, owner_balance_i64, account_upgrade_cost
+            ));
+        }
         let new_owner_account = revm_primitives::AccountInfo {
-            balance: owner_account.balance - revm_primitives::U256::from(account_upgrade_cost),
+            balance: i64_to_u256(new_balance_i64)?,
             nonce: owner_account.nonce,
             code_hash: owner_account.code_hash,
             code: owner_account.code.clone(),
@@ -1737,9 +1787,10 @@ impl BackendService {
             .map_err(|e| format!("Failed to persist owner account: {}", e))?;
 
         // 10. Handle fee burning/crediting
+        // Java parity: uses signed long for cost throughout burn/blackhole path.
         let fee_destination: String;
         if support_blackhole {
-            // Burn mode - no additional account change needed
+            // Burn mode: Java calls dynamicStore.burnTrx(cost) with signed long.
             info!(
                 "Burning {} SUN (blackhole optimization)",
                 account_upgrade_cost
@@ -1750,6 +1801,7 @@ impl BackendService {
             fee_destination = String::from("burn");
         } else {
             // Credit blackhole account
+            // Java: adjustBalance(blackhole, cost) — signed addition to blackhole balance.
             if let Some(blackhole_addr) = storage_adapter
                 .get_blackhole_address()
                 .map_err(|e| format!("Failed to get blackhole address: {}", e))?
@@ -1759,9 +1811,23 @@ impl BackendService {
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
+                // Java parity: adjustBalance(blackhole, cost) uses signed arithmetic.
+                let blackhole_balance_i64 = u256_to_i64(blackhole_account.balance)?;
+                if account_upgrade_cost < 0 {
+                    let neg_amount = account_upgrade_cost.wrapping_neg();
+                    if blackhole_balance_i64 < neg_amount {
+                        let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
+                        return Err(format!(
+                            "{} insufficient balance, balance: {}, amount: {}",
+                            bh_hex, blackhole_balance_i64, neg_amount
+                        ));
+                    }
+                }
+                let new_blackhole_balance = blackhole_balance_i64
+                    .checked_add(account_upgrade_cost)
+                    .ok_or_else(|| "long overflow".to_string())?;
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: blackhole_account.balance
-                        + revm_primitives::U256::from(account_upgrade_cost),
+                    balance: i64_to_u256(new_blackhole_balance)?,
                     nonce: blackhole_account.nonce,
                     code_hash: blackhole_account.code_hash,
                     code: blackhole_account.code.clone(),
@@ -2834,44 +2900,234 @@ impl BackendService {
         }
 
         // 4. Get fee from dynamic properties
-        let fee = storage_adapter
-            .get_create_new_account_fee_in_system_contract()
-            .map_err(|e| {
-                format!(
-                    "Failed to get CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: {}",
-                    e
-                )
-            })?;
+        let execution_config = self.get_execution_config()?;
+        let strict = execution_config
+            .remote
+            .strict_dynamic_properties;
+
+        let fee = if strict {
+            storage_adapter
+                .get_create_new_account_fee_in_system_contract_strict()
+                .map_err(|e| {
+                    format!(
+                        "Failed to get CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: {}",
+                        e
+                    )
+                })?
+        } else {
+            storage_adapter
+                .get_create_new_account_fee_in_system_contract()
+                .map_err(|e| {
+                    format!(
+                        "Failed to get CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: {}",
+                        e
+                    )
+                })?
+        };
 
         info!("AccountCreate fee: {} SUN", fee);
 
-        // 5. Validate sufficient balance
-        let fee_u256 = revm_primitives::U256::from(fee);
-        if owner_account.balance < fee_u256 {
+        // 4b. Guard: i64::MIN cannot be safely negated in two's complement.
+        // Java's -Long.MIN_VALUE wraps to Long.MIN_VALUE, causing degenerate
+        // behavior in adjustBalance's insufficient-balance check (balance <
+        // -amount becomes balance < Long.MIN_VALUE, always false).  Java then
+        // stores a negative balance via Math.addExact.  Rust uses U256 for
+        // balances and cannot represent negative values, so we reject this
+        // pathological fee value explicitly.
+        if fee == i64::MIN {
+            return Err("long overflow".to_string());
+        }
+
+        // 5. Validate sufficient balance (Java parity: signed i64 comparison)
+        // Java's CreateAccountActuator.validate():
+        //   long fee = calcFee();  // signed long
+        //   if (accountCapsule.getBalance() < fee) throw ...
+        // Both balance and fee are signed longs in Java.
+        let owner_balance_i64 = u256_to_i64(owner_account.balance)?;
+        if owner_balance_i64 < fee {
             warn!(
                 "Validate CreateAccountActuator error, insufficient fee. need={}, have={}",
-                fee, owner_account.balance
+                fee, owner_balance_i64
             );
             return Err("Validate CreateAccountActuator error, insufficient fee.".to_string());
         }
 
-        // 6. Get blackhole optimization flag
-        let support_blackhole = storage_adapter
-            .support_black_hole_optimization()
-            .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?;
+        info!("AccountCreate: fee={} SUN", fee);
 
-        info!(
-            "AccountCreate: fee={} SUN, support_blackhole={}",
-            fee, support_blackhole
-        );
+        // 6. Read blackhole flag BEFORE any writes so strict-mode errors don't
+        //    leave partial state mutations.
+        // Java's CreateAccountActuator.execute() reads
+        // supportBlackHoleOptimization() unconditionally (even when fee=0).
+        // If ALLOW_BLACKHOLE_OPTIMIZATION is missing, Java throws
+        // IllegalArgumentException.  Both strict and non-strict modes read
+        // the flag unconditionally to match Java's control-flow semantics.
+        // The difference: strict errors on missing key; non-strict defaults
+        // to false (matching early-chain behavior when key is absent).
+        let support_blackhole = if strict {
+            storage_adapter
+                .support_black_hole_optimization_strict()
+                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
+        } else {
+            storage_adapter
+                .support_black_hole_optimization()
+                .map_err(|e| format!("Failed to get SupportBlackHoleOptimization: {}", e))?
+        };
 
-        // 7. Prepare state changes
+        // 7. Prefetch all remaining strict-required dynamic properties BEFORE
+        //    any writes, so that a strict-mode failure cannot leave partial
+        //    state mutations (e.g. owner balance already deducted).
+        let create_time = if strict {
+            storage_adapter
+                .get_latest_block_header_timestamp_strict()
+                .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?
+        } else {
+            storage_adapter
+                .get_latest_block_header_timestamp()
+                .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?
+        };
+
+        let allow_multi_sign = storage_adapter
+            .get_allow_multi_sign()
+            .map_err(|e| format!("Failed to get ALLOW_MULTI_SIGN: {}", e))?;
+
+        // Prefetch tracked-mode properties if applicable (before any writes).
+        // We also resolve the bandwidth path here so that fee-path-only keys
+        // (CREATE_ACCOUNT_FEE, TOTAL_CREATE_ACCOUNT_COST) are only validated
+        // when the fee path is actually needed — avoiding false strict failures
+        // when non-fee bandwidth paths are taken.
+        let aext_mode_prefetch = execution_config
+            .remote
+            .accountinfo_aext_mode
+            .clone();
+
+        // Holds pre-resolved tracked-mode state: (free_net_limit, bandwidth_rate,
+        // path, before_aext, after_aext, create_account_fee_if_fee_path)
+        struct TrackedPrefetch {
+            free_net_limit: i64,
+            bandwidth_rate: i64,
+            path: tron_backend_execution::BandwidthPath,
+            before_aext: tron_backend_execution::AccountAext,
+            after_aext: tron_backend_execution::AccountAext,
+            create_account_fee: i64, // only meaningful when path == Fee
+        }
+
+        let prefetched_tracked = if aext_mode_prefetch == "tracked" {
+            use tron_backend_execution::{AccountAext, BandwidthPath, ResourceTracker};
+
+            let free_net_limit = if strict {
+                storage_adapter
+                    .get_free_net_limit_strict()
+                    .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?
+            } else {
+                storage_adapter
+                    .get_free_net_limit()
+                    .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?
+            };
+            let bandwidth_rate = if strict {
+                storage_adapter
+                    .get_create_new_account_bandwidth_rate_strict()
+                    .map_err(|e| {
+                        format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e)
+                    })?
+            } else {
+                storage_adapter
+                    .get_create_new_account_bandwidth_rate()
+                    .map_err(|e| {
+                        format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e)
+                    })?
+            };
+
+            // Resolve bandwidth path before any writes.
+            let raw_bw = Self::calculate_bandwidth_usage(transaction);
+            let net_cost = (raw_bw as i64).saturating_mul(bandwidth_rate);
+            let now_slot = (context.block_timestamp / 3000) as i64;
+            let current_aext = storage_adapter
+                .get_account_aext(&owner)
+                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
+                .unwrap_or_else(|| AccountAext::with_defaults());
+
+            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
+                &owner,
+                net_cost,
+                now_slot,
+                &current_aext,
+                free_net_limit,
+            )
+            .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
+
+            // Only validate fee-path keys when the fee path is actually taken.
+            let create_account_fee = if path == BandwidthPath::Fee {
+                let caf = if strict {
+                    storage_adapter
+                        .get_create_account_fee_strict()
+                        .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?
+                } else {
+                    storage_adapter
+                        .get_create_account_fee()
+                        .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?
+                };
+                if strict {
+                    let _ = storage_adapter
+                        .get_total_create_account_cost_strict()
+                        .map_err(|e| {
+                            format!("Failed to get TOTAL_CREATE_ACCOUNT_COST: {}", e)
+                        })?;
+                }
+                caf
+            } else {
+                0 // unused
+            };
+
+            Some(TrackedPrefetch {
+                free_net_limit,
+                bandwidth_rate,
+                path,
+                before_aext,
+                after_aext,
+                create_account_fee,
+            })
+        } else {
+            None
+        };
+
+        // 7b. Prepare state changes
         let mut state_changes = Vec::new();
 
-        // 8. Update owner account - deduct fee (only if fee > 0)
-        if fee > 0 {
+        // 8. Update owner account - deduct fee
+        // Java parity: CreateAccountActuator.execute() calls adjustBalance(owner, -fee)
+        // which uses Math.addExact(balance, -fee).  When fee != 0, Java always adjusts.
+        if fee != 0 {
+            if fee < 0 {
+                warn!("AccountCreate: negative fee {} SUN — unusual, adding to owner balance", fee);
+            }
+            // Java: adjustBalance(owner, -fee)  →  newBalance = balance + (-fee)
+            // Java's unary minus uses wrapping negation, then Math.addExact uses
+            // checked addition.  Note: fee == i64::MIN is rejected earlier (step 4b).
+            // Java also checks: if (amount < 0 && balance < -amount) throw BalanceInsufficient
+            let neg_fee = fee.wrapping_neg();
+            // Mirror Java's insufficient-balance guard before arithmetic.
+            if neg_fee < 0 && owner_balance_i64 < neg_fee.wrapping_neg() {
+                let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&owner));
+                return Err(format!(
+                    "{} insufficient balance, balance: {}, amount: {}",
+                    owner_hex, owner_balance_i64, neg_fee.wrapping_neg()
+                ));
+            }
+            let new_balance_i64 = owner_balance_i64
+                .checked_add(neg_fee)
+                .ok_or_else(|| "long overflow".to_string())?;
+            // Guard against negative result (e.g. pathological fee values).
+            // U256 cannot represent negative balances; return insufficient-balance
+            // error.  Note: fee == i64::MIN is already rejected in step 4b.
+            if new_balance_i64 < 0 {
+                let owner_hex = hex::encode(storage_adapter.to_tron_address_21(&owner));
+                return Err(format!(
+                    "{} insufficient balance, balance: {}, amount: {}",
+                    owner_hex, owner_balance_i64, fee
+                ));
+            }
             let new_owner_account = revm_primitives::AccountInfo {
-                balance: owner_account.balance - fee_u256,
+                balance: i64_to_u256(new_balance_i64)?,
                 nonce: owner_account.nonce,
                 code_hash: owner_account.code_hash,
                 code: owner_account.code.clone(),
@@ -2907,16 +3163,10 @@ impl BackendService {
 
         // Persist new account (include create_time and account_type for fixture parity).
         // Java's AccountCapsule(AccountCreateContract, ...) stores the contract's type field.
+        // create_time and allow_multi_sign were prefetched in step 7.
         use tron_backend_execution::protocol::permission::PermissionType;
         use tron_backend_execution::protocol::{Account as ProtoAccount, Key, Permission};
-        let create_time = storage_adapter
-            .get_latest_block_header_timestamp()
-            .map_err(|e| format!("Failed to get latest_block_header_timestamp: {}", e))?;
         let target_address_bytes = storage_adapter.to_tron_address_21(&target_address).to_vec();
-
-        let allow_multi_sign = storage_adapter
-            .get_allow_multi_sign()
-            .map_err(|e| format!("Failed to get ALLOW_MULTI_SIGN: {}", e))?;
 
         let mut target_proto = ProtoAccount {
             address: target_address_bytes.clone(),
@@ -2959,54 +3209,86 @@ impl BackendService {
             .put_account_proto(&target_address, &target_proto)
             .map_err(|e| format!("Failed to persist new account proto: {}", e))?;
 
-        // 10. Handle fee burning/crediting (only if fee > 0)
+        // 10. Handle fee burning/crediting (support_blackhole was read in step 6)
         let fee_destination: String;
         if fee == 0 {
             // No fee to process
             fee_destination = String::from("none(fee=0)");
-        } else if support_blackhole {
-            // Burn mode - no additional account change needed
-            info!("Burning {} SUN (blackhole optimization)", fee);
-            storage_adapter
-                .burn_trx(fee)
-                .map_err(|e| format!("Failed to burn TRX: {}", e))?;
-            fee_destination = String::from("burn");
         } else {
-            // Credit blackhole account
-            if let Some(blackhole_addr) = storage_adapter
-                .get_blackhole_address()
-                .map_err(|e| format!("Failed to get blackhole address: {}", e))?
-            {
-                let blackhole_account = storage_adapter
-                    .get_account(&blackhole_addr)
-                    .map_err(|e| format!("Failed to load blackhole account: {}", e))?
-                    .unwrap_or_default();
-
-                let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: blackhole_account.balance + fee_u256,
-                    nonce: blackhole_account.nonce,
-                    code_hash: blackhole_account.code_hash,
-                    code: blackhole_account.code.clone(),
-                };
-
-                // Emit account change for blackhole
-                state_changes.push(TronStateChange::AccountChange {
-                    address: blackhole_addr,
-                    old_account: Some(blackhole_account),
-                    new_account: Some(new_blackhole_account.clone()),
-                });
-
-                // Persist blackhole account update
+            if support_blackhole {
+                // Burn mode: Java calls dynamicStore.burnTrx(fee) with signed long.
+                // Java's burnTrx adds fee to BURN_TRX_AMOUNT (signed addition).
+                info!("Burning {} SUN (blackhole optimization)", fee);
                 storage_adapter
-                    .set_account(blackhole_addr, new_blackhole_account)
-                    .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
-
-                let bh_tron = tron_backend_common::to_tron_address(&blackhole_addr);
-                info!("Credited {} SUN to blackhole address {}", fee, bh_tron);
-                fee_destination = format!("blackhole:{}", bh_tron);
+                    .burn_trx(fee)
+                    .map_err(|e| format!("Failed to burn TRX: {}", e))?;
+                fee_destination = String::from("burn");
             } else {
-                warn!("No blackhole address configured, burning {} SUN", fee);
-                fee_destination = String::from("burn(no_addr)");
+                // Credit blackhole account
+                // Java: adjustBalance(blackhole, fee) — signed addition to blackhole balance.
+                // If fee is negative, this subtracts from blackhole (may throw BalanceInsufficient).
+                if let Some(blackhole_addr) = storage_adapter
+                    .get_blackhole_address()
+                    .map_err(|e| format!("Failed to get blackhole address: {}", e))?
+                {
+                    let blackhole_account = storage_adapter
+                        .get_account(&blackhole_addr)
+                        .map_err(|e| format!("Failed to load blackhole account: {}", e))?
+                        .unwrap_or_default();
+
+                    // Java parity: adjustBalance(blackhole, fee) uses signed arithmetic.
+                    // adjustBalance checks: if (amount < 0 && balance < -amount) throw
+                    // Java's unary minus uses wrapping negation.
+                    // Note: fee == i64::MIN is already rejected in step 4b.
+                    let blackhole_balance_i64 = u256_to_i64(blackhole_account.balance)?;
+                    if fee < 0 {
+                        let neg_fee = fee.wrapping_neg();
+                        if blackhole_balance_i64 < neg_fee {
+                            let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
+                            return Err(format!(
+                                "{} insufficient balance, balance: {}, amount: {}",
+                                bh_hex, blackhole_balance_i64, neg_fee
+                            ));
+                        }
+                    }
+                    let new_blackhole_balance = blackhole_balance_i64
+                        .checked_add(fee)
+                        .ok_or_else(|| "long overflow".to_string())?;
+                    // Guard against negative result (e.g. pathological fee values).
+                    // fee == i64::MIN is already rejected in step 4b.
+                    if new_blackhole_balance < 0 {
+                        let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
+                        return Err(format!(
+                            "{} insufficient balance, balance: {}, amount: {}",
+                            bh_hex, blackhole_balance_i64, fee
+                        ));
+                    }
+                    let new_blackhole_account = revm_primitives::AccountInfo {
+                        balance: i64_to_u256(new_blackhole_balance)?,
+                        nonce: blackhole_account.nonce,
+                        code_hash: blackhole_account.code_hash,
+                        code: blackhole_account.code.clone(),
+                    };
+
+                    // Emit account change for blackhole
+                    state_changes.push(TronStateChange::AccountChange {
+                        address: blackhole_addr,
+                        old_account: Some(blackhole_account),
+                        new_account: Some(new_blackhole_account.clone()),
+                    });
+
+                    // Persist blackhole account update
+                    storage_adapter
+                        .set_account(blackhole_addr, new_blackhole_account)
+                        .map_err(|e| format!("Failed to persist blackhole account: {}", e))?;
+
+                    let bh_tron = tron_backend_common::to_tron_address(&blackhole_addr);
+                    info!("Credited {} SUN to blackhole address {}", fee, bh_tron);
+                    fee_destination = format!("blackhole:{}", bh_tron);
+                } else {
+                    warn!("No blackhole address configured, burning {} SUN", fee);
+                    fee_destination = String::from("burn(no_addr)");
+                }
             }
         }
 
@@ -3023,58 +3305,24 @@ impl BackendService {
             _ => std::cmp::Ordering::Equal,
         });
 
-        // 12. Calculate bandwidth usage with CREATE_NEW_ACCOUNT_BANDWIDTH_RATE multiplier
-        // Java BandwidthProcessor: netCost = bytes * createNewAccountBandwidthRatio
+        // 12. Calculate raw bandwidth usage (always needed for bandwidth_used field)
         let raw_bandwidth_bytes = Self::calculate_bandwidth_usage(transaction);
-        let bandwidth_rate = storage_adapter
-            .get_create_new_account_bandwidth_rate()
-            .map_err(|e| format!("Failed to get CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: {}", e))?;
-        let net_cost = (raw_bandwidth_bytes as i64).saturating_mul(bandwidth_rate);
 
-        info!(
-            "AccountCreate bandwidth: raw_bytes={}, rate={}, netCost={}",
-            raw_bandwidth_bytes, bandwidth_rate, net_cost
-        );
-
-        // 13. Track AEXT for bandwidth if in tracked mode
-        // Implements Java BandwidthProcessor create-account path selection:
-        // 1. Try ACCOUNT_NET (if account has frozen bandwidth)
-        // 2. Try FREE_NET (if public bandwidth available)
-        // 3. Fall back to FEE (charge CREATE_ACCOUNT_FEE)
-        let execution_config = self.get_execution_config()?;
-        let aext_mode = execution_config.remote.accountinfo_aext_mode.as_str();
+        // 13. Apply tracked AEXT bandwidth using pre-resolved path from step 7.
         let mut aext_map = std::collections::HashMap::new();
         let mut bandwidth_path_used = "none";
-        let mut create_account_fee_charged: u64 = 0;
+        let mut create_account_fee_charged: i64 = 0;
 
-        if aext_mode == "tracked" {
-            use tron_backend_execution::{AccountAext, BandwidthPath, ResourceTracker};
+        if let Some(tp) = &prefetched_tracked {
+            use tron_backend_execution::BandwidthPath;
 
-            // Get current AEXT for owner (or initialize with defaults)
-            let current_aext = storage_adapter
-                .get_account_aext(&owner)
-                .map_err(|e| format!("Failed to get account AEXT: {}", e))?
-                .unwrap_or_else(|| AccountAext::with_defaults());
+            let net_cost = (raw_bandwidth_bytes as i64).saturating_mul(tp.bandwidth_rate);
+            info!(
+                "AccountCreate bandwidth: raw_bytes={}, rate={}, netCost={}",
+                raw_bandwidth_bytes, tp.bandwidth_rate, net_cost
+            );
 
-            // Get FREE_NET_LIMIT from dynamic properties
-            let free_net_limit = storage_adapter
-                .get_free_net_limit()
-                .map_err(|e| format!("Failed to get FREE_NET_LIMIT: {}", e))?;
-
-            // Java uses headSlot = block_timestamp_ms / 3000 for resource windows.
-            let now_slot = (context.block_timestamp / 3000) as i64;
-
-            // Track bandwidth usage with netCost (not raw bytes) - matches Java semantics
-            let (path, before_aext, after_aext) = ResourceTracker::track_bandwidth(
-                &owner,
-                net_cost, // Use netCost (bytes * rate) for create-account
-                now_slot,
-                &current_aext,
-                free_net_limit,
-            )
-            .map_err(|e| format!("Failed to track bandwidth: {}", e))?;
-
-            bandwidth_path_used = match path {
+            bandwidth_path_used = match tp.path {
                 BandwidthPath::AccountNet => "ACCOUNT_NET",
                 BandwidthPath::CreateAccount => "CREATE_ACCOUNT",
                 BandwidthPath::FreeNet => "FREE_NET",
@@ -3083,24 +3331,23 @@ impl BackendService {
 
             // If fee path is used, charge CREATE_ACCOUNT_FEE and update TOTAL_CREATE_ACCOUNT_COST
             // This is separate from CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT
-            if path == BandwidthPath::Fee {
-                create_account_fee_charged = storage_adapter
-                    .get_create_account_fee()
-                    .map_err(|e| format!("Failed to get CREATE_ACCOUNT_FEE: {}", e))?;
+            if tp.path == BandwidthPath::Fee {
+                create_account_fee_charged = tp.create_account_fee;
 
                 // Validate owner has sufficient balance for CREATE_ACCOUNT_FEE
                 // This matches Java BandwidthProcessor.payFee() which checks balance before deduction
-                // Get current owner balance (after actuator fee deduction if any)
+                // Get current owner balance as signed i64 (after actuator fee deduction if any)
                 let current_owner_balance = storage_adapter
                     .get_account(&owner)
                     .map_err(|e| format!("Failed to reload owner account: {}", e))?
-                    .map(|acc| acc.balance.as_limbs()[0]) // Get u64 balance
+                    .map(|acc| u256_to_i64(acc.balance))
+                    .transpose()?
                     .unwrap_or(0);
 
                 if current_owner_balance < create_account_fee_charged {
                     // Calculate available bandwidth for error message
                     let available_bandwidth =
-                        free_net_limit.saturating_sub(after_aext.free_net_usage);
+                        tp.free_net_limit.saturating_sub(tp.after_aext.free_net_usage);
                     let error_msg = format!(
                         "account [{}] has insufficient bandwidth[{}] and balance[{}] to create new account",
                         owner_tron,
@@ -3117,6 +3364,7 @@ impl BackendService {
                 );
 
                 // Update TOTAL_CREATE_ACCOUNT_COST dynamic property
+                // (strict-mode key existence was already validated in step 7 prefetch)
                 storage_adapter
                     .add_total_create_account_cost(create_account_fee_charged)
                     .map_err(|e| format!("Failed to update TOTAL_CREATE_ACCOUNT_COST: {}", e))?;
@@ -3128,20 +3376,20 @@ impl BackendService {
 
             // Persist after AEXT to storage
             storage_adapter
-                .set_account_aext(&owner, &after_aext)
+                .set_account_aext(&owner, &tp.after_aext)
                 .map_err(|e| format!("Failed to persist account AEXT: {}", e))?;
             storage_adapter
-                .apply_bandwidth_aext_to_account_proto(&owner, &after_aext)
+                .apply_bandwidth_aext_to_account_proto(&owner, &tp.after_aext)
                 .map_err(|e| {
                     format!("Failed to persist bandwidth usage to account proto: {}", e)
                 })?;
 
             // Add to aext_map
-            aext_map.insert(owner, (before_aext.clone(), after_aext.clone()));
+            aext_map.insert(owner, (tp.before_aext.clone(), tp.after_aext.clone()));
 
             debug!(
                 "AEXT tracked for account_create: owner={:?}, path={}, netCost={}, before_net_usage={}, after_net_usage={}",
-                owner, bandwidth_path_used, net_cost, before_aext.net_usage, after_aext.net_usage
+                owner, bandwidth_path_used, net_cost, tp.before_aext.net_usage, tp.after_aext.net_usage
             );
         }
 
@@ -4349,7 +4597,7 @@ impl BackendService {
             if support_blackhole_optimization {
                 // Burn mode: increment BURN_TRX_AMOUNT (matches Java's burnTrx())
                 storage_adapter
-                    .burn_trx(fee as u64)
+                    .burn_trx(fee)
                     .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             } else {
                 // Credit blackhole account (use get_blackhole_address for consistency)
@@ -4678,7 +4926,7 @@ impl BackendService {
             0
         };
 
-        if create_account_fee > 0 && owner_account_proto.balance < create_account_fee as i64 {
+        if create_account_fee > 0 && owner_account_proto.balance < create_account_fee {
             return Err("Validate TransferAssetActuator error, insufficient fee.".to_string());
         }
 
@@ -4779,7 +5027,7 @@ impl BackendService {
         if create_account_fee > 0 {
             owner_account_proto.balance = owner_account_proto
                 .balance
-                .checked_sub(create_account_fee as i64)
+                .checked_sub(create_account_fee)
                 .ok_or("Validate TransferAssetActuator error, insufficient fee.".to_string())?;
         }
 
@@ -4800,12 +5048,13 @@ impl BackendService {
         if create_account_fee > 0 {
             // Also deduct create-account fee from owner EVM AccountInfo balance
             // so state_changes reflect the real delta.
-            let fee_u256 = revm_primitives::U256::from(create_account_fee);
+            // Java parity: signed i64 arithmetic for fee deduction.
+            let old_owner_balance_i64 = u256_to_i64(old_owner_account.balance)?;
+            let new_owner_balance_i64 = old_owner_balance_i64
+                .checked_sub(create_account_fee)
+                .ok_or("Owner balance underflow for create-account fee".to_string())?;
             let new_owner_evm = revm_primitives::AccountInfo {
-                balance: old_owner_account
-                    .balance
-                    .checked_sub(fee_u256)
-                    .ok_or("Owner balance underflow for create-account fee".to_string())?,
+                balance: i64_to_u256(new_owner_balance_i64)?,
                 nonce: old_owner_account.nonce,
                 code_hash: old_owner_account.code_hash,
                 code: old_owner_account.code.clone(),
@@ -4830,12 +5079,12 @@ impl BackendService {
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
-                let new_blackhole_balance = old_blackhole_account
-                    .balance
-                    .checked_add(fee_u256)
-                    .ok_or("Blackhole balance overflow")?;
+                let old_bh_balance_i64 = u256_to_i64(old_blackhole_account.balance)?;
+                let new_blackhole_balance = old_bh_balance_i64
+                    .checked_add(create_account_fee)
+                    .ok_or("long overflow")?;
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: new_blackhole_balance,
+                    balance: i64_to_u256(new_blackhole_balance)?,
                     nonce: old_blackhole_account.nonce,
                     code_hash: old_blackhole_account.code_hash,
                     code: old_blackhole_account.code.clone(),
@@ -5212,15 +5461,14 @@ impl BackendService {
             return Err("An account can only issue one asset".to_string());
         }
 
-        // 4. Get asset issue fee from dynamic properties
+        // 4. Get asset issue fee from dynamic properties (signed i64, Java parity)
         let asset_issue_fee = storage_adapter
             .get_asset_issue_fee()
             .map_err(|e| format!("Failed to get AssetIssueFee: {}", e))?;
 
         debug!("AssetIssueFee: {} SUN", asset_issue_fee);
 
-        let fee_i64 =
-            i64::try_from(asset_issue_fee).map_err(|_| "AssetIssueFee overflow".to_string())?;
+        let fee_i64 = asset_issue_fee;
         if owner_account_proto.balance < fee_i64 {
             return Err("No enough balance for fee!".to_string());
         }
@@ -5264,10 +5512,12 @@ impl BackendService {
                 .map_err(|e| format!("Failed to persist AssetIssue (V2): {}", e))?;
         }
 
-        // 7. Deduct fee from owner
-        let owner_balance_u256 = owner_account.balance;
-        let fee_u256 = revm_primitives::U256::from(asset_issue_fee);
-        let new_owner_balance = owner_balance_u256 - fee_u256;
+        // 7. Deduct fee from owner using signed i64 arithmetic (Java parity)
+        let owner_balance_i64 = u256_to_i64(owner_account.balance)?;
+        let new_owner_balance_i64 = owner_balance_i64
+            .checked_sub(fee_i64)
+            .ok_or_else(|| "long overflow".to_string())?;
+        let new_owner_balance = i64_to_u256(new_owner_balance_i64)?;
         let new_owner_account = revm_primitives::AccountInfo {
             balance: new_owner_balance,
             nonce: owner_account.nonce,
@@ -5342,8 +5592,28 @@ impl BackendService {
                     .map_err(|e| format!("Failed to load blackhole account: {}", e))?
                     .unwrap_or_default();
 
+                let bh_balance_i64 = u256_to_i64(blackhole_account.balance)?;
+                // Mirror Java's insufficient-balance guard: if fee is negative
+                // (i.e. we're subtracting from blackhole), check balance first.
+                if fee_i64 < 0 && bh_balance_i64 < fee_i64.wrapping_neg() {
+                    let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
+                    return Err(format!(
+                        "{} insufficient balance, balance: {}, amount: {}",
+                        bh_hex, bh_balance_i64, fee_i64.wrapping_neg()
+                    ));
+                }
+                let new_bh_balance_i64 = bh_balance_i64
+                    .checked_add(fee_i64)
+                    .ok_or_else(|| "long overflow".to_string())?;
+                if new_bh_balance_i64 < 0 {
+                    let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
+                    return Err(format!(
+                        "{} insufficient balance, balance: {}, amount: {}",
+                        bh_hex, bh_balance_i64, fee_i64
+                    ));
+                }
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: blackhole_account.balance + fee_u256,
+                    balance: i64_to_u256(new_bh_balance_i64)?,
                     nonce: blackhole_account.nonce,
                     code_hash: blackhole_account.code_hash,
                     code: blackhole_account.code.clone(),
@@ -9956,7 +10226,7 @@ impl BackendService {
         if support_black_hole {
             // Burn the fee by incrementing BURN_TRX_AMOUNT
             storage_adapter
-                .burn_trx(exchange_create_fee as u64)
+                .burn_trx(exchange_create_fee)
                 .map_err(|e| format!("Failed to burn fee: {}", e))?;
         } else {
             // Credit blackhole account
@@ -11282,7 +11552,7 @@ impl BackendService {
         let state_changes = if fee > 0 {
             if support_blackhole {
                 storage_adapter
-                    .burn_trx(fee as u64)
+                    .burn_trx(fee)
                     .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             } else {
                 let blackhole = storage_adapter.get_blackhole_address_evm();
@@ -11678,7 +11948,7 @@ impl BackendService {
         if fee > 0 {
             if support_blackhole {
                 storage_adapter
-                    .burn_trx(fee as u64)
+                    .burn_trx(fee)
                     .map_err(|e| format!("Failed to burn TRX: {}", e))?;
             } else {
                 let blackhole = storage_adapter.get_blackhole_address_evm();

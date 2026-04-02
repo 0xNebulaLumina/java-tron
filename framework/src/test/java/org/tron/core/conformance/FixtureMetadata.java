@@ -45,6 +45,9 @@ public class FixtureMetadata {
   private String expectedErrorMessage;
   private String ownerAddress;
   private Map<String, Object> dynamicProperties;
+  private Boolean strictDynamicProperties;
+  private Boolean strictExpectedFailure;
+  private String accountinfoAextMode;
   private List<String> notes;
 
   public FixtureMetadata() {
@@ -226,6 +229,30 @@ public class FixtureMetadata {
     }
   }
 
+  public Boolean getStrictDynamicProperties() {
+    return strictDynamicProperties;
+  }
+
+  public void setStrictDynamicProperties(Boolean strictDynamicProperties) {
+    this.strictDynamicProperties = strictDynamicProperties;
+  }
+
+  public Boolean getStrictExpectedFailure() {
+    return strictExpectedFailure;
+  }
+
+  public void setStrictExpectedFailure(Boolean strictExpectedFailure) {
+    this.strictExpectedFailure = strictExpectedFailure;
+  }
+
+  public String getAccountinfoAextMode() {
+    return accountinfoAextMode;
+  }
+
+  public void setAccountinfoAextMode(String accountinfoAextMode) {
+    this.accountinfoAextMode = accountinfoAextMode;
+  }
+
   public List<String> getNotes() {
     return notes;
   }
@@ -319,6 +346,21 @@ public class FixtureMetadata {
 
     public Builder note(String note) {
       metadata.getNotes().add(note);
+      return this;
+    }
+
+    public Builder strictDynamicProperties(boolean strict) {
+      metadata.setStrictDynamicProperties(strict);
+      return this;
+    }
+
+    public Builder strictExpectedFailure(boolean strict) {
+      metadata.setStrictExpectedFailure(strict);
+      return this;
+    }
+
+    public Builder accountinfoAextMode(String mode) {
+      metadata.setAccountinfoAextMode(mode);
       return this;
     }
 

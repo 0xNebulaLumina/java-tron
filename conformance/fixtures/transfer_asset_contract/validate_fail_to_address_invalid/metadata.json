@@ -4,7 +4,7 @@
   "caseName": "validate_fail_to_address_invalid",
   "caseCategory": "validate_fail",
   "description": "Fail when toAddress is invalid (empty)",
-  "generatedAt": "2026-03-10T11:52:30.156Z",
+  "generatedAt": "2026-03-29T03:55:45.190Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

@@ -67,6 +67,13 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
     dbManager.getDynamicPropertiesStore().saveCreateNewAccountFeeInSystemContract(CREATE_ACCOUNT_FEE);
     dbManager.getDynamicPropertiesStore().saveCreateAccountFee(CREATE_ACCOUNT_FEE);
 
+    // Seed bandwidth-related properties needed by strict mode tracked-bandwidth fixtures.
+    // These are not set by initCommonDynamicPropsV1 because Java defaults them internally,
+    // but Rust strict mode requires them to be present in the DB.
+    dbManager.getDynamicPropertiesStore().saveFreeNetLimit(5000L);
+    dbManager.getDynamicPropertiesStore().saveCreateNewAccountBandwidthRate(1L);
+    dbManager.getDynamicPropertiesStore().saveTotalCreateAccountFee(0L);
+
     // Create owner account with sufficient balance
     putAccount(dbManager, OWNER_ADDRESS, INITIAL_BALANCE, "owner");
 
@@ -571,6 +578,323 @@ public class CoreAccountFixtureGeneratorTest extends BaseTest {
 
     FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
     log.info("AccountCreate fee=0: success={}", result.isSuccess());
+  }
+
+  // --------------------------------------------------------------------------
+  // AccountCreateContract (0) - Missing dynamic property (strict parity)
+  // --------------------------------------------------------------------------
+
+  @Test
+  public void generateAccountCreate_validateFailMissingCreateNewAccountFeeInSystemContract()
+      throws Exception {
+    String newAccountAddress = generateAddress("new_acc_mfee_01");
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    // Remove the key AFTER common init so the fixture captures missing-key failure
+    dbManager.getDynamicPropertiesStore()
+        .delete("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT".getBytes());
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_missing_create_new_account_fee_in_system_contract")
+        .caseCategory("validate_fail")
+        .description("Fail when CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT is missing from dynamic properties")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("not found CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT")
+        .strictDynamicProperties(true)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate missing CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT: validationError={}",
+        result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountCreate_validateFailMissingLatestBlockHeaderTimestamp()
+      throws Exception {
+    String newAccountAddress = generateAddress("new_acc_mts_001");
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    // Remove key after common init
+    dbManager.getDynamicPropertiesStore()
+        .delete("latest_block_header_timestamp".getBytes());
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_missing_latest_block_header_timestamp")
+        .caseCategory("validate_fail")
+        .description("Fail when latest_block_header_timestamp is missing from dynamic properties")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("not found latest block header timestamp")
+        .strictDynamicProperties(true)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate missing latest_block_header_timestamp: validationError={}",
+        result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountCreate_validateFailMissingAllowMultiSign() throws Exception {
+    String newAccountAddress = generateAddress("new_acc_mms_001");
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    // Remove key after common init
+    dbManager.getDynamicPropertiesStore()
+        .delete("ALLOW_MULTI_SIGN".getBytes());
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_missing_allow_multi_sign")
+        .caseCategory("validate_fail")
+        .description("Fail when ALLOW_MULTI_SIGN is missing from dynamic properties")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("not found ALLOW_MULTI_SIGN")
+        .strictDynamicProperties(true)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate missing ALLOW_MULTI_SIGN: validationError={}",
+        result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountCreate_validateFailMissingAllowBlackholeOptimization()
+      throws Exception {
+    String newAccountAddress = generateAddress("new_acc_mbh_001");
+
+    // Ensure fee > 0 so the blackhole optimization flag is actually read
+    dbManager.getDynamicPropertiesStore().saveCreateNewAccountFeeInSystemContract(ONE_TRX);
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    // Remove key after common init
+    dbManager.getDynamicPropertiesStore()
+        .delete("ALLOW_BLACKHOLE_OPTIMIZATION".getBytes());
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_missing_allow_blackhole_optimization")
+        .caseCategory("validate_fail")
+        .description("Fail when ALLOW_BLACKHOLE_OPTIMIZATION is missing (fee > 0 so flag is read)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("not found ALLOW_BLACKHOLE_OPTIMIZATION")
+        .strictDynamicProperties(true)
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate missing ALLOW_BLACKHOLE_OPTIMIZATION: validationError={}",
+        result.getValidationError());
+  }
+
+  // --- Tracked-bandwidth missing dynamic property fixtures ---
+
+  @Test
+  public void generateAccountCreate_validateFailMissingFreeNetLimit() throws Exception {
+    String newAccountAddress = generateAddress("new_acc_mfnl_01");
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    // Remove key after common init
+    dbManager.getDynamicPropertiesStore()
+        .delete("FREE_NET_LIMIT".getBytes());
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_missing_free_net_limit")
+        .caseCategory("validate_fail")
+        .description("Fail when FREE_NET_LIMIT is missing (tracked bandwidth mode)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("not found FREE_NET_LIMIT")
+        .strictDynamicProperties(true)
+        .strictExpectedFailure(true)
+        .accountinfoAextMode("tracked")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate missing FREE_NET_LIMIT: validationError={}",
+        result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountCreate_validateFailMissingCreateNewAccountBandwidthRate()
+      throws Exception {
+    String newAccountAddress = generateAddress("new_acc_mbr_001");
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    // Remove key after common init
+    dbManager.getDynamicPropertiesStore()
+        .delete("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE".getBytes());
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_missing_create_new_account_bandwidth_rate")
+        .caseCategory("validate_fail")
+        .description("Fail when CREATE_NEW_ACCOUNT_BANDWIDTH_RATE is missing (tracked bandwidth mode)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("not found CREATE_NEW_ACCOUNT_BANDWIDTH_RATE")
+        .strictDynamicProperties(true)
+        .strictExpectedFailure(true)
+        .accountinfoAextMode("tracked")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate missing CREATE_NEW_ACCOUNT_BANDWIDTH_RATE: validationError={}",
+        result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountCreate_validateFailMissingCreateAccountFee() throws Exception {
+    String newAccountAddress = generateAddress("new_acc_mcaf_01");
+
+    // Set fee=0 so actuator succeeds; force FEE path via zero free bandwidth
+    dbManager.getDynamicPropertiesStore().saveCreateNewAccountFeeInSystemContract(0);
+    dbManager.getDynamicPropertiesStore().saveFreeNetLimit(0L);
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    // Remove key after common init
+    dbManager.getDynamicPropertiesStore()
+        .delete("CREATE_ACCOUNT_FEE".getBytes());
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_missing_create_account_fee")
+        .caseCategory("validate_fail")
+        .description("Fail when CREATE_ACCOUNT_FEE is missing (fee fallback path in tracked bandwidth)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("not found CREATE_ACCOUNT_FEE")
+        .strictDynamicProperties(true)
+        .strictExpectedFailure(true)
+        .accountinfoAextMode("tracked")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate missing CREATE_ACCOUNT_FEE: validationError={}",
+        result.getValidationError());
+  }
+
+  @Test
+  public void generateAccountCreate_validateFailMissingTotalCreateAccountCost() throws Exception {
+    String newAccountAddress = generateAddress("new_acc_mtcc_01");
+
+    // Set fee=0 so actuator succeeds; force FEE path via zero free bandwidth
+    dbManager.getDynamicPropertiesStore().saveCreateNewAccountFeeInSystemContract(0);
+    dbManager.getDynamicPropertiesStore().saveFreeNetLimit(0L);
+
+    AccountCreateContract contract = AccountCreateContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setAccountAddress(ByteString.copyFrom(ByteArray.fromHexString(newAccountAddress)))
+        .setType(AccountType.Normal)
+        .build();
+
+    TransactionCapsule trxCap = createTransaction(
+        Transaction.Contract.ContractType.AccountCreateContract, contract);
+
+    BlockCapsule blockCap = createBlockContext(dbManager, WITNESS_ADDRESS);
+
+    // Remove key after common init
+    dbManager.getDynamicPropertiesStore()
+        .delete("TOTAL_CREATE_ACCOUNT_COST".getBytes());
+
+    FixtureMetadata metadata = FixtureMetadata.builder()
+        .contractType("ACCOUNT_CREATE_CONTRACT", 0)
+        .caseName("validate_fail_missing_total_create_account_cost")
+        .caseCategory("validate_fail")
+        .description("Fail when TOTAL_CREATE_ACCOUNT_COST is missing (fee fallback path in tracked bandwidth)")
+        .database("account")
+        .database("dynamic-properties")
+        .ownerAddress(OWNER_ADDRESS)
+        .expectedError("not found TOTAL_CREATE_ACCOUNT_COST")
+        .strictDynamicProperties(true)
+        .strictExpectedFailure(true)
+        .accountinfoAextMode("tracked")
+        .build();
+
+    FixtureGenerator.FixtureResult result = generator.generate(trxCap, blockCap, metadata);
+    log.info("AccountCreate missing TOTAL_CREATE_ACCOUNT_COST: validationError={}",
+        result.getValidationError());
   }
 
   // ==========================================================================

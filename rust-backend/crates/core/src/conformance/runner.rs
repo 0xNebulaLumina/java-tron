@@ -207,8 +207,25 @@ impl ConformanceRunner {
     }
 
     /// Create an execution configuration with all contracts enabled for conformance testing.
-    fn create_conformance_config() -> ExecutionConfig {
-        ExecutionConfig {
+    /// When metadata specifies overrides (strict_dynamic_properties, accountinfo_aext_mode),
+    /// those are applied on top of the base config.
+    fn create_conformance_config(metadata: &super::metadata::FixtureMetadata) -> Result<ExecutionConfig, String> {
+        let strict = metadata.strict_dynamic_properties.unwrap_or(false);
+        let aext_mode = metadata
+            .accountinfo_aext_mode
+            .clone()
+            .unwrap_or_else(|| "none".to_string());
+
+        // Validate aext_mode to catch typos early
+        match aext_mode.as_str() {
+            "none" | "tracked" | "hybrid" | "zeros" | "defaults" => {}
+            other => return Err(format!(
+                "Fixture '{}': invalid accountinfoAextMode '{}' (valid: none, tracked, hybrid, zeros, defaults)",
+                metadata.case_name, other
+            )),
+        }
+
+        Ok(ExecutionConfig {
             remote: RemoteExecutionConfig {
                 system_enabled: true,
                 // Conformance runner executes against an isolated RocksDB instance, so Rust must
@@ -257,10 +274,13 @@ impl ConformanceRunner {
                 account_create_enabled: true,
                 trc10_enabled: true,
                 delegation_reward_enabled: true,
+                // Metadata-driven overrides
+                strict_dynamic_properties: strict,
+                accountinfo_aext_mode: aext_mode,
                 ..Default::default()
             },
             ..Default::default()
-        }
+        })
     }
 
     /// Map fixture DB aliases to the actual storage DB names used by the adapter.
@@ -675,9 +695,45 @@ impl ConformanceRunner {
             return ConformanceResult::failure(metadata, e);
         }
 
+        // Compute strict_expected_failure early so we can capture a pre-exec
+        // snapshot before execution modifies state.
+        let strict_expected_failure = metadata.strict_expected_failure.unwrap_or(false);
+
+        // Snapshot the actual pre-execution DB state.  This captures any
+        // implicit/default keys the engine may have injected during
+        // load_pre_state_into_storage, so strict-expected-failure comparisons
+        // use a real baseline instead of the fixture's declared pre_state.
+        let pre_exec_snapshot: Option<BTreeMap<String, BTreeMap<Vec<u8>, Vec<u8>>>> =
+            if strict_expected_failure {
+                let all_engine_dbs = match storage_engine.list_databases() {
+                    Ok(dbs) => dbs,
+                    Err(e) => {
+                        return ConformanceResult::failure(
+                            metadata,
+                            format!("Failed to list engine databases for pre-exec snapshot: {}", e),
+                        );
+                    }
+                };
+                match self.dump_storage_state(&storage_engine, &all_engine_dbs) {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        return ConformanceResult::failure(
+                            metadata,
+                            format!("Failed to dump pre-exec snapshot: {}", e),
+                        );
+                    }
+                }
+            } else {
+                None
+            };
+
         // Create a BackendService instance configured for conformance.
         // This ensures we exercise the same NON_VM dispatch path as the gRPC server.
-        let config = Self::create_conformance_config();
+        // Metadata-driven overrides (strict_dynamic_properties, accountinfo_aext_mode) are applied.
+        let config = match Self::create_conformance_config(&metadata) {
+            Ok(c) => c,
+            Err(e) => return ConformanceResult::failure(metadata, e),
+        };
         let mut module_manager = ModuleManager::new();
         module_manager.register("execution", Box::new(ExecutionModule::new(config.clone())));
         let backend_service = BackendService::new(module_manager);
@@ -878,9 +934,47 @@ impl ConformanceRunner {
             Err(e) => format!("ERROR: {}", e),
         };
 
-        // Dump actual post-state (even for failure cases) and compare against fixture oracle.
-        let actual_state =
-            match self.dump_storage_state(&storage_engine, &metadata.databases_touched) {
+        // Validate strict-expected-failure fixture requirements.
+        // These fixtures assert that Rust rejects execution AND makes no state
+        // mutations.  The Java-side expectedStatus can be SUCCESS (Java succeeded
+        // with fallback defaults while Rust fails strict) or a failure status
+        // (both fail, but we still verify no accidental writes).
+        if strict_expected_failure {
+            if !metadata.strict_dynamic_properties.unwrap_or(false) {
+                return ConformanceResult::failure(
+                    metadata,
+                    "strictExpectedFailure=true requires strictDynamicProperties=true".to_string(),
+                );
+            }
+            match &metadata.expected_error_message {
+                None => return ConformanceResult::failure(
+                    metadata,
+                    "strictExpectedFailure=true requires expectedErrorMessage to be set".to_string(),
+                ),
+                Some(msg) if msg.trim().is_empty() => return ConformanceResult::failure(
+                    metadata,
+                    "strictExpectedFailure=true requires non-blank expectedErrorMessage".to_string(),
+                ),
+                _ => {}
+            }
+        }
+
+        // Dump actual post-state.  For strict-expected-failure we dump ALL
+        // engine databases (using canonical names) so we can detect accidental
+        // writes outside the declared databasesTouched list.  For normal
+        // fixtures we only dump the databases the fixture declares.
+        let (actual_state, compare_pre_state) = if strict_expected_failure {
+            let all_engine_dbs = match storage_engine.list_databases() {
+                Ok(dbs) => dbs,
+                Err(e) => {
+                    return ConformanceResult::failure(
+                        metadata,
+                        format!("Failed to list engine databases for post-state dump: {}", e),
+                    );
+                }
+            };
+            // Dump using canonical engine names so keys are consistent.
+            let actual = match self.dump_storage_state(&storage_engine, &all_engine_dbs) {
                 Ok(s) => s,
                 Err(e) => {
                     return ConformanceResult::failure(
@@ -889,17 +983,59 @@ impl ConformanceRunner {
                     );
                 }
             };
+            // Use the real pre-exec snapshot (captured after loading fixture
+            // DBs) instead of the fixture's declared pre_state.  This avoids
+            // false diffs from implicit/default keys the engine may inject.
+            let baseline = pre_exec_snapshot.unwrap_or_else(|| {
+                // Fallback: canonicalize fixture pre_state (should not happen
+                // since we always populate pre_exec_snapshot for strict mode).
+                let mut canonical_pre: BTreeMap<String, BTreeMap<Vec<u8>, Vec<u8>>> = BTreeMap::new();
+                for (k, v) in &pre_state {
+                    let canon = Self::canonical_db_name(k).to_string();
+                    canonical_pre.insert(canon, v.clone());
+                }
+                canonical_pre
+            });
+            (actual, baseline)
+        } else {
+            let actual = match self.dump_storage_state(&storage_engine, &metadata.databases_touched) {
+                Ok(s) => s,
+                Err(e) => {
+                    return ConformanceResult::failure(
+                        metadata,
+                        format!("Failed to dump post-state: {}", e),
+                    );
+                }
+            };
+            // Not used for normal fixtures; placeholder to satisfy the binding.
+            (actual, BTreeMap::new())
+        };
 
-        // Compare states
-        let db_diffs =
-            self.compare_states(&expected_state, &actual_state, &metadata.databases_touched);
+        // Compare states.  For strict-expected-failure fixtures Rust correctly
+        // aborts before making state changes, so the expected post-state (from
+        // Java's successful execution) won't match.  Instead, compare actual
+        // post-state against the canonicalized pre-state to verify no
+        // accidental writes across ALL engine databases.
+        let db_diffs = if strict_expected_failure {
+            // Union all DB namespaces from both maps so we catch writes in
+            // databases that exist only in actual_state (not in pre_state).
+            let all_dbs: Vec<String> = {
+                let mut keys: std::collections::BTreeSet<String> =
+                    compare_pre_state.keys().cloned().collect();
+                keys.extend(actual_state.keys().cloned());
+                keys.into_iter().collect()
+            };
+            self.compare_states(&compare_pre_state, &actual_state, &all_dbs)
+        } else {
+            self.compare_states(&expected_state, &actual_state, &metadata.databases_touched)
+        };
         let state_ok = db_diffs.is_empty();
 
         // Check execution outcome vs expected status.
         let mut status_ok = true;
         let mut status_error: Option<String> = None;
 
-        if metadata.expects_success() {
+        if metadata.expects_success() && !strict_expected_failure {
             match &execution_result {
                 Ok(r) if r.success => {}
                 Ok(r) => {
@@ -911,7 +1047,10 @@ impl ConformanceRunner {
                     status_error = Some(format!("Expected SUCCESS but got ERROR: {}", e));
                 }
             }
-        } else if metadata.expects_validation_failure() || metadata.expected_status == "REVERT" {
+        } else if strict_expected_failure
+            || metadata.expects_validation_failure()
+            || metadata.expected_status == "REVERT"
+        {
             // Java fixture generator classifies non-success as either VALIDATION_FAILED or REVERT.
             match &execution_result {
                 Ok(r) if !r.success => {}
@@ -927,11 +1066,40 @@ impl ConformanceRunner {
 
             if status_ok {
                 if let Some(expected_msg) = metadata.expected_error_message.clone() {
+                    if expected_msg.trim().is_empty() {
+                        return ConformanceResult::failure(
+                            metadata,
+                            "expectedErrorMessage is blank — this would match any error".to_string(),
+                        );
+                    }
                     let actual_msg = match &execution_result {
                         Ok(r) => r.error.clone().unwrap_or_default(),
                         Err(e) => e.clone(),
                     };
-                    if !actual_msg.contains(&expected_msg) {
+                    // For strict dynamic-property fixtures, Java and Rust may wrap
+                    // "not found KEY" in different prefix strings.  Match on the
+                    // exact "not found ..." tail if a full substring match fails.
+                    // This applies to both strictDynamicProperties and
+                    // strictExpectedFailure fixtures that hit missing-key paths.
+                    let matched = if actual_msg.contains(&expected_msg) {
+                        true
+                    } else if metadata.strict_dynamic_properties.unwrap_or(false)
+                        || metadata.strict_expected_failure.unwrap_or(false)
+                    {
+                        // Extract "not found ..." from both messages and require
+                        // exact equality so that a wrong-key with a similar prefix
+                        // cannot pass.
+                        let extract_not_found = |s: &str| -> Option<String> {
+                            s.find("not found ").map(|idx| s[idx..].trim().to_string())
+                        };
+                        match (extract_not_found(&expected_msg), extract_not_found(&actual_msg)) {
+                            (Some(exp_core), Some(act_core)) => act_core == exp_core,
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    };
+                    if !matched {
                         status_ok = false;
                         status_error = Some(format!(
                             "Error message mismatch: expected '{}', got '{}'",
@@ -1001,6 +1169,9 @@ impl ConformanceRunner {
                         expected_error_message: None,
                         owner_address: None,
                         dynamic_properties: Default::default(),
+                        strict_dynamic_properties: None,
+                        strict_expected_failure: None,
+                        accountinfo_aext_mode: None,
                         notes: Vec::new(),
                     },
                     passed: false,

@@ -945,23 +945,15 @@ impl EngineBackedEvmStateStore {
 
     /// Get AccountUpgradeCost dynamic property
     /// Default value for witness creation cost in SUN
-    pub fn get_account_upgrade_cost(&self) -> Result<u64> {
+    /// Java parity: returns signed i64 (Java's long), matching Java's
+    /// DynamicPropertiesStore.getAccountUpgradeCost() which returns long.
+    pub fn get_account_upgrade_cost(&self) -> Result<i64> {
         let key = b"ACCOUNT_UPGRADE_COST";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) => {
-                if data.len() >= 8 {
-                    let cost = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(cost)
-                } else {
-                    // Use default value for AccountUpgradeCost
-                    Ok(9999000000) // 9999 TRX in SUN (default from TRON)
-                }
-            }
+            Some(data) => Ok(Self::decode_i64_java(&data)),
             None => {
                 // Use default value for AccountUpgradeCost
                 Ok(9999000000) // 9999 TRX in SUN (default from TRON)
@@ -972,23 +964,14 @@ impl EngineBackedEvmStateStore {
     /// Get AssetIssueFee dynamic property
     /// Default value for TRC-10 asset issuance cost in SUN
     /// Java reference: DynamicPropertiesStore.java:1554, 1568
-    pub fn get_asset_issue_fee(&self) -> Result<u64> {
+    /// Java parity: returns signed i64, matching Java's long return type
+    pub fn get_asset_issue_fee(&self) -> Result<i64> {
         let key = b"ASSET_ISSUE_FEE";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) => {
-                if data.len() >= 8 {
-                    let fee = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(fee)
-                } else {
-                    // Use default value for AssetIssueFee
-                    Ok(1024000000) // 1024 TRX in SUN (default from TRON mainnet)
-                }
-            }
+            Some(data) => Ok(Self::decode_i64_java(&data)),
             None => {
                 // Use default value for AssetIssueFee
                 Ok(1024000000) // 1024 TRX in SUN (default from TRON mainnet)
@@ -1000,27 +983,23 @@ impl EngineBackedEvmStateStore {
     /// Fee charged when creating a new account via system contract (AccountCreateContract)
     /// Java reference: DynamicPropertiesStore.java getCreateNewAccountFeeInSystemContract()
     /// Default value: 1_000_000 SUN (1 TRX)
-    pub fn get_create_new_account_fee_in_system_contract(&self) -> Result<u64> {
+    pub fn get_create_new_account_fee_in_system_contract(&self) -> Result<i64> {
         let key = b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                if data.len() >= 8 {
-                    let fee = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    tracing::debug!(
-                        "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT from DB: {} SUN",
-                        fee
-                    );
-                    Ok(fee)
-                } else {
-                    // Use default value if data is too short
-                    tracing::debug!("CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT has invalid length, using default 1000000 SUN");
-                    Ok(1_000_000) // 1 TRX in SUN (default from TRON)
-                }
+                // Java parity: returns signed i64, matching Java's long return type.
+                // Java's DynamicPropertiesStore.getCreateNewAccountFeeInSystemContract()
+                // returns long (signed) and callers use signed arithmetic throughout.
+                let fee = Self::decode_i64_java(&data);
+                tracing::debug!(
+                    "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT from DB: {} SUN (len={})",
+                    fee,
+                    data.len()
+                );
+                Ok(fee)
             }
             None => {
                 // Use default value if not found
@@ -1040,14 +1019,16 @@ impl EngineBackedEvmStateStore {
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) if data.len() >= 8 => {
-                let rate = i64::from_be_bytes([
-                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                ]);
-                tracing::debug!("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE from DB: {}", rate);
+            Some(data) => {
+                let rate = Self::decode_i64_java(&data);
+                tracing::debug!(
+                    "CREATE_NEW_ACCOUNT_BANDWIDTH_RATE from DB: {} (len={})",
+                    rate,
+                    data.len()
+                );
                 Ok(rate)
             }
-            _ => {
+            None => {
                 tracing::debug!("CREATE_NEW_ACCOUNT_BANDWIDTH_RATE not found, using default 1");
                 Ok(1) // Default: no multiplier
             }
@@ -1058,20 +1039,25 @@ impl EngineBackedEvmStateStore {
     /// Fee charged as fallback when bandwidth is insufficient for account creation.
     /// Java reference: DynamicPropertiesStore.getCreateAccountFee()
     /// Default value: 100_000 SUN (0.1 TRX)
-    pub fn get_create_account_fee(&self) -> Result<u64> {
+    pub fn get_create_account_fee(&self) -> Result<i64> {
         let key = b"CREATE_ACCOUNT_FEE";
         match self
             .storage_engine
             .get(self.dynamic_properties_database(), key)?
         {
-            Some(data) if data.len() >= 8 => {
-                let fee = u64::from_be_bytes([
-                    data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                ]);
-                tracing::debug!("CREATE_ACCOUNT_FEE from DB: {} SUN", fee);
+            Some(data) => {
+                // Java parity: returns signed i64, matching Java's long return type.
+                // Java's DynamicPropertiesStore.getCreateAccountFee() returns long (signed)
+                // and callers use signed arithmetic throughout.
+                let fee = Self::decode_i64_java(&data);
+                tracing::debug!(
+                    "CREATE_ACCOUNT_FEE from DB: {} SUN (len={})",
+                    fee,
+                    data.len()
+                );
                 Ok(fee)
             }
-            _ => {
+            None => {
                 tracing::debug!("CREATE_ACCOUNT_FEE not found, using default 100000 SUN");
                 Ok(100_000) // 0.1 TRX in SUN (default from TRON)
             }
@@ -1085,23 +1071,19 @@ impl EngineBackedEvmStateStore {
     pub fn get_total_create_account_cost(&self) -> Result<i64> {
         let key = b"TOTAL_CREATE_ACCOUNT_COST";
         match self.buffered_get(self.dynamic_properties_database(), key)? {
-            Some(data) if data.len() >= 8 => Ok(i64::from_be_bytes([
-                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-            ])),
-            _ => Ok(0),
+            Some(data) => Ok(Self::decode_i64_java(&data)),
+            None => Ok(0),
         }
     }
 
     /// Add to TOTAL_CREATE_ACCOUNT_COST dynamic property (java: addTotalCreateAccountCost()).
     /// Called when bandwidth is insufficient and fee fallback is used for account creation.
-    pub fn add_total_create_account_cost(&self, fee: u64) -> Result<()> {
+    pub fn add_total_create_account_cost(&self, fee: i64) -> Result<()> {
         if fee == 0 {
             return Ok(());
         }
 
-        let delta: i64 = fee
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("fee exceeds i64::MAX"))?;
+        let delta: i64 = fee;
         let current = self.get_total_create_account_cost()?;
         let new_value = current
             .checked_add(delta)
@@ -1121,30 +1103,145 @@ impl EngineBackedEvmStateStore {
         Ok(())
     }
 
+    // ── Strict dynamic-property helpers for account-create parity ───────
+    //
+    // When `strict_dynamic_properties=true`, these return an error when the
+    // key is absent, matching Java's `IllegalArgumentException("not found
+    // <KEY>")` semantics.  Present-but-short/empty values are decoded like
+    // Java's `ByteArray.toLong` (empty → 0, short → zero-padded BE).
+
+    /// Decode bytes the way Java's `ByteArray.toLong` does: empty → 0,
+    /// short → zero-padded big-endian, ≥8 → last 8 bytes as signed i64.
+    ///
+    /// Java uses `new BigInteger(1, b).longValue()` which interprets the
+    /// full array as an unsigned big-endian integer and truncates to the
+    /// lowest 64 bits — equivalent to taking the **last** 8 bytes.
+    fn decode_i64_java(data: &[u8]) -> i64 {
+        let len = data.len();
+        if len >= 8 {
+            let off = len - 8;
+            i64::from_be_bytes([
+                data[off],
+                data[off + 1],
+                data[off + 2],
+                data[off + 3],
+                data[off + 4],
+                data[off + 5],
+                data[off + 6],
+                data[off + 7],
+            ])
+        } else if data.is_empty() {
+            0
+        } else {
+            let mut buf = [0u8; 8];
+            buf[8 - len..].copy_from_slice(data);
+            i64::from_be_bytes(buf)
+        }
+    }
+
+    /// Unsigned reinterpretation of [`decode_i64_java`].
+    ///
+    /// Java's `ByteArray.toLong` returns a **signed** `long`.  This helper
+    /// reinterprets those same bits as `u64`.  For data whose high bit is set
+    /// (≥ 0x80 in the most-significant decoded byte) the signed value would be
+    /// negative in Java, while the `u64` value here is a large positive number.
+    fn decode_u64_java(data: &[u8]) -> u64 {
+        Self::decode_i64_java(data) as u64
+    }
+
+    fn get_dynamic_property_i64_strict(&self, key: &[u8], key_label: &str) -> Result<i64> {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) => Ok(Self::decode_i64_java(&data)),
+            None => Err(anyhow::anyhow!("not found {}", key_label)),
+        }
+    }
+
+    /// Java parity: decode as signed i64 and cast to u64 without rejecting
+    /// negatives.  Java's `ByteArray.toLong` returns a signed long and the
+    /// DynamicPropertiesStore getters do NOT enforce non-negativity.
+    fn get_dynamic_property_u64_strict(&self, key: &[u8], key_label: &str) -> Result<u64> {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) => Ok(Self::decode_i64_java(&data) as u64),
+            None => Err(anyhow::anyhow!("not found {}", key_label)),
+        }
+    }
+
+    /// Strict variant of `get_create_new_account_fee_in_system_contract()`.
+    /// Returns error when the key is absent (Java throws IllegalArgumentException).
+    pub fn get_create_new_account_fee_in_system_contract_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(
+            b"CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
+            "CREATE_NEW_ACCOUNT_FEE_IN_SYSTEM_CONTRACT",
+        )
+    }
+
+    /// Strict variant of `get_latest_block_header_timestamp()`.
+    /// Returns error when the key is absent.
+    /// Note: Java uses lowercase key name in error: "not found latest block header timestamp"
+    pub fn get_latest_block_header_timestamp_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(
+            b"latest_block_header_timestamp",
+            "latest block header timestamp",
+        )
+    }
+
+    /// Strict variant of `support_black_hole_optimization()`.
+    /// Returns error only when the key is absent.
+    /// Present-but-empty values decode as 0 (false), matching Java's
+    /// `ByteArray.toLong(empty) → 0` then `== 1` → false.
+    pub fn support_black_hole_optimization_strict(&self) -> Result<bool> {
+        let key = b"ALLOW_BLACKHOLE_OPTIMIZATION";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) => Ok(Self::decode_i64_java(&data) == 1),
+            None => Err(anyhow::anyhow!("not found ALLOW_BLACKHOLE_OPTIMIZATION")),
+        }
+    }
+
+    /// Strict variant of `get_create_new_account_bandwidth_rate()`.
+    /// Returns error when the key is absent.
+    pub fn get_create_new_account_bandwidth_rate_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(
+            b"CREATE_NEW_ACCOUNT_BANDWIDTH_RATE",
+            "CREATE_NEW_ACCOUNT_BANDWIDTH_RATE",
+        )
+    }
+
+    /// Strict variant of `get_free_net_limit()`.
+    /// Returns error when the key is absent.
+    pub fn get_free_net_limit_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(b"FREE_NET_LIMIT", "FREE_NET_LIMIT")
+    }
+
+    /// Strict variant of `get_create_account_fee()`.
+    /// Returns error when the key is absent.
+    pub fn get_create_account_fee_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(b"CREATE_ACCOUNT_FEE", "CREATE_ACCOUNT_FEE")
+    }
+
+    /// Strict variant of `get_total_create_account_cost()`.
+    /// Returns error when the key is absent.
+    /// Uses buffered_get for read-your-writes consistency (this key is
+    /// updated within the same transaction by `add_total_create_account_cost`).
+    pub fn get_total_create_account_cost_strict(&self) -> Result<i64> {
+        let key = b"TOTAL_CREATE_ACCOUNT_COST";
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
+            Some(data) => Ok(Self::decode_i64_java(&data)),
+            None => Err(anyhow::anyhow!("not found TOTAL_CREATE_ACCOUNT_COST")),
+        }
+    }
+
     /// Get AllowMultiSign dynamic property
     /// Java-tron uses strict `== 1` check (not just `!= 0`) for parity.
     /// Java throws `IllegalArgumentException("not found ALLOW_MULTI_SIGN")` if missing.
+    /// Uses buffered_get for read-your-writes consistency with other
+    /// strict-dynamic property reads.
     pub fn get_allow_multi_sign(&self) -> Result<bool> {
         let key = b"ALLOW_MULTI_SIGN";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
-                // Java stores dynamic properties as big-endian i64.
-                // Java: getAllowMultiSign() != 1 is "not allowed", so we need strict == 1 check.
-                if data.len() >= 8 {
-                    let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(val == 1)
-                } else if !data.is_empty() {
-                    // Fallback for short data (edge case)
-                    Ok(data[data.len() - 1] == 1)
-                } else {
-                    // Empty data treated as missing for strict parity
-                    Err(anyhow::anyhow!("not found ALLOW_MULTI_SIGN"))
-                }
+                // Use the Java-parity decode helper: empty → 0, >8 → last 8 bytes.
+                // Java: getAllowMultiSign() returns the stored long; callers check == 1.
+                Ok(Self::decode_i64_java(&data) == 1)
             }
             None => {
                 // Java throws IllegalArgumentException when key is missing
@@ -1235,20 +1332,9 @@ impl EngineBackedEvmStateStore {
             .get(self.dynamic_properties_database(), key)?
         {
             Some(data) => {
-                // Java writes a long; interpret big-endian i64 when length >= 8.
+                // Use decode_i64_java for consistent decoding with strict variant.
                 // Java: supportBlackHoleOptimization() checks value == 1 (strict).
-                if data.len() >= 8 {
-                    let val = i64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(val == 1)
-                } else if !data.is_empty() {
-                    // Fallback: treat last byte as the value (edge case)
-                    Ok(data[data.len() - 1] == 1)
-                } else {
-                    // Empty value → treat as disabled (credit blackhole)
-                    Ok(false)
-                }
+                Ok(Self::decode_i64_java(&data) == 1)
             }
             None => {
                 // Absent key → default to disabled (credit blackhole) for early heights
@@ -1273,14 +1359,13 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Add to TOTAL_CREATE_WITNESS_FEE dynamic property (java: addTotalCreateWitnessCost()).
-    pub fn add_total_create_witness_cost(&self, fee: u64) -> Result<()> {
+    /// Java parity: accepts signed long matching DynamicPropertiesStore.addTotalCreateWitnessCost(long).
+    pub fn add_total_create_witness_cost(&self, fee: i64) -> Result<()> {
         if fee == 0 {
             return Ok(());
         }
 
-        let delta: i64 = fee
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("fee exceeds i64::MAX"))?;
+        let delta: i64 = fee;
         let current = self.get_total_create_witness_cost()?;
         let new_value = current
             .checked_add(delta)
@@ -1309,14 +1394,13 @@ impl EngineBackedEvmStateStore {
     }
 
     /// Burn TRX by incrementing BURN_TRX_AMOUNT (java: burnTrx()).
-    pub fn burn_trx(&self, amount: u64) -> Result<()> {
-        if amount == 0 {
+    /// Java parity: `if (amount <= 0) return;` — negative amounts are no-ops.
+    pub fn burn_trx(&self, amount: i64) -> Result<()> {
+        if amount <= 0 {
             return Ok(());
         }
 
-        let delta: i64 = amount
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("burn amount exceeds i64::MAX"))?;
+        let delta: i64 = amount;
         let current = self.get_burn_trx_amount()?;
         let new_value = current
             .checked_add(delta)
@@ -6289,34 +6373,15 @@ impl EngineBackedEvmStateStore {
 
     /// Get AssetIssueFee with strict mode (errors when missing).
     /// Java: "not found ASSET_ISSUE_FEE"
-    pub fn get_asset_issue_fee_strict(&self) -> Result<u64> {
-        let key = b"ASSET_ISSUE_FEE";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
-            Some(data) => {
-                if data.len() >= 8 {
-                    let fee = u64::from_be_bytes([
-                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
-                    ]);
-                    Ok(fee)
-                } else {
-                    Err(anyhow::anyhow!("not found ASSET_ISSUE_FEE"))
-                }
-            }
-            None => Err(anyhow::anyhow!("not found ASSET_ISSUE_FEE")),
-        }
+    pub fn get_asset_issue_fee_strict(&self) -> Result<i64> {
+        self.get_dynamic_property_i64_strict(b"ASSET_ISSUE_FEE", "ASSET_ISSUE_FEE")
     }
 
     /// Get AllowSameTokenName with strict mode (errors when missing).
     /// Java: "not found ALLOW_SAME_TOKEN_NAME"
     pub fn get_allow_same_token_name_strict(&self) -> Result<i64> {
         let key = b" ALLOW_SAME_TOKEN_NAME";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
@@ -6454,10 +6519,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found TOKEN_ID_NUM"
     pub fn get_token_id_num_strict(&self) -> Result<i64> {
         let key = b"TOKEN_ID_NUM";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
@@ -6475,10 +6537,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found ONE_DAY_NET_LIMIT"
     pub fn get_one_day_net_limit_strict(&self) -> Result<i64> {
         let key = b"ONE_DAY_NET_LIMIT";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     let val = i64::from_be_bytes([
@@ -6497,10 +6556,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found MAX_FROZEN_SUPPLY_NUMBER"
     pub fn get_max_frozen_supply_number_strict(&self) -> Result<i64> {
         let key = b"MAX_FROZEN_SUPPLY_NUMBER";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
@@ -6522,10 +6578,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found MAX_FROZEN_SUPPLY_TIME"
     pub fn get_max_frozen_supply_time_strict(&self) -> Result<i64> {
         let key = b"MAX_FROZEN_SUPPLY_TIME";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([
@@ -6547,10 +6600,7 @@ impl EngineBackedEvmStateStore {
     /// Java: "not found MIN_FROZEN_SUPPLY_TIME"
     pub fn get_min_frozen_supply_time_strict(&self) -> Result<i64> {
         let key = b"MIN_FROZEN_SUPPLY_TIME";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 if data.len() >= 8 {
                     Ok(i64::from_be_bytes([

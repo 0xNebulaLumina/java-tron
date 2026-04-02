@@ -4,7 +4,7 @@
   "caseName": "validate_fail_proposal_id_zero",
   "caseCategory": "validate_fail",
   "description": "Fail with proposal_id=0 (proto3 default); error should be 'Proposal[0] not exists'",
-  "generatedAt": "2026-03-10T11:52:28.011Z",
+  "generatedAt": "2026-03-29T03:55:42.136Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1003000,

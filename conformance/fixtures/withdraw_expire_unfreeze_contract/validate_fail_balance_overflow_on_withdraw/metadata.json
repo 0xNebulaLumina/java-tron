@@ -4,7 +4,7 @@
   "caseName": "validate_fail_balance_overflow_on_withdraw",
   "caseCategory": "validate_fail",
   "description": "Fail when withdrawing would cause balance overflow (ArithmeticException)",
-  "generatedAt": "2026-03-10T11:52:29.068Z",
+  "generatedAt": "2026-03-29T03:55:43.403Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 11,
   "blockTimestamp": 1700000003000,

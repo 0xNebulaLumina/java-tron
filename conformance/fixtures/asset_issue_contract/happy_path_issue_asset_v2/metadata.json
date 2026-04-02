@@ -4,7 +4,7 @@
   "caseName": "happy_path_issue_asset_v2",
   "caseCategory": "happy",
   "description": "Issue a new TRC-10 asset with allowSameTokenName=1 (V2 mode)",
-  "generatedAt": "2026-03-10T11:52:19.340Z",
+  "generatedAt": "2026-03-29T03:55:32.917Z",
   "generatorVersion": "1.0.0",
   "blockNumber": 1700000001,
   "blockTimestamp": 1700000003000,

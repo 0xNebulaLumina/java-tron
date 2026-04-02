@@ -1,5 +1,6 @@
 package org.tron.core.execution.spi;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
@@ -376,7 +377,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
   }
 
   /** Build ExecuteTransactionRequest from TransactionContext. */
-  private ExecuteTransactionRequest buildExecuteTransactionRequest(TransactionContext context) {
+  @VisibleForTesting
+  ExecuteTransactionRequest buildExecuteTransactionRequest(TransactionContext context) {
     try {
       TransactionCapsule trxCap = context.getTrxCap();
       Transaction transaction = trxCap.getInstance();
