@@ -935,8 +935,10 @@ impl ConformanceRunner {
         };
 
         // Validate strict-expected-failure fixture requirements.
-        // These are cases where Rust correctly rejects missing dynamic properties
-        // while Java succeeded using fallback defaults.
+        // These fixtures assert that Rust rejects execution AND makes no state
+        // mutations.  The Java-side expectedStatus can be SUCCESS (Java succeeded
+        // with fallback defaults while Rust fails strict) or a failure status
+        // (both fail, but we still verify no accidental writes).
         if strict_expected_failure {
             if !metadata.strict_dynamic_properties.unwrap_or(false) {
                 return ConformanceResult::failure(
@@ -954,16 +956,6 @@ impl ConformanceRunner {
                     "strictExpectedFailure=true requires non-blank expectedErrorMessage".to_string(),
                 ),
                 _ => {}
-            }
-            if !metadata.expects_success() {
-                let status = metadata.expected_status.clone();
-                return ConformanceResult::failure(
-                    metadata,
-                    format!(
-                        "strictExpectedFailure=true requires expectedStatus='SUCCESS', got '{}'",
-                        status
-                    ),
-                );
             }
         }
 

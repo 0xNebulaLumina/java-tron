@@ -1233,12 +1233,11 @@ impl EngineBackedEvmStateStore {
     /// Get AllowMultiSign dynamic property
     /// Java-tron uses strict `== 1` check (not just `!= 0`) for parity.
     /// Java throws `IllegalArgumentException("not found ALLOW_MULTI_SIGN")` if missing.
+    /// Uses buffered_get for read-your-writes consistency with other
+    /// strict-dynamic property reads.
     pub fn get_allow_multi_sign(&self) -> Result<bool> {
         let key = b"ALLOW_MULTI_SIGN";
-        match self
-            .storage_engine
-            .get(self.dynamic_properties_database(), key)?
-        {
+        match self.buffered_get(self.dynamic_properties_database(), key)? {
             Some(data) => {
                 // Use the Java-parity decode helper: empty → 0, >8 → last 8 bytes.
                 // Java: getAllowMultiSign() returns the stored long; callers check == 1.
