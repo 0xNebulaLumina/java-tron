@@ -25,10 +25,10 @@ Goal: ownerAddress must be **21 bytes** and **prefix == configured prefix**.
 - [x] Fix gRPC conversion prefixing:
   - [x] Added `add_tron_address_prefix_with(address, prefix)` variant that accepts configurable prefix.
   - [x] Added `validate_tron_address_prefix(address_bytes, expected_prefix)` for strict validation.
-  - [ ] (Optional) Update conversion.rs to use DB prefix for all emitted addresses (not critical for actuator parity).
+  - [x] (Optional) Update conversion.rs to use DB prefix for all emitted addresses (not critical for actuator parity). Done: all 15 address emission sites in conversion.rs now use `add_tron_address_prefix_with(..., address_prefix)` where prefix is passed from `storage_adapter.address_prefix()`.
 - [x] Add Rust tests:
   - [x] With a test DB prefixed `0x41`, a contract owner_address prefixed `0xa0` should fail with `"Invalid ownerAddress"`.
-  - [ ] (Optional) With a test DB prefixed `0xa0`, emitted `Trc10AssetIssued.owner_address` should use `0xa0` prefix.
+  - [x] (Optional) With a test DB prefixed `0xa0`, emitted `Trc10AssetIssued.owner_address` should use `0xa0` prefix. Done: `test_convert_result_trc10_issued_uses_testnet_prefix` in conversion.rs.
 
 ## 2) Stop validating on lossy strings (use raw bytes for validations + lookups)
 
@@ -62,7 +62,7 @@ Goal: reduce reliance on Java reading `TOKEN_ID_NUM` after execution.
 - [x] Add tests:
   - [x] `Trc10Change::AssetIssued.token_id` is present and matches the allocated id
   - [x] `TOKEN_ID_NUM` is persisted alongside token_id (guards future refactors; Java only increments TOKEN_ID_NUM when token_id is empty per RuntimeSpiImpl.java:700)
-  - [ ] Java remote CSV extraction uses the provided token_id (no dynamicStore dependency)
+  - [x] Java remote CSV extraction uses the provided token_id (no dynamicStore dependency). Done: `ExecutionCsvRecordBuilderTest.testExtractTrc10DomainsUsesProvidedTokenId` verifies provided tokenId "1000042" is used, not fallback "9999999".
 
 ## 4) Unify contract bytes source (`data` vs `contract_parameter.value`)
 
@@ -99,10 +99,11 @@ Goal: decide whether Rust should match Java's "throw when missing" behavior or k
 
 - [x] Rust:
   - [x] `cd rust-backend && cargo test` — All 26 asset_issue tests pass (updated from 20 after adding Task 5 strict mode tests)
-  - [ ] Run any available conformance/fixture runner for AssetIssue cases (if present)
-- [ ] Java (optional, if remote mode integration is under test):
-  - [ ] `./gradlew :framework:test`
-  - [ ] If dual-mode is relevant: `./gradlew :framework:test --tests "org.tron.core.storage.spi.DualStorageModeIntegrationTest"`
+  - [x] Run any available conformance/fixture runner for AssetIssue cases (if present). Done: `scripts/ci/run_fixture_conformance.sh --rust-only --contract asset_issue` — 49/50 ASSET_ISSUE_CONTRACT fixtures passed; 1 pre-existing failure unrelated to this work.
+- [x] Java (optional, if remote mode integration is under test):
+  - [x] `RuntimeSpiImplTest` — 13/13 passed (including new provided-tokenId and fallback tests)
+  - [x] `ExecutionCsvRecordBuilderTest` — 2/2 passed
+  - [x] `AssetIssueFixtureGeneratorTest` — all fixture generation tests passed
 
 ---
 
