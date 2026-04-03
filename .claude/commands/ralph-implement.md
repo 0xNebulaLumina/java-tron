@@ -1,48 +1,20 @@
 Use the ralph-loop plugin to implement tasks from design doc $1 and progress tracker $2 via an iterative implement-review loop.
 
-## Workflow per iteration
+## Loop behavior
 
-### Step 1: Read planning & progress
-- Read $1 (design planning) and $2 (TODO/progress tracker)
-- Identify the FIRST unchecked `- [ ]` task in $2 — that is your target for this iteration
-- If ALL tasks are checked `- [x]`, proceed to Step 4 (final validation)
+Each iteration:
 
-### Step 2: Implement the target task
-- Implement ONLY the single target task identified in Step 1
-- Follow the design guidance in $1 for how to implement it
-- After implementation, run `cargo check` (for Rust changes) or the relevant build command to verify compilation
-- If the task involves tests, run the specific test(s) to verify they pass
-- On success: mark the task as `- [x]` in $2
-- On failure: fix the issue within this iteration; do NOT move on to the next task until the current one compiles and passes
-
-### Step 3: Exit iteration
-- After completing one task, output: `Done with this iteration.`
-- The Ralph Loop will restart you at Step 1 with the next unchecked task
-
-### Step 4: Final validation (when all tasks are checked)
-
-**Loop A — Correctness validation**
-1. Run `/codex:review` to cross-validate $2:
-   - **No over-marking**: every `- [x]` task in $2 is actually implemented
-   - **No under-marking**: every implemented change has its corresponding task marked in $2
-   - **No skips**: no unchecked tasks remain that should have been done
-2. Evaluate the feedback — for each item, decide: **incorporate** (correct, valuable) or **discard** (wrong, out-of-scope).
-3. If you incorporated any feedback and made changes → go back to A.1.
-4. If no changes needed → proceed to Loop B.
-
-**Loop B — Code quality review**
-1. Run `/codex:review` on all uncommitted or recently committed changes.
-2. Evaluate the feedback — for each item, decide: **incorporate** or **discard**.
-3. If you incorporated any feedback and made changes → go back to B.1.
-4. If no changes needed → validation complete.
-
-- If both loops converge (no new changes), output: `<promise>IMPLEMENTATION COMPLETE</promise>`
-
-## Rules
-- ONE task per iteration — do not batch multiple tasks
-- ALWAYS update $2 after completing a task — this is how the next iteration knows where to resume
-- If a task is blocked by a prior task that isn't done, do the blocker first
-- Follow commit conventions from CLAUDE.md: `<type>(<scope>): <subject>`
+1. **Read** — Read $1 (design planning) and $2 (progress tracker). Identify unchecked `- [ ]` tasks.
+   - If ALL tasks are `[x]` → output `<promise>IMPLEMENTATION COMPLETE</promise>` and STOP.
+2. **Implement** — Work through unchecked tasks. Multiple related tasks per iteration is fine — use judgment on what forms a coherent chunk. Don't force yourself to stop mid-work if the next task is closely related.
+3. **Verify** — Run `cargo check` (Rust) or the relevant build command. Run related tests. The goal is that the iteration ends in a compilable, test-passing state — but intermediate non-compilation during implementation is acceptable.
+4. **Mark** completed tasks `[x]` in $2.
+5. **Review** — Run `/codex:review` to check:
+   - No over-marking: every `[x]` task is actually implemented
+   - No under-marking: every code change has a corresponding `[x]` task
+   - No skips: no doable unchecked tasks remain that should have been done in this chunk
+6. **Fix** according to codex's feedback unless codex says all good.
+7. **Converge** — If you made changes from the review → go back to step 5 (re-review). If no new changes → STOP. Ralph will restart you at step 1 for the next chunk.
 
 ## How to invoke ralph-loop
 
@@ -55,7 +27,7 @@ The ralph-loop skill runs a shell setup script that cannot handle backticks, spe
    ```
 
 2. **Write the prompt to a file:**
-   Write the full workflow description (the "Workflow per iteration" and "Rules" sections above, plus the resolved values of $1 and $2) to `.claude/ralph-loop-prompt.local.md` using the Write tool.
+   Write the resolved loop behavior (with actual file paths substituted for $1 and $2) to `.claude/ralph-loop-prompt.local.md` using the Write tool. Do NOT include the "How to invoke" section — only the loop behavior and rules.
 
 3. **Invoke ralph-loop with a short, shell-safe argument:**
    Run the setup script directly via Bash tool: `CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}" /root/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh "See .claude/ralph-loop-prompt.local.md"`
@@ -63,7 +35,7 @@ The ralph-loop skill runs a shell setup script that cannot handle backticks, spe
 
 ## When the loop ends
 
-After the implement-review cycle completes, clean up the loop files:
+After the implement-review cycle converges, clean up the loop files:
 ```
 rm -f .claude/ralph-loop-prompt.local.md .claude/ralph-loop.local.md
 ```
