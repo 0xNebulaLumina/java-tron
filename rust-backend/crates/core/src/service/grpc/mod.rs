@@ -1367,6 +1367,9 @@ impl crate::backend::backend_server::Backend for BackendService {
         };
 
         // Phase 3: Branch execution based on transaction kind
+        // Capture the DB-detected address prefix before storage_adapter is moved into execution.
+        let address_prefix = storage_adapter.address_prefix();
+
         let execution_result = match tx_kind {
             crate::backend::TxKind::NonVm => {
                 info!("Executing NON_VM transaction with contract type dispatch");
@@ -1592,6 +1595,7 @@ impl crate::backend::backend_server::Backend for BackendService {
                     &pre_exec_aext_map,
                     touched_keys.as_deref(),
                     write_mode,
+                    address_prefix,
                 );
                 Ok(Response::new(response))
             }
