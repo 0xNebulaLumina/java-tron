@@ -528,6 +528,9 @@ public class RuntimeSpiImplTest extends BaseTest {
     String computedTokenId = String.valueOf(finalTokenId);
     AssetIssueCapsule v2Asset = dbManager.getAssetIssueV2Store().get(computedTokenId.getBytes());
     assertNotNull("V2 asset should exist with computed token ID", v2Asset);
+
+    // Cleanup the asset we created
+    dbManager.getAssetIssueV2Store().delete(computedTokenId.getBytes());
   }
 
   @Test

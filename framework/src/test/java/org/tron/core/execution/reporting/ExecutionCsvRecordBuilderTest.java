@@ -33,15 +33,19 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
     OWNER_ADDRESS = Wallet.getAddressPreFixString() + "abd4b9367799eaa3197fecb144eb71de1e049150";
   }
 
+  private long originalTokenIdNum;
+
   @Before
   public void setUp() {
+    originalTokenIdNum = dbManager.getDynamicPropertiesStore().getTokenIdNum();
     // Set TOKEN_ID_NUM to a different value so fallback usage is detectable
     dbManager.getDynamicPropertiesStore().saveTokenIdNum(9999999L);
   }
 
   @After
   public void cleanup() {
-    // Nothing to clean
+    // Restore original TOKEN_ID_NUM to avoid interfering with other tests
+    dbManager.getDynamicPropertiesStore().saveTokenIdNum(originalTokenIdNum);
   }
 
   /**
@@ -97,6 +101,8 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
         issuanceJson.contains(providedTokenId));
     assertFalse("Issuance JSON should NOT contain the fallback tokenId 9999999",
         issuanceJson.contains("9999999"));
+    // 13 fields: owner, name, abbr, totalSupply, trxNum, precision, num,
+    // startTime, endTime, description, url, freeAssetNetLimit, publicFreeAssetNetLimit
     assertEquals("Should have issuance changes", 13, record.getTrc10IssuanceChangeCount());
   }
 
@@ -147,6 +153,7 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
     assertNotNull("Issuance JSON should not be null even with empty tokenId and null trace",
         issuanceJson);
     // With null trace, the fallback goes to hex-of-name path
+    // 13 fields: see testExtractTrc10DomainsUsesProvidedTokenId for field list
     assertEquals("Should still have issuance changes", 13, record.getTrc10IssuanceChangeCount());
   }
 }
