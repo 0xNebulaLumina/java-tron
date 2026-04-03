@@ -9,7 +9,7 @@ Each iteration:
 2. **Implement** — Work through unchecked tasks. Multiple related tasks per iteration is fine — use judgment on what forms a coherent chunk. Don't force yourself to stop mid-work if the next task is closely related.
 3. **Verify** — Run `cargo check` (Rust) or the relevant build command. Run related tests. The goal is that the iteration ends in a compilable, test-passing state — but intermediate non-compilation during implementation is acceptable.
 4. **Mark** completed tasks `[x]` in $2.
-5. **Review** — Run `/codex:review` to check:
+5. **Review** — Run `codex:review` command to check:
    - No over-marking: every `[x]` task is actually implemented
    - No under-marking: every code change has a corresponding `[x]` task
    - No skips: no doable unchecked tasks remain that should have been done in this chunk

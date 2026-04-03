@@ -17,7 +17,7 @@ On re-review iterations (after fixes), tell Codex to also review any uncommitted
 
 ## Loop behavior
 
-1. **Review** — Run `/codex:review` asking Codex to review the scope. On re-review iterations, tell Codex to include uncommitted changes too.
+1. **Review** — Run `codex:review` command asking Codex to review the scope. On re-review iterations, tell Codex to include uncommitted changes too.
    - If Codex finds no issues → output `<promise>ALL CLEAN</promise>` and STOP.
 2. **Evaluate** — Judge the review feedback. For each item, classify it as:
    - **Incorporate** — correct and valuable → fix it.
