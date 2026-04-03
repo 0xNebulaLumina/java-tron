@@ -8,7 +8,7 @@ $ARGUMENTS
 
 1. **Assess** — Understand the problem. Decide what changes are needed and whether each aspect is worth fixing (correct, in-scope, valuable) before writing any code.
 2. **Fix** — Apply the changes you decided to make.
-3. **Review** — Use the `codex:review` skill to get a code review of all changes (same review prompt style as `.github/workflows/codex-review.yml`).
+3. **Review** — Use the `codex:review` command to get a code review of all changes (same review prompt style as `.github/workflows/codex-review.yml`).
 4. **Evaluate** — Judge the review feedback. For each item, classify it as:
    - **Incorporate** — correct and valuable → fix it.
    - **Discard** — wrong, out-of-scope, or low-priority → dismiss it.
