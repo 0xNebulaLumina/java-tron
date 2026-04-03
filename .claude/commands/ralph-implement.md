@@ -21,8 +21,8 @@ Use the ralph-loop plugin to implement tasks from design doc $1 and progress tra
 
 ### Step 4: Final validation (when all tasks are checked)
 
-**Loop A — Correctness validation (`/codex-ask`):**
-1. Run `/codex-ask` to cross-validate $2:
+**Loop A — Correctness validation**
+1. Run `/codex:review` to cross-validate $2:
    - **No over-marking**: every `- [x]` task in $2 is actually implemented
    - **No under-marking**: every implemented change has its corresponding task marked in $2
    - **No skips**: no unchecked tasks remain that should have been done
@@ -30,8 +30,8 @@ Use the ralph-loop plugin to implement tasks from design doc $1 and progress tra
 3. If you incorporated any feedback and made changes → go back to A.1.
 4. If no changes needed → proceed to Loop B.
 
-**Loop B — Code quality review (`/codex-review-code`):**
-1. Run `/codex-review-code` on all uncommitted or recently committed changes.
+**Loop B — Code quality review**
+1. Run `/codex:review` on all uncommitted or recently committed changes.
 2. Evaluate the feedback — for each item, decide: **incorporate** or **discard**.
 3. If you incorporated any feedback and made changes → go back to B.1.
 4. If no changes needed → validation complete.
