@@ -1,9 +1,9 @@
 package org.tron.core.execution.reporting;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.assertFalse;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -108,7 +108,9 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
 
   /**
    * When Trc10AssetIssued carries an empty tokenId and trace is null,
-   * the fallback path should NOT crash (graceful degradation).
+   * extractTrc10Domains should not crash. The tokenId remains empty because
+   * the DynamicPropertiesStore fallback requires a non-null trace, and the
+   * hex-of-name catch-block fallback is only reached on exception.
    */
   @Test
   public void testExtractTrc10DomainsEmptyTokenIdWithNullTrace() throws Exception {
@@ -152,7 +154,10 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
     String issuanceJson = record.getTrc10IssuanceChangesJson();
     assertNotNull("Issuance JSON should not be null even with empty tokenId and null trace",
         issuanceJson);
-    // With null trace, the fallback goes to hex-of-name path
+    // With null trace, tokenId stays empty (DynamicPropertiesStore unreachable).
+    // The fallback tokenId 9999999 from setUp() must NOT appear.
+    assertFalse("Issuance JSON should NOT contain the DynamicPropertiesStore fallback tokenId",
+        issuanceJson.contains("9999999"));
     // 13 fields: see testExtractTrc10DomainsUsesProvidedTokenId for field list
     assertEquals("Should still have issuance changes", 13, record.getTrc10IssuanceChangeCount());
   }
