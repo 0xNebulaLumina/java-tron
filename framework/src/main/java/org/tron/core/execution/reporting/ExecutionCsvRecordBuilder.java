@@ -291,8 +291,9 @@ public class ExecutionCsvRecordBuilder {
             }
           }
           if (tokenId == null || tokenId.isEmpty()) {
-            log.warn("token_id unresolved for TRC-10 transfer, leaving empty");
-            tokenId = "";
+            log.warn("token_id unresolved for TRC-10 transfer, skipping balance delta "
+                + "emission to avoid key collision");
+            continue; // Skip: empty key would collide across unresolved assets
           }
 
           byte[] senderAddr = transfer.getOwnerAddress();
