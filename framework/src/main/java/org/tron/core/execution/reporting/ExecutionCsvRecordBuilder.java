@@ -2,6 +2,7 @@ package org.tron.core.execution.reporting;
 
 import java.util.ArrayList;
 import java.util.List;
+import lombok.extern.slf4j.Slf4j;
 import org.tron.common.runtime.ProgramResult;
 import org.tron.common.runtime.vm.LogInfo;
 import org.tron.core.capsule.BlockCapsule;
@@ -40,6 +41,7 @@ import org.tron.protos.Protocol.Transaction.Contract;
  * - Account resource usage (AEXT) changes
  * - Log entries
  */
+@Slf4j(topic = "execution-csv")
 public class ExecutionCsvRecordBuilder {
 
   /**
@@ -289,8 +291,8 @@ public class ExecutionCsvRecordBuilder {
             }
           }
           if (tokenId == null || tokenId.isEmpty()) {
-            // Fallback: hex of asset name (legacy), though not preferred for parity
-            tokenId = ByteArray.toHexString(transfer.getAssetName());
+            log.warn("token_id unresolved for TRC-10 transfer, leaving empty");
+            tokenId = "";
           }
 
           byte[] senderAddr = transfer.getOwnerAddress();
@@ -360,13 +362,8 @@ public class ExecutionCsvRecordBuilder {
           Trc10AssetIssued issued = change.getAssetIssued();
 
           // Get token_id: prefer provided value, else read from DynamicPropertiesStore
-          // (applyAssetIssuedChange has already computed and stored the token_id)
           String tokenId = issued.getTokenId();
           if (tokenId == null || tokenId.isEmpty()) {
-            // Hex of asset name as deterministic fallback for CSV consumers
-            String hexNameFallback = (issued.getName() != null && issued.getName().length > 0)
-                ? org.tron.common.utils.ByteArray.toHexString(issued.getName()) : null;
-            // Read computed token_id from DynamicPropertiesStore
             try {
               if (trace != null && trace.getTransactionContext() != null
                   && trace.getTransactionContext().getStoreFactory() != null) {
@@ -376,15 +373,11 @@ public class ExecutionCsvRecordBuilder {
                 tokenId = String.valueOf(dynamicStore.getTokenIdNum());
               }
             } catch (Exception e) {
-              // Fallback to hex of name if store access fails
-              if (hexNameFallback != null) {
-                tokenId = hexNameFallback;
-              }
+              log.warn("Failed to read tokenIdNum from DynamicPropertiesStore", e);
             }
-            // Final fallback: if tokenId is still empty (e.g. trace was null)
-            // and asset name is present, use hex of name for CSV consumers
-            if ((tokenId == null || tokenId.isEmpty()) && hexNameFallback != null) {
-              tokenId = hexNameFallback;
+            if (tokenId == null || tokenId.isEmpty()) {
+              log.warn("token_id unresolved for TRC-10 asset issuance, leaving empty");
+              tokenId = "";
             }
           }
 
