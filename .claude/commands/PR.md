@@ -3,22 +3,22 @@ allowed-tools: Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git m
 description: help me write the title & desc for PR (branch $1-> $2)
 ---
 
-## Context
-
-- Current branch: !`git branch --show-current`
-- Base branch: $2
-- Merge base: !`git merge-base HEAD $2`
-- Commits on this branch since diverging from $2: !`git log --oneline $2..HEAD`
-- Full diff against base: !`git diff $2...HEAD --stat`
-
 ## Your task
 
 Write a PR title and description for merging branch **$1** into **$2**.
 
+## First: gather context
+
+Run these commands yourself before writing the PR:
+
+1. `git log --oneline $2..$1` — commits on the source branch
+2. `git diff $2...$1 --stat` — file change summary
+3. If the stat is large or unclear, run `git diff $2...$1` for the full diff
+
 ### Steps
 
-1. Read the commit history and diff stat above to understand all changes.
-2. If the stat is large or unclear, read the full diff (`git diff $2...HEAD`) to understand the details.
+1. Run the context-gathering commands above.
+2. Analyze the commits and diff to understand all changes.
 3. Output a PR title and description in the format below.
 
 ### Output format
@@ -41,3 +41,6 @@ Write a PR title and description for merging branch **$1** into **$2**.
 - Title should use conventional commit style if the repo does (e.g. `feat(travel): ...`, `fix(farm): ...`).
 - Keep the description concise — reviewers skim, not read.
 - Do NOT include Claude Code attribution in the output.
+
+
+
