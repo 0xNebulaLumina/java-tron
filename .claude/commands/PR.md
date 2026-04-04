@@ -23,7 +23,9 @@ Run these commands yourself before writing the PR:
 
 ### Output format
 
-```
+**IMPORTANT: Output raw Markdown source text inside a fenced code block (```markdown ... ```), NOT rendered Markdown. The user needs to copy-paste the raw Markdown into a PR form.**
+
+```markdown
 ## Title
 <short title, under 70 chars, in the style of existing PRs>
 
