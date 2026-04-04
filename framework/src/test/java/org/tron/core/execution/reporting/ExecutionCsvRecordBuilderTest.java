@@ -121,14 +121,14 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
 
   /**
    * When Trc10AssetIssued carries an empty tokenId and trace is null,
-   * extractTrc10Domains should not crash. When the asset name is present,
-   * the tokenId falls back to the hex encoding of the asset name.
+   * extractTrc10Domains should not crash. The tokenId should be empty
+   * rather than a synthetic hex-of-name fallback that could collide
+   * across different issuances with the same name.
    */
   @Test
   public void testExtractTrc10DomainsEmptyTokenIdWithNullTrace() throws Exception {
     byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
     String assetName = "TestToken";
-    String expectedHexFallback = ByteArray.toHexString(assetName.getBytes());
 
     ExecutionSPI.Trc10AssetIssued assetIssued = new ExecutionSPI.Trc10AssetIssued(
         ownerAddress,
@@ -146,7 +146,7 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
         0L,
         0L,
         0L,
-        "" // Empty: will trigger hex-of-name fallback
+        "" // Empty: token_id left empty when trace unavailable
     );
 
     ExecutionSPI.Trc10Change trc10Change = new ExecutionSPI.Trc10Change(assetIssued);
@@ -168,17 +168,15 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
     String issuanceJson = record.getTrc10IssuanceChangesJson();
     assertNotNull("Issuance JSON should not be null with null trace",
         issuanceJson);
-    // Parse JSON and verify token_id falls back to hex of asset name
+    // Parse JSON and verify token_id is empty (no synthetic fallback)
     JsonArray entries = JsonParser.parseString(issuanceJson).getAsJsonArray();
     assertTrue("Issuance JSON should have entries", entries.size() > 0);
     for (JsonElement elem : entries) {
       assertTrue("Every issuance entry must have a token_id field",
           elem.getAsJsonObject().has("token_id"));
       String tokenId = elem.getAsJsonObject().get("token_id").getAsString();
-      assertFalse("token_id should not be empty when asset name is available",
-          tokenId.isEmpty());
-      assertEquals("token_id should be hex of asset name when trace is null",
-          expectedHexFallback, tokenId);
+      assertEquals("token_id should be empty when trace is null",
+          "", tokenId);
     }
     // 13 fields: see testExtractTrc10DomainsUsesProvidedTokenId for field list
     assertEquals("Should still have issuance changes", 13, record.getTrc10IssuanceChangeCount());
