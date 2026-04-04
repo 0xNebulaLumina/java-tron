@@ -363,6 +363,9 @@ public class ExecutionCsvRecordBuilder {
           // (applyAssetIssuedChange has already computed and stored the token_id)
           String tokenId = issued.getTokenId();
           if (tokenId == null || tokenId.isEmpty()) {
+            // Hex of asset name as deterministic fallback for CSV consumers
+            String hexNameFallback = (issued.getName() != null && issued.getName().length > 0)
+                ? org.tron.common.utils.ByteArray.toHexString(issued.getName()) : null;
             // Read computed token_id from DynamicPropertiesStore
             try {
               if (trace != null && trace.getTransactionContext() != null
@@ -374,7 +377,14 @@ public class ExecutionCsvRecordBuilder {
               }
             } catch (Exception e) {
               // Fallback to hex of name if store access fails
-              tokenId = org.tron.common.utils.ByteArray.toHexString(issued.getName());
+              if (hexNameFallback != null) {
+                tokenId = hexNameFallback;
+              }
+            }
+            // Final fallback: if tokenId is still empty (e.g. trace was null)
+            // and asset name is present, use hex of name for CSV consumers
+            if ((tokenId == null || tokenId.isEmpty()) && hexNameFallback != null) {
+              tokenId = hexNameFallback;
             }
           }
 

@@ -121,17 +121,18 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
 
   /**
    * When Trc10AssetIssued carries an empty tokenId and trace is null,
-   * extractTrc10Domains should not crash. The tokenId remains empty because
-   * the DynamicPropertiesStore fallback requires a non-null trace, and the
-   * hex-of-name catch-block fallback is only reached on exception.
+   * extractTrc10Domains should not crash. When the asset name is present,
+   * the tokenId falls back to the hex encoding of the asset name.
    */
   @Test
   public void testExtractTrc10DomainsEmptyTokenIdWithNullTrace() throws Exception {
     byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
+    String assetName = "TestToken";
+    String expectedHexFallback = ByteArray.toHexString(assetName.getBytes());
 
     ExecutionSPI.Trc10AssetIssued assetIssued = new ExecutionSPI.Trc10AssetIssued(
         ownerAddress,
-        "TestToken".getBytes(),
+        assetName.getBytes(),
         "TT".getBytes(),
         1000000L,
         1,
@@ -145,7 +146,7 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
         0L,
         0L,
         0L,
-        "" // Empty: will attempt fallback
+        "" // Empty: will trigger hex-of-name fallback
     );
 
     ExecutionSPI.Trc10Change trc10Change = new ExecutionSPI.Trc10Change(assetIssued);
@@ -165,20 +166,19 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
 
     ExecutionCsvRecord record = builder.build();
     String issuanceJson = record.getTrc10IssuanceChangesJson();
-    assertNotNull("Issuance JSON should not be null even with empty tokenId and null trace",
+    assertNotNull("Issuance JSON should not be null with null trace",
         issuanceJson);
-    // Parse JSON and verify token_id field is present and not the fallback value
+    // Parse JSON and verify token_id falls back to hex of asset name
     JsonArray entries = JsonParser.parseString(issuanceJson).getAsJsonArray();
     assertTrue("Issuance JSON should have entries", entries.size() > 0);
     for (JsonElement elem : entries) {
       assertTrue("Every issuance entry must have a token_id field",
           elem.getAsJsonObject().has("token_id"));
       String tokenId = elem.getAsJsonObject().get("token_id").getAsString();
-      assertFalse("token_id field should NOT be the DynamicPropertiesStore fallback 9999999",
-          "9999999".equals(tokenId));
-      // With null trace, tokenId stays empty (DynamicPropertiesStore unreachable)
-      assertTrue("token_id should be empty when trace is null",
+      assertFalse("token_id should not be empty when asset name is available",
           tokenId.isEmpty());
+      assertEquals("token_id should be hex of asset name when trace is null",
+          expectedHexFallback, tokenId);
     }
     // 13 fields: see testExtractTrc10DomainsUsesProvidedTokenId for field list
     assertEquals("Should still have issuance changes", 13, record.getTrc10IssuanceChangeCount());
