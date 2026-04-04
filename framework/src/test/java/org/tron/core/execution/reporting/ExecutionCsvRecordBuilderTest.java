@@ -5,6 +5,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
@@ -97,10 +100,20 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
     String issuanceJson = record.getTrc10IssuanceChangesJson();
 
     assertNotNull("Issuance JSON should not be null", issuanceJson);
-    assertTrue("Issuance JSON should contain the provided tokenId " + providedTokenId,
-        issuanceJson.contains(providedTokenId));
-    assertFalse("Issuance JSON should NOT contain the fallback tokenId 9999999",
-        issuanceJson.contains("9999999"));
+    // Parse JSON array and assert tokenId field values directly (not substring matching)
+    JsonArray entries = JsonParser.parseString(issuanceJson).getAsJsonArray();
+    assertTrue("Issuance JSON should have entries", entries.size() > 0);
+    boolean foundProvidedTokenId = false;
+    for (JsonElement elem : entries) {
+      String tokenId = elem.getAsJsonObject().get("token_id").getAsString();
+      assertFalse("tokenId field should NOT be the fallback value 9999999",
+          "9999999".equals(tokenId));
+      if (providedTokenId.equals(tokenId)) {
+        foundProvidedTokenId = true;
+      }
+    }
+    assertTrue("At least one entry should have tokenId=" + providedTokenId,
+        foundProvidedTokenId);
     // 13 fields: owner, name, abbr, totalSupply, trxNum, precision, num,
     // startTime, endTime, description, url, freeAssetNetLimit, publicFreeAssetNetLimit
     assertEquals("Should have issuance changes", 13, record.getTrc10IssuanceChangeCount());
@@ -154,10 +167,19 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
     String issuanceJson = record.getTrc10IssuanceChangesJson();
     assertNotNull("Issuance JSON should not be null even with empty tokenId and null trace",
         issuanceJson);
-    // With null trace, tokenId stays empty (DynamicPropertiesStore unreachable).
-    // The fallback tokenId 9999999 from setUp() must NOT appear.
-    assertFalse("Issuance JSON should NOT contain the DynamicPropertiesStore fallback tokenId",
-        issuanceJson.contains("9999999"));
+    // Parse JSON and verify token_id field is present and not the fallback value
+    JsonArray entries = JsonParser.parseString(issuanceJson).getAsJsonArray();
+    assertTrue("Issuance JSON should have entries", entries.size() > 0);
+    for (JsonElement elem : entries) {
+      assertTrue("Every issuance entry must have a token_id field",
+          elem.getAsJsonObject().has("token_id"));
+      String tokenId = elem.getAsJsonObject().get("token_id").getAsString();
+      assertFalse("token_id field should NOT be the DynamicPropertiesStore fallback 9999999",
+          "9999999".equals(tokenId));
+      // With null trace, tokenId stays empty (DynamicPropertiesStore unreachable)
+      assertTrue("token_id should be empty when trace is null",
+          tokenId.isEmpty());
+    }
     // 13 fields: see testExtractTrc10DomainsUsesProvidedTokenId for field list
     assertEquals("Should still have issuance changes", 13, record.getTrc10IssuanceChangeCount());
   }

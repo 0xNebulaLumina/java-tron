@@ -961,6 +961,269 @@ mod tests {
         assert_eq!(logs[0].address[0], 0xa0, "Log address should use testnet prefix");
     }
 
+    // ---------- address-prefix tests for state_changes, freeze, vote, withdraw, contract_address ----------
+
+    #[test]
+    fn test_convert_result_storage_change_uses_address_prefix() {
+        let service = make_backend_service();
+        let addr = revm_primitives::Address::repeat_byte(0x22);
+        let result = tron_backend_execution::TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: 0,
+            logs: vec![],
+            state_changes: vec![tron_backend_execution::TronStateChange::StorageChange {
+                address: addr,
+                key: revm_primitives::U256::from(1),
+                old_value: revm_primitives::U256::ZERO,
+                new_value: revm_primitives::U256::from(42),
+            }],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+            contract_address: None,
+        };
+        let empty_aext = std::collections::HashMap::new();
+
+        let response = service.convert_execution_result_to_protobuf(
+            result, &empty_aext, None, 0, 0xa0,
+        );
+
+        let state_changes = &response.result.unwrap().state_changes;
+        assert_eq!(state_changes.len(), 1);
+        if let Some(crate::backend::state_change::Change::StorageChange(sc)) = &state_changes[0].change {
+            assert_eq!(sc.address.len(), 21);
+            assert_eq!(sc.address[0], 0xa0, "StorageChange address should use testnet prefix");
+            assert_eq!(&sc.address[1..], addr.as_slice());
+        } else {
+            panic!("Expected StorageChange variant");
+        }
+    }
+
+    #[test]
+    fn test_convert_result_account_change_uses_address_prefix() {
+        let service = make_backend_service();
+        let addr = revm_primitives::Address::repeat_byte(0x33);
+        let old_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(100),
+            nonce: 0,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+        let new_info = revm_primitives::AccountInfo {
+            balance: revm_primitives::U256::from(200),
+            nonce: 1,
+            code_hash: revm_primitives::B256::ZERO,
+            code: None,
+        };
+        let result = tron_backend_execution::TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: 0,
+            logs: vec![],
+            state_changes: vec![tron_backend_execution::TronStateChange::AccountChange {
+                address: addr,
+                old_account: Some(old_info),
+                new_account: Some(new_info),
+            }],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+            contract_address: None,
+        };
+        let empty_aext = std::collections::HashMap::new();
+
+        let response = service.convert_execution_result_to_protobuf(
+            result, &empty_aext, None, 0, 0xa0,
+        );
+
+        let state_changes = &response.result.unwrap().state_changes;
+        assert_eq!(state_changes.len(), 1);
+        if let Some(crate::backend::state_change::Change::AccountChange(ac)) = &state_changes[0].change {
+            // Outer address
+            assert_eq!(ac.address.len(), 21);
+            assert_eq!(ac.address[0], 0xa0, "AccountChange address should use testnet prefix");
+            assert_eq!(&ac.address[1..], addr.as_slice());
+            // Inner old_account address
+            let old_acc = ac.old_account.as_ref().unwrap();
+            assert_eq!(old_acc.address[0], 0xa0, "old_account address should use testnet prefix");
+            // Inner new_account address
+            let new_acc = ac.new_account.as_ref().unwrap();
+            assert_eq!(new_acc.address[0], 0xa0, "new_account address should use testnet prefix");
+        } else {
+            panic!("Expected AccountChange variant");
+        }
+    }
+
+    #[test]
+    fn test_convert_result_freeze_change_uses_address_prefix() {
+        let service = make_backend_service();
+        let addr = revm_primitives::Address::repeat_byte(0x44);
+        let result = tron_backend_execution::TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: 0,
+            logs: vec![],
+            state_changes: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![tron_backend_execution::FreezeLedgerChange {
+                owner_address: addr,
+                resource: tron_backend_execution::FreezeLedgerResource::Bandwidth,
+                amount: 1000,
+                expiration_ms: 0,
+                v2_model: true,
+            }],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+            contract_address: None,
+        };
+        let empty_aext = std::collections::HashMap::new();
+
+        let response = service.convert_execution_result_to_protobuf(
+            result, &empty_aext, None, 0, 0xa0,
+        );
+
+        let freeze = &response.result.unwrap().freeze_changes;
+        assert_eq!(freeze.len(), 1);
+        assert_eq!(freeze[0].owner_address.len(), 21);
+        assert_eq!(freeze[0].owner_address[0], 0xa0, "FreezeLedgerChange address should use testnet prefix");
+        assert_eq!(&freeze[0].owner_address[1..], addr.as_slice());
+    }
+
+    #[test]
+    fn test_convert_result_vote_change_uses_address_prefix() {
+        let service = make_backend_service();
+        let voter = revm_primitives::Address::repeat_byte(0x55);
+        let witness = revm_primitives::Address::repeat_byte(0x66);
+        let result = tron_backend_execution::TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: 0,
+            logs: vec![],
+            state_changes: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![tron_backend_execution::VoteChange {
+                owner_address: voter,
+                votes: vec![tron_backend_execution::VoteEntry {
+                    vote_address: witness,
+                    vote_count: 100,
+                }],
+            }],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+            contract_address: None,
+        };
+        let empty_aext = std::collections::HashMap::new();
+
+        let response = service.convert_execution_result_to_protobuf(
+            result, &empty_aext, None, 0, 0xa0,
+        );
+
+        let votes = &response.result.unwrap().vote_changes;
+        assert_eq!(votes.len(), 1);
+        assert_eq!(votes[0].owner_address.len(), 21);
+        assert_eq!(votes[0].owner_address[0], 0xa0, "VoteChange owner_address should use testnet prefix");
+        assert_eq!(&votes[0].owner_address[1..], voter.as_slice());
+        // Check nested vote_address
+        assert_eq!(votes[0].votes.len(), 1);
+        assert_eq!(votes[0].votes[0].vote_address.len(), 21);
+        assert_eq!(votes[0].votes[0].vote_address[0], 0xa0, "Vote vote_address should use testnet prefix");
+        assert_eq!(&votes[0].votes[0].vote_address[1..], witness.as_slice());
+    }
+
+    #[test]
+    fn test_convert_result_withdraw_change_uses_address_prefix() {
+        let service = make_backend_service();
+        let addr = revm_primitives::Address::repeat_byte(0x77);
+        let result = tron_backend_execution::TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: 0,
+            logs: vec![],
+            state_changes: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![tron_backend_execution::WithdrawChange {
+                owner_address: addr,
+                amount: 5000,
+                latest_withdraw_time: 1700000000000,
+            }],
+            tron_transaction_result: None,
+            contract_address: None,
+        };
+        let empty_aext = std::collections::HashMap::new();
+
+        let response = service.convert_execution_result_to_protobuf(
+            result, &empty_aext, None, 0, 0xa0,
+        );
+
+        let withdrawals = &response.result.unwrap().withdraw_changes;
+        assert_eq!(withdrawals.len(), 1);
+        assert_eq!(withdrawals[0].owner_address.len(), 21);
+        assert_eq!(withdrawals[0].owner_address[0], 0xa0, "WithdrawChange address should use testnet prefix");
+        assert_eq!(&withdrawals[0].owner_address[1..], addr.as_slice());
+    }
+
+    #[test]
+    fn test_convert_result_contract_address_uses_address_prefix() {
+        let service = make_backend_service();
+        let contract_addr = revm_primitives::Address::repeat_byte(0x88);
+        let result = tron_backend_execution::TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: 0,
+            logs: vec![],
+            state_changes: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+            contract_address: Some(contract_addr),
+        };
+        let empty_aext = std::collections::HashMap::new();
+
+        let response = service.convert_execution_result_to_protobuf(
+            result, &empty_aext, None, 0, 0xa0,
+        );
+
+        let ca = &response.result.unwrap().contract_address;
+        assert_eq!(ca.len(), 21);
+        assert_eq!(ca[0], 0xa0, "contract_address should use testnet prefix");
+        assert_eq!(&ca[1..], contract_addr.as_slice());
+    }
+
     #[test]
     fn test_convert_protobuf_transaction_allows_empty_from_for_freeze_v2_family() {
         // Test that all freeze-v2 related contracts allow malformed from addresses
