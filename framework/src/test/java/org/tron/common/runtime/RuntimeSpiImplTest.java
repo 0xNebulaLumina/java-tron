@@ -394,6 +394,145 @@ public class RuntimeSpiImplTest extends BaseTest {
         initialTokenId + 6, dbManager.getDynamicPropertiesStore().getTokenIdNum());
   }
 
+  /**
+   * Test that a non-empty tokenId from Rust is consumed directly by applyAssetIssuedChange
+   * without incrementing TOKEN_ID_NUM again.
+   */
+  @Test
+  public void testTrc10AssetIssuedWithProvidedTokenIdSkipsIncrement() throws Exception {
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
+    long initialTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
+    String providedTokenId = "1000042"; // Simulate Rust-provided token ID
+
+    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
+    ExecutionSPI.Trc10AssetIssued assetIssued = new ExecutionSPI.Trc10AssetIssued(
+        ownerAddress,
+        NAME.getBytes(),
+        ABBR.getBytes(),
+        TOTAL_SUPPLY,
+        TRX_NUM,
+        PRECISION,
+        NUM,
+        System.currentTimeMillis(),
+        System.currentTimeMillis() + 86400000L,
+        DESCRIPTION.getBytes(),
+        URL.getBytes(),
+        FREE_ASSET_NET_LIMIT,
+        PUBLIC_FREE_ASSET_NET_LIMIT,
+        PUBLIC_FREE_ASSET_NET_USAGE,
+        PUBLIC_LATEST_FREE_NET_TIME,
+        providedTokenId // Non-empty: Java should use this directly
+    );
+
+    ExecutionSPI.Trc10Change trc10Change = new ExecutionSPI.Trc10Change(assetIssued);
+    List<ExecutionSPI.Trc10Change> trc10Changes = new ArrayList<>();
+    trc10Changes.add(trc10Change);
+
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setTrc10Changes(trc10Changes);
+
+    // Create a TransactionContext with AssetIssueContract
+    org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract issueContract =
+        org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.newBuilder()
+            .setOwnerAddress(ByteString.copyFrom(ownerAddress))
+            .setName(ByteString.copyFrom(NAME.getBytes()))
+            .build();
+    TransactionContext context = buildContext(issueContract, ContractType.AssetIssueContract);
+
+    // Invoke applyTrc10Changes via reflection
+    RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
+    java.lang.reflect.Method applyMethod = RuntimeSpiImpl.class.getDeclaredMethod(
+        "applyTrc10Changes",
+        ExecutionProgramResult.class,
+        TransactionContext.class);
+    applyMethod.setAccessible(true);
+    applyMethod.invoke(runtimeSpi, result, context);
+
+    // 1. TOKEN_ID_NUM should NOT have been incremented
+    long finalTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
+    assertEquals("TOKEN_ID_NUM should remain unchanged when Rust provides tokenId",
+        initialTokenId, finalTokenId);
+
+    // 2. V2 store should have an entry keyed by the provided tokenId
+    AssetIssueCapsule v2Asset = dbManager.getAssetIssueV2Store().get(providedTokenId.getBytes());
+    assertNotNull("V2 asset should exist with provided token ID", v2Asset);
+    assertEquals("V2 token ID should match provided value", providedTokenId, v2Asset.getId());
+    assertEquals("V2 total supply should match", TOTAL_SUPPLY, v2Asset.getInstance().getTotalSupply());
+
+    // 3. Issuer account assetV2 map should use the provided tokenId
+    AccountCapsule ownerAccount = dbManager.getAccountStore().get(ownerAddress);
+    assertNotNull("Owner account should exist", ownerAccount);
+    assertEquals("V2 asset map should contain token with provided ID",
+        TOTAL_SUPPLY, ownerAccount.getAssetV2MapForTest().get(providedTokenId).longValue());
+
+    // Cleanup the asset we created
+    dbManager.getAssetIssueV2Store().delete(providedTokenId.getBytes());
+  }
+
+  /**
+   * Test that the empty-tokenId fallback path still works (TOKEN_ID_NUM is incremented).
+   * This keeps both branches covered alongside the provided-tokenId test above.
+   */
+  @Test
+  public void testTrc10AssetIssuedFallbackIncrementTokenIdNum() throws Exception {
+    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
+    long initialTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
+
+    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
+    ExecutionSPI.Trc10AssetIssued assetIssued = new ExecutionSPI.Trc10AssetIssued(
+        ownerAddress,
+        NAME.getBytes(),
+        ABBR.getBytes(),
+        TOTAL_SUPPLY,
+        TRX_NUM,
+        PRECISION,
+        NUM,
+        System.currentTimeMillis(),
+        System.currentTimeMillis() + 86400000L,
+        DESCRIPTION.getBytes(),
+        URL.getBytes(),
+        FREE_ASSET_NET_LIMIT,
+        PUBLIC_FREE_ASSET_NET_LIMIT,
+        PUBLIC_FREE_ASSET_NET_USAGE,
+        PUBLIC_LATEST_FREE_NET_TIME,
+        "" // Empty: Java should compute from TOKEN_ID_NUM
+    );
+
+    ExecutionSPI.Trc10Change trc10Change = new ExecutionSPI.Trc10Change(assetIssued);
+    List<ExecutionSPI.Trc10Change> trc10Changes = new ArrayList<>();
+    trc10Changes.add(trc10Change);
+
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setTrc10Changes(trc10Changes);
+
+    org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract issueContract =
+        org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.newBuilder()
+            .setOwnerAddress(ByteString.copyFrom(ownerAddress))
+            .setName(ByteString.copyFrom(NAME.getBytes()))
+            .build();
+    TransactionContext context = buildContext(issueContract, ContractType.AssetIssueContract);
+
+    RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
+    java.lang.reflect.Method applyMethod = RuntimeSpiImpl.class.getDeclaredMethod(
+        "applyTrc10Changes",
+        ExecutionProgramResult.class,
+        TransactionContext.class);
+    applyMethod.setAccessible(true);
+    applyMethod.invoke(runtimeSpi, result, context);
+
+    // TOKEN_ID_NUM should have been incremented
+    long finalTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
+    assertEquals("TOKEN_ID_NUM should be incremented when tokenId is empty",
+        initialTokenId + 1, finalTokenId);
+
+    String computedTokenId = String.valueOf(finalTokenId);
+    AssetIssueCapsule v2Asset = dbManager.getAssetIssueV2Store().get(computedTokenId.getBytes());
+    assertNotNull("V2 asset should exist with computed token ID", v2Asset);
+
+    // Cleanup the asset we created
+    dbManager.getAssetIssueV2Store().delete(computedTokenId.getBytes());
+  }
+
   @Test
   public void testExecutionModeDetection() {
     // Test that execution mode can be determined
