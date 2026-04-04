@@ -42,7 +42,7 @@ The ralph-loop skill runs a shell setup script that cannot handle backticks, spe
    Write the loop behavior and the raw scope description to `.claude/ralph-loop-prompt.local.md` using the Write tool. Do NOT include the "How to invoke" section — only the loop behavior and scope description.
 
 3. **Invoke ralph-loop with a short, shell-safe argument:**
-   Run the setup script directly via Bash tool: `CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}" /root/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh "See .claude/ralph-loop-prompt.local.md"`
+   Run the setup script directly via Bash tool: `CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}" "$HOME/.claude/plugins/marketplaces/claude-plugins-official/plugins/ralph-loop/scripts/setup-ralph-loop.sh" "See .claude/ralph-loop-prompt.local.md"`
    Do NOT pass the raw review scope text to ralph-loop — it will break if the text contains backticks, quotes, or other shell metacharacters.
 
 ## When the loop ends
