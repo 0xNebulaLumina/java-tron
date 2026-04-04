@@ -2,7 +2,7 @@
 // Functions for converting transactions, contexts, and results between Java and Rust formats
 
 use super::super::BackendService;
-use super::address::{add_tron_address_prefix, strip_tron_address_prefix};
+use super::address::{add_tron_address_prefix_with, strip_tron_address_prefix};
 use crate::backend::*;
 use revm_primitives::hex;
 use std::collections::HashMap;
@@ -332,12 +332,17 @@ impl BackendService {
     /// * `pre_exec_aext` - Pre-execution AEXT values for hybrid mode
     /// * `touched_keys` - Optional list of database keys touched during execution (for B-镜像)
     /// * `write_mode` - The write mode: 0 = COMPUTE_ONLY, 1 = PERSISTED
+    /// * `address_prefix` - The DB-detected network address prefix (0x41 mainnet, 0xa0 testnet).
+    ///   Passed from the gRPC execution handler via `storage_adapter.address_prefix()`.
+    ///   All emitted addresses in the response use this prefix so non-mainnet networks
+    ///   do not lose their DB prefix at the protobuf/gRPC boundary.
     pub(super) fn convert_execution_result_to_protobuf(
         &self,
         result: TronExecutionResult,
         pre_exec_aext: &std::collections::HashMap<revm::primitives::Address, AccountAext>,
         touched_keys: Option<&[TouchedKey]>,
         write_mode: i32,
+        address_prefix: u8,
     ) -> ExecuteTransactionResponse {
         let status = if result.success {
             execution_result::Status::Success
@@ -349,7 +354,7 @@ impl BackendService {
             .logs
             .iter()
             .map(|log| LogEntry {
-                address: add_tron_address_prefix(&log.address),
+                address: add_tron_address_prefix_with(&log.address, address_prefix),
                 topics: log.topics().iter().map(|t| t.as_slice().to_vec()).collect(),
                 data: log.data.data.to_vec(),
             })
@@ -361,7 +366,7 @@ impl BackendService {
                     StateChange {
                         change: Some(crate::backend::state_change::Change::StorageChange(
                             crate::backend::StorageChange {
-                                address: add_tron_address_prefix(address),
+                                address: add_tron_address_prefix_with(address, address_prefix),
                                 key: key.to_be_bytes::<32>().to_vec(),
                                 old_value: old_value.to_be_bytes::<32>().to_vec(),
                                 new_value: new_value.to_be_bytes::<32>().to_vec(),
@@ -419,7 +424,7 @@ impl BackendService {
                             "hybrid" if is_eoa => {
                                 // Hybrid mode: prefer pre-provided AEXT from Java, fallback to defaults
                                 if let Some(aext) = pre_exec_aext.get(addr) {
-                                    debug!("Using pre-exec AEXT for address {} in hybrid mode", hex::encode(add_tron_address_prefix(addr)));
+                                    debug!("Using pre-exec AEXT for address {} in hybrid mode", hex::encode(add_tron_address_prefix_with(addr, address_prefix)));
                                     // Use the same AEXT for both old and new (unchanged fields)
                                     (Some(aext.net_usage), Some(aext.free_net_usage), Some(aext.energy_usage),
                                      Some(aext.latest_consume_time), Some(aext.latest_consume_free_time),
@@ -428,7 +433,7 @@ impl BackendService {
                                      Some(aext.energy_window_optimized))
                                 } else {
                                     // Not provided, fall back to defaults
-                                    debug!("No pre-exec AEXT for address {}, using defaults in hybrid mode", hex::encode(add_tron_address_prefix(addr)));
+                                    debug!("No pre-exec AEXT for address {}, using defaults in hybrid mode", hex::encode(add_tron_address_prefix_with(addr, address_prefix)));
                                     (Some(0), Some(0), Some(0), Some(0), Some(0), Some(0),
                                      Some(28800), Some(false), Some(28800), Some(false))
                                 }
@@ -480,11 +485,11 @@ impl BackendService {
                         };
 
                         debug!("AccountInfo AEXT presence: mode={}, is_eoa={}, address={}, net_window={:?}, energy_window={:?}",
-                               aext_mode, is_eoa, hex::encode(add_tron_address_prefix(addr)),
+                               aext_mode, is_eoa, hex::encode(add_tron_address_prefix_with(addr, address_prefix)),
                                net_window_size, energy_window_size);
 
                         crate::backend::AccountInfo {
-                            address: add_tron_address_prefix(addr),
+                            address: add_tron_address_prefix_with(addr, address_prefix),
                             balance: acc_info.balance.to_be_bytes::<32>().to_vec(),
                             nonce: acc_info.nonce,
                             code_hash: code_hash_bytes,
@@ -509,7 +514,7 @@ impl BackendService {
                     StateChange {
                         change: Some(crate::backend::state_change::Change::AccountChange(
                             crate::backend::AccountChange {
-                                address: add_tron_address_prefix(address),
+                                address: add_tron_address_prefix_with(address, address_prefix),
                                 old_account: old_account_proto,
                                 new_account: new_account_proto,
                                 is_creation: old_account.is_none() && new_account.is_some(),
@@ -536,7 +541,7 @@ impl BackendService {
                 };
 
                 crate::backend::FreezeLedgerChange {
-                    owner_address: add_tron_address_prefix(&change.owner_address),
+                    owner_address: add_tron_address_prefix_with(&change.owner_address, address_prefix),
                     resource: resource as i32,
                     amount: change.amount,
                     expiration_ms: change.expiration_ms,
@@ -566,7 +571,7 @@ impl BackendService {
                     crate::backend::Trc10Change {
                         kind: Some(crate::backend::trc10_change::Kind::AssetIssued(
                             crate::backend::Trc10AssetIssued {
-                                owner_address: add_tron_address_prefix(&issued.owner_address),
+                                owner_address: add_tron_address_prefix_with(&issued.owner_address, address_prefix),
                                 name: issued.name.clone(),
                                 abbr: issued.abbr.clone(),
                                 total_supply: issued.total_supply,
@@ -590,8 +595,8 @@ impl BackendService {
                     crate::backend::Trc10Change {
                         kind: Some(crate::backend::trc10_change::Kind::AssetTransferred(
                             crate::backend::Trc10AssetTransferred {
-                                owner_address: add_tron_address_prefix(&transferred.owner_address),
-                                to_address: add_tron_address_prefix(&transferred.to_address),
+                                owner_address: add_tron_address_prefix_with(&transferred.owner_address, address_prefix),
+                                to_address: add_tron_address_prefix_with(&transferred.to_address, address_prefix),
                                 asset_name: transferred.asset_name.clone(),
                                 token_id: transferred.token_id.clone().unwrap_or_default(),
                                 amount: transferred.amount,
@@ -607,12 +612,12 @@ impl BackendService {
             .vote_changes
             .iter()
             .map(|change| crate::backend::VoteChange {
-                owner_address: add_tron_address_prefix(&change.owner_address),
+                owner_address: add_tron_address_prefix_with(&change.owner_address, address_prefix),
                 votes: change
                     .votes
                     .iter()
                     .map(|v| crate::backend::Vote {
-                        vote_address: add_tron_address_prefix(&v.vote_address),
+                        vote_address: add_tron_address_prefix_with(&v.vote_address, address_prefix),
                         vote_count: v.vote_count as i64,
                     })
                     .collect(),
@@ -624,7 +629,7 @@ impl BackendService {
             .withdraw_changes
             .iter()
             .map(|change| crate::backend::WithdrawChange {
-                owner_address: add_tron_address_prefix(&change.owner_address),
+                owner_address: add_tron_address_prefix_with(&change.owner_address, address_prefix),
                 amount: change.amount,
                 latest_withdraw_time: change.latest_withdraw_time,
             })
@@ -635,7 +640,7 @@ impl BackendService {
         // Phase 2.I L2: Convert contract_address to TRON 21-byte format if present
         let contract_address_bytes = result
             .contract_address
-            .map(|addr| add_tron_address_prefix(&addr))
+            .map(|addr| add_tron_address_prefix_with(&addr, address_prefix))
             .unwrap_or_default();
 
         ExecuteTransactionResponse {
@@ -770,6 +775,190 @@ mod tests {
         assert!(transaction.metadata.contract_parameter.is_some());
         let param = transaction.metadata.contract_parameter.unwrap();
         assert!(param.type_url.ends_with("WithdrawExpireUnfreezeContract"));
+    }
+
+    // ---------- convert_execution_result_to_protobuf address-prefix tests ----------
+
+    fn make_test_result_with_trc10_issued(
+        owner: revm_primitives::Address,
+    ) -> tron_backend_execution::TronExecutionResult {
+        tron_backend_execution::TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: 0,
+            logs: vec![],
+            state_changes: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![tron_backend_execution::Trc10Change::AssetIssued(
+                tron_backend_execution::Trc10AssetIssued {
+                    owner_address: owner,
+                    name: b"TestToken".to_vec(),
+                    abbr: b"TT".to_vec(),
+                    total_supply: 1_000_000,
+                    trx_num: 1,
+                    precision: 6,
+                    num: 1,
+                    start_time: 0,
+                    end_time: 0,
+                    description: vec![],
+                    url: vec![],
+                    free_asset_net_limit: 0,
+                    public_free_asset_net_limit: 0,
+                    public_free_asset_net_usage: 0,
+                    public_latest_free_net_time: 0,
+                    token_id: Some("1000001".to_string()),
+                },
+            )],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+            contract_address: None,
+        }
+    }
+
+    fn make_test_result_with_trc10_transferred(
+        owner: revm_primitives::Address,
+        to: revm_primitives::Address,
+    ) -> tron_backend_execution::TronExecutionResult {
+        tron_backend_execution::TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: 0,
+            logs: vec![],
+            state_changes: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![tron_backend_execution::Trc10Change::AssetTransferred(
+                tron_backend_execution::Trc10AssetTransferred {
+                    owner_address: owner,
+                    to_address: to,
+                    asset_name: b"TestToken".to_vec(),
+                    token_id: Some("1000001".to_string()),
+                    amount: 100,
+                },
+            )],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+            contract_address: None,
+        }
+    }
+
+    fn make_backend_service() -> BackendService {
+        let config = ExecutionConfig::default();
+        let mut module_manager = ModuleManager::new();
+        module_manager.register("execution", Box::new(ExecutionModule::new(config)));
+        BackendService::new(module_manager)
+    }
+
+    #[test]
+    fn test_convert_result_trc10_issued_uses_testnet_prefix() {
+        let service = make_backend_service();
+        let owner = revm_primitives::Address::repeat_byte(0xAB);
+        let result = make_test_result_with_trc10_issued(owner);
+        let empty_aext = std::collections::HashMap::new();
+
+        let response = service.convert_execution_result_to_protobuf(
+            result, &empty_aext, None, 0, 0xa0,
+        );
+
+        let trc10 = &response.result.unwrap().trc10_changes;
+        assert_eq!(trc10.len(), 1);
+        if let Some(crate::backend::trc10_change::Kind::AssetIssued(issued)) = &trc10[0].kind {
+            assert_eq!(issued.owner_address.len(), 21);
+            assert_eq!(issued.owner_address[0], 0xa0, "Expected testnet prefix 0xa0");
+            assert_eq!(&issued.owner_address[1..], owner.as_slice());
+        } else {
+            panic!("Expected AssetIssued variant");
+        }
+    }
+
+    #[test]
+    fn test_convert_result_trc10_issued_uses_mainnet_prefix() {
+        let service = make_backend_service();
+        let owner = revm_primitives::Address::repeat_byte(0xAB);
+        let result = make_test_result_with_trc10_issued(owner);
+        let empty_aext = std::collections::HashMap::new();
+
+        let response = service.convert_execution_result_to_protobuf(
+            result, &empty_aext, None, 0, 0x41,
+        );
+
+        let trc10 = &response.result.unwrap().trc10_changes;
+        assert_eq!(trc10.len(), 1);
+        if let Some(crate::backend::trc10_change::Kind::AssetIssued(issued)) = &trc10[0].kind {
+            assert_eq!(issued.owner_address[0], 0x41, "Expected mainnet prefix 0x41");
+        } else {
+            panic!("Expected AssetIssued variant");
+        }
+    }
+
+    #[test]
+    fn test_convert_result_trc10_transferred_uses_testnet_prefix() {
+        let service = make_backend_service();
+        let owner = revm_primitives::Address::repeat_byte(0xAB);
+        let to = revm_primitives::Address::repeat_byte(0xCD);
+        let result = make_test_result_with_trc10_transferred(owner, to);
+        let empty_aext = std::collections::HashMap::new();
+
+        let response = service.convert_execution_result_to_protobuf(
+            result, &empty_aext, None, 0, 0xa0,
+        );
+
+        let trc10 = &response.result.unwrap().trc10_changes;
+        assert_eq!(trc10.len(), 1);
+        if let Some(crate::backend::trc10_change::Kind::AssetTransferred(transferred)) = &trc10[0].kind {
+            assert_eq!(transferred.owner_address.len(), 21);
+            assert_eq!(transferred.owner_address[0], 0xa0, "owner_address: expected testnet prefix 0xa0");
+            assert_eq!(&transferred.owner_address[1..], owner.as_slice());
+
+            assert_eq!(transferred.to_address.len(), 21);
+            assert_eq!(transferred.to_address[0], 0xa0, "to_address: expected testnet prefix 0xa0");
+            assert_eq!(&transferred.to_address[1..], to.as_slice());
+        } else {
+            panic!("Expected AssetTransferred variant");
+        }
+    }
+
+    #[test]
+    fn test_convert_result_logs_use_address_prefix() {
+        // Verify that log addresses also respect the address_prefix parameter
+        let service = make_backend_service();
+        let log_addr = revm_primitives::Address::repeat_byte(0x11);
+        let result = tron_backend_execution::TronExecutionResult {
+            success: true,
+            return_data: revm_primitives::Bytes::new(),
+            energy_used: 0,
+            bandwidth_used: 0,
+            logs: vec![revm_primitives::Log::new_unchecked(log_addr, vec![], revm_primitives::Bytes::new())],
+            state_changes: vec![],
+            error: None,
+            aext_map: std::collections::HashMap::new(),
+            freeze_changes: vec![],
+            global_resource_changes: vec![],
+            trc10_changes: vec![],
+            vote_changes: vec![],
+            withdraw_changes: vec![],
+            tron_transaction_result: None,
+            contract_address: None,
+        };
+        let empty_aext = std::collections::HashMap::new();
+
+        let response = service.convert_execution_result_to_protobuf(
+            result, &empty_aext, None, 0, 0xa0,
+        );
+
+        let logs = &response.result.unwrap().logs;
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].address.len(), 21);
+        assert_eq!(logs[0].address[0], 0xa0, "Log address should use testnet prefix");
     }
 
     #[test]
