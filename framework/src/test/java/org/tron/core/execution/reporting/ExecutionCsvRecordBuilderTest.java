@@ -181,4 +181,46 @@ public class ExecutionCsvRecordBuilderTest extends BaseTest {
     // 13 fields: see testExtractTrc10DomainsUsesProvidedTokenId for field list
     assertEquals("Should still have issuance changes", 13, record.getTrc10IssuanceChangeCount());
   }
+
+  /**
+   * When two TRC-10 transfers both have unresolved token IDs (empty),
+   * extractTrc10Domains must skip balance delta emission for both rather
+   * than emitting deltas keyed by "", which would collide and corrupt
+   * old/new balance values.
+   */
+  @Test
+  public void testUnresolvedTransferTokenIdSkipsBalanceDeltas() throws Exception {
+    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
+    byte[] recipientAddress = ByteArray.fromHexString(
+        Wallet.getAddressPreFixString() + "1234567890abcdef1234567890abcdef12345678");
+
+    // Two transfers with different asset names but both unresolvable token IDs
+    // (one empty string, one null — both should be skipped)
+    ExecutionSPI.Trc10AssetTransferred transfer1 = new ExecutionSPI.Trc10AssetTransferred(
+        ownerAddress, recipientAddress, "AssetA".getBytes(), "", 100L);
+    ExecutionSPI.Trc10AssetTransferred transfer2 = new ExecutionSPI.Trc10AssetTransferred(
+        ownerAddress, recipientAddress, "AssetB".getBytes(), null, 200L);
+
+    List<ExecutionSPI.Trc10Change> trc10Changes = new ArrayList<>();
+    trc10Changes.add(new ExecutionSPI.Trc10Change(transfer1));
+    trc10Changes.add(new ExecutionSPI.Trc10Change(transfer2));
+
+    ExecutionCsvRecord.Builder builder = new ExecutionCsvRecord.Builder();
+
+    Method method = ExecutionCsvRecordBuilder.class.getDeclaredMethod(
+        "extractTrc10Domains",
+        ExecutionCsvRecord.Builder.class,
+        List.class,
+        TransactionTrace.class);
+    method.setAccessible(true);
+    // Should not throw, and should skip unresolved transfers
+    method.invoke(null, builder, trc10Changes, null);
+
+    ExecutionCsvRecord record = builder.build();
+    // No balance deltas should be emitted for unresolved token IDs
+    assertEquals("Balance delta count should be 0 for unresolved transfers",
+        0, record.getTrc10BalanceChangeCount());
+    assertEquals("Balance changes JSON should be empty array",
+        "[]", record.getTrc10BalanceChangesJson());
+  }
 }
