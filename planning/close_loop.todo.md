@@ -11,6 +11,23 @@ This phase is intentionally not about:
 - Rust consensus replacement
 - Replacing the Java node shell in one jump
 
+Operating model for this planning:
+
+- `EE` = embedded execution + embedded storage
+- `RR` = remote execution + remote storage
+
+Out of scope as target modes:
+
+- current in-process `SHADOW`
+- mixed combinations such as remote execution + embedded storage
+
+Project decision for this planning:
+
+- The current `SHADOW` path is not the primary validation strategy we want.
+- The comparison we want must be trustworthy and isolated.
+- Shared JVM singleton / global-state behavior makes the current shadow approach unsuitable as the main acceptance mechanism.
+- Going forward, the primary comparison model is: run `EE`, run `RR`, compare results outside the in-process shadow path.
+
 Current judgement:
 
 - Storage hot-path DB operations are already real, but transaction/snapshot semantics are not closed.
@@ -43,23 +60,29 @@ Primary references:
 ## 0. Phase boundaries and exit criteria
 
 - [ ] Freeze Phase 1 scope as: execution semantics + storage semantics + parity verification only
+- [ ] Freeze the only two strategic modes for this planning:
+  - [ ] `EE`
+  - [ ] `RR`
 - [ ] Freeze explicit non-goals for this phase:
   - [ ] No Rust P2P networking rewrite
   - [ ] No Rust sync scheduler / peer manager rewrite
   - [ ] No Rust consensus rewrite
   - [ ] No attempt to remove the Java node shell in this phase
+  - [ ] No optimization for mixed execution/storage combinations
+  - [ ] No reliance on current `SHADOW` as the main proof mechanism
 - [ ] Freeze the intended next milestone as `Rust block importer / block executor readiness`
 - [ ] Publish a short "why not P2P yet" note inside this file or a sibling planning note so the roadmap does not drift
+- [ ] Publish a short "why not SHADOW as the main validator" note so the roadmap does not drift back
 - [ ] Define Phase 1 exit criteria:
-  - [ ] Java execution read/query APIs are no longer placeholders
+  - [ ] Java execution read/query APIs are no longer placeholders in the `RR` path
   - [ ] Rust execution read/query APIs are either implemented or explicitly unsupported
   - [ ] Storage transaction semantics are real enough for execution needs
   - [ ] Storage snapshot semantics are real, or snapshot is explicitly unavailable and not silently fake
   - [ ] `energy_limit` wire semantics are locked
-  - [ ] Write ownership is unambiguous
-  - [ ] A first contract whitelist reaches stable shadow parity
+  - [ ] Write ownership is unambiguous in `EE` and `RR`
+  - [ ] A first contract whitelist reaches stable `EE-vs-RR` parity
   - [ ] Storage crate has real tests
-  - [ ] Replay + CI can continuously report parity state
+  - [ ] Replay + CI can continuously report `EE-vs-RR` parity state
 
 ---
 
@@ -72,24 +95,21 @@ Goal: stop the project from moving forward on top of ambiguous semantics.
 Primary touchpoints:
 
 - `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java`
-- `framework/src/main/java/org/tron/core/execution/spi/ShadowExecutionSPI.java`
 - `rust-backend/config.toml`
 - `rust-backend/crates/common/src/config.rs`
 
 - [ ] Write down the authoritative write-path matrix for:
-  - [ ] `EMBEDDED`
-  - [ ] `REMOTE`
-  - [ ] `SHADOW`
+  - [ ] `EE`
+  - [ ] `RR`
+- [ ] Explicitly de-emphasize current `SHADOW` as a legacy / optional path, not a Phase 1 acceptance mode
 - [ ] Define whether `RuntimeSpiImpl` Java-side apply is canonical, transitional, or legacy-only
 - [ ] Define whether `rust_persist_enabled=true` is allowed in:
   - [ ] development only
-  - [ ] shadow only
-  - [ ] remote canonical mode
+  - [ ] targeted experiments only
+  - [ ] `RR` candidate mode
   - [ ] never, until later phase
 - [ ] Align code defaults, checked-in config, and comments
-- [ ] Add a future implementation item to fail fast when an unsafe mode combination is detected:
-  - [ ] `SHADOW + rust_persist_enabled=true`
-  - [ ] any other double-write or state-polluting combination
+- [ ] Add a future implementation item to fail fast when an unsafe mode combination is detected
 - [ ] Document one recommended safe rollout profile and one experimental profile
 
 Acceptance:
@@ -120,7 +140,7 @@ Primary touchpoints:
   - [ ] Java bridge
   - [ ] Rust execution
   - [ ] fixtures
-  - [ ] shadow comparisons
+  - [ ] `EE-vs-RR` comparison tooling
   - [ ] replay tooling
 - [ ] Update comments in `backend.proto`
 - [ ] Add a follow-up implementation item to prevent mixed old/new interpretations during transition
@@ -191,9 +211,10 @@ Primary touchpoints:
 
 - [ ] Enumerate all contract types currently seen by `RemoteExecutionSPI`
 - [ ] Mark each as:
-  - [ ] Java only
-  - [ ] shadow only
-  - [ ] remote canonical candidate
+  - [ ] `EE` only
+  - [ ] `RR` blocked
+  - [ ] `RR` candidate
+  - [ ] `RR` canonical-ready
 - [ ] For each contract type, record:
   - [ ] depends on read-path closure
   - [ ] depends on TRC-10 semantics
@@ -201,15 +222,15 @@ Primary touchpoints:
   - [ ] depends on dynamic-property strictness
   - [ ] has fixture coverage
   - [ ] has Rust unit coverage
-  - [ ] has replay coverage
+  - [ ] has `EE-vs-RR` replay coverage
 - [ ] Split the matrix into:
   - [ ] core high-value contracts for Phase 1 acceptance
-  - [ ] secondary contracts that can remain shadow-only longer
+  - [ ] secondary contracts that can remain `RR` blocked longer
 
 Acceptance:
 
 - [ ] Remote enablement is no longer driven only by config convenience
-- [ ] There is an explicit whitelist target for the end of this phase
+- [ ] There is an explicit `RR` whitelist target for the end of this phase
 
 ---
 
@@ -222,7 +243,6 @@ Goal: close the biggest gap between "write-path already exists" and "node-level 
 Primary touchpoints:
 
 - `framework/src/main/java/org/tron/core/execution/spi/RemoteExecutionSPI.java`
-- `framework/src/main/java/org/tron/core/execution/spi/ShadowExecutionSPI.java`
 
 - [ ] Replace placeholder `callContract(...)` with a real RPC-backed path
 - [ ] Replace placeholder `estimateEnergy(...)` with a real RPC-backed path
@@ -237,9 +257,9 @@ Primary touchpoints:
 - [ ] Normalize error mapping across all remote execution APIs
 - [ ] Decide when Java should:
   - [ ] fail hard
-  - [ ] fall back to embedded
   - [ ] return explicit remote unsupported
-- [ ] Make sure `SHADOW` mode compares real remote results instead of placeholder outputs
+  - [ ] fall back only where this is still intentionally allowed
+- [ ] Remove planning assumptions that these APIs will be validated mainly through `SHADOW`
 
 ### 2.2 Rust execution gRPC tasks
 
@@ -271,7 +291,7 @@ Primary touchpoints:
   - [ ] unsupported
   - [ ] internal error
   - [ ] transport error
-- [ ] Verify `estimateEnergy` comparison rules in shadow mode:
+- [ ] Verify `estimateEnergy` comparison rules in `EE-vs-RR` validation:
   - [ ] exact match
   - [ ] tolerated delta
   - [ ] per-contract exception list if needed
@@ -281,8 +301,7 @@ Primary touchpoints:
 Java-focused:
 
 - [ ] Add focused Java tests for each remote execution read/query API
-- [ ] Add `ShadowExecutionSPI` tests that compare real `callContract` results
-- [ ] Add `ShadowExecutionSPI` tests that compare real `estimateEnergy` results
+- [ ] Add paired `EE` baseline vs `RR` target tests where the harness can run both paths separately
 
 Rust-focused:
 
@@ -293,7 +312,7 @@ Rust-focused:
 Acceptance:
 
 - [ ] Node-level remote execution no longer depends on placeholder query APIs
-- [ ] `callContract` and `estimateEnergy` are usable in remote/shadow mode
+- [ ] `callContract` and `estimateEnergy` are usable in `RR`
 - [ ] Query APIs either work or fail explicitly, never with fake success payloads
 
 ---
@@ -350,7 +369,7 @@ Primary touchpoints:
 - [ ] Define interaction rules between transactions and snapshots
 - [ ] Decide whether iterator APIs against snapshot are needed now or later
 
-### 3.4 Storage tests and dual-mode checks
+### 3.4 Storage tests and EE/RR comparison checks
 
 Rust-focused:
 
@@ -367,7 +386,8 @@ Java-focused:
 
 - [ ] Extend or add integration coverage around `RemoteStorageSPI`
 - [ ] Add tests proving Java actually carries `transaction_id` into remote writes
-- [ ] Add dual-mode tests that verify remote semantics, not just factory wiring
+- [ ] Add `EE` run vs `RR` run semantic checks where possible
+- [ ] Avoid using `DualStorageModeIntegrationTest` as if mode-switch wiring alone proves semantic parity
 
 Acceptance:
 
@@ -431,7 +451,7 @@ Primary touchpoints:
 
 Acceptance:
 
-- [ ] The current known gap is either closed or explicitly kept out of the canonical whitelist
+- [ ] The current known gap is either closed or explicitly kept out of the `RR` canonical whitelist
 
 ### 5.2 Resource / fee / sidecar parity
 
@@ -465,9 +485,9 @@ Primary touchpoints:
 - [ ] Audit every `execution.remote.*` flag currently enabled in checked-in config
 - [ ] Compare against code defaults
 - [ ] Mark each flag as:
-  - [ ] experimental
-  - [ ] shadow-ready
-  - [ ] canonical-ready
+  - [ ] `EE` baseline only
+  - [ ] `RR` experimental
+  - [ ] `RR` canonical-ready
   - [ ] legacy / should be removed
 - [ ] Produce one recommended conservative config for parity work
 - [ ] Produce one experimental config for targeted validation only
@@ -488,7 +508,7 @@ Goal: turn parity from a subjective feeling into an observable gate.
 - [ ] Add at least one Java integration path that validates remote storage semantics, not only factory creation
 - [ ] Track storage regressions separately from execution regressions
 
-### 6.2 Execution read-path vs write-path verification
+### 6.2 Execution lane split
 
 - [ ] Split verification into two lanes:
   - [ ] write-path / execute tx parity
@@ -502,7 +522,8 @@ Primary touchpoints:
 
 - `framework/src/test/java/org/tron/core/execution/spi/GoldenVectorTestSuite.java`
 
-- [ ] Make golden vectors execute real remote/shadow paths instead of mostly validating framework structure
+- [ ] Make golden vectors execute the same input in separate `EE` and `RR` runs
+- [ ] Add a comparator that records `EE` result vs `RR` result
 - [ ] Add vectors for remote read/query APIs where appropriate
 - [ ] Add vectors for known mismatch-prone branches:
   - [ ] trigger smart contract
@@ -518,8 +539,10 @@ Primary touchpoints:
 
 - [ ] Pick a small fixed replay range for routine work
 - [ ] Pick a larger replay range for milestone validation
-- [ ] Record mismatch categories by contract type
-- [ ] Record mismatch categories by read-path vs write-path
+- [ ] Run replay once in `EE`
+- [ ] Run replay once in `RR`
+- [ ] Compare outputs by contract type
+- [ ] Compare outputs by read-path vs write-path
 - [ ] Record whether mismatch is:
   - [ ] result-code only
   - [ ] energy only
@@ -530,18 +553,18 @@ Primary touchpoints:
 
 - [ ] Turn the support matrix into a living readiness table
 - [ ] For each contract type, record:
-  - [ ] remote support status
+  - [ ] `RR` support status
   - [ ] fixture coverage
   - [ ] Rust unit coverage
-  - [ ] replay status
+  - [ ] `EE-vs-RR` replay status
   - [ ] major known gaps
-- [ ] Use the readiness table as the only source of truth for enabling canonical remote support
+- [ ] Use the readiness table as the only source of truth for enabling canonical `RR` support
 
 ### 6.6 CI smoke gates
 
-- [ ] Define a minimal remote storage smoke set
-- [ ] Define a minimal remote execution smoke set
-- [ ] Define a minimal shadow mismatch smoke set
+- [ ] Define a minimal `EE` smoke set
+- [ ] Define a minimal `RR` smoke set
+- [ ] Define a minimal `EE-vs-RR diff` smoke set
 - [ ] Make CI output mismatches in a readable, triageable form
 
 Acceptance:
@@ -590,6 +613,8 @@ These items should remain out of scope until the exit criteria above are met.
 - [ ] Do not start Rust peer/session manager work
 - [ ] Do not start Rust sync scheduler / inventory pipeline work
 - [ ] Do not start Rust consensus scheduling rewrite
+- [ ] Do not optimize for mixed execution/storage modes
+- [ ] Do not make current `SHADOW` the main acceptance path again
 - [ ] Do not treat "many system contracts already run remotely" as proof that the full execution problem is solved
 - [ ] Do not treat "storage CRUD works" as proof that storage semantics are solved
 
