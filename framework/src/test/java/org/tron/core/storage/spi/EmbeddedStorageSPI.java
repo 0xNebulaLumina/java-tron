@@ -282,23 +282,39 @@ public class EmbeddedStorageSPI implements StorageSPI {
     return CompletableFuture.completedFuture(null);
   }
 
+  // Phase 1 (close_loop): snapshot APIs are explicitly UNSUPPORTED on the
+  // test EmbeddedStorageSPI, mirroring the production EmbeddedStorageSPI in
+  // src/main. See planning/close_loop.snapshot.md. Tests that need point-in-
+  // time semantics must build a real RocksDB snapshot handle separately.
+
   @Override
   public CompletableFuture<String> createSnapshot(String dbName) {
-    // Simplified snapshot implementation
-    return CompletableFuture.completedFuture("embedded-snapshot-" + System.currentTimeMillis());
+    CompletableFuture<String> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "Embedded storage snapshot is not supported in close_loop Phase 1 "
+                + "(see planning/close_loop.snapshot.md)."));
+    return future;
   }
 
   @Override
   public CompletableFuture<Void> deleteSnapshot(String snapshotId) {
-    // Simplified snapshot implementation
-    return CompletableFuture.completedFuture(null);
+    CompletableFuture<Void> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "Embedded storage deleteSnapshot is not supported in close_loop Phase 1 "
+                + "(see planning/close_loop.snapshot.md)."));
+    return future;
   }
 
   @Override
   public CompletableFuture<byte[]> getFromSnapshot(String snapshotId, byte[] key) {
-    // Simplified snapshot implementation - just return current value
-    String dbName = extractDbNameFromSnapshot(snapshotId);
-    return get(dbName, key);
+    CompletableFuture<byte[]> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "Embedded storage getFromSnapshot is not supported in close_loop Phase 1 "
+                + "(see planning/close_loop.snapshot.md)."));
+    return future;
   }
 
   @Override
@@ -341,8 +357,11 @@ public class EmbeddedStorageSPI implements StorageSPI {
     databases.clear();
   }
 
+  // Dead helper retained for future re-introduction of snapshot support.
+  // Phase 1 marks snapshots as explicitly unsupported — see
+  // planning/close_loop.snapshot.md.
+  @SuppressWarnings("unused")
   private String extractDbNameFromSnapshot(String snapshotId) {
-    // Simple implementation - assume first database
     return databases.keySet().iterator().next();
   }
 

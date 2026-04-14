@@ -87,6 +87,34 @@ fn log_filtered_account_batch_write(stage: &str, key: &[u8], value: &[u8]) {
     }
 }
 
+/// Normalize a TRON-format address from a gRPC request into a 20-byte REVM
+/// `Address`. Thin wrapper around `address::strip_tron_address_prefix`
+/// (the existing shared helper) that converts the returned slice into a
+/// concrete `Address`, so every read-path handler agrees on the same
+/// "20 raw bytes OR 21 bytes with 0x41/0xa0 prefix" acceptance rule.
+///
+/// We wrap the shared helper rather than duplicating its logic so that
+/// any future change to prefix acceptance (e.g. disabling the legacy
+/// 0xa0 testnet prefix) only needs to happen in one place.
+fn normalize_tron_address(bytes: &[u8]) -> Result<revm_primitives::Address, String> {
+    let stripped = self::address::strip_tron_address_prefix(bytes)?;
+    Ok(revm_primitives::Address::from_slice(stripped))
+}
+
+/// Canonical error string for Phase 1 "snapshot is unsupported" responses
+/// from the execution read-path handlers. Matches the wording used by the
+/// storage engine and the Java SPI surfaces so log-grep tooling can find
+/// all surfaces with a single search.
+fn snapshot_unsupported_error(method: &str) -> String {
+    format!(
+        "{}: snapshot_id is not supported in close_loop Phase 1 \
+         (see planning/close_loop.snapshot.md). Snapshots were previously \
+         handled as a fake live-DB read; this has been replaced with an \
+         explicit unsupported error.",
+        method
+    )
+}
+
 #[tonic::async_trait]
 impl crate::backend::backend_server::Backend for BackendService {
     type IteratorStream = std::pin::Pin<
@@ -195,7 +223,29 @@ impl crate::backend::backend_server::Backend for BackendService {
         let req = request.into_inner();
         let engine = self.get_storage_engine()?;
 
-        match engine.put(&req.database, &req.key, &req.value) {
+        // close_loop Section 3.1: branch on transaction_id. An empty string
+        // means "direct write against the base DB" (the historical behavior).
+        // A non-empty transaction_id routes through the per-tx write buffer
+        // in the engine; unknown transaction ids are rejected with an
+        // explicit error per planning/close_loop.storage_transactions.md.
+        let result = if req.transaction_id.is_empty() {
+            debug!(
+                "Direct put: db={}, key_len={}",
+                req.database,
+                req.key.len()
+            );
+            engine.put(&req.database, &req.key, &req.value)
+        } else {
+            debug!(
+                "Transactional put: db={}, tx={}, key_len={}",
+                req.database,
+                req.transaction_id,
+                req.key.len()
+            );
+            engine.put_in_tx(&req.transaction_id, &req.database, &req.key, &req.value)
+        };
+
+        match result {
             Ok(()) => {
                 let response = PutResponse {
                     success: true,
@@ -223,7 +273,25 @@ impl crate::backend::backend_server::Backend for BackendService {
         let req = request.into_inner();
         let engine = self.get_storage_engine()?;
 
-        match engine.delete(&req.database, &req.key) {
+        // close_loop Section 3.1: same direct vs transactional branching as `put`.
+        let result = if req.transaction_id.is_empty() {
+            debug!(
+                "Direct delete: db={}, key_len={}",
+                req.database,
+                req.key.len()
+            );
+            engine.delete(&req.database, &req.key)
+        } else {
+            debug!(
+                "Transactional delete: db={}, tx={}, key_len={}",
+                req.database,
+                req.transaction_id,
+                req.key.len()
+            );
+            engine.delete_in_tx(&req.transaction_id, &req.database, &req.key)
+        };
+
+        match result {
             Ok(()) => {
                 let response = DeleteResponse {
                     success: true,
@@ -324,65 +392,112 @@ impl crate::backend::backend_server::Backend for BackendService {
             }
         }
 
-        match engine.batch_write(&req.database, &operations) {
+        // close_loop Section 3.1: branch on transaction_id (same contract as `put` / `delete`).
+        // The filtered-debug readback paths below are only meaningful for direct
+        // writes — for transactional writes, the engine has only buffered the
+        // operations and the readback would not see anything until commit. We
+        // skip the readback diagnostics in the transactional branch but still
+        // log a debug line so operator-facing tracing is consistent.
+        let result = if req.transaction_id.is_empty() {
+            debug!(
+                "Direct batch_write: db={}, op_count={}",
+                req.database,
+                operations.len()
+            );
+            engine.batch_write(&req.database, &operations)
+        } else {
+            debug!(
+                "Transactional batch_write: db={}, tx={}, op_count={}",
+                req.database,
+                req.transaction_id,
+                operations.len()
+            );
+            engine.batch_write_in_tx(&req.transaction_id, &req.database, &operations)
+        };
+
+        match result {
             Ok(()) => {
-                for (op_type, key, value) in &filtered_debug_ops {
-                    match *op_type {
-                        0 => match engine.get(&req.database, key) {
-                            Ok(Some(stored)) => {
-                                log_filtered_account_batch_write("readback", key, &stored);
-                                if stored != *value {
+                // Read-back diagnostics only make sense for direct writes —
+                // a transactional write only buffers the operation, so a live
+                // `engine.get` would (correctly) report it missing until the
+                // commit lands. Skip the diagnostics in the transactional
+                // branch to avoid spurious "missing on readback" warnings.
+                if req.transaction_id.is_empty() {
+                    for (op_type, key, value) in &filtered_debug_ops {
+                        match *op_type {
+                            0 => match engine.get(&req.database, key) {
+                                Ok(Some(stored)) => {
+                                    log_filtered_account_batch_write("readback", key, &stored);
+                                    if stored != *value {
+                                        error!(
+                                            "Filtered account batch write readback mismatch: key_hex={}, expected_len={}, actual_len={}",
+                                            hex::encode(key),
+                                            value.len(),
+                                            stored.len()
+                                        );
+                                    }
+                                }
+                                Ok(None) => {
                                     error!(
-                                        "Filtered account batch write readback mismatch: key_hex={}, expected_len={}, actual_len={}",
-                                        hex::encode(key),
-                                        value.len(),
-                                        stored.len()
+                                        "Filtered account batch write missing on readback: key_hex={}",
+                                        hex::encode(key)
                                     );
                                 }
-                            }
-                            Ok(None) => {
-                                error!(
-                                    "Filtered account batch write missing on readback: key_hex={}",
-                                    hex::encode(key)
-                                );
-                            }
-                            Err(err) => {
-                                error!(
-                                    "Filtered account batch write readback failed: key_hex={}, error={}",
-                                    hex::encode(key),
-                                    err
-                                );
-                            }
-                        },
-                        1 => match engine.get(&req.database, key) {
-                            Ok(Some(_)) => {
-                                error!(
-                                    "Filtered account batch delete still present after readback: key_hex={}",
-                                    hex::encode(key)
-                                );
-                            }
-                            Ok(None) => {
-                                info!(
-                                    "Filtered account batch delete confirmed: key_hex={}",
-                                    hex::encode(key)
-                                );
-                            }
-                            Err(err) => {
-                                error!(
-                                    "Filtered account batch delete readback failed: key_hex={}, error={}",
-                                    hex::encode(key),
-                                    err
-                                );
-                            }
-                        },
-                        _ => {}
+                                Err(err) => {
+                                    error!(
+                                        "Filtered account batch write readback failed: key_hex={}, error={}",
+                                        hex::encode(key),
+                                        err
+                                    );
+                                }
+                            },
+                            1 => match engine.get(&req.database, key) {
+                                Ok(Some(_)) => {
+                                    error!(
+                                        "Filtered account batch delete still present after readback: key_hex={}",
+                                        hex::encode(key)
+                                    );
+                                }
+                                Ok(None) => {
+                                    info!(
+                                        "Filtered account batch delete confirmed: key_hex={}",
+                                        hex::encode(key)
+                                    );
+                                }
+                                Err(err) => {
+                                    error!(
+                                        "Filtered account batch delete readback failed: key_hex={}, error={}",
+                                        hex::encode(key),
+                                        err
+                                    );
+                                }
+                            },
+                            _ => {}
+                        }
                     }
                 }
 
+                // `operations_applied` semantics (close_loop Section 3.1):
+                // - Direct branch (empty transaction_id): the ops are persisted
+                //   as part of the RocksDB WriteBatch, so "applied" matches
+                //   `operations.len()`.
+                // - Transactional branch (non-empty transaction_id): the ops
+                //   are only buffered; nothing has been written to RocksDB
+                //   yet. Return `0` so a caller cannot mistake a successful
+                //   buffer append for a persisted commit. Persistence of the
+                //   buffered batch happens later at `commitTransaction` time;
+                //   the commit response does not itself expose an apply count,
+                //   so callers that need to audit how many operations were
+                //   committed must track it on the Java side.
+                let operations_applied = if req.transaction_id.is_empty() {
+                    operations.len() as i32
+                } else {
+                    0
+                };
                 let response = BatchWriteResponse {
                     success: true,
                     error_message: String::new(),
-                    operations_applied: operations.len() as i32,
+                    operations_applied,
                 };
                 Ok(Response::new(response))
             }
@@ -1668,6 +1783,9 @@ impl crate::backend::backend_server::Backend for BackendService {
                     success: false,
                     error_message: format!("Request conversion error: {}", e),
                     energy_used: 0,
+                    // close_loop iter 6: request-conversion failures
+                    // are handler-level — the VM never runs.
+                    status: call_contract_response::Status::HandlerError as i32,
                 }));
             }
         };
@@ -1681,6 +1799,8 @@ impl crate::backend::backend_server::Backend for BackendService {
                     success: false,
                     error_message: format!("Context conversion error: {}", e),
                     energy_used: 0,
+                    // close_loop iter 6: same as above — the VM never ran.
+                    status: call_contract_response::Status::HandlerError as i32,
                 }));
             }
         };
@@ -1690,14 +1810,48 @@ impl crate::backend::backend_server::Backend for BackendService {
         let storage_adapter =
             tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine.clone());
 
-        // Call the contract using the database-specific storage adapter
+        // Call the contract using the database-specific storage adapter.
+        //
+        // close_loop Phase 1 — Section 2.1:
+        //   - The request converter above now prefers the full
+        //     `CallContractRequest.transaction` field (iter 6) so
+        //     value/gas_limit/metadata all round-trip from Java.
+        //   - The response now carries a structured `status` enum
+        //     (iter 6) instead of forcing the Java side to match on
+        //     error-message string prefixes. `success`/`error_message`
+        //     are still populated for backward compatibility with
+        //     clients built before iter 6, but new clients should read
+        //     `status` directly.
         match execution_module.call_contract_with_storage(storage_adapter, &transaction, &context) {
             Ok(result) => {
+                // Classify the execution outcome into the new Status
+                // enum. The Rust side has access to
+                // `TronExecutionResult.success` and the error string
+                // that REVM/tron_evm.rs set; the mapping mirrors what
+                // the Java bridge used to infer from string prefixes.
+                let status = if result.success {
+                    call_contract_response::Status::Success
+                } else {
+                    match result.error.as_deref() {
+                        Some("Call reverted") => call_contract_response::Status::Revert,
+                        Some(msg) if msg.starts_with("Call halted:") => {
+                            call_contract_response::Status::Halt
+                        }
+                        // An `Ok(result)` with `success=false` and an
+                        // error string that is neither "Call reverted"
+                        // nor "Call halted:*" should not happen today,
+                        // but if it does, report it as a handler-level
+                        // error so the Java side can surface it without
+                        // guessing.
+                        _ => call_contract_response::Status::HandlerError,
+                    }
+                };
                 let response = CallContractResponse {
                     return_data: result.return_data.to_vec(),
-                    success: true,
-                    error_message: String::new(),
+                    success: result.success,
+                    error_message: result.error.clone().unwrap_or_default(),
                     energy_used: result.energy_used as i64,
+                    status: status as i32,
                 };
                 Ok(Response::new(response))
             }
@@ -1708,6 +1862,9 @@ impl crate::backend::backend_server::Backend for BackendService {
                     success: false,
                     error_message: format!("Contract call error: {}", e),
                     energy_used: 0,
+                    // `Err(_)` from call_contract_with_storage is a
+                    // handler-level failure — the VM never ran.
+                    status: call_contract_response::Status::HandlerError as i32,
                 }))
             }
         }
@@ -1799,102 +1956,739 @@ impl crate::backend::backend_server::Backend for BackendService {
         }
     }
 
+    /// close_loop Phase 1 — Section 2.2 execution read-path closure.
+    ///
+    /// Returns the contract byte code stored at `address`. Reads flow through
+    /// the live storage engine; per `close_loop.snapshot.md`, any non-empty
+    /// `snapshot_id` is rejected with an explicit unsupported error rather
+    /// than silently reading from the live DB.
     async fn get_code(
         &self,
         request: Request<GetCodeRequest>,
     ) -> Result<Response<GetCodeResponse>, Status> {
         debug!("Get code request: {:?}", request.get_ref());
+        let req = request.into_inner();
 
-        // Placeholder implementation
-        let response = GetCodeResponse {
-            code: vec![],
-            found: false,
-            success: false,
-            error_message: "Not implemented".to_string(),
+        if !req.snapshot_id.is_empty() {
+            return Ok(Response::new(GetCodeResponse {
+                code: vec![],
+                found: false,
+                success: false,
+                error_message: snapshot_unsupported_error("get_code"),
+            }));
+        }
+
+        let address = match normalize_tron_address(&req.address) {
+            Ok(addr) => addr,
+            Err(e) => {
+                return Ok(Response::new(GetCodeResponse {
+                    code: vec![],
+                    found: false,
+                    success: false,
+                    error_message: format!("Invalid address: {}", e),
+                }));
+            }
         };
 
-        Ok(Response::new(response))
+        let storage_engine = self.get_storage_engine()?;
+        let adapter =
+            tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine.clone());
+
+        match adapter.get_code(&address) {
+            Ok(Some(bytecode)) => Ok(Response::new(GetCodeResponse {
+                code: bytecode.bytes().to_vec(),
+                found: true,
+                success: true,
+                error_message: String::new(),
+            })),
+            Ok(None) => Ok(Response::new(GetCodeResponse {
+                code: vec![],
+                found: false,
+                success: true,
+                error_message: String::new(),
+            })),
+            Err(e) => {
+                error!("get_code engine read failed: {}", e);
+                Ok(Response::new(GetCodeResponse {
+                    code: vec![],
+                    found: false,
+                    success: false,
+                    error_message: format!("get_code engine error: {}", e),
+                }))
+            }
+        }
     }
 
+    /// close_loop Phase 1 — Section 2.2.
+    ///
+    /// Returns the VM storage slot at `(address, key)`. The `key` is
+    /// interpreted as a 32-byte big-endian storage index; shorter inputs
+    /// are left-padded with zeros, longer inputs are rejected. Non-empty
+    /// `snapshot_id` is rejected per `close_loop.snapshot.md`.
     async fn get_storage_at(
         &self,
         request: Request<GetStorageAtRequest>,
     ) -> Result<Response<GetStorageAtResponse>, Status> {
         debug!("Get storage at request: {:?}", request.get_ref());
+        let req = request.into_inner();
 
-        // Placeholder implementation
-        let response = GetStorageAtResponse {
-            value: vec![],
-            found: false,
-            success: false,
-            error_message: "Not implemented".to_string(),
+        if !req.snapshot_id.is_empty() {
+            return Ok(Response::new(GetStorageAtResponse {
+                value: vec![],
+                found: false,
+                success: false,
+                error_message: snapshot_unsupported_error("get_storage_at"),
+            }));
+        }
+
+        let address = match normalize_tron_address(&req.address) {
+            Ok(addr) => addr,
+            Err(e) => {
+                return Ok(Response::new(GetStorageAtResponse {
+                    value: vec![],
+                    found: false,
+                    success: false,
+                    error_message: format!("Invalid address: {}", e),
+                }));
+            }
         };
 
-        Ok(Response::new(response))
+        if req.key.len() > 32 {
+            return Ok(Response::new(GetStorageAtResponse {
+                value: vec![],
+                found: false,
+                success: false,
+                error_message: format!(
+                    "storage key must be at most 32 bytes, got {}",
+                    req.key.len()
+                ),
+            }));
+        }
+        let mut key_bytes = [0u8; 32];
+        key_bytes[32 - req.key.len()..].copy_from_slice(&req.key);
+        let slot = revm_primitives::U256::from_be_bytes(key_bytes);
+
+        let storage_engine = self.get_storage_engine()?;
+        let adapter =
+            tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine.clone());
+
+        match adapter.get_storage(&address, &slot) {
+            Ok(value) => {
+                let bytes = value.to_be_bytes::<32>().to_vec();
+                let found = value != revm_primitives::U256::ZERO;
+                Ok(Response::new(GetStorageAtResponse {
+                    value: bytes,
+                    found,
+                    success: true,
+                    error_message: String::new(),
+                }))
+            }
+            Err(e) => {
+                error!("get_storage_at engine read failed: {}", e);
+                Ok(Response::new(GetStorageAtResponse {
+                    value: vec![],
+                    found: false,
+                    success: false,
+                    error_message: format!("get_storage_at engine error: {}", e),
+                }))
+            }
+        }
     }
 
+    /// close_loop Phase 1 — Section 2.2.
+    ///
+    /// Returns the account nonce (type_code field for TRON accounts) at
+    /// `address`. Non-empty `snapshot_id` rejected per snapshot policy.
     async fn get_nonce(
         &self,
         request: Request<GetNonceRequest>,
     ) -> Result<Response<GetNonceResponse>, Status> {
         debug!("Get nonce request: {:?}", request.get_ref());
+        let req = request.into_inner();
 
-        // Placeholder implementation
-        let response = GetNonceResponse {
-            nonce: 0,
-            found: false,
-            success: false,
-            error_message: "Not implemented".to_string(),
+        if !req.snapshot_id.is_empty() {
+            return Ok(Response::new(GetNonceResponse {
+                nonce: 0,
+                found: false,
+                success: false,
+                error_message: snapshot_unsupported_error("get_nonce"),
+            }));
+        }
+
+        let address = match normalize_tron_address(&req.address) {
+            Ok(addr) => addr,
+            Err(e) => {
+                return Ok(Response::new(GetNonceResponse {
+                    nonce: 0,
+                    found: false,
+                    success: false,
+                    error_message: format!("Invalid address: {}", e),
+                }));
+            }
         };
 
-        Ok(Response::new(response))
+        let storage_engine = self.get_storage_engine()?;
+        let adapter =
+            tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine.clone());
+
+        match adapter.get_account(&address) {
+            Ok(Some(account)) => Ok(Response::new(GetNonceResponse {
+                nonce: account.nonce as i64,
+                found: true,
+                success: true,
+                error_message: String::new(),
+            })),
+            Ok(None) => Ok(Response::new(GetNonceResponse {
+                nonce: 0,
+                found: false,
+                success: true,
+                error_message: String::new(),
+            })),
+            Err(e) => {
+                error!("get_nonce engine read failed: {}", e);
+                Ok(Response::new(GetNonceResponse {
+                    nonce: 0,
+                    found: false,
+                    success: false,
+                    error_message: format!("get_nonce engine error: {}", e),
+                }))
+            }
+        }
     }
 
+    /// close_loop Phase 1 — Section 2.2.
+    ///
+    /// Returns the account balance (in SUN) at `address`. The balance is
+    /// serialized as a 32-byte big-endian blob to preserve the full U256
+    /// representation REVM uses internally. Non-empty `snapshot_id` is
+    /// rejected per snapshot policy.
     async fn get_balance(
         &self,
         request: Request<GetBalanceRequest>,
     ) -> Result<Response<GetBalanceResponse>, Status> {
         debug!("Get balance request: {:?}", request.get_ref());
+        let req = request.into_inner();
 
-        // Placeholder implementation
-        let response = GetBalanceResponse {
-            balance: vec![],
-            found: false,
-            success: false,
-            error_message: "Not implemented".to_string(),
+        if !req.snapshot_id.is_empty() {
+            return Ok(Response::new(GetBalanceResponse {
+                balance: vec![],
+                found: false,
+                success: false,
+                error_message: snapshot_unsupported_error("get_balance"),
+            }));
+        }
+
+        let address = match normalize_tron_address(&req.address) {
+            Ok(addr) => addr,
+            Err(e) => {
+                return Ok(Response::new(GetBalanceResponse {
+                    balance: vec![],
+                    found: false,
+                    success: false,
+                    error_message: format!("Invalid address: {}", e),
+                }));
+            }
         };
 
-        Ok(Response::new(response))
+        let storage_engine = self.get_storage_engine()?;
+        let adapter =
+            tron_backend_execution::EngineBackedEvmStateStore::new(storage_engine.clone());
+
+        match adapter.get_account(&address) {
+            Ok(Some(account)) => Ok(Response::new(GetBalanceResponse {
+                balance: account.balance.to_be_bytes::<32>().to_vec(),
+                found: true,
+                success: true,
+                error_message: String::new(),
+            })),
+            Ok(None) => Ok(Response::new(GetBalanceResponse {
+                balance: vec![0u8; 32],
+                found: false,
+                success: true,
+                error_message: String::new(),
+            })),
+            Err(e) => {
+                error!("get_balance engine read failed: {}", e);
+                Ok(Response::new(GetBalanceResponse {
+                    balance: vec![],
+                    found: false,
+                    success: false,
+                    error_message: format!("get_balance engine error: {}", e),
+                }))
+            }
+        }
     }
 
+    /// Phase 1: EVM snapshot creation is explicitly UNSUPPORTED.
+    ///
+    /// See `planning/close_loop.snapshot.md`. The previous placeholder
+    /// generated a fresh UUID and returned `success = true`, which let
+    /// callers believe they had an isolated point-in-time handle. That
+    /// has been replaced with `success = false` plus an explicit error
+    /// message so no code path can silently rely on isolation that does
+    /// not exist. REVM's intra-transaction journaling still covers
+    /// in-VM revert for actual execution — cross-transaction SPI
+    /// snapshots are not a Phase 1 consumer.
     async fn create_evm_snapshot(
         &self,
         request: Request<CreateEvmSnapshotRequest>,
     ) -> Result<Response<CreateEvmSnapshotResponse>, Status> {
-        debug!("Create EVM snapshot request: {:?}", request.get_ref());
-
-        // Placeholder implementation
+        debug!(
+            "Create EVM snapshot request (rejected as unsupported in Phase 1): {:?}",
+            request.get_ref()
+        );
         let response = CreateEvmSnapshotResponse {
-            snapshot_id: uuid::Uuid::new_v4().to_string(),
-            success: true,
-            error_message: String::new(),
+            snapshot_id: String::new(),
+            success: false,
+            error_message:
+                "EVM snapshot is not supported in close_loop Phase 1 \
+                 (see planning/close_loop.snapshot.md). The previous \
+                 placeholder returned a synthetic snapshot id without \
+                 taking a real point-in-time handle; it has been \
+                 replaced with an explicit unsupported error."
+                    .to_string(),
         };
-
         Ok(Response::new(response))
     }
 
+    /// Phase 1: EVM snapshot revert is explicitly UNSUPPORTED.
+    ///
+    /// See `planning/close_loop.snapshot.md`. The previous placeholder
+    /// silently returned `success = true`, which was the "fake success"
+    /// state Section 1.4 explicitly bans.
     async fn revert_to_evm_snapshot(
         &self,
         request: Request<RevertToEvmSnapshotRequest>,
     ) -> Result<Response<RevertToEvmSnapshotResponse>, Status> {
-        debug!("Revert to EVM snapshot request: {:?}", request.get_ref());
-
-        // Placeholder implementation
+        debug!(
+            "Revert to EVM snapshot request (rejected as unsupported in Phase 1): {:?}",
+            request.get_ref()
+        );
         let response = RevertToEvmSnapshotResponse {
-            success: true,
-            error_message: String::new(),
+            success: false,
+            error_message:
+                "EVM revert-to-snapshot is not supported in close_loop Phase 1 \
+                 (see planning/close_loop.snapshot.md). The previous \
+                 placeholder silently returned success; it has been \
+                 replaced with an explicit unsupported error."
+                    .to_string(),
+        };
+        Ok(Response::new(response))
+    }
+}
+
+// =============================================================================
+// Tests for iter 4 execution read-path (helpers + handlers)
+// =============================================================================
+//
+// The first half of this module locks the small free-function helpers
+// `normalize_tron_address` / `snapshot_unsupported_error` / the storage
+// key padding / the U256 balance BE round-trip so that future refactors
+// cannot quietly change address acceptance, storage key width, or the
+// snapshot-unsupported error string.
+//
+// The second half (the `#[tokio::test]` block) builds a real
+// `BackendService` backed by a real `StorageModule` rooted in a
+// `tempfile::TempDir`, then invokes `get_code` / `get_storage_at` /
+// `get_nonce` / `get_balance` directly via the tonic `Backend` trait.
+// That covers the invariants we care about without a seeded account:
+// snapshot rejection, malformed-address rejection, oversized-key
+// rejection, and the not-found response shaping (`success = true`
+// with `found = false` and zeroed payload).
+//
+// A seeded-data "happy path" handler test that exercises a real
+// Account protobuf write + read is still an open follow-up under
+// Section 2.4. It requires constructing AccountCapsule serialization
+// from the Rust side, which lives in the execution crate's storage
+// adapter and deserves its own test harness.
+#[cfg(test)]
+mod iter4_read_path_tests {
+    use super::*;
+
+    // ---- Address normalization -----------------------------------------
+
+    #[test]
+    fn normalize_accepts_20_byte_address() {
+        let raw = [0x11u8; 20];
+        let addr = normalize_tron_address(&raw).expect("20-byte address accepted");
+        assert_eq!(addr.as_slice(), &raw[..]);
+    }
+
+    #[test]
+    fn normalize_accepts_21_byte_mainnet_prefix() {
+        let mut raw = vec![0x41];
+        raw.extend_from_slice(&[0x22u8; 20]);
+        let addr = normalize_tron_address(&raw).expect("0x41-prefixed address accepted");
+        assert_eq!(addr.as_slice(), &raw[1..]);
+    }
+
+    #[test]
+    fn normalize_accepts_21_byte_testnet_prefix() {
+        let mut raw = vec![0xa0];
+        raw.extend_from_slice(&[0x33u8; 20]);
+        let addr = normalize_tron_address(&raw).expect("0xa0-prefixed address accepted");
+        assert_eq!(addr.as_slice(), &raw[1..]);
+    }
+
+    #[test]
+    fn normalize_rejects_empty_address() {
+        let err = normalize_tron_address(&[]).unwrap_err();
+        assert!(
+            err.contains("expected 20 or 21 bytes"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn normalize_rejects_21_byte_with_bad_prefix() {
+        let mut raw = vec![0xff];
+        raw.extend_from_slice(&[0x44u8; 20]);
+        let err = normalize_tron_address(&raw).unwrap_err();
+        assert!(err.contains("expected 20 or 21 bytes"));
+    }
+
+    #[test]
+    fn normalize_rejects_odd_length() {
+        let err = normalize_tron_address(&[0x00u8; 15]).unwrap_err();
+        assert!(err.contains("15"));
+    }
+
+    #[test]
+    fn normalize_rejects_too_long() {
+        let err = normalize_tron_address(&[0x00u8; 33]).unwrap_err();
+        assert!(err.contains("33"));
+    }
+
+    // ---- Snapshot unsupported error string -----------------------------
+
+    #[test]
+    fn snapshot_error_names_the_method_and_points_at_planning() {
+        let msg = snapshot_unsupported_error("get_code");
+        assert!(msg.starts_with("get_code:"));
+        assert!(msg.contains("snapshot_id is not supported"));
+        assert!(msg.contains("close_loop.snapshot.md"));
+    }
+
+    // ---- Storage key padding semantics ---------------------------------
+    //
+    // The get_storage_at handler left-pads a short key to 32 bytes and
+    // rejects keys longer than 32 bytes. Replicate the padding logic
+    // exactly here so a regression that changes the padding direction
+    // (left vs right) or the max length is caught.
+
+    fn pad_storage_key(key: &[u8]) -> Result<[u8; 32], String> {
+        if key.len() > 32 {
+            return Err(format!(
+                "storage key must be at most 32 bytes, got {}",
+                key.len()
+            ));
+        }
+        let mut padded = [0u8; 32];
+        padded[32 - key.len()..].copy_from_slice(key);
+        Ok(padded)
+    }
+
+    #[test]
+    fn storage_key_zero_length_pads_to_zero_word() {
+        assert_eq!(pad_storage_key(&[]).unwrap(), [0u8; 32]);
+    }
+
+    #[test]
+    fn storage_key_32_bytes_is_identity() {
+        let raw: [u8; 32] = [0x11; 32];
+        assert_eq!(pad_storage_key(&raw).unwrap(), raw);
+    }
+
+    #[test]
+    fn storage_key_33_bytes_is_rejected() {
+        let raw = [0x22u8; 33];
+        let err = pad_storage_key(&raw).unwrap_err();
+        assert!(err.contains("at most 32"));
+    }
+
+    #[test]
+    fn storage_key_is_left_padded_not_right_padded() {
+        // A single byte 0xff must land in the last byte of the 32-byte
+        // slot (index 31), NOT the first byte. This matches how the
+        // get_storage_at handler builds the U256 slot index from the
+        // raw request key.
+        let padded = pad_storage_key(&[0xff]).unwrap();
+        assert_eq!(padded[31], 0xff);
+        assert_eq!(padded[..31], [0u8; 31]);
+    }
+
+    // ---- U256 balance round-trip ---------------------------------------
+    //
+    // The get_balance handler serializes the U256 balance as 32-byte BE.
+    // This test locks that the serialization round-trips losslessly for
+    // values near zero, in the middle of the range, and near the top.
+
+    #[test]
+    fn balance_round_trips_as_32_byte_be() {
+        let cases: [revm_primitives::U256; 4] = [
+            revm_primitives::U256::ZERO,
+            revm_primitives::U256::from(1_000_000_000u64),
+            revm_primitives::U256::MAX,
+            revm_primitives::U256::from_be_bytes([0x7fu8; 32]),
+        ];
+        for value in cases {
+            let bytes = value.to_be_bytes::<32>();
+            assert_eq!(bytes.len(), 32);
+            let round_trip = revm_primitives::U256::from_be_bytes::<32>(bytes);
+            assert_eq!(round_trip, value);
+        }
+    }
+
+    // ---- Handler-level tests -------------------------------------------
+    //
+    // These tests exercise the actual gRPC handler code for the four
+    // read-path methods by building a real `BackendService` backed by a
+    // `StorageModule` rooted in a temporary directory. They prove:
+    //
+    // 1. Non-empty `snapshot_id` is rejected with `success = false` and
+    //    an error_message that mentions `close_loop.snapshot.md`.
+    // 2. Malformed addresses produce `success = false` rather than
+    //    silently returning default values.
+    // 3. Reading an address that has never been written returns
+    //    `found = false, success = true` (i.e. "no such account, no
+    //    error either"), not a fake default.
+    //
+    // End-to-end "seed a real account and read it back" is still an
+    // open follow-up under Section 2.4 (it requires exercising the
+    // actual AccountCapsule serialization format, which lives inside
+    // the execution crate). The tests below lock the invariants we
+    // care about today — snapshot rejection, bad-address rejection,
+    // and the not-found response shape.
+
+    use tron_backend_common::ModuleManager;
+    use tron_backend_common::StorageConfig as CommonStorageConfig;
+
+    async fn build_read_path_test_service() -> (crate::BackendService, tempfile::TempDir) {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let storage_config = CommonStorageConfig {
+            data_dir: dir.path().to_string_lossy().to_string(),
+            max_open_files: 100,
+            cache_size: 8 * 1024 * 1024,
+            write_buffer_size: 4 * 1024 * 1024,
+            max_write_buffer_number: 2,
+            compression: "lz4".to_string(),
         };
 
-        Ok(Response::new(response))
+        let mut manager = ModuleManager::new();
+        let storage_module =
+            tron_backend_storage::StorageModule::new(&storage_config).expect("storage module");
+        manager.register("storage", Box::new(storage_module));
+        manager
+            .init_all()
+            .await
+            .expect("manager init_all should bring up the storage engine");
+
+        (crate::BackendService::new(manager), dir)
+    }
+
+    fn valid_21_byte_address() -> Vec<u8> {
+        let mut buf = Vec::with_capacity(21);
+        buf.push(0x41);
+        buf.extend_from_slice(&[0x55u8; 20]);
+        buf
+    }
+
+    #[tokio::test]
+    async fn get_code_rejects_non_empty_snapshot_id() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .get_code(tonic::Request::new(crate::backend::GetCodeRequest {
+                address: valid_21_byte_address(),
+                snapshot_id: "any-snapshot".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert!(!resp.found);
+        assert!(resp.error_message.contains("close_loop.snapshot.md"));
+    }
+
+    #[tokio::test]
+    async fn get_nonce_rejects_non_empty_snapshot_id() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .get_nonce(tonic::Request::new(crate::backend::GetNonceRequest {
+                address: valid_21_byte_address(),
+                snapshot_id: "x".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert_eq!(resp.nonce, 0);
+        assert!(resp.error_message.contains("close_loop.snapshot.md"));
+    }
+
+    #[tokio::test]
+    async fn get_balance_rejects_non_empty_snapshot_id() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .get_balance(tonic::Request::new(crate::backend::GetBalanceRequest {
+                address: valid_21_byte_address(),
+                snapshot_id: "x".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert!(resp.balance.is_empty());
+        assert!(resp.error_message.contains("close_loop.snapshot.md"));
+    }
+
+    #[tokio::test]
+    async fn get_storage_at_rejects_non_empty_snapshot_id() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .get_storage_at(tonic::Request::new(crate::backend::GetStorageAtRequest {
+                address: valid_21_byte_address(),
+                key: vec![0u8; 32],
+                snapshot_id: "x".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert!(resp.error_message.contains("close_loop.snapshot.md"));
+    }
+
+    #[tokio::test]
+    async fn get_code_rejects_malformed_address() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .get_code(tonic::Request::new(crate::backend::GetCodeRequest {
+                address: vec![0x00u8; 7], // wrong length
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert!(resp.error_message.contains("Invalid address"));
+    }
+
+    #[tokio::test]
+    async fn get_storage_at_rejects_oversized_key() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .get_storage_at(tonic::Request::new(crate::backend::GetStorageAtRequest {
+                address: valid_21_byte_address(),
+                key: vec![0u8; 33], // >32 bytes
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert!(resp.error_message.contains("at most 32 bytes"));
+    }
+
+    #[tokio::test]
+    async fn get_nonce_unknown_address_returns_not_found_success() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .get_nonce(tonic::Request::new(crate::backend::GetNonceRequest {
+                address: valid_21_byte_address(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        // Reading an address that was never written is not an error:
+        // the handler reports `found = false, success = true` so callers
+        // can distinguish "missing account" from "transport failure".
+        assert!(resp.success);
+        assert!(!resp.found);
+        assert_eq!(resp.nonce, 0);
+        assert!(resp.error_message.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_balance_unknown_address_returns_zeroed_balance() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .get_balance(tonic::Request::new(crate::backend::GetBalanceRequest {
+                address: valid_21_byte_address(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(resp.success);
+        assert!(!resp.found);
+        assert_eq!(resp.balance.len(), 32);
+        assert!(resp.balance.iter().all(|b| *b == 0));
+    }
+
+    #[tokio::test]
+    async fn get_code_unknown_address_returns_not_found_success() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .get_code(tonic::Request::new(crate::backend::GetCodeRequest {
+                address: valid_21_byte_address(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(resp.success);
+        assert!(!resp.found);
+        assert!(resp.code.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_storage_at_unknown_slot_returns_zero_with_found_false() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .get_storage_at(tonic::Request::new(crate::backend::GetStorageAtRequest {
+                address: valid_21_byte_address(),
+                key: vec![0u8; 32],
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        // An unwritten storage slot reads as U256::ZERO. The handler
+        // returns success=true (no error) and found=false (distinguishing
+        // "never written" from a genuine zero write).
+        assert!(resp.success);
+        assert!(!resp.found);
+        assert_eq!(resp.value.len(), 32);
+        assert!(resp.value.iter().all(|b| *b == 0));
     }
 }

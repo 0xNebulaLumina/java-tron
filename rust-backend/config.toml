@@ -1,3 +1,21 @@
+# =============================================================================
+# rust-backend/config.toml
+#
+# This file is the Phase 1 EXPERIMENTAL profile for close_loop work. It is
+# tuned for EE-vs-RR parity runs against `RR experimental` contract families.
+# Do NOT cite a run made under this profile as evidence of canonical RR
+# acceptance — see planning/close_loop.config_convergence.md for the
+# per-flag classification, the conservative profile, and the policy on
+# what counts as canonical RR enablement.
+#
+# Related planning notes:
+#   - planning/close_loop.scope.md            Phase 1 scope freeze
+#   - planning/close_loop.write_ownership.md  rust_persist_enabled policy
+#   - planning/close_loop.energy_limit.md     energy_limit wire contract
+#   - planning/close_loop.contract_matrix.md  per-contract readiness
+#   - planning/close_loop.config_convergence.md  this file's per-flag audit
+# =============================================================================
+
 [server]
 host = "127.0.0.1"
 port = 50011
@@ -153,24 +171,29 @@ delegation_reward_enabled = true
 # Set this for custom/private networks with different genesis witnesses.
 # genesis_guard_representatives_base58 = ["T...", "T..."]
 
-# === Phase 0.3: Write Consistency Model ===
+# === Write Consistency Model (close_loop Phase 1) ===
+#
 # This flag controls whether Rust persists state changes directly to storage during commit.
+# The canonical policy is defined in planning/close_loop.write_ownership.md.
 #
 # The system has two potential write paths:
-# 1. Rust handler directly writes to RocksDB via storage_adapter.set_*
-# 2. Java RuntimeSpiImpl applies state_changes/sidecars to local database
+# 1. Rust handler directly writes to RocksDB via the buffered storage adapter
+# 2. Java RuntimeSpiImpl.apply* reflects state_changes/sidecars into the local chainbase
 #
-# To ensure idempotent semantics and avoid double-writes:
-# - When false (default/recommended): Rust only computes and returns changes via gRPC
-#   Java's RuntimeSpiImpl handles all persistence. This is Option A from the planning doc.
-# - When true: Rust writes to storage AND returns changes (legacy mode, risk of double-write)
-#   Only enable for testing or when Java apply is disabled.
+# Double-write is prevented by the `write_mode` guard in RuntimeSpiImpl:
+# when Rust returns `write_mode = PERSISTED`, Java skips apply* and only runs postExecMirror.
 #
-# Benefits of false (Option A):
-# - Single authoritative write path (Java)
-# - Works consistently for both EMBEDDED and REMOTE storage modes
-# - Avoids non-idempotent double-writes (e.g., TRC-10 delta semantics)
-# - Easier transaction rollback on validation failure
+# Profile mapping:
+# - RR canonical (Phase 1 acceptance):    rust_persist_enabled = true
+#     Rust is the authoritative writer; Java is a read-side mirror.
+# - RR compute-only (development only):   rust_persist_enabled = false
+#     Rust computes, Java applies. Not an acceptance profile — results from
+#     this mode are NOT citable as RR parity.
+# - EE baseline:                           flag is ignored, Rust backend is not hit.
+#
+# This checked-in value is the RR canonical profile. Do not flip it to false
+# without first updating close_loop.write_ownership.md and notifying the phase
+# owner — it changes who owns final state in the active execution path.
 rust_persist_enabled = true
 
 # Dynamic property strictness (Task 5 - Java parity)

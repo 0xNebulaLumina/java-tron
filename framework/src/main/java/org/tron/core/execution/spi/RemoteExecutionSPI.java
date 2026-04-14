@@ -116,6 +116,65 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
   
 
+  /**
+   * close_loop Phase 1 — Section 2.1: RPC-backed contract call.
+   *
+   * <p>Builds a {@link CallContractRequest} by reusing
+   * {@link #buildExecuteTransactionRequest} for the nested
+   * {@link TronTransaction} and {@link ExecutionContext} — so the
+   * request carries the same {@code value}, {@code energy_limit},
+   * {@code tx_kind}, {@code contract_type}, {@code asset_id}, and
+   * {@code contract_parameter} the full execution path would see.
+   * This was the key gap from iter 5 and is closed in iter 6 by the
+   * additive proto field {@code CallContractRequest.transaction}.
+   *
+   * <p>The response is classified via the structured
+   * {@link CallContractResponse.Status} enum added in iter 6. The
+   * mapping onto the Java VM result shape is:
+   *
+   * <ul>
+   *   <li>{@code SUCCESS}       → {@link contractResult#SUCCESS}</li>
+   *   <li>{@code REVERT}        → {@link contractResult#REVERT} with
+   *       {@code setRevert()} — the only case that represents an
+   *       explicit REVM REVERT opcode.</li>
+   *   <li>{@code HALT}          → {@link contractResult#UNKNOWN} WITHOUT
+   *       {@code setRevert()} — REVM halt (out-of-energy, bad jump,
+   *       invalid opcode, etc.). Calling {@code setRevert()} here would
+   *       let {@code Wallet.java} rewrite the runtime error string to
+   *       "REVERT opcode executed" and lose the halt reason, so we
+   *       deliberately skip it.</li>
+   *   <li>{@code HANDLER_ERROR} → {@link contractResult#UNKNOWN} WITHOUT
+   *       {@code setRevert()} — gRPC handler failure (request
+   *       conversion, context conversion, or an internal server
+   *       error). The VM never ran.</li>
+   *   <li>{@code UNSPECIFIED}   → legacy fallback (pre-iter-6 server).
+   *       Interpret {@code success}/{@code error_message} the way iter
+   *       5 did, preserving backward compatibility with an older
+   *       Rust backend.</li>
+   * </ul>
+   *
+   * <p>A thrown {@link RuntimeException} from the gRPC client itself
+   * (transport failure, deadline exceeded, etc.) is also mapped to
+   * {@link contractResult#UNKNOWN} without {@code setRevert()}, for
+   * the same reason — the VM never ran and we must not let downstream
+   * revert-reporting overwrite the underlying error string.
+   *
+   * <p>Historical note: prior to iter 6 this method had two open
+   * correctness gaps that have since been closed. (1) A shape
+   * mismatch where {@link CallContractRequest} only carried
+   * {@code from} / {@code to} / {@code data} / {@code context},
+   * which dropped {@code value} / {@code energy_limit} /
+   * {@code contract_type} / {@code asset_id} / {@code contract_parameter};
+   * iter 6 added {@code CallContractRequest.transaction} (field 5)
+   * carrying a full {@link TronTransaction}, and the Java side now
+   * populates it via {@code callReq.setTransaction(tx)}. (2) The
+   * Java bridge used to discriminate non-success responses by
+   * string-matching on {@code error_message}; iter 6 added
+   * {@link CallContractResponse.Status} and the Java side now reads
+   * the structured enum. Both correctness gaps are closed on the
+   * canonical path; the legacy {@code UNSPECIFIED} fallback is
+   * retained only to interoperate with pre-iter-6 servers.
+   */
   @Override
   public CompletableFuture<ExecutionProgramResult> callContract(TransactionContext context)
       throws ContractValidateException, VMIllegalException {
@@ -124,19 +183,132 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         () -> {
           logger.debug(
               "Calling contract with remote Rust EVM: {}", context.getTrxCap().getTransactionId());
+          try {
+            ExecuteTransactionRequest execReq = buildExecuteTransactionRequest(context);
+            TronTransaction tx = execReq.getTransaction();
+            // close_loop iter 6: CallContractRequest now carries the full
+            // TronTransaction in field 5. Populating `transaction` means
+            // the Rust converter sees value/gas_limit/contract_type/
+            // asset_id/contract_parameter instead of reconstructing a
+            // minimal tx with hardcoded defaults. We still populate the
+            // legacy from/to/data fields so this client keeps working
+            // against pre-iter-6 servers that have not yet regenerated
+            // their CallContractRequest stubs.
+            CallContractRequest callReq =
+                CallContractRequest.newBuilder()
+                    .setFrom(tx.getFrom())
+                    .setTo(tx.getTo())
+                    .setData(tx.getData())
+                    .setContext(execReq.getContext())
+                    .setTransaction(tx)
+                    .build();
 
-          // TODO: Implement in Task 2 with ExecutionGrpcClient
-
-          // Placeholder implementation
-          logger.warn("Remote contract call not yet implemented - returning placeholder result");
-          ExecutionProgramResult result = new ExecutionProgramResult();
-          result.setRuntimeError("Remote contract call not yet implemented");
-          result.setRevert();
-          result.setResultCode(contractResult.UNKNOWN);
-          return result;
+            CallContractResponse resp =
+                grpcClient.callContract(callReq);
+            ExecutionProgramResult result = new ExecutionProgramResult();
+            // The Rust handler now propagates TronExecutionResult.success
+            // as CallContractResponse.success (fixed alongside this
+            // iteration). A REVM revert therefore arrives here as
+            // success=false, not success=true, so we can safely trust
+            // the flag.
+            // close_loop iter 6: prefer the structured `status` enum.
+            // Pre-iter-6 servers send `status = UNSPECIFIED` (zero
+            // default); for those we fall back to the legacy
+            // success / error_message string-match path from iter 5.
+            CallContractResponse.Status status = resp.getStatus();
+            result.setHReturn(resp.getReturnData().toByteArray());
+            result.spendEnergy(resp.getEnergyUsed());
+            if (status == CallContractResponse.Status.SUCCESS) {
+              result.setResultCode(contractResult.SUCCESS);
+            } else if (status == CallContractResponse.Status.REVERT) {
+              logger.warn(
+                  "Remote callContract REVERT for tx {}: {}",
+                  context.getTrxCap().getTransactionId(),
+                  resp.getErrorMessage());
+              result.setRuntimeError(
+                  "Remote callContract reverted: " + resp.getErrorMessage());
+              // Only an explicit REVM REVERT opcode sets setRevert().
+              // Calling setRevert() for anything else lets Wallet.java
+              // rewrite the runtimeError to "REVERT opcode executed",
+              // which would silently erase the halt / handler error
+              // details.
+              result.setRevert();
+              result.setResultCode(contractResult.REVERT);
+            } else if (status == CallContractResponse.Status.HALT) {
+              logger.warn(
+                  "Remote callContract HALT for tx {}: {}",
+                  context.getTrxCap().getTransactionId(),
+                  resp.getErrorMessage());
+              // REVM halt (out-of-energy, bad jump, invalid opcode,
+              // etc.). No setRevert() — see REVERT comment above.
+              result.setRuntimeError(
+                  "Remote callContract halted: " + resp.getErrorMessage());
+              result.setResultCode(contractResult.UNKNOWN);
+            } else if (status == CallContractResponse.Status.HANDLER_ERROR) {
+              logger.warn(
+                  "Remote callContract handler error for tx {}: {}",
+                  context.getTrxCap().getTransactionId(),
+                  resp.getErrorMessage());
+              // gRPC handler-level failure — the VM never ran. No
+              // setRevert() because there is no VM outcome to revert.
+              result.setRuntimeError(
+                  "Remote callContract handler error: " + resp.getErrorMessage());
+              result.setResultCode(contractResult.UNKNOWN);
+            } else {
+              // status == UNSPECIFIED (pre-iter-6 server) OR unrecognized
+              // enum value. Fall back to the legacy success /
+              // error_message classification.
+              if (resp.getSuccess()) {
+                result.setResultCode(contractResult.SUCCESS);
+              } else {
+                String err = resp.getErrorMessage() == null ? "" : resp.getErrorMessage();
+                logger.warn(
+                    "Remote callContract non-success (legacy mode) for tx {}: {}",
+                    context.getTrxCap().getTransactionId(),
+                    err);
+                result.setRuntimeError("Remote callContract non-success: " + err);
+                if (err.equals("Call reverted")) {
+                  result.setRevert();
+                  result.setResultCode(contractResult.REVERT);
+                } else {
+                  // Unknown legacy error string. Conservative mapping:
+                  // UNKNOWN, no setRevert().
+                  result.setResultCode(contractResult.UNKNOWN);
+                }
+              }
+            }
+            return result;
+          } catch (RuntimeException e) {
+            // Transport or build error. The VM never ran, so this is
+            // NOT a revert — do NOT call setRevert(). Downstream
+            // Wallet.java:3122 rewrites any setRevert()-shaped failure
+            // to "REVERT opcode executed", which would silently erase
+            // the real transport error string below. Reporting as
+            // UNKNOWN with the original exception message preserves
+            // the diagnostic.
+            logger.error(
+                "Remote callContract failed for tx {}",
+                context.getTrxCap().getTransactionId(),
+                e);
+            ExecutionProgramResult result = new ExecutionProgramResult();
+            result.setRuntimeError("Remote callContract failed: " + e.getMessage());
+            result.setResultCode(contractResult.UNKNOWN);
+            return result;
+          }
         });
   }
 
+  /**
+   * close_loop Phase 1 — Section 2.1: real RPC-backed energy estimation.
+   *
+   * <p>Builds an {@link EstimateEnergyRequest}
+   * from the given {@link TransactionContext} and returns the estimate
+   * reported by the Rust execution service. On any backend error this
+   * method fails-hard via {@link CompletableFuture#completeExceptionally},
+   * matching the contract described in {@code close_loop.energy_limit.md}
+   * — callers that need a default should catch the exception and supply
+   * their own fallback.
+   */
   @Override
   public CompletableFuture<Long> estimateEnergy(TransactionContext context)
       throws ContractValidateException {
@@ -145,26 +317,73 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         () -> {
           logger.debug(
               "Estimating energy with remote Rust EVM: {}", context.getTrxCap().getTransactionId());
-
-          // TODO: Implement in Task 2 with ExecutionGrpcClient
-
-          // Placeholder implementation
-          logger.warn("Remote energy estimation not yet implemented - returning 0");
-          return 0L;
+          try {
+            ExecuteTransactionRequest execReq = buildExecuteTransactionRequest(context);
+            EstimateEnergyRequest req =
+                EstimateEnergyRequest.newBuilder()
+                    .setTransaction(execReq.getTransaction())
+                    .setContext(execReq.getContext())
+                    .build();
+            EstimateEnergyResponse resp =
+                grpcClient.estimateEnergy(req);
+            if (!resp.getSuccess()) {
+              throw new RuntimeException(
+                  "Remote estimateEnergy failed: " + resp.getErrorMessage());
+            }
+            return resp.getEnergyEstimate();
+          } catch (RuntimeException e) {
+            logger.error(
+                "Remote estimateEnergy failed for tx {}",
+                context.getTrxCap().getTransactionId(),
+                e);
+            throw e;
+          }
         });
   }
+
+  // ===========================================================================
+  // close_loop Phase 1 — Section 2.1 execution read-path closure.
+  //
+  // The four read methods below used to return placeholder empty values and
+  // log a warning. They now call the real Rust execution gRPC handlers
+  // (implemented in iter 4) via ExecutionGrpcClient and surface any
+  // backend error to the caller instead of silently hiding it.
+  //
+  // Contract (matches planning/close_loop.snapshot.md):
+  //   - snapshot_id is propagated as-is. The Rust side rejects a non-empty
+  //     snapshot_id with an explicit unsupported error, and this Java layer
+  //     surfaces that error by completing the future exceptionally.
+  //   - response.success = false → fail-hard via completeExceptionally with
+  //     the remote error_message, so callers cannot accidentally treat a
+  //     backend failure as a successful empty read.
+  //   - response.found    = false → typed "not found" value (empty bytes /
+  //     zero), success. Callers that need to distinguish missing vs present
+  //     must use the handlers directly on the Rust side; this SPI surface
+  //     intentionally collapses "not found" into a normal empty result to
+  //     match the historical placeholder signature.
+  // ===========================================================================
 
   @Override
   public CompletableFuture<byte[]> getCode(byte[] address, String snapshotId) {
     return CompletableFuture.supplyAsync(
         () -> {
-          logger.debug("Getting code for address: {} via remote service", address);
-
-          // TODO: Implement in Task 2 with ExecutionGrpcClient
-
-          // Placeholder implementation
-          logger.warn("Remote getCode not yet implemented - returning empty");
-          return new byte[0];
+          logger.debug("Getting code for address (len={}) via remote service", address == null ? 0 : address.length);
+          try {
+            GetCodeRequest req =
+                GetCodeRequest.newBuilder()
+                    .setAddress(ByteString.copyFrom(address == null ? new byte[0] : address))
+                    .setSnapshotId(snapshotId == null ? "" : snapshotId)
+                    .build();
+            GetCodeResponse resp = grpcClient.getCode(req);
+            if (!resp.getSuccess()) {
+              throw new RuntimeException(
+                  "Remote getCode failed: " + resp.getErrorMessage());
+            }
+            return resp.getCode().toByteArray();
+          } catch (RuntimeException e) {
+            logger.error("Remote getCode failed", e);
+            throw e;
+          }
         });
   }
 
@@ -172,13 +391,27 @@ public class RemoteExecutionSPI implements ExecutionSPI {
   public CompletableFuture<byte[]> getStorageAt(byte[] address, byte[] key, String snapshotId) {
     return CompletableFuture.supplyAsync(
         () -> {
-          logger.debug("Getting storage at address: {}, key: {} via remote service", address, key);
-
-          // TODO: Implement in Task 2 with ExecutionGrpcClient
-
-          // Placeholder implementation
-          logger.warn("Remote getStorageAt not yet implemented - returning empty");
-          return new byte[0];
+          logger.debug(
+              "Getting storage at address (len={}) key (len={}) via remote service",
+              address == null ? 0 : address.length,
+              key == null ? 0 : key.length);
+          try {
+            GetStorageAtRequest req =
+                GetStorageAtRequest.newBuilder()
+                    .setAddress(ByteString.copyFrom(address == null ? new byte[0] : address))
+                    .setKey(ByteString.copyFrom(key == null ? new byte[0] : key))
+                    .setSnapshotId(snapshotId == null ? "" : snapshotId)
+                    .build();
+            GetStorageAtResponse resp = grpcClient.getStorageAt(req);
+            if (!resp.getSuccess()) {
+              throw new RuntimeException(
+                  "Remote getStorageAt failed: " + resp.getErrorMessage());
+            }
+            return resp.getValue().toByteArray();
+          } catch (RuntimeException e) {
+            logger.error("Remote getStorageAt failed", e);
+            throw e;
+          }
         });
   }
 
@@ -186,13 +419,23 @@ public class RemoteExecutionSPI implements ExecutionSPI {
   public CompletableFuture<Long> getNonce(byte[] address, String snapshotId) {
     return CompletableFuture.supplyAsync(
         () -> {
-          logger.debug("Getting nonce for address: {} via remote service", address);
-
-          // TODO: Implement in Task 2 with ExecutionGrpcClient
-
-          // Placeholder implementation
-          logger.warn("Remote getNonce not yet implemented - returning 0");
-          return 0L;
+          logger.debug("Getting nonce for address (len={}) via remote service", address == null ? 0 : address.length);
+          try {
+            GetNonceRequest req =
+                GetNonceRequest.newBuilder()
+                    .setAddress(ByteString.copyFrom(address == null ? new byte[0] : address))
+                    .setSnapshotId(snapshotId == null ? "" : snapshotId)
+                    .build();
+            GetNonceResponse resp = grpcClient.getNonce(req);
+            if (!resp.getSuccess()) {
+              throw new RuntimeException(
+                  "Remote getNonce failed: " + resp.getErrorMessage());
+            }
+            return resp.getNonce();
+          } catch (RuntimeException e) {
+            logger.error("Remote getNonce failed", e);
+            throw e;
+          }
         });
   }
 
@@ -200,59 +443,143 @@ public class RemoteExecutionSPI implements ExecutionSPI {
   public CompletableFuture<byte[]> getBalance(byte[] address, String snapshotId) {
     return CompletableFuture.supplyAsync(
         () -> {
-          logger.debug("Getting balance for address: {} via remote service", address);
-
-          // TODO: Implement in Task 2 with ExecutionGrpcClient
-
-          // Placeholder implementation
-          logger.warn("Remote getBalance not yet implemented - returning empty");
-          return new byte[0];
+          logger.debug("Getting balance for address (len={}) via remote service", address == null ? 0 : address.length);
+          try {
+            GetBalanceRequest req =
+                GetBalanceRequest.newBuilder()
+                    .setAddress(ByteString.copyFrom(address == null ? new byte[0] : address))
+                    .setSnapshotId(snapshotId == null ? "" : snapshotId)
+                    .build();
+            GetBalanceResponse resp = grpcClient.getBalance(req);
+            if (!resp.getSuccess()) {
+              throw new RuntimeException(
+                  "Remote getBalance failed: " + resp.getErrorMessage());
+            }
+            // Rust serializes balance as 32-byte BE U256; pass through as-is
+            // so callers can decode to BigInteger or similar. Historical
+            // placeholder returned an empty byte[] on any error; we now
+            // fail-hard via exception instead.
+            return resp.getBalance().toByteArray();
+          } catch (RuntimeException e) {
+            logger.error("Remote getBalance failed", e);
+            throw e;
+          }
         });
   }
 
+  /**
+   * Phase 1: SPI-level EVM snapshot creation is explicitly UNSUPPORTED.
+   *
+   * <p>The previous placeholder returned {@code "remote_snapshot_" + millis}
+   * without doing any work, which let callers think they had a real
+   * point-in-time handle. That has been replaced with an
+   * {@link UnsupportedOperationException} so silent fake-success can no
+   * longer hide bugs in code paths that depend on snapshot isolation.
+   * See {@code planning/close_loop.snapshot.md}. REVM intra-transaction
+   * journaling still handles the in-VM revert use case; nothing in the
+   * Phase 1 acceptance path needs cross-transaction SPI snapshots.
+   */
   @Override
   public CompletableFuture<String> createSnapshot() {
-    return CompletableFuture.supplyAsync(
-        () -> {
-          logger.debug("Creating EVM snapshot via remote service");
-
-          // TODO: Implement in Task 2 with ExecutionGrpcClient
-
-          // Placeholder implementation
-          logger.warn("Remote createSnapshot not yet implemented - returning placeholder");
-          return "remote_snapshot_" + System.currentTimeMillis();
-        });
+    logger.debug("Creating EVM snapshot via remote service");
+    CompletableFuture<String> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "Remote EVM snapshot is not supported in close_loop Phase 1 "
+                + "(see planning/close_loop.snapshot.md). The previous placeholder "
+                + "returned a fake snapshot id without taking a real point-in-time "
+                + "handle, which has been removed to prevent silent isolation bugs."));
+    return future;
   }
 
+  /**
+   * Phase 1: SPI-level EVM snapshot revert is explicitly UNSUPPORTED.
+   *
+   * <p>The previous placeholder silently returned {@code false}, which
+   * could be mistaken for "the revert was attempted and failed". It has
+   * been replaced with an {@link UnsupportedOperationException} for the
+   * same reasons as {@link #createSnapshot()}.
+   */
   @Override
   public CompletableFuture<Boolean> revertToSnapshot(String snapshotId) {
-    return CompletableFuture.supplyAsync(
-        () -> {
-          logger.debug("Reverting to snapshot: {} via remote service", snapshotId);
-
-          // TODO: Implement in Task 2 with ExecutionGrpcClient
-
-          // Placeholder implementation
-          logger.warn("Remote revertToSnapshot not yet implemented - returning false");
-          return false;
-        });
+    logger.debug("Reverting to snapshot: {} via remote service", snapshotId);
+    CompletableFuture<Boolean> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "Remote EVM revertToSnapshot is not supported in close_loop Phase 1 "
+                + "(see planning/close_loop.snapshot.md). The previous placeholder "
+                + "silently returned false, which has been replaced with an "
+                + "explicit unsupported error."));
+    return future;
   }
 
+  /**
+   * close_loop Phase 1 — Section 2.1: real RPC-backed health check.
+   *
+   * <p>The Rust backend's {@code health} gRPC handler walks the module
+   * manager and reports per-module `healthy` / `degraded` / `unhealthy`
+   * status (verified during iter 4's read-path audit). This Java side
+   * maps the three-valued backend status onto the two-valued
+   * {@link HealthStatus} the existing SPI exposes:
+   *
+   * <ul>
+   *   <li>{@code HEALTHY}   → {@code HealthStatus(true, ...)} — backend is ready.</li>
+   *   <li>{@code DEGRADED}  → {@code HealthStatus(true, ...)} — backend is
+   *       reachable and partially functional; the module detail string
+   *       carries the degraded-module information so operators can see
+   *       which subsystem is flaky without changing the boolean.</li>
+   *   <li>{@code UNHEALTHY} → {@code HealthStatus(false, ...)} — backend
+   *       is reachable but not operational.</li>
+   *   <li>transport error   → {@code HealthStatus(false, ...)} — backend
+   *       is unreachable; the message carries the gRPC error string.</li>
+   * </ul>
+   *
+   * <p>Rationale for collapsing {@code DEGRADED} onto {@code healthy=true}:
+   * the existing Java callers (see `ShadowExecutionSPI` and any
+   * monitoring code) treat {@code HealthStatus.isHealthy()} as "can I
+   * dispatch work to this backend". A degraded backend still accepts
+   * work; it just has one sub-module reporting partial failure. Any
+   * monitoring code that needs finer granularity should parse the
+   * detail string rather than the boolean.
+   */
   @Override
   public CompletableFuture<HealthStatus> healthCheck() {
     return CompletableFuture.supplyAsync(
         () -> {
           try {
             logger.debug("Checking health of remote execution service at {}:{}", host, port);
+            HealthResponse resp = grpcClient.healthCheck();
 
-            // TODO: Implement in Task 2 with ExecutionGrpcClient
-            // Call grpcClient.healthCheck()
+            // Render the per-module status map into the message string so
+            // operators can see which module was reporting what without
+            // needing to expand HealthStatus's shape.
+            StringBuilder detail = new StringBuilder();
+            detail.append(resp.getMessage() == null ? "" : resp.getMessage());
+            if (!resp.getModuleStatusMap().isEmpty()) {
+              detail.append(" [modules:");
+              for (java.util.Map.Entry<String, String> entry : resp.getModuleStatusMap().entrySet()) {
+                detail.append(' ').append(entry.getKey()).append('=').append(entry.getValue());
+              }
+              detail.append("]");
+            }
 
-            // Placeholder implementation
-            logger.warn("Remote health check not yet implemented - returning unhealthy");
-            return new HealthStatus(false, "Remote execution service not yet implemented");
-
-          } catch (Exception e) {
+            HealthResponse.Status status = resp.getStatus();
+            switch (status) {
+              case HEALTHY:
+                return new HealthStatus(true, "Remote backend healthy" + (detail.length() > 0 ? ": " + detail : ""));
+              case DEGRADED:
+                logger.warn("Remote backend reports DEGRADED status: {}", detail);
+                return new HealthStatus(true, "Remote backend degraded: " + detail);
+              case UNHEALTHY:
+              default:
+                logger.warn("Remote backend reports UNHEALTHY status: {}", detail);
+                return new HealthStatus(false, "Remote backend unhealthy: " + detail);
+            }
+          } catch (RuntimeException e) {
+            // Transport-level failure: the backend is unreachable.
+            // Surface this as unhealthy with the underlying error string
+            // rather than silently returning an empty "not implemented"
+            // message as the old placeholder did.
             logger.error("Remote execution health check failed", e);
             return new HealthStatus(
                 false, "Remote execution health check failed: " + e.getMessage());
@@ -390,13 +717,28 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       byte[] toAddress = new byte[20]; // Default empty address
       byte[] data = new byte[0]; // Default empty data
       long value = 0; // Default zero value
+      // Wire contract for `energy_limit` is FUTURE-LOCKED to ENERGY UNITS
+      // (see planning/close_loop.energy_limit.md — close_loop Phase 1 Section 1.2).
+      // The decision is recorded; the producer/consumer migration has NOT
+      // yet landed. Current live behavior here:
+      //  - Default initialization sends raw fee-limit SUN (this line).
+      //  - VM contract types (Create / Trigger) override the default below
+      //    via `computeEnergyLimitWithFixRatio(...)`, which returns energy
+      //    units — but its own exception fallback drops back to raw
+      //    feeLimit SUN if any of its lookups fail.
+      //  - Non-VM contract types keep this raw fee-limit SUN default.
+      // Do not flip to 0 (or any other "energy units only" value) here
+      // without landing the coordinated Rust-side removal of the
+      // divide-by-ENERGY_FEE and regenerating fixtures, all in the same
+      // change. Mixing the two interpretations on the wire silently
+      // under- or over-gases transactions.
       long energyLimit = transaction.getRawData().getFeeLimit();
       long energyPrice = 1; // Default energy price
       long nonce = 0; // TRON doesn't use nonce like Ethereum
 
       // Determine transaction kind based on contract type
       TxKind txKind; // Will be set based on contract type
-      tron.backend.BackendOuterClass.ContractType contractType; // Will be set based on contract type
+      ContractType contractType; // Will be set based on contract type
       byte[] assetId = new byte[0]; // Default empty for TRX transfers
 
       // Extract specific data based on contract type
@@ -406,7 +748,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = transferContract.getToAddress().toByteArray();
           value = transferContract.getAmount();
           txKind = TxKind.NON_VM; // Simple TRX transfer
-          contractType = tron.backend.BackendOuterClass.ContractType.TRANSFER_CONTRACT;
+          contractType = ContractType.TRANSFER_CONTRACT;
           break;
 
         case TransferAssetContract:
@@ -423,7 +765,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           value = transferAssetContract.getAmount();
           assetId = transferAssetContract.getAssetName().toByteArray(); // TRC-10 asset ID
           txKind = TxKind.NON_VM; // TRC-10 asset transfer (when enabled)
-          contractType = tron.backend.BackendOuterClass.ContractType.TRANSFER_ASSET_CONTRACT;
+          contractType = ContractType.TRANSFER_ASSET_CONTRACT;
           break;
 
         case AssetIssueContract:
@@ -440,7 +782,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           value = 0; // Asset issue fee is charged, but not a value transfer
           data = assetIssueContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // TRC-10 asset issuance
-          contractType = tron.backend.BackendOuterClass.ContractType.ASSET_ISSUE_CONTRACT;
+          contractType = ContractType.ASSET_ISSUE_CONTRACT;
           logger.debug(
               "Mapped AssetIssueContract to remote request; owner={}, name={}, total_supply={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
@@ -465,7 +807,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           assetId = participateAssetContract.getAssetName().toByteArray();
           data = participateAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // TRC-10 participation
-          contractType = tron.backend.BackendOuterClass.ContractType.PARTICIPATE_ASSET_ISSUE_CONTRACT;
+          contractType = ContractType.PARTICIPATE_ASSET_ISSUE_CONTRACT;
           logger.debug(
               "Mapped ParticipateAssetIssueContract to remote request; owner={}, to={}, asset={}, amount={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
@@ -489,7 +831,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           value = 0; // No value transfer
           data = unfreezeAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // TRC-10 unfreeze
-          contractType = tron.backend.BackendOuterClass.ContractType.UNFREEZE_ASSET_CONTRACT;
+          contractType = ContractType.UNFREEZE_ASSET_CONTRACT;
           logger.debug(
               "Mapped UnfreezeAssetContract to remote request; owner={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress));
@@ -510,7 +852,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           value = 0; // No value transfer
           data = updateAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // TRC-10 update
-          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_ASSET_CONTRACT;
+          contractType = ContractType.UPDATE_ASSET_CONTRACT;
           logger.debug(
               "Mapped UpdateAssetContract to remote request; owner={}, new_limit={}, new_public_limit={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
@@ -541,7 +883,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
                 energyLimit);
           }
           txKind = TxKind.VM; // Smart contract creation requires VM
-          contractType = tron.backend.BackendOuterClass.ContractType.CREATE_SMART_CONTRACT;
+          contractType = ContractType.CREATE_SMART_CONTRACT;
           break;
 
         case TriggerSmartContract:
@@ -564,7 +906,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               energyLimit);
 
           txKind = TxKind.VM; // Smart contract invocation requires VM
-          contractType = tron.backend.BackendOuterClass.ContractType.TRIGGER_SMART_CONTRACT;
+          contractType = ContractType.TRIGGER_SMART_CONTRACT;
           break;
 
         case FreezeBalanceContract:
@@ -573,7 +915,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0];
           data = freezeContract.toByteArray();
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.FREEZE_BALANCE_CONTRACT;
+          contractType = ContractType.FREEZE_BALANCE_CONTRACT;
           logger.debug(
               "Mapped FreezeBalanceContract to remote request; owner={}, amount={}, duration={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
@@ -587,7 +929,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0];
           data = unfreezeContract.toByteArray();
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.UNFREEZE_BALANCE_CONTRACT;
+          contractType = ContractType.UNFREEZE_BALANCE_CONTRACT;
           logger.debug(
               "Mapped UnfreezeBalanceContract to remote request; owner={}, resource={}, receiver={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
@@ -601,7 +943,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0];
           data = freezeBalanceV2Contract.toByteArray();
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.FREEZE_BALANCE_V2_CONTRACT;
+          contractType = ContractType.FREEZE_BALANCE_V2_CONTRACT;
           logger.debug(
               "Mapped FreezeBalanceV2Contract to remote request; owner={}, amount={}, resource={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
@@ -615,7 +957,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0];
           data = unfreezeBalanceV2Contract.toByteArray();
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.UNFREEZE_BALANCE_V2_CONTRACT;
+          contractType = ContractType.UNFREEZE_BALANCE_V2_CONTRACT;
           logger.debug(
               "Mapped UnfreezeBalanceV2Contract to remote request; owner={}, amount={}, resource={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
@@ -631,7 +973,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Include URL in execution data for Rust backend processing
           data = witnessCreateContract.getUrl().toByteArray();
           txKind = TxKind.NON_VM; // System contract
-          contractType = tron.backend.BackendOuterClass.ContractType.WITNESS_CREATE_CONTRACT;
+          contractType = ContractType.WITNESS_CREATE_CONTRACT;
           break;
 
         case WitnessUpdateContract:
@@ -642,7 +984,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Include update URL in execution data for Rust backend processing
           data = witnessUpdateContract.getUpdateUrl().toByteArray();
           txKind = TxKind.NON_VM; // System contract
-          contractType = tron.backend.BackendOuterClass.ContractType.WITNESS_UPDATE_CONTRACT;
+          contractType = ContractType.WITNESS_UPDATE_CONTRACT;
           break;
 
         case VoteWitnessContract:
@@ -653,7 +995,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Serialize vote data for Rust backend processing (simplified for now)
           data = voteWitnessContract.toByteArray(); // Full contract data
           txKind = TxKind.NON_VM; // System contract
-          contractType = tron.backend.BackendOuterClass.ContractType.VOTE_WITNESS_CONTRACT;
+          contractType = ContractType.VOTE_WITNESS_CONTRACT;
           break;
 
         case AccountUpdateContract:
@@ -668,7 +1010,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           // Set data to account name bytes
           data = accountUpdateContract.getAccountName().toByteArray();
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.ACCOUNT_UPDATE_CONTRACT;
+          contractType = ContractType.ACCOUNT_UPDATE_CONTRACT;
           logger.debug("Mapped AccountUpdateContract to remote request; owner={}, data_len={}",
               org.tron.common.utils.ByteArray.toHexString(accountUpdateContract.getOwnerAddress().toByteArray()), data.length);
           break;
@@ -679,7 +1021,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = new byte[0]; // No extra data needed - owner is in fromAddress
           txKind = TxKind.NON_VM; // System contract
-          contractType = tron.backend.BackendOuterClass.ContractType.WITHDRAW_BALANCE_CONTRACT;
+          contractType = ContractType.WITHDRAW_BALANCE_CONTRACT;
           logger.debug("Mapped WithdrawBalanceContract to remote request; owner={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress));
           break;
@@ -691,7 +1033,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = accountCreateContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // System contract
-          contractType = tron.backend.BackendOuterClass.ContractType.ACCOUNT_CREATE_CONTRACT;
+          contractType = ContractType.ACCOUNT_CREATE_CONTRACT;
           logger.debug("Mapped AccountCreateContract to remote request; owner={}, account_address={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(accountCreateContract.getAccountAddress().toByteArray()));
@@ -710,7 +1052,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = proposalCreateContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // System contract
-          contractType = tron.backend.BackendOuterClass.ContractType.PROPOSAL_CREATE_CONTRACT;
+          contractType = ContractType.PROPOSAL_CREATE_CONTRACT;
           logger.debug("Mapped ProposalCreateContract to remote request; owner={}, params={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               proposalCreateContract.getParametersCount());
@@ -727,7 +1069,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = proposalApproveContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // System contract
-          contractType = tron.backend.BackendOuterClass.ContractType.PROPOSAL_APPROVE_CONTRACT;
+          contractType = ContractType.PROPOSAL_APPROVE_CONTRACT;
           logger.debug("Mapped ProposalApproveContract to remote request; owner={}, proposal_id={}, is_add={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               proposalApproveContract.getProposalId(),
@@ -745,7 +1087,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = proposalDeleteContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // System contract
-          contractType = tron.backend.BackendOuterClass.ContractType.PROPOSAL_DELETE_CONTRACT;
+          contractType = ContractType.PROPOSAL_DELETE_CONTRACT;
           logger.debug("Mapped ProposalDeleteContract to remote request; owner={}, proposal_id={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               proposalDeleteContract.getProposalId());
@@ -763,7 +1105,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = setAccountIdContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // System contract
-          contractType = tron.backend.BackendOuterClass.ContractType.SET_ACCOUNT_ID_CONTRACT;
+          contractType = ContractType.SET_ACCOUNT_ID_CONTRACT;
           logger.debug("Mapped SetAccountIdContract to remote request; owner={}, account_id={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               new String(setAccountIdContract.getAccountId().toByteArray()));
@@ -780,7 +1122,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = permissionUpdateContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM; // System contract
-          contractType = tron.backend.BackendOuterClass.ContractType.ACCOUNT_PERMISSION_UPDATE_CONTRACT;
+          contractType = ContractType.ACCOUNT_PERMISSION_UPDATE_CONTRACT;
           logger.debug("Mapped AccountPermissionUpdateContract to remote request; owner={}, active_count={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               permissionUpdateContract.getActivesCount());
@@ -798,7 +1140,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = updateSettingContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_SETTING_CONTRACT;
+          contractType = ContractType.UPDATE_SETTING_CONTRACT;
           logger.debug("Mapped UpdateSettingContract to remote request; owner={}, contract={}, percent={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(updateSettingContract.getContractAddress().toByteArray()),
@@ -816,7 +1158,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = updateEnergyLimitContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_ENERGY_LIMIT_CONTRACT;
+          contractType = ContractType.UPDATE_ENERGY_LIMIT_CONTRACT;
           logger.debug("Mapped UpdateEnergyLimitContract to remote request; owner={}, contract={}, limit={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(updateEnergyLimitContract.getContractAddress().toByteArray()),
@@ -834,7 +1176,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = clearAbiContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.CLEAR_ABI_CONTRACT;
+          contractType = ContractType.CLEAR_ABI_CONTRACT;
           logger.debug("Mapped ClearABIContract to remote request; owner={}, contract={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(clearAbiContract.getContractAddress().toByteArray()));
@@ -852,7 +1194,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = updateBrokerageContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.UPDATE_BROKERAGE_CONTRACT;
+          contractType = ContractType.UPDATE_BROKERAGE_CONTRACT;
           logger.debug("Mapped UpdateBrokerageContract to remote request; owner={}, brokerage={}%",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               updateBrokerageContract.getBrokerage());
@@ -870,7 +1212,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = withdrawExpireUnfreezeContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.WITHDRAW_EXPIRE_UNFREEZE_CONTRACT;
+          contractType = ContractType.WITHDRAW_EXPIRE_UNFREEZE_CONTRACT;
           logger.debug("Mapped WithdrawExpireUnfreezeContract to remote request; owner={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress));
           break;
@@ -886,7 +1228,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, receiver is in contract data
           data = delegateResourceContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.DELEGATE_RESOURCE_CONTRACT;
+          contractType = ContractType.DELEGATE_RESOURCE_CONTRACT;
           logger.debug("Mapped DelegateResourceContract to remote request; owner={}, receiver={}, resource={}, balance={}, lock={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(delegateResourceContract.getReceiverAddress().toByteArray()),
@@ -906,7 +1248,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, receiver is in contract data
           data = unDelegateResourceContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.UNDELEGATE_RESOURCE_CONTRACT;
+          contractType = ContractType.UNDELEGATE_RESOURCE_CONTRACT;
           logger.debug("Mapped UnDelegateResourceContract to remote request; owner={}, receiver={}, resource={}, balance={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(unDelegateResourceContract.getReceiverAddress().toByteArray()),
@@ -925,7 +1267,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = cancelAllUnfreezeV2Contract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.CANCEL_ALL_UNFREEZE_V2_CONTRACT;
+          contractType = ContractType.CANCEL_ALL_UNFREEZE_V2_CONTRACT;
           logger.debug("Mapped CancelAllUnfreezeV2Contract to remote request; owner={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress));
           break;
@@ -942,7 +1284,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = exchangeCreateContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_CREATE_CONTRACT;
+          contractType = ContractType.EXCHANGE_CREATE_CONTRACT;
           logger.debug("Mapped ExchangeCreateContract to remote request; owner={}, first_token={}, second_token={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               new String(exchangeCreateContract.getFirstTokenId().toByteArray()),
@@ -960,7 +1302,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = exchangeInjectContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_INJECT_CONTRACT;
+          contractType = ContractType.EXCHANGE_INJECT_CONTRACT;
           logger.debug("Mapped ExchangeInjectContract to remote request; owner={}, exchange_id={}, token={}, quant={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               exchangeInjectContract.getExchangeId(),
@@ -979,7 +1321,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = exchangeWithdrawContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_WITHDRAW_CONTRACT;
+          contractType = ContractType.EXCHANGE_WITHDRAW_CONTRACT;
           logger.debug("Mapped ExchangeWithdrawContract to remote request; owner={}, exchange_id={}, token={}, quant={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               exchangeWithdrawContract.getExchangeId(),
@@ -998,7 +1340,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = exchangeTransactionContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.EXCHANGE_TRANSACTION_CONTRACT;
+          contractType = ContractType.EXCHANGE_TRANSACTION_CONTRACT;
           logger.debug("Mapped ExchangeTransactionContract to remote request; owner={}, exchange_id={}, token={}, quant={}, expected={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               exchangeTransactionContract.getExchangeId(),
@@ -1018,7 +1360,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = marketSellAssetContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.MARKET_SELL_ASSET_CONTRACT;
+          contractType = ContractType.MARKET_SELL_ASSET_CONTRACT;
           logger.debug("Mapped MarketSellAssetContract to remote request; owner={}, sell_token={}, sell_qty={}, buy_token={}, buy_qty={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               new String(marketSellAssetContract.getSellTokenId().toByteArray()),
@@ -1038,7 +1380,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = new byte[0]; // System contract, no recipient
           data = marketCancelOrderContract.toByteArray(); // Send full proto bytes for Rust parsing
           txKind = TxKind.NON_VM;
-          contractType = tron.backend.BackendOuterClass.ContractType.MARKET_CANCEL_ORDER_CONTRACT;
+          contractType = ContractType.MARKET_CANCEL_ORDER_CONTRACT;
           logger.debug("Mapped MarketCancelOrderContract to remote request; owner={}, order_id={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(marketCancelOrderContract.getOrderId().toByteArray()));
@@ -1144,7 +1486,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
    * Format: [balance(32)] + [nonce(8)] + [code_hash(32)] + [code_length(4)] + [code(variable)]
    *         + optional [AEXT tail] for resource usage (when proto fields are present)
    */
-  private byte[] serializeAccountInfo(tron.backend.BackendOuterClass.AccountInfo accountInfo) {
+  private byte[] serializeAccountInfo(AccountInfo accountInfo) {
     if (accountInfo == null) {
       return new byte[0]; // Empty for null account (creation/deletion cases)
     }
@@ -1266,7 +1608,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
    * Format: magic(4) + version(2) + length(2) + payload(68)
    * Total: 76 bytes
    */
-  private byte[] serializeAextTailFromProto(tron.backend.BackendOuterClass.AccountInfo accountInfo) {
+  private byte[] serializeAextTailFromProto(AccountInfo accountInfo) {
     // AEXT v1 payload size: 8*8 (i64 fields) + 1 + 1 (booleans) + 2 (padding) = 68 bytes
     int payloadSize = 68;
     int totalSize = 4 + 2 + 2 + payloadSize; // magic + version + length + payload = 76 bytes
@@ -1331,7 +1673,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     ExecutionSPI.WriteMode writeMode = ExecutionSPI.WriteMode.fromValue(
         response.getWriteMode().getNumber());
     List<ExecutionSPI.TouchedKey> touchedKeys = new ArrayList<>();
-    for (tron.backend.BackendOuterClass.DbKey dbKey : response.getTouchedKeysList()) {
+    for (DbKey dbKey : response.getTouchedKeysList()) {
       touchedKeys.add(new ExecutionSPI.TouchedKey(
           dbKey.getDb(),
           dbKey.getKey().toByteArray(),
@@ -1359,18 +1701,18 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           touchedKeys);
     }
 
-    tron.backend.BackendOuterClass.ExecutionResult protoResult = response.getResult();
+    ExecutionResult protoResult = response.getResult();
     List<StateChange> stateChanges = new ArrayList<>();
     List<LogEntry> logs = new ArrayList<>();
 
     // Convert protobuf state changes to ExecutionSPI state changes
-    for (tron.backend.BackendOuterClass.StateChange protoChange :
+    for (StateChange protoChange :
         protoResult.getStateChangesList()) {
       
       // Handle the oneof union type
       if (protoChange.hasStorageChange()) {
         // Handle storage change
-        tron.backend.BackendOuterClass.StorageChange storageChange = protoChange.getStorageChange();
+        StorageChange storageChange = protoChange.getStorageChange();
         StateChange stateChange = new StateChange(
             storageChange.getAddress().toByteArray(),
             storageChange.getKey().toByteArray(),
@@ -1386,7 +1728,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             
       } else if (protoChange.hasAccountChange()) {
         // Handle account change - serialize AccountInfo properly
-        tron.backend.BackendOuterClass.AccountChange accountChange = protoChange.getAccountChange();
+        AccountChange accountChange = protoChange.getAccountChange();
         
         // For account changes, we'll use empty key to indicate it's an account-level change
         // and serialize account info in the values
@@ -1425,7 +1767,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     }
 
     // Convert protobuf logs to ExecutionSPI logs
-    for (tron.backend.BackendOuterClass.LogEntry protoLog : protoResult.getLogsList()) {
+    for (LogEntry protoLog : protoResult.getLogsList()) {
       List<byte[]> topics = new ArrayList<>();
       for (ByteString topic : protoLog.getTopicsList()) {
         topics.add(topic.toByteArray());
@@ -1437,7 +1779,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     // Convert protobuf freeze changes to ExecutionSPI freeze changes (Phase 2)
     List<FreezeLedgerChange> freezeChanges = new ArrayList<>();
-    for (tron.backend.BackendOuterClass.FreezeLedgerChange protoFreeze : protoResult.getFreezeChangesList()) {
+    for (FreezeLedgerChange protoFreeze : protoResult.getFreezeChangesList()) {
       // Convert proto Resource enum to ExecutionSPI Resource enum
       FreezeLedgerChange.Resource resource;
       switch (protoFreeze.getResource()) {
@@ -1474,7 +1816,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     // Convert protobuf global resource changes (Phase 2)
     List<GlobalResourceTotalsChange> globalResourceChanges = new ArrayList<>();
-    for (tron.backend.BackendOuterClass.GlobalResourceTotalsChange protoGlobal : protoResult.getGlobalResourceChangesList()) {
+    for (GlobalResourceTotalsChange protoGlobal : protoResult.getGlobalResourceChangesList()) {
       GlobalResourceTotalsChange globalChange = new GlobalResourceTotalsChange(
           protoGlobal.getTotalNetWeight(),
           protoGlobal.getTotalNetLimit(),
@@ -1516,10 +1858,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     // Convert protobuf TRC-10 changes (Phase 2: full TRC-10 ledger semantics)
     List<Trc10Change> trc10Changes = new ArrayList<>();
-    for (tron.backend.BackendOuterClass.Trc10Change protoTrc10 : protoResult.getTrc10ChangesList()) {
+    for (Trc10Change protoTrc10 : protoResult.getTrc10ChangesList()) {
       // Handle the oneof union type
       if (protoTrc10.hasAssetIssued()) {
-        tron.backend.BackendOuterClass.Trc10AssetIssued protoAssetIssued = protoTrc10.getAssetIssued();
+        Trc10AssetIssued protoAssetIssued = protoTrc10.getAssetIssued();
 
         Trc10AssetIssued assetIssued = new Trc10AssetIssued(
             protoAssetIssued.getOwnerAddress().toByteArray(),
@@ -1548,7 +1890,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             protoAssetIssued.getPrecision(),
             protoAssetIssued.getTokenId());
       } else if (protoTrc10.hasAssetTransferred()) {
-        tron.backend.BackendOuterClass.Trc10AssetTransferred protoAssetTransferred =
+        Trc10AssetTransferred protoAssetTransferred =
             protoTrc10.getAssetTransferred();
 
         Trc10AssetTransferred assetTransferred = new Trc10AssetTransferred(
@@ -1571,9 +1913,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     // Convert protobuf VoteChange (Phase 2: Account.votes update after VoteWitness)
     List<VoteChange> voteChanges = new ArrayList<>();
-    for (tron.backend.BackendOuterClass.VoteChange protoVoteChange : protoResult.getVoteChangesList()) {
+    for (VoteChange protoVoteChange : protoResult.getVoteChangesList()) {
       List<VoteEntry> votes = new ArrayList<>();
-      for (tron.backend.BackendOuterClass.Vote protoVote : protoVoteChange.getVotesList()) {
+      for (Vote protoVote : protoVoteChange.getVotesList()) {
         votes.add(new VoteEntry(
             protoVote.getVoteAddress().toByteArray(),
             protoVote.getVoteCount()));
@@ -1589,7 +1931,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     // Convert protobuf WithdrawChange (WithdrawBalanceContract: allowance/latestWithdrawTime sidecar)
     List<WithdrawChange> withdrawChanges = new ArrayList<>();
-    for (tron.backend.BackendOuterClass.WithdrawChange protoWithdrawChange : protoResult.getWithdrawChangesList()) {
+    for (WithdrawChange protoWithdrawChange : protoResult.getWithdrawChangesList()) {
       withdrawChanges.add(new WithdrawChange(
           protoWithdrawChange.getOwnerAddress().toByteArray(),
           protoWithdrawChange.getAmount(),
@@ -1606,7 +1948,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       metricsCallback.onMetric("remote.energy_used", protoResult.getEnergyUsed());
       metricsCallback.onMetric(
           "remote.success",
-          protoResult.getStatus() == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS
+          protoResult.getStatus() == ExecutionResult.Status.SUCCESS
               ? 1.0
               : 0.0);
       metricsCallback.onMetric("remote.freeze_changes_count", freezeChanges.size());
@@ -1635,7 +1977,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     }
 
     return new ExecutionResult(
-        protoResult.getStatus() == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS,
+        protoResult.getStatus() == ExecutionResult.Status.SUCCESS,
         protoResult.getReturnData().toByteArray(),
         protoResult.getEnergyUsed(),
         protoResult.getEnergyRefunded(),

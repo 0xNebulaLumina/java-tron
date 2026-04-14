@@ -213,28 +213,80 @@ public class StorageSPIIntegrationTest {
     storage.rollbackTransaction(rollbackTransactionId).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
   }
 
+  /**
+   * Storage snapshot APIs are explicitly UNSUPPORTED in close_loop Phase 1.
+   *
+   * <p>This test was previously a happy-path test against the fake-success
+   * placeholder behavior (which silently read from the live DB). After the
+   * Phase 1 hardening described in {@code planning/close_loop.snapshot.md},
+   * every snapshot method on the Rust storage engine and every snapshot
+   * method on the Java {@link RemoteStorageSPI} client must surface an
+   * explicit error rather than fake success. This test asserts that
+   * contract: each snapshot call must complete exceptionally, and the
+   * cause chain must contain {@link UnsupportedOperationException}, so a
+   * transport hiccup or unrelated runtime error cannot accidentally
+   * satisfy the assertion.
+   */
   @Test
-  public void testSnapshotOperations() throws Exception {
-    // Add some data
+  public void testSnapshotOperationsAreUnsupported() throws Exception {
+    // Add some data first so the test would otherwise have something to read.
     storage
         .put(testDbName, "snapshot-key".getBytes(), "snapshot-value".getBytes())
         .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
-    // Create snapshot
-    String snapshotId = storage.createSnapshot(testDbName).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-    Assert.assertNotNull("Snapshot ID should not be null", snapshotId);
-    Assert.assertFalse("Snapshot ID should not be empty", snapshotId.isEmpty());
+    // createSnapshot must fail — no fake snapshot id may be returned.
+    try {
+      storage.createSnapshot(testDbName).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+      Assert.fail(
+          "createSnapshot must throw in Phase 1 — see planning/close_loop.snapshot.md");
+    } catch (ExecutionException expected) {
+      assertCauseChainContainsUnsupported("createSnapshot", expected);
+    }
 
-    // Read from snapshot
-    byte[] snapshotValue =
-        storage
-            .getFromSnapshot(snapshotId, "snapshot-key".getBytes())
-            .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-    Assert.assertArrayEquals(
-        "Snapshot value should match", "snapshot-value".getBytes(), snapshotValue);
+    // getFromSnapshot must also fail. Use any opaque id — the implementation
+    // is expected to reject the call before it even consults the id.
+    try {
+      storage
+          .getFromSnapshot("placeholder-snapshot-id", "snapshot-key".getBytes())
+          .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+      Assert.fail(
+          "getFromSnapshot must throw in Phase 1 — see planning/close_loop.snapshot.md");
+    } catch (ExecutionException expected) {
+      assertCauseChainContainsUnsupported("getFromSnapshot", expected);
+    }
 
-    // Delete snapshot
-    storage.deleteSnapshot(snapshotId).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    // deleteSnapshot must also fail explicitly rather than completing silently.
+    try {
+      storage
+          .deleteSnapshot("placeholder-snapshot-id")
+          .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+      Assert.fail(
+          "deleteSnapshot must throw in Phase 1 — see planning/close_loop.snapshot.md");
+    } catch (ExecutionException expected) {
+      assertCauseChainContainsUnsupported("deleteSnapshot", expected);
+    }
+  }
+
+  /**
+   * Walk the cause chain of {@code thrown} and assert that at least one
+   * link is an {@link UnsupportedOperationException}. This protects the
+   * Phase 1 snapshot contract from being satisfied by an unrelated
+   * transport or runtime failure.
+   */
+  private static void assertCauseChainContainsUnsupported(
+      String methodName, Throwable thrown) {
+    Throwable cause = thrown;
+    while (cause != null) {
+      if (cause instanceof UnsupportedOperationException) {
+        return;
+      }
+      cause = cause.getCause();
+    }
+    Assert.fail(
+        methodName
+            + " must surface UnsupportedOperationException in its cause chain "
+            + "(see planning/close_loop.snapshot.md); actual: "
+            + thrown);
   }
 
   @Test

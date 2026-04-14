@@ -103,6 +103,17 @@ pub struct ExecutionFeeConfig {
     pub non_vm_blackhole_credit_flat: Option<u64>,
 }
 
+/// Remote-execution feature flags for the Rust backend.
+///
+/// The per-flag classification (EE baseline / RR experimental / RR canonical /
+/// legacy) lives in `planning/close_loop.config_convergence.md`. The
+/// `RemoteExecutionConfig::default()` values below represent the
+/// **conservative** profile (almost everything `false`). The checked-in
+/// `rust-backend/config.toml` overrides these defaults to produce the
+/// **experimental** profile used for Phase 1 parity work.
+///
+/// When you add a new flag, add a row to `close_loop.config_convergence.md`
+/// in the same change and pick a classification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteExecutionConfig {
     /// Global enable/disable for remote system contract execution
@@ -168,30 +179,35 @@ pub struct RemoteExecutionConfig {
     #[serde(default)]
     pub genesis_guard_representatives_base58: Vec<String>,
 
-    // === Phase 0.3: Write Consistency Model ===
+    // === Write Consistency Model (close_loop Phase 1) ===
+    //
+    // Canonical policy: planning/close_loop.write_ownership.md.
     //
     // The system has two potential write paths:
-    // 1. Rust handler directly writes to RocksDB via storage_adapter.set_*
-    // 2. Java RuntimeSpiImpl applies state_changes/sidecars to local database
+    // 1. Rust handler writes to RocksDB via the buffered storage adapter.
+    // 2. Java `RuntimeSpiImpl.apply*` reflects state changes back into the local chainbase.
     //
-    // To ensure idempotent semantics and avoid double-writes, we adopt:
-    // **Option A (Recommended)**: Rust computes + returns changes (no persistence),
-    //                            Java apply handles persistence.
+    // Double-write is prevented by the `write_mode` guard: when Rust returns
+    // `write_mode = PERSISTED`, Java skips `apply*` and only runs `postExecMirror`.
     //
-    // This flag controls whether Rust persists state changes directly.
-    // When false (default), Rust only computes and returns changes via gRPC,
-    // and Java's RuntimeSpiImpl is responsible for all persistence.
+    // Phase 1 profile mapping:
+    // - `RR` canonical (Phase 1 acceptance):   rust_persist_enabled = true
+    //     Rust is the authoritative writer. Java is a read-side mirror.
+    // - `RR` compute-only (development only):  rust_persist_enabled = false
+    //     Rust computes, Java applies. Developer/diagnostic mode only.
+    //     Results from this mode are NOT citable as RR parity.
+    // - `EE` baseline:                          flag ignored, Rust backend not hit.
     //
-    // Benefits of Option A:
-    // - Single authoritative write path (Java)
-    // - Works consistently for both EMBEDDED and REMOTE storage modes
-    // - Avoids non-idempotent double-writes (e.g., TRC-10 delta semantics)
-    // - Easier transaction rollback on validation failure
-    //
-    // Set to true only for specific testing scenarios or when Java apply is disabled.
+    // The code default is `false` so a fresh install without any config
+    // changes is the conservative compute-only profile. The checked-in
+    // `rust-backend/config.toml` sets `true` for the Phase 1 canonical
+    // RR profile. Do not flip the checked-in value without updating
+    // `close_loop.write_ownership.md` in the same change.
     /// Whether Rust handlers should persist state changes directly to storage.
-    /// Default: false (Rust only computes, Java apply handles persistence)
-    /// When true: Rust writes to storage AND returns changes (legacy behavior, risk of double-write)
+    ///
+    /// See planning/close_loop.write_ownership.md for the policy.
+    /// Code default: `false` (compute-only / development profile).
+    /// `rust-backend/config.toml` default: `true` (canonical `RR` profile).
     pub rust_persist_enabled: bool,
 
     // === Phase 2.A: Proposal Contracts (16/17/18) ===

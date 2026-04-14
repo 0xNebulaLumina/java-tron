@@ -7,6 +7,19 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Storage Service Provider Interface (SPI) for abstracting database operations. This interface
  * supports both embedded and remote storage implementations.
+ *
+ * <p>Phase 1 semantics for {@code beginTransaction} / {@code commitTransaction} /
+ * {@code rollbackTransaction} and {@code createSnapshot} are frozen in
+ * {@code planning/close_loop.storage_transactions.md} and
+ * {@code planning/close_loop.snapshot.md}. The Javadoc on each method intentionally
+ * does not duplicate the spec — the planning notes are the source of truth, and
+ * the implementations must match them, not the other way around.
+ *
+ * <p>Notable anti-goals (do not reach for these without updating the planning notes):
+ * cross-DB transactions, transactional iterators, read-your-writes on
+ * {@code get}/{@code has}/{@code batchGet}, savepoints, and generic DB-product
+ * semantics. This SPI is a narrow helper for execution atomicity and future
+ * block-importer needs only.
  */
 public interface StorageSPI {
 

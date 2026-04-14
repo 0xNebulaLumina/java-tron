@@ -110,21 +110,29 @@ impl ExecutionModule {
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
 
-        // TRON energy_limit wire semantics (KNOWN MISMATCH — needs spec lock):
+        // TRON energy_limit wire semantics (FUTURE-LOCKED — close_loop Phase 1).
         //
-        // - Conformance fixtures: energy_limit = feeLimit in SUN → Rust divides by ENERGY_FEE
-        //   to get energy units. This path is correct for fixtures.
+        // Phase 1 decision (see planning/close_loop.energy_limit.md):
+        //   `energy_limit` on the wire WILL be expressed in ENERGY UNITS,
+        //   and this crate WILL stop dividing by `ENERGY_FEE`. The decision
+        //   is recorded; the producer/consumer migration has NOT yet landed.
         //
-        // - Production RemoteExecutionSPI: energy_limit = computeEnergyLimitWithFixRatio()
-        //   which already returns energy units (min(availableEnergy, feeLimit/energyFee)).
-        //   Dividing again here would under-gas the transaction.
+        // Current live behavior:
+        //   - Java `RemoteExecutionSPI` sends energy units only for the two
+        //     VM contract types, and falls back to raw fee-limit SUN if its
+        //     helper hits an exception.
+        //   - Java fixture generators still send fee-limit SUN unconditionally.
+        //   - This crate divides incoming `gas_limit` by `energy_fee_rate`
+        //     to recover energy units, which is correct for the SUN-sending
+        //     paths and double-converts the energy-unit-sending paths.
         //
-        // TODO: Lock the wire spec for energy_limit. Options:
-        //   (a) Java always sends feeLimit (SUN); Rust converts. Requires Rust to implement
-        //       the full getTotalEnergyLimitWithFixRatio computation for caller/creator split.
-        //   (b) Java always sends energy units; Rust does NOT convert. Requires fixture
-        //       generator to match by also sending energy units.
-        //   (c) Add a proto field/flag to indicate the unit.
+        // The division below is the transitional behavior. When the Java
+        // producer-side migration in close_loop Section 1.2 lands, delete
+        // this block and update the removal todo in
+        // `planning/close_loop.energy_limit.md`.
+        //
+        // TODO(close_loop 1.2): remove this division once all producers
+        // (Java bridge + fixture generators) emit energy units directly.
         let mut adjusted_tx = tx.clone();
         if energy_fee_rate > 0 {
             adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
