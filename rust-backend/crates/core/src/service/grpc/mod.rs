@@ -2691,4 +2691,614 @@ mod iter4_read_path_tests {
         assert_eq!(resp.value.len(), 32);
         assert!(resp.value.iter().all(|b| *b == 0));
     }
+
+    // ---- iter 11: EVM snapshot handlers explicit-unsupported --------------
+    //
+    // Section 1.4 / 2.2 decision: `create_evm_snapshot` and
+    // `revert_to_evm_snapshot` both return `success = false` with an
+    // explicit error message pointing at `close_loop.snapshot.md`. The
+    // iter 4 read-path tests covered the `snapshot_id` rejection on the
+    // four read handlers; these two tests cover the execution-side
+    // snapshot handlers that were closed in iter 4 as well but never
+    // got targeted test coverage until now. Closes the partial flag on
+    // Section 2.4 Rust-focused "Add negative tests for unsupported
+    // snapshot/revert".
+
+    #[tokio::test]
+    async fn create_evm_snapshot_returns_explicit_unsupported() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .create_evm_snapshot(tonic::Request::new(
+                crate::backend::CreateEvmSnapshotRequest {},
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert!(
+            resp.snapshot_id.is_empty(),
+            "Phase 1 must never hand back a synthetic snapshot id; \
+             got: {:?}",
+            resp.snapshot_id
+        );
+        assert!(
+            resp.error_message.contains("close_loop.snapshot.md"),
+            "error_message should cite the planning note; got: {}",
+            resp.error_message
+        );
+        assert!(
+            resp.error_message.contains("not supported"),
+            "error_message should say 'not supported'; got: {}",
+            resp.error_message
+        );
+    }
+
+    #[tokio::test]
+    async fn revert_to_evm_snapshot_returns_explicit_unsupported() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .revert_to_evm_snapshot(tonic::Request::new(
+                crate::backend::RevertToEvmSnapshotRequest {
+                    snapshot_id: "any-snapshot-id".to_string(),
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert!(!resp.success);
+        assert!(
+            resp.error_message.contains("close_loop.snapshot.md"),
+            "error_message should cite the planning note; got: {}",
+            resp.error_message
+        );
+        assert!(
+            resp.error_message.contains("not supported"),
+            "error_message should say 'not supported'; got: {}",
+            resp.error_message
+        );
+    }
+
+    // ---- iter 11: put / delete / batch_write tx_id branching --------------
+    //
+    // Section 3.1 Rust-side handler branching was wired in iter 3: the
+    // gRPC `put` / `delete` / `batch_write` handlers check
+    // `req.transaction_id` and route to either the direct engine path
+    // (empty string) or the per-tx buffered path (non-empty id via
+    // `put_in_tx` / `delete_in_tx` / `batch_write_in_tx`). The storage
+    // engine tests in iter 3 cover the engine layer directly; these
+    // tests cover the gRPC handler layer that sits on top of it, which
+    // was tracked as a "still open" follow-up under the Section 3.4
+    // Java-focused "gRPC-handler coverage for transaction_id = ''"
+    // item. Closing the Rust half of that item here; the Java half
+    // stays open pending the gradle env unblock.
+    //
+    // The tests use the same `build_read_path_test_service()` helper as
+    // the read-path tests — that helper registers a `StorageModule`
+    // against a `TempDir`, so all storage writes go through the real
+    // Rust storage engine with real RocksDB.
+
+    #[tokio::test]
+    async fn put_direct_path_round_trips_via_get() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        // Empty `transaction_id` must route through the direct engine
+        // path. The write must be immediately visible via a direct
+        // `get`, because the direct path bypasses the per-tx buffer.
+        let put_resp = service
+            .put(tonic::Request::new(crate::backend::PutRequest {
+                database: "account".to_string(),
+                key: b"direct-key".to_vec(),
+                value: b"direct-val".to_vec(),
+                transaction_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(put_resp.success, "direct put should succeed");
+        assert!(put_resp.error_message.is_empty());
+
+        let get_resp = service
+            .get(tonic::Request::new(crate::backend::GetRequest {
+                database: "account".to_string(),
+                key: b"direct-key".to_vec(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(get_resp.success);
+        assert!(get_resp.found);
+        assert_eq!(get_resp.value, b"direct-val");
+    }
+
+    #[tokio::test]
+    async fn put_buffered_path_is_invisible_until_commit() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        // Open a transaction against the "account" database.
+        let begin_resp = service
+            .begin_transaction(tonic::Request::new(
+                crate::backend::BeginTransactionRequest {
+                    database: "account".to_string(),
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(begin_resp.success);
+        assert!(!begin_resp.transaction_id.is_empty());
+        let tx_id = begin_resp.transaction_id;
+
+        // Transactional put — routes through the per-tx buffer. Must
+        // NOT be visible to a direct `get` before commit (the iter 3
+        // Section 1.3 decision: no read-your-writes for transactional
+        // put).
+        let put_resp = service
+            .put(tonic::Request::new(crate::backend::PutRequest {
+                database: "account".to_string(),
+                key: b"buffered-key".to_vec(),
+                value: b"buffered-val".to_vec(),
+                transaction_id: tx_id.clone(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(put_resp.success);
+
+        let pre_commit = service
+            .get(tonic::Request::new(crate::backend::GetRequest {
+                database: "account".to_string(),
+                key: b"buffered-key".to_vec(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(pre_commit.success);
+        assert!(
+            !pre_commit.found,
+            "buffered write must be invisible to direct get before commit"
+        );
+
+        // Commit the transaction; now the write becomes visible.
+        let commit_resp = service
+            .commit_transaction(tonic::Request::new(
+                crate::backend::CommitTransactionRequest {
+                    transaction_id: tx_id.clone(),
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(commit_resp.success);
+
+        let post_commit = service
+            .get(tonic::Request::new(crate::backend::GetRequest {
+                database: "account".to_string(),
+                key: b"buffered-key".to_vec(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(post_commit.success);
+        assert!(post_commit.found);
+        assert_eq!(post_commit.value, b"buffered-val");
+    }
+
+    #[tokio::test]
+    async fn put_buffered_path_is_discarded_on_rollback() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let begin_resp = service
+            .begin_transaction(tonic::Request::new(
+                crate::backend::BeginTransactionRequest {
+                    database: "account".to_string(),
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(begin_resp.success);
+        let tx_id = begin_resp.transaction_id;
+
+        service
+            .put(tonic::Request::new(crate::backend::PutRequest {
+                database: "account".to_string(),
+                key: b"rollback-key".to_vec(),
+                value: b"rollback-val".to_vec(),
+                transaction_id: tx_id.clone(),
+            }))
+            .await
+            .unwrap();
+
+        // Rollback discards the buffer. A subsequent direct read must
+        // report `found = false`, NOT return the would-be value.
+        let rollback_resp = service
+            .rollback_transaction(tonic::Request::new(
+                crate::backend::RollbackTransactionRequest {
+                    transaction_id: tx_id.clone(),
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(rollback_resp.success);
+
+        let post_rollback = service
+            .get(tonic::Request::new(crate::backend::GetRequest {
+                database: "account".to_string(),
+                key: b"rollback-key".to_vec(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(post_rollback.success);
+        assert!(
+            !post_rollback.found,
+            "rolled-back buffer must leave no trace in the direct read"
+        );
+    }
+
+    #[tokio::test]
+    async fn put_unknown_transaction_id_is_rejected() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        // A non-empty transaction_id that was never opened must be
+        // rejected with an explicit error — no silent fallback to the
+        // direct path. The iter 3 Section 1.3 "no silent fallback"
+        // decision is what this test enforces at the handler layer.
+        let put_resp = service
+            .put(tonic::Request::new(crate::backend::PutRequest {
+                database: "account".to_string(),
+                key: b"ghost-key".to_vec(),
+                value: b"ghost-val".to_vec(),
+                transaction_id: "tx-does-not-exist".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!put_resp.success);
+        assert!(
+            put_resp.error_message.contains("not found")
+                || put_resp.error_message.contains("transaction"),
+            "unknown tx_id should surface an explicit 'not found'/'transaction' error; got: {}",
+            put_resp.error_message
+        );
+
+        // Confirm the write did NOT leak into the direct path either.
+        let get_resp = service
+            .get(tonic::Request::new(crate::backend::GetRequest {
+                database: "account".to_string(),
+                key: b"ghost-key".to_vec(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(get_resp.success);
+        assert!(!get_resp.found);
+    }
+
+    #[tokio::test]
+    async fn delete_direct_path_removes_existing_key() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        // Seed a value via the direct put path.
+        service
+            .put(tonic::Request::new(crate::backend::PutRequest {
+                database: "account".to_string(),
+                key: b"delete-key".to_vec(),
+                value: b"delete-val".to_vec(),
+                transaction_id: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        // Direct delete must remove it immediately.
+        let delete_resp = service
+            .delete(tonic::Request::new(crate::backend::DeleteRequest {
+                database: "account".to_string(),
+                key: b"delete-key".to_vec(),
+                transaction_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(delete_resp.success);
+
+        let get_resp = service
+            .get(tonic::Request::new(crate::backend::GetRequest {
+                database: "account".to_string(),
+                key: b"delete-key".to_vec(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(get_resp.success);
+        assert!(!get_resp.found);
+    }
+
+    #[tokio::test]
+    async fn delete_buffered_path_honors_rollback() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        // Seed a value via direct put so there is something to delete.
+        service
+            .put(tonic::Request::new(crate::backend::PutRequest {
+                database: "account".to_string(),
+                key: b"tx-delete-key".to_vec(),
+                value: b"tx-delete-val".to_vec(),
+                transaction_id: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        let begin_resp = service
+            .begin_transaction(tonic::Request::new(
+                crate::backend::BeginTransactionRequest {
+                    database: "account".to_string(),
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        let tx_id = begin_resp.transaction_id;
+
+        // Transactional delete: buffered, so the direct read still
+        // sees the value before commit.
+        service
+            .delete(tonic::Request::new(crate::backend::DeleteRequest {
+                database: "account".to_string(),
+                key: b"tx-delete-key".to_vec(),
+                transaction_id: tx_id.clone(),
+            }))
+            .await
+            .unwrap();
+
+        let pre_commit = service
+            .get(tonic::Request::new(crate::backend::GetRequest {
+                database: "account".to_string(),
+                key: b"tx-delete-key".to_vec(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(pre_commit.found);
+        assert_eq!(pre_commit.value, b"tx-delete-val");
+
+        // Rollback discards the pending delete; value still exists.
+        service
+            .rollback_transaction(tonic::Request::new(
+                crate::backend::RollbackTransactionRequest {
+                    transaction_id: tx_id.clone(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        let post_rollback = service
+            .get(tonic::Request::new(crate::backend::GetRequest {
+                database: "account".to_string(),
+                key: b"tx-delete-key".to_vec(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(post_rollback.found);
+        assert_eq!(post_rollback.value, b"tx-delete-val");
+    }
+
+    #[tokio::test]
+    async fn batch_write_direct_path_applies_all_ops() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        // Seed one value so we can verify batch delete alongside batch put.
+        service
+            .put(tonic::Request::new(crate::backend::PutRequest {
+                database: "account".to_string(),
+                key: b"old".to_vec(),
+                value: b"x".to_vec(),
+                transaction_id: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        let ops = vec![
+            crate::backend::WriteOperation {
+                r#type: 0, // PUT
+                key: b"batch-a".to_vec(),
+                value: b"1".to_vec(),
+            },
+            crate::backend::WriteOperation {
+                r#type: 0, // PUT
+                key: b"batch-b".to_vec(),
+                value: b"2".to_vec(),
+            },
+            crate::backend::WriteOperation {
+                r#type: 1, // DELETE
+                key: b"old".to_vec(),
+                value: Vec::new(),
+            },
+        ];
+        let resp = service
+            .batch_write(tonic::Request::new(crate::backend::BatchWriteRequest {
+                database: "account".to_string(),
+                operations: ops,
+                transaction_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(resp.success);
+        // Direct-path operations_applied must equal the ops count
+        // (the iter 6 fix: transactional branch returns 0, direct
+        // branch returns ops.len()).
+        assert_eq!(resp.operations_applied, 3);
+
+        // Verify each op.
+        for (k, expected_found, expected_val) in [
+            (b"batch-a".to_vec(), true, b"1".to_vec()),
+            (b"batch-b".to_vec(), true, b"2".to_vec()),
+            (b"old".to_vec(), false, Vec::new()),
+        ] {
+            let r = service
+                .get(tonic::Request::new(crate::backend::GetRequest {
+                    database: "account".to_string(),
+                    key: k,
+                    snapshot_id: String::new(),
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(r.success);
+            assert_eq!(r.found, expected_found);
+            if expected_found {
+                assert_eq!(r.value, expected_val);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_write_buffered_path_reports_zero_operations_applied() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let begin_resp = service
+            .begin_transaction(tonic::Request::new(
+                crate::backend::BeginTransactionRequest {
+                    database: "account".to_string(),
+                },
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        let tx_id = begin_resp.transaction_id;
+
+        let ops = vec![
+            crate::backend::WriteOperation {
+                r#type: 0,
+                key: b"bx-a".to_vec(),
+                value: b"1".to_vec(),
+            },
+            crate::backend::WriteOperation {
+                r#type: 0,
+                key: b"bx-b".to_vec(),
+                value: b"2".to_vec(),
+            },
+        ];
+        let resp = service
+            .batch_write(tonic::Request::new(crate::backend::BatchWriteRequest {
+                database: "account".to_string(),
+                operations: ops,
+                transaction_id: tx_id.clone(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(resp.success);
+        // iter 6 fix: buffered branch must report 0 — a buffer append
+        // is not the same as a persisted commit.
+        assert_eq!(
+            resp.operations_applied, 0,
+            "transactional batch_write must NOT return ops.len() as operations_applied; \
+             that would let a caller mistake buffering for commit"
+        );
+
+        // Both writes must be invisible to direct read before commit.
+        for k in [b"bx-a".to_vec(), b"bx-b".to_vec()] {
+            let r = service
+                .get(tonic::Request::new(crate::backend::GetRequest {
+                    database: "account".to_string(),
+                    key: k,
+                    snapshot_id: String::new(),
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(!r.found);
+        }
+
+        // Commit, then they become visible.
+        service
+            .commit_transaction(tonic::Request::new(
+                crate::backend::CommitTransactionRequest {
+                    transaction_id: tx_id.clone(),
+                },
+            ))
+            .await
+            .unwrap();
+        for (k, expected) in [
+            (b"bx-a".to_vec(), b"1".to_vec()),
+            (b"bx-b".to_vec(), b"2".to_vec()),
+        ] {
+            let r = service
+                .get(tonic::Request::new(crate::backend::GetRequest {
+                    database: "account".to_string(),
+                    key: k,
+                    snapshot_id: String::new(),
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(r.found);
+            assert_eq!(r.value, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_write_unknown_transaction_id_is_rejected() {
+        use crate::backend::backend_server::Backend;
+        let (service, _dir) = build_read_path_test_service().await;
+
+        let resp = service
+            .batch_write(tonic::Request::new(crate::backend::BatchWriteRequest {
+                database: "account".to_string(),
+                operations: vec![crate::backend::WriteOperation {
+                    r#type: 0,
+                    key: b"k".to_vec(),
+                    value: b"v".to_vec(),
+                }],
+                transaction_id: "tx-not-opened".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!resp.success);
+        assert_eq!(resp.operations_applied, 0);
+        assert!(
+            resp.error_message.contains("not found")
+                || resp.error_message.contains("transaction"),
+            "unknown tx_id on batch_write should surface an explicit error; got: {}",
+            resp.error_message
+        );
+
+        let get_resp = service
+            .get(tonic::Request::new(crate::backend::GetRequest {
+                database: "account".to_string(),
+                key: b"k".to_vec(),
+                snapshot_id: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!get_resp.found);
+    }
 }

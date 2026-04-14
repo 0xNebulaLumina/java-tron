@@ -660,7 +660,7 @@ debt visible.
       `ExecutionCsvRecordBuilder` + `StateChangeCanonicalizer`
       from `framework/.../execution/reporting/` (Tool E) — do
       NOT re-implement the field walk.
-- [ ] Extend `scripts/compare_exec_csv.py` (or add a Java
+- [x] Extend `scripts/compare_exec_csv.py` (or add a Java
       sibling that consumes the same CSV schema) so it
       classifies mismatches into the 4-category set from
       Section 6.4 #5 (`result-code only` / `energy only` /
@@ -670,6 +670,48 @@ debt visible.
       driver for the two-run flow, but its output then needs to
       flow into the classifier instead of straight to a human
       diff viewer.
+      (iter 12: `scripts/compare_exec_csv.py` rewritten to
+      classify every mismatch using the `_classify_row` helper
+      against the frozen 4-category set from Section 6.4 #5
+      (`state-change / sidecar difference`, `result-code only`,
+      `energy only`, `return-data only`). Column-family groups:
+      `STATE_DIGEST_COLUMNS`, `RESULT_CODE_COLUMNS`,
+      `ENERGY_FAMILY_COLUMNS` (= `ENERGY_COLUMNS` ∪
+      `{bandwidth_used}` — the spec only freezes `energy only`
+      so bandwidth is folded in rather than published as a new
+      tag), `RETURN_DATA_COLUMNS`. Unknown columns default to
+      the most-serious `state-change / sidecar difference`
+      bucket so a newly-added column cannot silently mask a
+      regression. `CATEGORY_SEVERITY` orders rows that trip
+      multiple families to the most-serious one; only the
+      "state-change is most serious" precedence is locked by
+      tests, the rest is internal display policy. Three output
+      modes: default (first-mismatch + stderr classification
+      tag, exit 0 — intentionally matches the legacy semantic
+      because `collect_remote_results.sh` runs with `set -e`
+      and would abort at step 11 on a non-zero exit),
+      `--classify-all` (per-category summary + per-tx details,
+      exit 1 on mismatch), `--json` (machine-readable report
+      with `header_mismatch` envelope for downstream dashboard
+      generators, exit 1 on mismatch). `*_json` columns are
+      excluded from classification so JSON-whitespace drift
+      cannot trip a false state-change mismatch. Added
+      `scripts/test_compare_exec_csv.py` with 37 unittest
+      cases covering: identity, each family, the
+      state-change-most-serious precedence, bandwidth-used
+      folding into the energy family, unknown-column fallback
+      to state-change, ignored-column handling, end-to-end
+      `walk_mismatches` pipeline, and CLI surface
+      (`_parse_args` + `main`) — including (a) the
+      regression-locking test that default mode exits 0 on
+      mismatch so the wrapper-vs-CI exit-code split cannot
+      regress and (b) empty/headerless CSV regression tests
+      (zero-byte, blank-line `"\n"` which `csv.reader` parses
+      as `[[]]`, and one-side-empty) that lock the script
+      into rejecting empty inputs with exit 2 instead of
+      silently passing as "no mismatches" (a broken
+      artifact-collection step would otherwise produce a
+      false negative). All 37 tests pass.)
 - [ ] Aggregate per-transaction CSV records up to
       per-block-per-contract counters so the readiness dashboard
       (Section 6.5) can populate the new `replay write lane` /
