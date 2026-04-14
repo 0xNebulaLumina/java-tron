@@ -1663,7 +1663,16 @@ impl crate::backend::backend_server::Backend for BackendService {
                     result.energy_used, result.bandwidth_used
                 );
 
-                // Phase B: Commit buffer and extract touched_keys if rust_persist_enabled
+                // Phase B: Commit buffer and extract touched_keys if rust_persist_enabled.
+                //
+                // Parity rule (close_loop): once the handler decided to buffer
+                // writes (rust_persist_enabled OR NonVm atomicity), a commit or
+                // lock failure is a hard error. Silently downgrading
+                // `write_mode` to 0 would flip ownership of the final state back
+                // to Java without Java being told, so the Java side would
+                // re-apply sidecars that may or may not match what Rust already
+                // partially wrote. We fail the RPC instead and let the Java
+                // caller abort / retry.
                 let (touched_keys, write_mode) = if let Some(ref buffer) = write_buffer {
                     match buffer.lock() {
                         Ok(mut locked_buffer) => {
@@ -1683,8 +1692,36 @@ impl crate::backend::backend_server::Backend for BackendService {
                                     }
                                     Err(e) => {
                                         error!("Phase B: Failed to commit buffer: {}", e);
-                                        // Fallback to compute-only mode on commit failure
-                                        (None, 0)
+                                        let msg = format!(
+                                            "Buffer commit failed after successful execution: {}",
+                                            e
+                                        );
+                                        return Ok(Response::new(ExecuteTransactionResponse {
+                                            result: Some(ExecutionResult {
+                                                status:
+                                                    execution_result::Status::TronSpecificError
+                                                        as i32,
+                                                return_data: vec![],
+                                                energy_used: 0,
+                                                energy_refunded: 0,
+                                                state_changes: vec![],
+                                                logs: vec![],
+                                                error_message: msg.clone(),
+                                                bandwidth_used: 0,
+                                                resource_usage: vec![],
+                                                freeze_changes: vec![],
+                                                global_resource_changes: vec![],
+                                                trc10_changes: vec![],
+                                                vote_changes: vec![],
+                                                withdraw_changes: vec![],
+                                                tron_transaction_result: vec![],
+                                                contract_address: vec![],
+                                            }),
+                                            success: false,
+                                            error_message: msg,
+                                            write_mode: 0,
+                                            touched_keys: vec![],
+                                        }));
                                     }
                                 }
                             } else {
@@ -1697,7 +1734,31 @@ impl crate::backend::backend_server::Backend for BackendService {
                         }
                         Err(e) => {
                             error!("Phase B: Failed to lock buffer: {}", e);
-                            (None, 0)
+                            let msg = format!("Buffer lock failed after successful execution: {}", e);
+                            return Ok(Response::new(ExecuteTransactionResponse {
+                                result: Some(ExecutionResult {
+                                    status: execution_result::Status::TronSpecificError as i32,
+                                    return_data: vec![],
+                                    energy_used: 0,
+                                    energy_refunded: 0,
+                                    state_changes: vec![],
+                                    logs: vec![],
+                                    error_message: msg.clone(),
+                                    bandwidth_used: 0,
+                                    resource_usage: vec![],
+                                    freeze_changes: vec![],
+                                    global_resource_changes: vec![],
+                                    trc10_changes: vec![],
+                                    vote_changes: vec![],
+                                    withdraw_changes: vec![],
+                                    tron_transaction_result: vec![],
+                                    contract_address: vec![],
+                                }),
+                                success: false,
+                                error_message: msg,
+                                write_mode: 0,
+                                touched_keys: vec![],
+                            }));
                         }
                     }
                 } else {

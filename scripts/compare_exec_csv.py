@@ -191,6 +191,36 @@ class RowMismatch:
         }
 
 
+@dataclass
+class AlignmentBreak:
+    """A structural row-alignment mismatch between two CSVs.
+
+    This is distinct from a `RowMismatch`: it means the two files stopped
+    describing the same transaction at a given row. Once alignment is
+    lost, comparing subsequent rows by index produces meaningless
+    `state-change / sidecar` diffs that drown out any real signal, so
+    `main()` stops classifying after the break and surfaces this object
+    instead. The 4-category frozen contract in
+    `close_loop.verification.md` §6.4 #5 is preserved — alignment breaks
+    are reported in their own section, not as a fifth category.
+    """
+
+    row_index: int  # 0-based data row index (file line number = idx + 2)
+    embedded_block: str
+    remote_block: str
+    embedded_tx_id: str
+    remote_tx_id: str
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "row_index": self.row_index,
+            "embedded_block": self.embedded_block,
+            "remote_block": self.remote_block,
+            "embedded_tx_id": self.embedded_tx_id,
+            "remote_tx_id": self.remote_tx_id,
+        }
+
+
 class EmptyCsvError(ValueError):
     """Raised when an input CSV is zero-byte or has no header row.
 
@@ -272,6 +302,69 @@ def _classify_row(
     return CATEGORY_STATE_CHANGE, diffs
 
 
+def find_alignment_break(
+    header: List[str],
+    d1: List[List[str]],
+    d2: List[List[str]],
+) -> Optional[AlignmentBreak]:
+    """Return the first row where `tx_id_hex` or `block_num` diverge.
+
+    If one CSV inserts or drops a row relative to the other, every
+    subsequent index-based comparison is against the wrong pair of
+    rows. Classifying those rows as `state-change / sidecar` mismatches
+    floods the report with false positives that hide the real issue.
+
+    This helper finds the first row where the two files stop describing
+    the same transaction, using the columns `tx_id_hex` (primary) and
+    `block_num` (secondary) as the alignment oracle. Callers should
+    stop classifying rows at that index and surface the
+    `AlignmentBreak` separately from per-row content mismatches.
+
+    Returns `None` if neither oracle column is present, or if the
+    common prefix is fully aligned.
+    """
+    try:
+        txid_col = header.index("tx_id_hex")
+    except ValueError:
+        txid_col = None
+    try:
+        blk_col = header.index("block_num")
+    except ValueError:
+        blk_col = None
+    if txid_col is None and blk_col is None:
+        return None
+
+    def _col(row: List[str], idx: Optional[int]) -> str:
+        if idx is None or idx >= len(row):
+            return ""
+        return row[idx]
+
+    n = min(len(d1), len(d2))
+    for i in range(n):
+        r1, r2 = d1[i], d2[i]
+        txid1 = _col(r1, txid_col)
+        txid2 = _col(r2, txid_col)
+        blk1 = _col(r1, blk_col)
+        blk2 = _col(r2, blk_col)
+        if txid_col is not None and txid1 != txid2:
+            return AlignmentBreak(
+                row_index=i,
+                embedded_block=blk1,
+                remote_block=blk2,
+                embedded_tx_id=txid1,
+                remote_tx_id=txid2,
+            )
+        if txid_col is None and blk_col is not None and blk1 != blk2:
+            return AlignmentBreak(
+                row_index=i,
+                embedded_block=blk1,
+                remote_block=blk2,
+                embedded_tx_id="?",
+                remote_tx_id="?",
+            )
+    return None
+
+
 def walk_mismatches(
     header: List[str],
     d1: List[List[str]],
@@ -281,6 +374,12 @@ def walk_mismatches(
 
     Rows past the common prefix are not compared; row-count mismatches
     are reported by the caller after this function returns.
+
+    This function compares rows strictly by index. Callers that need
+    alignment-drift protection should call `find_alignment_break()`
+    first and truncate `d1` / `d2` to the returned row index before
+    calling this function; `main()` does this for both `--classify-all`
+    and `--json`.
     """
     compare_idx = [
         i for i, name in enumerate(header) if name not in COMPARE_EXCLUDED
@@ -367,6 +466,19 @@ def print_first_mismatch(
         print("  remote  :", trunc(sc2))
 
 
+def print_alignment_break(ab: AlignmentBreak) -> None:
+    """Print a human-readable alignment break banner."""
+    print(
+        f"Row alignment break at row {ab.row_index + 2} (1-based): "
+        f"embedded tx={ab.embedded_tx_id} block={ab.embedded_block}, "
+        f"remote tx={ab.remote_tx_id} block={ab.remote_block}"
+    )
+    print(
+        "  Rows past this point are not classified because an inserted or "
+        "dropped row would reclassify every later row as a content mismatch."
+    )
+
+
 def print_summary(mismatches: List[RowMismatch], total_rows: int) -> None:
     """Print a per-category summary table and the per-tx list."""
     if not mismatches:
@@ -401,6 +513,7 @@ def emit_json(
     embedded_path: str,
     remote_path: str,
     row_count_mismatch: Optional[Tuple[int, int]],
+    alignment_break: Optional[AlignmentBreak] = None,
 ) -> None:
     per_category: Dict[str, int] = {}
     for m in mismatches:
@@ -416,6 +529,7 @@ def emit_json(
         }
         if row_count_mismatch
         else None,
+        "alignment_break": alignment_break.to_dict() if alignment_break else None,
         "per_category": per_category,
         "mismatches": [m.to_dict() for m in mismatches],
     }
@@ -497,24 +611,46 @@ def main() -> None:
             print("- remote  :", h2)
         sys.exit(1)
 
-    mismatches = walk_mismatches(h1, d1, d2)
-    n = min(len(d1), len(d2))
+    # Detect structural row-alignment drift BEFORE classifying row content.
+    # If one file inserts/drops a row relative to the other, every downstream
+    # index-based comparison would produce a false `state-change / sidecar`
+    # mismatch and drown out the real signal; we stop classifying at the
+    # break and surface it separately. See close_loop.verification.md
+    # §6.4 #5: the 4 content categories stay frozen — alignment breaks are
+    # reported in their own field, not as a fifth category.
+    alignment_break = find_alignment_break(h1, d1, d2)
+    if alignment_break is not None:
+        walk_d1 = d1[: alignment_break.row_index]
+        walk_d2 = d2[: alignment_break.row_index]
+    else:
+        walk_d1 = d1
+        walk_d2 = d2
+
+    mismatches = walk_mismatches(h1, walk_d1, walk_d2)
+    n = min(len(walk_d1), len(walk_d2))
     row_count_mismatch: Optional[Tuple[int, int]] = (
         (len(d1), len(d2)) if len(d1) != len(d2) else None
     )
 
     if json_mode:
-        emit_json(mismatches, n, p1, p2, row_count_mismatch)
-        sys.exit(1 if mismatches or row_count_mismatch else 0)
+        emit_json(mismatches, n, p1, p2, row_count_mismatch, alignment_break)
+        sys.exit(1 if mismatches or row_count_mismatch or alignment_break else 0)
 
     if classify_all:
         print_summary(mismatches, n)
+        if alignment_break is not None:
+            print()
+            print_alignment_break(alignment_break)
         if row_count_mismatch:
             print(
                 f"\nRow count differs: embedded={row_count_mismatch[0]} "
                 f"remote={row_count_mismatch[1]}"
             )
-        sys.exit(1 if mismatches or row_count_mismatch else 0)
+        sys.exit(
+            1
+            if mismatches or row_count_mismatch or alignment_break
+            else 0
+        )
 
     # Legacy default: print the first mismatch with full context and
     # exit 0. This is intentional — `collect_remote_results.sh` runs
@@ -525,10 +661,19 @@ def main() -> None:
     # `--classify-all` or `--json`, which are the CI-shaped modes
     # added in iter 12.
     if mismatches:
-        print_first_mismatch(h1, d1, d2, mismatches[0])
+        print_first_mismatch(h1, walk_d1, walk_d2, mismatches[0])
         # Also print a single-line category tag to stderr so a script
         # can grep it without parsing the full context block.
         print(f"classification={mismatches[0].category}", file=sys.stderr)
+        if alignment_break is not None:
+            print()
+            print_alignment_break(alignment_break)
+            print("classification=row-alignment-break", file=sys.stderr)
+        sys.exit(0)
+
+    if alignment_break is not None:
+        print_alignment_break(alignment_break)
+        print("classification=row-alignment-break", file=sys.stderr)
         sys.exit(0)
 
     if row_count_mismatch:

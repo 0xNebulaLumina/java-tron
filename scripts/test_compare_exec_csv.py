@@ -635,5 +635,153 @@ class CliTests(unittest.TestCase):
             self.assertIn("file not found", buf.getvalue())
 
 
+class AlignmentBreakTests(unittest.TestCase):
+    """Tests for row-alignment drift detection.
+
+    When one CSV inserts or drops a row, comparing by strict row index
+    misclassifies every later row as a `state-change / sidecar` diff
+    and drowns the real signal. `find_alignment_break()` detects the
+    first row where `tx_id_hex` or `block_num` diverge so `main()` can
+    stop classifying and surface the break explicitly.
+    """
+
+    def _write_csv(self, path: str, rows: list) -> None:
+        with open(path, "w", newline="") as f:
+            f.write(",".join(CSV_HEADER))
+            f.write("\n")
+            for row in rows:
+                f.write(",".join(row))
+                f.write("\n")
+
+    def _run_main(self, argv: list) -> int:
+        old_argv = sys.argv
+        sys.argv = argv
+        try:
+            cmp.main()
+            return 0
+        except SystemExit as e:
+            return int(e.code) if e.code is not None else 0
+        finally:
+            sys.argv = old_argv
+
+    def test_find_returns_none_when_aligned(self) -> None:
+        d1 = [make_row({"tx_id_hex": "a"}), make_row({"tx_id_hex": "b"})]
+        d2 = [make_row({"tx_id_hex": "a"}), make_row({"tx_id_hex": "b"})]
+        self.assertIsNone(cmp.find_alignment_break(CSV_HEADER, d1, d2))
+
+    def test_find_detects_inserted_row(self) -> None:
+        d1 = [
+            make_row({"tx_id_hex": "a"}),
+            make_row({"tx_id_hex": "b"}),
+            make_row({"tx_id_hex": "c"}),
+        ]
+        # d2 inserts a new row at index 1 (x), shifting b/c down by one.
+        d2 = [
+            make_row({"tx_id_hex": "a"}),
+            make_row({"tx_id_hex": "x"}),
+            make_row({"tx_id_hex": "b"}),
+        ]
+        ab = cmp.find_alignment_break(CSV_HEADER, d1, d2)
+        self.assertIsNotNone(ab)
+        self.assertEqual(ab.row_index, 1)
+        self.assertEqual(ab.embedded_tx_id, "b")
+        self.assertEqual(ab.remote_tx_id, "x")
+
+    def test_find_detects_dropped_row(self) -> None:
+        d1 = [
+            make_row({"tx_id_hex": "a"}),
+            make_row({"tx_id_hex": "b"}),
+            make_row({"tx_id_hex": "c"}),
+        ]
+        d2 = [
+            make_row({"tx_id_hex": "a"}),
+            make_row({"tx_id_hex": "c"}),
+        ]
+        ab = cmp.find_alignment_break(CSV_HEADER, d1, d2)
+        self.assertIsNotNone(ab)
+        self.assertEqual(ab.row_index, 1)
+        self.assertEqual(ab.embedded_tx_id, "b")
+        self.assertEqual(ab.remote_tx_id, "c")
+
+    def test_main_classify_all_exits_1_on_alignment_break(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            p1 = os.path.join(d, "embedded.csv")
+            p2 = os.path.join(d, "remote.csv")
+            self._write_csv(
+                p1,
+                [
+                    make_row({"tx_id_hex": "a"}),
+                    make_row({"tx_id_hex": "b"}),
+                    make_row({"tx_id_hex": "c"}),
+                ],
+            )
+            self._write_csv(
+                p2,
+                [
+                    make_row({"tx_id_hex": "a"}),
+                    make_row({"tx_id_hex": "x"}),
+                    make_row({"tx_id_hex": "b"}),
+                    make_row({"tx_id_hex": "c"}),
+                ],
+            )
+            rc = self._run_main(
+                ["compare_exec_csv.py", "--classify-all", p1, p2]
+            )
+            # Alignment break alone — no content mismatches before it —
+            # must still fail classify-all mode so CI doesn't silently
+            # pass a drifted run.
+            self.assertEqual(rc, 1)
+
+    def test_main_alignment_break_does_not_flood_mismatches(self) -> None:
+        # Regression: without the pre-walk alignment check, a single
+        # inserted row would produce N-1 false `state-change / sidecar`
+        # mismatches (one per row past the break). Assert that only the
+        # alignment break is reported when the post-break rows would
+        # otherwise align to entirely different transactions.
+        with tempfile.TemporaryDirectory() as d:
+            p1 = os.path.join(d, "embedded.csv")
+            p2 = os.path.join(d, "remote.csv")
+            # Embedded: 4 rows. Remote: same 4 rows with a new row at
+            # index 1. Comparing by strict index would give rows 1..3
+            # a `state-change / sidecar` classification each, even
+            # though every tx in both files executed identically.
+            self._write_csv(
+                p1,
+                [
+                    make_row({"tx_id_hex": "t0"}),
+                    make_row({"tx_id_hex": "t1"}),
+                    make_row({"tx_id_hex": "t2"}),
+                    make_row({"tx_id_hex": "t3"}),
+                ],
+            )
+            self._write_csv(
+                p2,
+                [
+                    make_row({"tx_id_hex": "t0"}),
+                    make_row({"tx_id_hex": "INSERTED"}),
+                    make_row({"tx_id_hex": "t1"}),
+                    make_row({"tx_id_hex": "t2"}),
+                    make_row({"tx_id_hex": "t3"}),
+                ],
+            )
+            buf = io.StringIO()
+            old_stdout = sys.stdout
+            sys.stdout = buf
+            try:
+                rc = self._run_main(
+                    ["compare_exec_csv.py", "--json", p1, p2]
+                )
+            finally:
+                sys.stdout = old_stdout
+            self.assertEqual(rc, 1)
+            report = json.loads(buf.getvalue())
+            # The alignment break is surfaced separately.
+            self.assertIsNotNone(report["alignment_break"])
+            self.assertEqual(report["alignment_break"]["row_index"], 1)
+            # Crucially, no content mismatches are reported after the
+            # break — every row before it is identical.
+            self.assertEqual(report["mismatch_count"], 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
