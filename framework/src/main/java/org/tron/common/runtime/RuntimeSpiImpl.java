@@ -92,6 +92,49 @@ public class RuntimeSpiImpl implements Runtime {
 
       // Phase B conformance: Check write mode to determine if we should apply state changes
       // When write_mode=PERSISTED, Rust has already persisted state - Java should NOT apply to avoid double-apply
+      //
+      // LD-2 audit (close_loop.planning.md §§ LD-1, LD-2): this audit is
+      // scoped strictly to whether the `skipApply` short-circuit below —
+      // the Java behavioral consumer of `WriteMode.PERSISTED` — can be
+      // reached in RR production. It is NOT a claim that all Rust-side
+      // VM writes are Java-owned; there is a separate class of direct
+      // Rust writes that live outside the `WriteMode` signal entirely
+      // (see the last bullet below).
+      //
+      // `WriteMode.PERSISTED` reachability audit result:
+      //   - VM path (buffered-write lane): after the §1.1 follow-up #1
+      //     flip, the checked-in `rust-backend/config.toml` sets
+      //     `rust_persist_enabled = false`, and the Rust main binary's
+      //     LD-2 startup guard (`rust-backend/src/main.rs`) refuses to
+      //     start the production binary with the flag set to `true`.
+      //     Rust therefore never emits `WriteMode.PERSISTED` for VM
+      //     transactions in RR production, so `skipApply` is never
+      //     reached for VM in RR — Java's normal `applyStateChanges*`
+      //     path always runs for VM transactions.
+      //   - NonVm path: the Rust gRPC handler unconditionally uses
+      //     buffered writes for `TxKind::NonVm` regardless of
+      //     `rust_persist_enabled` (see
+      //     `rust-backend/crates/core/src/service/grpc/mod.rs`
+      //     around the NonVm buffering branch), so every successful
+      //     NonVm transaction in RR production still returns
+      //     `WriteMode.PERSISTED` and triggers this short-circuit.
+      //     This is an outstanding LD-1/LD-2 gap tracked by
+      //     `planning/close_loop.todo.md` §1.1 deferred follow-up #5
+      //     ("Reconcile the NonVm execution path with LD-1/LD-2").
+      //     DO NOT interpret this audit as "LD-2 fully enforced here"
+      //     — the NonVm half is still open.
+      //   - Orthogonal VM-side Rust-owned writes (outside the
+      //     `WriteMode` signal): the `CreateSmartContract` handler in
+      //     `rust-backend/crates/core/src/service/grpc/mod.rs` calls
+      //     `persist_smart_contract_metadata` on an adapter that
+      //     writes straight through to the storage engine when
+      //     `write_buffer` is absent (i.e. VM path with
+      //     `rust_persist_enabled = false`). These writes never touch
+      //     `WriteMode.PERSISTED`, so the short-circuit reachability
+      //     argument above is unaffected, but they are still
+      //     Rust-owned writes in RR production and therefore a
+      //     distinct LD-1 bridge-debt item. They are tracked under the
+      //     §4 LD-11 bridge-debt inventory, not under this audit.
       ExecutionSPI.WriteMode writeMode = executionResult.getWriteMode();
       boolean skipApply = (writeMode == ExecutionSPI.WriteMode.PERSISTED);
 

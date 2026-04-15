@@ -1,10 +1,7 @@
 use std::net::SocketAddr;
 
 use tonic::transport::Server;
-use tracing::{info, warn};
-
-#[cfg(feature = "storage")]
-use tracing::error;
+use tracing::{error, info, warn};
 use tracing_subscriber;
 
 use tron_backend_common::{Config, GenesisConfig, ModuleManager};
@@ -28,6 +25,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration
     let config = Config::load()?;
     info!("Loaded configuration: {:?}", config);
+
+    // LD-2 runtime guard: refuse to start the production main binary if the
+    // loaded config says rust_persist_enabled=true. See
+    // `planning/close_loop.planning.md` §§ LD-1, LD-2: the canonical RR writer
+    // is Java's `RuntimeSpiImpl` apply path, so Rust must only compute deltas
+    // in RR production. The conformance runner at
+    // `rust-backend/crates/core/src/conformance/runner.rs` is the one
+    // in-tree force-`true` caller; it builds its own `ExecutionConfig` in
+    // code and does not go through `Config::load()`, so this guard does not
+    // affect conformance/isolation paths. This guard intentionally does NOT
+    // cover the separate NonVm buffered-write bypass in
+    // `crates/core/src/service/grpc/mod.rs`, which is tracked as its own
+    // open item (§1.1 deferred follow-up #5 / LD-1 Current-state gap).
+    // It also does NOT cover the `CreateSmartContract` metadata persist
+    // path in `grpc/mod.rs` that writes straight to the storage engine
+    // when `write_buffer` is absent — that Rust-owned VM-side write is a
+    // separate LD-1 gap outside the `rust_persist_enabled` / `WriteMode`
+    // signal and is tracked under the LD-11 bridge-debt inventory.
+    if config.execution.remote.rust_persist_enabled {
+        error!(
+            "LD-2 guard: `execution.remote.rust_persist_enabled = true` was loaded from config, \
+             but the `main` binary is the RR production path. The canonical RR writer is Java's \
+             RuntimeSpiImpl apply path (LD-1). Set `rust_persist_enabled = false` in \
+             `rust-backend/config.toml` (or clear \
+             `TRON_BACKEND__EXECUTION__REMOTE__RUST_PERSIST_ENABLED` in the environment). If you \
+             need `rust_persist_enabled = true` for conformance or isolation runs, use the \
+             conformance runner (`rust-backend/crates/core/src/conformance/runner.rs`) instead: \
+             it builds its own ExecutionConfig in code and does not load `config.toml`. \
+             See `planning/close_loop.planning.md` §§ LD-1, LD-2 for the write-ownership lock."
+        );
+        return Err(
+            "LD-2 guard: rust_persist_enabled=true is not allowed in main.rs (RR production path)"
+                .into(),
+        );
+    }
 
     // Initialize module manager
     let mut module_manager = ModuleManager::new();

@@ -171,7 +171,21 @@ delegation_reward_enabled = true
 # - Works consistently for both EMBEDDED and REMOTE storage modes
 # - Avoids non-idempotent double-writes (e.g., TRC-10 delta semantics)
 # - Easier transaction rollback on validation failure
-rust_persist_enabled = true
+#
+# LD-1/LD-2 locked target state (planning/close_loop.planning.md §§ LD-1, LD-2):
+# the canonical RR writer is the Java RuntimeSpiImpl apply path (LD-1), so for
+# production RR this flag MUST be false — the checked-in value below matches
+# the code default (common/src/config.rs) and the LD-2 lock. Setting it to true
+# is reserved for conformance / isolation / local development profiles only.
+# In-tree, the conformance runner (crates/core/src/conformance/runner.rs)
+# is the one force-true caller; it flips the flag internally rather than
+# reading it from this file. Any other dev / experiment use of rust_persist = true
+# is expected to override the flag locally (via the `TRON_BACKEND__...`
+# environment variable, or a local `config.toml` edit/replacement in the
+# developer's own working copy), not by changing this checked-in value. Note this flag does NOT cover
+# the separate NonVm buffered-write bypass (grpc/mod.rs), which is tracked as
+# its own open item in §4 LD-11 and is orthogonal to the LD-2 write-path lock.
+rust_persist_enabled = false
 
 # Dynamic property strictness (Task 5 - Java parity)
 # When true: Methods like get_asset_issue_fee_strict() return errors when keys are missing

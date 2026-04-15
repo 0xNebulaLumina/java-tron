@@ -110,21 +110,13 @@ impl ExecutionModule {
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
 
-        // TRON energy_limit wire semantics (KNOWN MISMATCH — needs spec lock):
-        //
-        // - Conformance fixtures: energy_limit = feeLimit in SUN → Rust divides by ENERGY_FEE
-        //   to get energy units. This path is correct for fixtures.
-        //
-        // - Production RemoteExecutionSPI: energy_limit = computeEnergyLimitWithFixRatio()
-        //   which already returns energy units (min(availableEnergy, feeLimit/energyFee)).
-        //   Dividing again here would under-gas the transaction.
-        //
-        // TODO: Lock the wire spec for energy_limit. Options:
-        //   (a) Java always sends feeLimit (SUN); Rust converts. Requires Rust to implement
-        //       the full getTotalEnergyLimitWithFixRatio computation for caller/creator split.
-        //   (b) Java always sends energy units; Rust does NOT convert. Requires fixture
-        //       generator to match by also sending energy units.
-        //   (c) Add a proto field/flag to indicate the unit.
+        // energy_limit wire semantics: LOCKED to **energy units** by
+        // close_loop.planning.md § LD-4 (option b: Java sends energy units,
+        // Rust does not convert). The division below is leftover pre-lock
+        // behavior. It must be removed as part of the LD-4 deferred follow-
+        // ups, in lockstep with the conformance fixture migration and the
+        // Java-side fallback hardening — they are a single coherent change
+        // boundary and cannot be staged independently.
         let mut adjusted_tx = tx.clone();
         if energy_fee_rate > 0 {
             adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;

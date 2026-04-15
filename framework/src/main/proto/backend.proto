@@ -598,10 +598,27 @@ message TronTransaction {
   // Rust accepts both encodings: it prefers `contract_parameter.value` when present and
   // the type_url matches, falling back to decoding from `data`.
   bytes data = 4;
-  // KNOWN MISMATCH: Conformance fixtures send feeLimit in SUN; production
-  // RemoteExecutionSPI sends energy units (min(availableEnergy, feeLimit/energyFee)).
-  // Rust currently assumes SUN and divides by ENERGY_FEE, which double-converts
-  // the production value. Needs wire spec lock — see lib.rs energy_limit comment.
+  // LOCKED (close_loop.planning.md § LD-4): the energy_limit contract is
+  // **VM transactions only** (TriggerSmartContract / CreateSmartContract).
+  // For VM txs, this field MUST carry **energy units** converted from
+  // feeLimit on the Java side; Rust must NOT divide by ENERGY_FEE again.
+  // For all non-VM contract types, the canonical value is **0** (or a
+  // documented sentinel) — Rust does not consume it, and Java must not
+  // forward feeLimit here. Conformance fixtures must encode VM txs as energy
+  // units.
+  //
+  // CURRENT STATE (not yet matching the lock — tracked as LD-4 deferred
+  // follow-ups in planning/close_loop.todo.md §1.2):
+  //   - The Java sender uses RemoteExecutionSPI.computeEnergyLimitWithFixRatio
+  //     (a caller-side compute), not the full VMActuator
+  //     getTotalEnergyLimitWithFixRatio contract-side clamp; reaching full
+  //     parity with the embedded path is part of LD-4's deferred cutover.
+  //   - Non-VM transactions still leak raw `feeLimit` (SUN) here because
+  //     buildExecuteTransactionRequest seeds energyLimit from feeLimit and
+  //     non-VM arms never re-assign it.
+  //   - Rust still double-converts production VM values until the
+  //     adjusted_tx.gas_limit / energy_fee_rate divide is removed.
+  // This comment documents the locked contract, not today's implementation.
   int64 energy_limit = 5;
   int64 energy_price = 6;
   int64 nonce = 7;
@@ -639,6 +656,10 @@ message ExecutionContext {
   int64 block_timestamp = 2;
   bytes block_hash = 3;
   bytes coinbase = 4;
+  // LOCKED (close_loop.planning.md § LD-4): energy_limit on the block context
+  // is the **block-level energy envelope** (already in energy units), not the
+  // per-transaction cap. Java's RemoteExecutionSPI currently reuses the
+  // per-tx value here — see LD-4 deferred follow-ups for separating the two.
   int64 energy_limit = 5;
   int64 energy_price = 6;
   string snapshot_id = 7;
