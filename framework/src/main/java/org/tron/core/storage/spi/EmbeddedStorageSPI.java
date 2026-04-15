@@ -302,25 +302,52 @@ public class EmbeddedStorageSPI implements StorageSPI {
     return CompletableFuture.completedFuture(null);
   }
 
+  // Storage snapshot APIs — Phase 1: explicitly UNSUPPORTED.
+  //
+  // Both EE and RR storage paths previously had fake-success snapshot
+  // implementations: createSnapshot returned a synthetic id, deleteSnapshot
+  // completed silently, and getFromSnapshot fell through to a live-DB read.
+  // That gave callers fake point-in-time semantics. Phase 1 hardening
+  // (planning/close_loop.snapshot.md) replaces all three with explicit
+  // unsupported errors so callers cannot silently rely on isolation that
+  // does not exist. If a real snapshot implementation is needed later,
+  // update the planning note first and back the snapshot with a real
+  // RocksDB snapshot handle.
+
   @Override
   public CompletableFuture<String> createSnapshot(String dbName) {
-    // Simplified snapshot implementation
-    // In a full implementation, you would use RocksDB snapshots
-    return CompletableFuture.completedFuture("embedded-snapshot-" + System.currentTimeMillis());
+    CompletableFuture<String> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "Embedded storage snapshot is not supported in close_loop Phase 1 "
+                + "(see planning/close_loop.snapshot.md). The previous placeholder "
+                + "returned a synthetic id without taking a real RocksDB snapshot, "
+                + "and getFromSnapshot fell through to a live-DB read. Both have "
+                + "been replaced with explicit unsupported errors."));
+    return future;
   }
 
   @Override
   public CompletableFuture<Void> deleteSnapshot(String snapshotId) {
-    // Simplified snapshot implementation
-    return CompletableFuture.completedFuture(null);
+    CompletableFuture<Void> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "Embedded storage deleteSnapshot is not supported in close_loop Phase 1 "
+                + "(see planning/close_loop.snapshot.md). deleteSnapshot is a "
+                + "no-op error rather than a fake success."));
+    return future;
   }
 
   @Override
   public CompletableFuture<byte[]> getFromSnapshot(String snapshotId, byte[] key) {
-    // Simplified snapshot implementation - just return current value
-    // In a full implementation, you would read from the actual snapshot
-    String dbName = extractDbNameFromSnapshot(snapshotId);
-    return get(dbName, key);
+    CompletableFuture<byte[]> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "Embedded storage getFromSnapshot is not supported in close_loop Phase 1 "
+                + "(see planning/close_loop.snapshot.md). The previous implementation "
+                + "fell through to a live-DB read, masquerading as a point-in-time "
+                + "snapshot read. That has been replaced with an explicit error."));
+    return future;
   }
 
   @Override
@@ -397,9 +424,13 @@ public class EmbeddedStorageSPI implements StorageSPI {
     databases.clear();
   }
 
+  // extractDbNameFromSnapshot was a helper for the fake-success snapshot
+  // implementation. Phase 1 marks snapshots as explicitly unsupported (see
+  // planning/close_loop.snapshot.md), so this helper is dead code. It is
+  // retained as a private method to make the deletion a single hunk if
+  // snapshots remain unsupported in a later phase.
+  @SuppressWarnings("unused")
   private String extractDbNameFromSnapshot(String snapshotId) {
-    // Simple implementation - assume first database
-    // In a full implementation, you would encode the database name in the snapshot ID
     if (databases.isEmpty()) {
       throw new RuntimeException("No databases available for snapshot");
     }

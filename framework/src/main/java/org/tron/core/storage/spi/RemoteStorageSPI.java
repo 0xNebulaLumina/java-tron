@@ -27,10 +27,12 @@ import tron.backend.BackendOuterClass.BeginTransactionRequest;
 import tron.backend.BackendOuterClass.BeginTransactionResponse;
 import tron.backend.BackendOuterClass.CloseDBRequest;
 import tron.backend.BackendOuterClass.CommitTransactionRequest;
+import tron.backend.BackendOuterClass.CommitTransactionResponse;
 import tron.backend.BackendOuterClass.CreateSnapshotRequest;
 import tron.backend.BackendOuterClass.CreateSnapshotResponse;
 import tron.backend.BackendOuterClass.DeleteRequest;
 import tron.backend.BackendOuterClass.DeleteSnapshotRequest;
+import tron.backend.BackendOuterClass.DeleteSnapshotResponse;
 import tron.backend.BackendOuterClass.GetFromSnapshotRequest;
 import tron.backend.BackendOuterClass.GetFromSnapshotResponse;
 import tron.backend.BackendOuterClass.GetKeysNextRequest;
@@ -60,6 +62,7 @@ import tron.backend.BackendOuterClass.PrefixQueryResponse;
 import tron.backend.BackendOuterClass.PutRequest;
 import tron.backend.BackendOuterClass.ResetDBRequest;
 import tron.backend.BackendOuterClass.RollbackTransactionRequest;
+import tron.backend.BackendOuterClass.RollbackTransactionResponse;
 import tron.backend.BackendOuterClass.SizeRequest;
 import tron.backend.BackendOuterClass.SizeResponse;
 import tron.backend.BackendOuterClass.WriteOperation;
@@ -614,6 +617,14 @@ public class RemoteStorageSPI implements StorageSPI {
                 BeginTransactionRequest.newBuilder().setDatabase(dbName).build();
 
             BeginTransactionResponse response = blockingStub.beginTransaction(request);
+            if (!response.getSuccess()) {
+              logger.error(
+                  "Begin transaction reported failure: db={}, error={}",
+                  dbName,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage begin transaction failed: " + response.getErrorMessage());
+            }
             logger.debug(
                 "Begin transaction operation: db={}, txId={}", dbName, response.getTransactionId());
 
@@ -633,7 +644,15 @@ public class RemoteStorageSPI implements StorageSPI {
             CommitTransactionRequest request =
                 CommitTransactionRequest.newBuilder().setTransactionId(transactionId).build();
 
-            blockingStub.commitTransaction(request);
+            CommitTransactionResponse response = blockingStub.commitTransaction(request);
+            if (!response.getSuccess()) {
+              logger.error(
+                  "Commit transaction reported failure: txId={}, error={}",
+                  transactionId,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage commit transaction failed: " + response.getErrorMessage());
+            }
             logger.debug("Commit transaction operation: txId={}", transactionId);
           } catch (StatusRuntimeException e) {
             logger.error(
@@ -651,7 +670,15 @@ public class RemoteStorageSPI implements StorageSPI {
             RollbackTransactionRequest request =
                 RollbackTransactionRequest.newBuilder().setTransactionId(transactionId).build();
 
-            blockingStub.rollbackTransaction(request);
+            RollbackTransactionResponse response = blockingStub.rollbackTransaction(request);
+            if (!response.getSuccess()) {
+              logger.error(
+                  "Rollback transaction reported failure: txId={}, error={}",
+                  transactionId,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage rollback transaction failed: " + response.getErrorMessage());
+            }
             logger.debug("Rollback transaction operation: txId={}", transactionId);
           } catch (StatusRuntimeException e) {
             logger.error(
@@ -663,6 +690,23 @@ public class RemoteStorageSPI implements StorageSPI {
         });
   }
 
+  // ===========================================================================
+  // Storage snapshot APIs — Phase 1: explicitly UNSUPPORTED.
+  //
+  // The Rust storage engine returns an explicit error from every snapshot
+  // method (see `rust-backend/crates/storage/src/engine.rs` and
+  // `planning/close_loop.snapshot.md`). The gRPC server forwards that as
+  // `success = false` plus an `error_message` field in the response. The
+  // earlier client implementations dropped the `success` field on the floor,
+  // returning empty ids / null values to callers — that re-introduced the
+  // fake-success behavior on the Java SPI side.
+  //
+  // The implementations below now check the `success` field and surface
+  // failures by completing the future exceptionally with a
+  // `RuntimeException` whose cause is an `UnsupportedOperationException`,
+  // matching the policy in close_loop.snapshot.md.
+  // ===========================================================================
+
   @Override
   public CompletableFuture<String> createSnapshot(String dbName) {
     return CompletableFuture.supplyAsync(
@@ -672,6 +716,16 @@ public class RemoteStorageSPI implements StorageSPI {
                 CreateSnapshotRequest.newBuilder().setDatabase(dbName).build();
 
             CreateSnapshotResponse response = blockingStub.createSnapshot(request);
+            if (!response.getSuccess()) {
+              logger.warn(
+                  "Remote createSnapshot rejected: db={}, error={}",
+                  dbName,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage createSnapshot rejected by remote backend: "
+                      + response.getErrorMessage(),
+                  new UnsupportedOperationException(response.getErrorMessage()));
+            }
             logger.debug(
                 "Create snapshot operation: db={}, snapId={}", dbName, response.getSnapshotId());
 
@@ -691,7 +745,17 @@ public class RemoteStorageSPI implements StorageSPI {
             DeleteSnapshotRequest request =
                 DeleteSnapshotRequest.newBuilder().setSnapshotId(snapshotId).build();
 
-            blockingStub.deleteSnapshot(request);
+            DeleteSnapshotResponse response = blockingStub.deleteSnapshot(request);
+            if (!response.getSuccess()) {
+              logger.warn(
+                  "Remote deleteSnapshot rejected: snapId={}, error={}",
+                  snapshotId,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage deleteSnapshot rejected by remote backend: "
+                      + response.getErrorMessage(),
+                  new UnsupportedOperationException(response.getErrorMessage()));
+            }
             logger.debug("Delete snapshot operation: snapId={}", snapshotId);
           } catch (StatusRuntimeException e) {
             logger.error(
@@ -713,6 +777,16 @@ public class RemoteStorageSPI implements StorageSPI {
                     .build();
 
             GetFromSnapshotResponse response = blockingStub.getFromSnapshot(request);
+            if (!response.getSuccess()) {
+              logger.warn(
+                  "Remote getFromSnapshot rejected: snapId={}, error={}",
+                  snapshotId,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage getFromSnapshot rejected by remote backend: "
+                      + response.getErrorMessage(),
+                  new UnsupportedOperationException(response.getErrorMessage()));
+            }
             logger.debug(
                 "Get from snapshot operation: snapId={}, key.length={}, found={}",
                 snapshotId,

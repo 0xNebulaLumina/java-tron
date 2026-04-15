@@ -598,10 +598,35 @@ message TronTransaction {
   // Rust accepts both encodings: it prefers `contract_parameter.value` when present and
   // the type_url matches, falling back to decoding from `data`.
   bytes data = 4;
-  // KNOWN MISMATCH: Conformance fixtures send feeLimit in SUN; production
-  // RemoteExecutionSPI sends energy units (min(availableEnergy, feeLimit/energyFee)).
-  // Rust currently assumes SUN and divides by ENERGY_FEE, which double-converts
-  // the production value. Needs wire spec lock — see lib.rs energy_limit comment.
+  // FUTURE-LOCKED (close_loop Phase 1, see planning/close_loop.energy_limit.md):
+  //   The Phase 1 decision is that `energy_limit` will be expressed in ENERGY
+  //   UNITS, not fee-limit SUN. The decision is recorded; the producer/consumer
+  //   migration to that contract has NOT yet landed.
+  //
+  // Current live behavior (as of this comment):
+  //   - Java `RemoteExecutionSPI` sends energy units only for the two VM
+  //     contract types (CreateSmartContract / TriggerSmartContract) via
+  //     `computeEnergyLimitWithFixRatio`, and even then falls back to raw
+  //     fee-limit SUN if the helper hits an exception.
+  //   - Java `RemoteExecutionSPI` sends raw fee-limit SUN for every other
+  //     contract type as the default.
+  //   - Java fixture generators (`FixtureGenerator.java`,
+  //     `VmTriggerFixtureGeneratorTest.java`) still send fee-limit SUN
+  //     across the board.
+  //   - Rust `tron-backend-execution` still divides incoming `energy_limit`
+  //     by `ENERGY_FEE` to obtain energy units, which under-gases the
+  //     production VM path.
+  //
+  // Future contract once migration lands (tracked in close_loop.energy_limit.md):
+  //   - Producers will convert fee-limit SUN to energy units before sending,
+  //     or set 0 for contract types that do not consume energy.
+  //   - Consumers will treat the field as energy units and will not divide
+  //     by ENERGY_FEE a second time.
+  //   - A value of 0 will mean "no VM-side energy cap specified"; non-VM
+  //     contract types will send 0.
+  //
+  // Until the follow-up code change lands, do NOT cite this comment as
+  // proof that the live system already enforces the future-locked contract.
   int64 energy_limit = 5;
   int64 energy_price = 6;
   int64 nonce = 7;
@@ -847,17 +872,69 @@ message WithdrawChange {
 
 message CallContractRequest {
   // Note: database field removed - execution uses unified storage context
+  //
+  // LEGACY fields (close_loop Phase 1):
+  //   Prior to close_loop iter 6, CallContractRequest only carried
+  //   `from`/`to`/`data`/`context`, which dropped `value`, `energy_limit`,
+  //   `tx_kind`, `contract_type`, `asset_id`, and `contract_parameter`.
+  //   The Rust converter then hardcoded `value=0`, `gas_limit=1_000_000`,
+  //   and default `TxMetadata`, which caused payable / fee-limit-sensitive
+  //   / TRC-10-sensitive calls to diverge from full execution.
+  //
+  //   Producers SHOULD now populate `transaction` (field 5) instead of
+  //   `from`/`to`/`data`. When `transaction` is set, the server uses it
+  //   and ignores the legacy fields. When `transaction` is absent, the
+  //   server falls back to the legacy fields for backward compatibility,
+  //   reconstructing a TronTransaction with the historical hardcoded
+  //   defaults.
   bytes from = 1;
   bytes to = 2;
   bytes data = 3;
   ExecutionContext context = 4;
+  // close_loop iter 6: preferred shape. Carries the full TronTransaction
+  // so the server does not have to guess at value / gas_limit / metadata.
+  TronTransaction transaction = 5;
 }
 
 message CallContractResponse {
   bytes return_data = 1;
+  // `success` is still the historical boolean and remains the primary
+  // signal for "did the contract execute without failing".
+  // close_loop iter 6: prefer reading `status` (field 5) instead, which
+  // gives a structured discriminator between REVERT / HALT / handler
+  // error / unknown.
   bool success = 2;
   string error_message = 3;
   int64 energy_used = 4;
+
+  // close_loop iter 6: structured status discriminator. Replaces the
+  // fragile error-message string-prefix matching the Java bridge had to
+  // fall back on when only `success`/`error_message` were available.
+  //
+  // Values:
+  //   UNSPECIFIED   — zero value; present on older servers/clients.
+  //                   Consumers should treat this identically to reading
+  //                   `success` + `error_message`.
+  //   SUCCESS       — the call executed without failure. `success=true`.
+  //   REVERT        — the call hit an explicit REVM REVERT opcode.
+  //                   `success=false`, `return_data` may carry the
+  //                   revert reason bytes.
+  //   HALT          — the call was halted by the VM (out-of-energy,
+  //                   invalid opcode, bad jump destination, etc.).
+  //                   `success=false`, `return_data` is empty,
+  //                   `error_message` carries the halt reason text.
+  //   HANDLER_ERROR — the gRPC handler itself failed (request
+  //                   conversion, context conversion, or an internal
+  //                   `call_contract_with_storage` error). The VM never
+  //                   executed. `success=false`.
+  enum Status {
+    UNSPECIFIED = 0;
+    SUCCESS = 1;
+    REVERT = 2;
+    HALT = 3;
+    HANDLER_ERROR = 4;
+  }
+  Status status = 5;
 }
 
 message EstimateEnergyRequest {

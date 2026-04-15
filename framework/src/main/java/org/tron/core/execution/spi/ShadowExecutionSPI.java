@@ -278,54 +278,40 @@ public class ShadowExecutionSPI implements ExecutionSPI {
     return embeddedExecution.getBalance(address, snapshotId);
   }
 
+  // close_loop §1.4 / planning/close_loop.snapshot.md:
+  // SHADOW mode is explicitly de-emphasized as a legacy/optional
+  // path per close_loop.write_ownership.md (it is NOT a Phase 1
+  // acceptance mode), but it must still honor the snapshot ban —
+  // the previous fan-out called both engines, joined synthetic
+  // ids, and on failure recursively re-called the (still failing)
+  // embedded path. With the underlying embedded + remote engines
+  // now both throwing, the recursive fallback would have produced
+  // a confusing nested CompletionException. Replace the fan-out
+  // entirely with an explicit unsupported error so callers see
+  // the same Phase 1 contract regardless of which SPI they hold.
   @Override
   public CompletableFuture<String> createSnapshot() {
-    // Create snapshots on both engines
-    return CompletableFuture.supplyAsync(
-        () -> {
-          try {
-            CompletableFuture<String> embeddedFuture = embeddedExecution.createSnapshot();
-            CompletableFuture<String> remoteFuture = remoteExecution.createSnapshot();
-
-            String embeddedSnapshot = embeddedFuture.join();
-            String remoteSnapshot = remoteFuture.join();
-
-            // TODO: Store mapping between embedded and remote snapshots
-            logger.debug(
-                "Created snapshots: embedded={}, remote={}", embeddedSnapshot, remoteSnapshot);
-
-            return embeddedSnapshot;
-          } catch (Exception e) {
-            logger.error("Shadow snapshot creation failed", e);
-            return embeddedExecution.createSnapshot().join();
-          }
-        });
+    CompletableFuture<String> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "EVM snapshot is not supported in close_loop Phase 1 "
+                + "(ShadowExecutionSPI) — see planning/close_loop.snapshot.md. "
+                + "SHADOW mode is itself a legacy/optional path per "
+                + "close_loop.write_ownership.md and must not return a "
+                + "synthetic snapshot id."));
+    return future;
   }
 
   @Override
   public CompletableFuture<Boolean> revertToSnapshot(String snapshotId) {
-    // Revert on both engines
-    return CompletableFuture.supplyAsync(
-        () -> {
-          try {
-            CompletableFuture<Boolean> embeddedFuture =
-                embeddedExecution.revertToSnapshot(snapshotId);
-            CompletableFuture<Boolean> remoteFuture = remoteExecution.revertToSnapshot(snapshotId);
-
-            Boolean embeddedResult = embeddedFuture.join();
-            Boolean remoteResult = remoteFuture.join();
-
-            if (!embeddedResult.equals(remoteResult)) {
-              logger.warn(
-                  "Snapshot revert mismatch: embedded={}, remote={}", embeddedResult, remoteResult);
-            }
-
-            return embeddedResult;
-          } catch (Exception e) {
-            logger.error("Shadow snapshot revert failed", e);
-            return embeddedExecution.revertToSnapshot(snapshotId).join();
-          }
-        });
+    CompletableFuture<Boolean> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "EVM revert-to-snapshot is not supported in close_loop Phase 1 "
+                + "(ShadowExecutionSPI) — see planning/close_loop.snapshot.md. "
+                + "Requested snapshotId="
+                + snapshotId));
+    return future;
   }
 
   @Override

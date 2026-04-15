@@ -306,7 +306,24 @@ impl BackendService {
         &self,
         req: &crate::backend::CallContractRequest,
     ) -> Result<TronTransaction, String> {
-        // Convert bytes to Address (strip Tron 0x41 prefix if present)
+        // close_loop iter 6: prefer the full `transaction` field when the
+        // caller populates it. Producers updated after iter 6
+        // (RemoteExecutionSPI + new ExecutionGrpcClientTest rows) set this
+        // field so the server sees the same transaction shape as full
+        // execution — value, gas_limit, contract_type, asset_id,
+        // contract_parameter, etc. Older producers that only populate the
+        // legacy from/to/data/context fields still work via the fallback
+        // branch below.
+        if let Some(tx_proto) = req.transaction.as_ref() {
+            let (tron_tx, _tx_kind) =
+                self.convert_protobuf_transaction(Some(tx_proto), 0)?;
+            return Ok(tron_tx);
+        }
+
+        // Legacy fallback for producers that have not yet migrated to
+        // setting `transaction`. Reconstructs a minimal TronTransaction
+        // from the historical flat fields with the same hardcoded
+        // defaults the pre-iter-6 converter used.
         let from_bytes = strip_tron_address_prefix(&req.from)?;
         let from = revm_primitives::Address::from_slice(from_bytes);
 
@@ -316,12 +333,12 @@ impl BackendService {
         Ok(TronTransaction {
             from,
             to: Some(to),
-            value: revm_primitives::U256::ZERO, // Contract calls typically don't transfer value
+            value: revm_primitives::U256::ZERO, // Legacy: contract calls assumed non-payable
             data: req.data.clone().into(),
-            gas_limit: 1000000, // Default gas limit for contract calls
+            gas_limit: 1000000, // Legacy: default gas limit for contract calls
             gas_price: revm_primitives::U256::from(1),
             nonce: 0, // Contract calls don't use nonce
-            metadata: tron_backend_execution::TxMetadata::default(), // No specific metadata for contract calls
+            metadata: tron_backend_execution::TxMetadata::default(), // Legacy: no metadata
         })
     }
 
@@ -1276,5 +1293,176 @@ mod tests {
             assert_eq!(transaction.from, revm_primitives::Address::ZERO);
             assert_eq!(transaction.metadata.contract_type, Some(expected_ct));
         }
+    }
+
+    // =========================================================================
+    // iter 6: CallContractRequest proto reshape tests
+    // =========================================================================
+    //
+    // These tests lock the iter-6 behavior of
+    // `convert_call_contract_request_to_transaction`:
+    //   - when `CallContractRequest.transaction` is set, the converter
+    //     uses it and carries value / gas_limit / metadata through;
+    //   - when `CallContractRequest.transaction` is absent, the
+    //     converter falls back to the legacy `from`/`to`/`data` flat
+    //     fields with the historical hardcoded defaults.
+    //
+    // The goal is to prevent a future refactor from silently removing
+    // the fallback (which would break pre-iter-6 clients) or from
+    // silently ignoring the `transaction` field (which would re-open
+    // the iter-5 correctness gap).
+
+    fn make_test_backend_service() -> BackendService {
+        let config = ExecutionConfig::default();
+        let mut module_manager = ModuleManager::new();
+        module_manager.register("execution", Box::new(ExecutionModule::new(config)));
+        BackendService::new(module_manager)
+    }
+
+    fn tron_prefixed(addr: [u8; 20]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(21);
+        v.push(0x41);
+        v.extend_from_slice(&addr);
+        v
+    }
+
+    #[test]
+    fn call_contract_request_prefers_transaction_field_when_present() {
+        // When `transaction` is populated, the converter must use it
+        // (via convert_protobuf_transaction) and the legacy flat
+        // fields must be ignored. This locks the iter-6 "preferred"
+        // path so a refactor cannot accidentally drop it.
+        let backend_service = make_test_backend_service();
+
+        // Build a nested TronTransaction carrying fields that the
+        // legacy fallback path would drop or hardcode:
+        //   - non-zero value (TronTransaction.value is bytes, 32-byte BE)
+        //   - non-default energy_limit (→ gas_limit)
+        //   - non-default tx_kind
+        //   - non-default contract_type
+        let inner_from = tron_prefixed([0xAA; 20]);
+        let inner_to = tron_prefixed([0xBB; 20]);
+        // 1000 in 32-byte big-endian = 31 zero bytes + 0xE8
+        let mut value_be = vec![0u8; 32];
+        value_be[31] = 0xE8;
+        value_be[30] = 0x03;
+        let mut inner_tx = ProtoTx::default();
+        inner_tx.from = inner_from.clone();
+        inner_tx.to = inner_to.clone();
+        inner_tx.data = vec![0x01, 0x02, 0x03];
+        inner_tx.value = value_be;
+        inner_tx.energy_limit = 4242;
+        inner_tx.tx_kind = TxKind::Vm as i32;
+        inner_tx.contract_type = ContractType::TriggerSmartContract as i32;
+
+        // Intentionally give the legacy flat fields DIFFERENT values
+        // so we can prove the converter picked the nested transaction
+        // instead of reading the flat fields.
+        let legacy_from = tron_prefixed([0xCC; 20]);
+        let legacy_to = tron_prefixed([0xDD; 20]);
+        let request = crate::backend::CallContractRequest {
+            from: legacy_from.clone(),
+            to: legacy_to.clone(),
+            data: vec![0xFF],
+            context: None,
+            transaction: Some(inner_tx),
+        };
+
+        let tron_tx = backend_service
+            .convert_call_contract_request_to_transaction(&request)
+            .expect("convert with transaction should succeed");
+
+        // Address should come from the nested transaction (0xAA...),
+        // not the legacy flat field (0xCC...).
+        assert_eq!(tron_tx.from.as_slice(), &[0xAAu8; 20]);
+        assert_eq!(tron_tx.to.expect("to present").as_slice(), &[0xBBu8; 20]);
+        assert_eq!(tron_tx.data.as_ref(), &[0x01, 0x02, 0x03]);
+        // Value must reflect the nested transaction (1000), NOT the
+        // legacy hardcoded U256::ZERO.
+        assert_eq!(tron_tx.value, revm_primitives::U256::from(1000u64));
+        // gas_limit should reflect energy_limit=4242 from the nested
+        // transaction, NOT the legacy hardcoded default of 1_000_000.
+        assert_eq!(tron_tx.gas_limit, 4242);
+        assert_eq!(
+            tron_tx.metadata.contract_type,
+            Some(tron_backend_execution::TronContractType::TriggerSmartContract)
+        );
+    }
+
+    #[test]
+    fn call_contract_request_falls_back_to_legacy_fields_when_transaction_absent() {
+        // When `transaction` is None, the converter must reconstruct a
+        // minimal TronTransaction from the legacy flat fields with the
+        // historical hardcoded defaults. This locks backward
+        // compatibility with pre-iter-6 clients such as
+        // `ExecutionGrpcClientTest.testCallContractRequestCreation`.
+        let backend_service = make_test_backend_service();
+
+        let legacy_from = tron_prefixed([0x11; 20]);
+        let legacy_to = tron_prefixed([0x22; 20]);
+        let request = crate::backend::CallContractRequest {
+            from: legacy_from.clone(),
+            to: legacy_to.clone(),
+            data: vec![0xAB, 0xCD],
+            context: None,
+            transaction: None,
+        };
+
+        let tron_tx = backend_service
+            .convert_call_contract_request_to_transaction(&request)
+            .expect("legacy fallback should succeed");
+
+        assert_eq!(tron_tx.from.as_slice(), &[0x11u8; 20]);
+        assert_eq!(tron_tx.to.expect("to present").as_slice(), &[0x22u8; 20]);
+        assert_eq!(tron_tx.data.as_ref(), &[0xAB, 0xCD]);
+        // The legacy path hardcodes value=0 and gas_limit=1_000_000.
+        assert_eq!(tron_tx.value, revm_primitives::U256::ZERO);
+        assert_eq!(tron_tx.gas_limit, 1_000_000);
+        // Legacy path uses default TxMetadata — no contract_type.
+        assert_eq!(tron_tx.metadata.contract_type, None);
+    }
+
+    #[test]
+    fn call_contract_request_legacy_fallback_rejects_malformed_address() {
+        // The legacy fallback path should still validate the flat
+        // address fields. A malformed `from` must be rejected with an
+        // explicit error, matching the pre-iter-6 behavior.
+        let backend_service = make_test_backend_service();
+
+        let request = crate::backend::CallContractRequest {
+            from: vec![0x00, 0x01, 0x02], // too short
+            to: tron_prefixed([0x22; 20]),
+            data: vec![],
+            context: None,
+            transaction: None,
+        };
+
+        let err = backend_service
+            .convert_call_contract_request_to_transaction(&request)
+            .unwrap_err();
+        assert!(
+            err.contains("Invalid address length"),
+            "unexpected error: {err}"
+        );
+    }
+
+    // =========================================================================
+    // iter 6: CallContractResponse.Status enum is wired correctly
+    // =========================================================================
+    //
+    // These tests lock the numeric mapping between the Rust-generated
+    // prost enum and the proto wire codes. If someone reorders or
+    // renumbers the enum in backend.proto, these tests will fail loudly
+    // instead of letting the Java bridge silently mis-classify
+    // responses.
+
+    #[test]
+    fn call_contract_response_status_wire_values_are_stable() {
+        use crate::backend::call_contract_response::Status;
+        assert_eq!(Status::Unspecified as i32, 0);
+        assert_eq!(Status::Success as i32, 1);
+        assert_eq!(Status::Revert as i32, 2);
+        assert_eq!(Status::Halt as i32, 3);
+        assert_eq!(Status::HandlerError as i32, 4);
     }
 }
