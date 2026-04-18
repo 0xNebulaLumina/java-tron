@@ -598,10 +598,12 @@ message TronTransaction {
   // Rust accepts both encodings: it prefers `contract_parameter.value` when present and
   // the type_url matches, falling back to decoding from `data`.
   bytes data = 4;
-  // KNOWN MISMATCH: Conformance fixtures send feeLimit in SUN; production
-  // RemoteExecutionSPI sends energy units (min(availableEnergy, feeLimit/energyFee)).
-  // Rust currently assumes SUN and divides by ENERGY_FEE, which double-converts
-  // the production value. Needs wire spec lock — see lib.rs energy_limit comment.
+  // Phase 1 wire contract (see planning/close_loop.phase1_freeze.md §14):
+  // carries ENERGY UNITS for VM txs. Java is the canonical computer of the
+  // SUN → energy conversion; Rust does NOT divide or otherwise reconvert.
+  // For non-VM txs this field is semantically undefined in Phase 1 (the
+  // Rust non-VM path does not gas-meter on it) and must not be relied on
+  // as SUN. Migration impact and follow-ups tracked in freeze §14.5-§14.7.
   int64 energy_limit = 5;
   int64 energy_price = 6;
   int64 nonce = 7;
@@ -639,6 +641,15 @@ message ExecutionContext {
   int64 block_timestamp = 2;
   bytes block_hash = 3;
   bytes coinbase = 4;
+  // Phase 1 wire contract (see planning/close_loop.phase1_freeze.md §14):
+  // carries ENERGY UNITS, unit-consistent with `TronTransaction.energy_limit`.
+  // `RemoteExecutionSPI` currently populates this by mirroring the transaction
+  // `energyLimit` into the context (TRON has no true EVM-style per-block gas
+  // limit). Because it mirrors the tx-level field, it inherits the same
+  // non-VM caveat: semantically undefined for non-VM txs in Phase 1 — not
+  // "implicitly SUN". Rust uses it as the upper bound fed into the EVM's
+  // block gas-limit slot and must NOT apply a SUN → energy conversion here
+  // or elsewhere.
   int64 energy_limit = 5;
   int64 energy_price = 6;
   string snapshot_id = 7;

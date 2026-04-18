@@ -168,30 +168,30 @@ pub struct RemoteExecutionConfig {
     #[serde(default)]
     pub genesis_guard_representatives_base58: Vec<String>,
 
-    // === Phase 0.3: Write Consistency Model ===
+    // === Phase 1 canonical write ownership (see planning/close_loop.phase1_freeze.md §13) ===
     //
-    // The system has two potential write paths:
-    // 1. Rust handler directly writes to RocksDB via storage_adapter.set_*
-    // 2. Java RuntimeSpiImpl applies state_changes/sidecars to local database
+    // Phase 1 freezes write ownership as:
+    //   - EE (embedded execution + embedded storage): Java writes.
+    //   - RR (remote execution + remote storage): Rust writes, via the buffered
+    //     adapter that commits on success and is dropped on revert.
     //
-    // To ensure idempotent semantics and avoid double-writes, we adopt:
-    // **Option A (Recommended)**: Rust computes + returns changes (no persistence),
-    //                            Java apply handles persistence.
+    // This flag gates the RR write path for VM transactions:
+    //   - true  (Phase 1 RR canonical): On a successful adapter commit the Rust
+    //           handler returns WRITE_MODE_PERSISTED and Java skips its apply.
+    //           Non-success paths (EVM revert, execution error, commit failure,
+    //           lock failure) still return WRITE_MODE_COMPUTE_ONLY so Java's
+    //           sidecar appliers remain the fallback for those cases.
+    //   - false (legacy / transitional only): Rust returns WRITE_MODE_COMPUTE_ONLY
+    //           for VM txs and Java's sidecar appliers write through the remote
+    //           storage SPI. Retained for old Shadow-era conformance fixtures and
+    //           ad-hoc debugging only. Not an RR acceptance configuration.
     //
-    // This flag controls whether Rust persists state changes directly.
-    // When false (default), Rust only computes and returns changes via gRPC,
-    // and Java's RuntimeSpiImpl is responsible for all persistence.
-    //
-    // Benefits of Option A:
-    // - Single authoritative write path (Java)
-    // - Works consistently for both EMBEDDED and REMOTE storage modes
-    // - Avoids non-idempotent double-writes (e.g., TRC-10 delta semantics)
-    // - Easier transaction rollback on validation failure
-    //
-    // Set to true only for specific testing scenarios or when Java apply is disabled.
-    /// Whether Rust handlers should persist state changes directly to storage.
-    /// Default: false (Rust only computes, Java apply handles persistence)
-    /// When true: Rust writes to storage AND returns changes (legacy behavior, risk of double-write)
+    // Non-VM txs always buffer-and-commit on the Rust side regardless of this
+    // flag, so the Rust storage is the canonical writer for non-VM RR traffic
+    // in every supported profile. The VM asymmetry when false is acknowledged
+    // debt, not a supported production configuration.
+    /// Whether Rust VM handlers should persist state changes directly to storage.
+    /// Phase 1 RR canonical value: true. See planning/close_loop.phase1_freeze.md §13.3.
     pub rust_persist_enabled: bool,
 
     // === Phase 2.A: Proposal Contracts (16/17/18) ===
@@ -603,8 +603,9 @@ impl Config {
             builder.set_default("execution.remote.vote_witness_seed_old_from_account", true)?;
         builder = builder.set_default("execution.remote.account_create_enabled", false)?;
         builder = builder.set_default("execution.remote.delegation_reward_enabled", false)?;
-        // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
-        builder = builder.set_default("execution.remote.rust_persist_enabled", false)?;
+        // Phase 1 RR canonical: Rust owns writes in RR mode.
+        // See planning/close_loop.phase1_freeze.md §13.3.
+        builder = builder.set_default("execution.remote.rust_persist_enabled", true)?;
 
         // Phase 2.A: Proposal contracts (16/17/18)
         builder = builder.set_default("execution.remote.proposal_create_enabled", false)?;
@@ -677,8 +678,9 @@ impl Default for RemoteExecutionConfig {
             account_create_enabled: false,             // Default false for safe rollout
             delegation_reward_enabled: false, // Deprecated: delegation reward is always computed
             genesis_guard_representatives_base58: Vec::new(), // Empty = use hardcoded fallback
-            // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
-            rust_persist_enabled: false,
+            // Phase 1 RR canonical: Rust owns writes in RR mode.
+            // See planning/close_loop.phase1_freeze.md §13.3.
+            rust_persist_enabled: true,
             // Phase 2.A: Proposal contracts (16/17/18)
             proposal_create_enabled: false, // Default false for safe rollout
             proposal_approve_enabled: false, // Default false for safe rollout

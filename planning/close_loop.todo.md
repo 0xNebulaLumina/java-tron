@@ -59,21 +59,25 @@ Primary references:
 
 ## 0. Phase boundaries and exit criteria
 
-- [ ] Freeze Phase 1 scope as: execution semantics + storage semantics + parity verification only
-- [ ] Freeze the only two strategic modes for this planning:
-  - [ ] `EE`
-  - [ ] `RR`
-- [ ] Freeze explicit non-goals for this phase:
-  - [ ] No Rust P2P networking rewrite
-  - [ ] No Rust sync scheduler / peer manager rewrite
-  - [ ] No Rust consensus rewrite
-  - [ ] No attempt to remove the Java node shell in this phase
-  - [ ] No optimization for mixed execution/storage combinations
-  - [ ] No reliance on current `SHADOW` as the main proof mechanism
-- [ ] Freeze the intended next milestone as `Rust block importer / block executor readiness`
-- [ ] Publish a short "why not P2P yet" note inside this file or a sibling planning note so the roadmap does not drift
-- [ ] Publish a short "why not SHADOW as the main validator" note so the roadmap does not drift back
-- [ ] Define Phase 1 exit criteria:
+Freeze decisions for this section are captured in
+`planning/close_loop.phase1_freeze.md`. That sibling note is the single source
+of truth for Phase 1 scope, modes, non-goals, and exit criteria.
+
+- [x] Freeze Phase 1 scope as: execution semantics + storage semantics + parity verification only
+- [x] Freeze the only two strategic modes for this planning:
+  - [x] `EE`
+  - [x] `RR`
+- [x] Freeze explicit non-goals for this phase:
+  - [x] No Rust P2P networking rewrite
+  - [x] No Rust sync scheduler / peer manager rewrite
+  - [x] No Rust consensus rewrite
+  - [x] No attempt to remove the Java node shell in this phase
+  - [x] No optimization for mixed execution/storage combinations
+  - [x] No reliance on current `SHADOW` as the main proof mechanism
+- [x] Freeze the intended next milestone as `Rust block importer / block executor readiness`
+- [x] Publish a short "why not P2P yet" note inside this file or a sibling planning note so the roadmap does not drift
+- [x] Publish a short "why not SHADOW as the main validator" note so the roadmap does not drift back
+- [x] Define Phase 1 exit criteria (recorded in `close_loop.phase1_freeze.md` §5 — the sub-bullets below track satisfaction, not definition):
   - [ ] Java execution read/query APIs are no longer placeholders in the `RR` path
   - [ ] Rust execution read/query APIs are either implemented or explicitly unsupported
   - [ ] Storage transaction semantics are real enough for execution needs
@@ -98,24 +102,26 @@ Primary touchpoints:
 - `rust-backend/config.toml`
 - `rust-backend/crates/common/src/config.rs`
 
-- [ ] Write down the authoritative write-path matrix for:
-  - [ ] `EE`
-  - [ ] `RR`
-- [ ] Explicitly de-emphasize current `SHADOW` as a legacy / optional path, not a Phase 1 acceptance mode
-- [ ] Define whether `RuntimeSpiImpl` Java-side apply is canonical, transitional, or legacy-only
-- [ ] Define whether `rust_persist_enabled=true` is allowed in:
+Decisions captured in `close_loop.phase1_freeze.md` §13.
+
+- [x] Write down the authoritative write-path matrix for:
+  - [x] `EE` (Java canonical writer — freeze §13.1)
+  - [x] `RR` (Rust canonical writer — freeze §13.1)
+- [x] Explicitly de-emphasize current `SHADOW` as a legacy / optional path, not a Phase 1 acceptance mode (freeze §2, §13.2)
+- [x] Define whether `RuntimeSpiImpl` Java-side apply is canonical, transitional, or legacy-only (legacy/transitional — freeze §13.2)
+- [x] Define whether `rust_persist_enabled=true` is allowed in:
   - [ ] development only
   - [ ] targeted experiments only
-  - [ ] `RR` candidate mode
+  - [x] `RR` candidate mode (Phase 1 RR canonical — freeze §13.3)
   - [ ] never, until later phase
-- [ ] Align code defaults, checked-in config, and comments
-- [ ] Add a future implementation item to fail fast when an unsafe mode combination is detected
-- [ ] Document one recommended safe rollout profile and one experimental profile
+- [x] Align code defaults, checked-in config, and comments (config.rs default flipped to true; config.toml comment rewritten; outdated "Option A" language removed)
+- [x] Add a future implementation item to fail fast when an unsafe mode combination is detected (tracked in freeze §13.6 as a Phase 1 follow-up guardrail)
+- [x] Document one recommended safe rollout profile and one experimental profile (freeze §13.5)
 
 Acceptance:
 
-- [ ] Any engineer can answer "who writes the final state in this mode?" without ambiguity
-- [ ] `config.toml`, `config.rs`, and planning docs no longer contradict each other
+- [x] Any engineer can answer "who writes the final state in this mode?" without ambiguity (freeze §13.7)
+- [x] `config.toml`, `config.rs`, and planning docs no longer contradict each other (aligned this iteration)
 
 ### 1.2 Lock `energy_limit` wire semantics
 
@@ -126,29 +132,31 @@ Primary touchpoints:
 - `rust-backend/crates/execution/src/lib.rs`
 - fixture/conformance generators and readers
 
-- [ ] Audit current Java sender behavior for VM txs:
-  - [ ] `CreateSmartContract`
-  - [ ] `TriggerSmartContract`
-  - [ ] any other path that sets `ExecutionContext.energy_limit`
-- [ ] Audit current Rust receiver behavior and conversion logic
-- [ ] Audit conformance fixture assumptions for `energy_limit`
-- [ ] Choose one canonical wire contract:
+Decisions captured in `close_loop.phase1_freeze.md` §14.
+
+- [x] Audit current Java sender behavior for VM txs (freeze §14.1):
+  - [x] `CreateSmartContract` (sends energy units via `computeEnergyLimitWithFixRatio`)
+  - [x] `TriggerSmartContract` (sends energy units via `computeEnergyLimitWithFixRatio`)
+  - [x] any other path that sets `ExecutionContext.energy_limit` (default at RemoteExecutionSPI:393 leaks raw `feeLimit` in SUN; fallback branches in `computeEnergyLimitWithFixRatio` also leak SUN)
+- [x] Audit current Rust receiver behavior and conversion logic (freeze §14.2 — `execute_vm_transaction` in `execution/src/lib.rs` unconditionally divides by `energy_fee_rate`, causing production double-divide)
+- [x] Audit conformance fixture assumptions for `energy_limit` (freeze §14.3 — fixtures write `feeLimit` in SUN, only work because of the Rust divide)
+- [x] Choose one canonical wire contract:
   - [ ] send SUN, convert in Rust
-  - [ ] send energy units, do not reconvert in Rust
+  - [x] send energy units, do not reconvert in Rust (freeze §14.4)
   - [ ] introduce an explicit unit field/flag if neither is safe enough
-- [ ] Record migration impact for:
-  - [ ] Java bridge
-  - [ ] Rust execution
-  - [ ] fixtures
-  - [ ] `EE-vs-RR` comparison tooling
-  - [ ] replay tooling
-- [ ] Update comments in `backend.proto`
-- [ ] Add a follow-up implementation item to prevent mixed old/new interpretations during transition
+- [x] Record migration impact for (freeze §14.5):
+  - [x] Java bridge (tighten `computeEnergyLimitWithFixRatio` fallbacks to fail-fast; clarify non-VM tx semantics)
+  - [x] Rust execution (remove the `gas_limit / energy_fee_rate` divide)
+  - [x] fixtures (regenerate generators to emit energy units)
+  - [x] `EE-vs-RR` comparison tooling (re-baseline any accidentally-passing under-gassed runs)
+  - [x] replay tooling (tag captures with wire-contract-version marker; refuse mixed replays)
+- [x] Update comments in `backend.proto` (both `TronTransaction.energy_limit` and `ExecutionContext.energy_limit` now point to freeze §14)
+- [x] Add a follow-up implementation item to prevent mixed old/new interpretations during transition (tracked in freeze §14.6 and §14.7 — anti-regression note covers future silent reintroduction)
 
 Acceptance:
 
-- [ ] No remaining ambiguity on whether Java sends fee-limit SUN or already-computed energy units
-- [ ] Java, Rust, and conformance tooling target the same unit contract
+- [x] No remaining ambiguity on whether Java sends fee-limit SUN or already-computed energy units (freeze §14.4 locks: energy units)
+- [ ] Java, Rust, and conformance tooling target the same unit contract (freeze §14 defines the single target contract; the three tools do NOT align at the implementation level yet — the Rust divide, the Java fallback leaks, and the fixture generator are all tracked as follow-up implementation items in freeze §14.5 / §14.6. This acceptance flips to [x] only when those follow-ups land, not as part of the semantic-freeze chunk.)
 
 ### 1.3 Lock storage transaction semantics
 
@@ -579,44 +587,54 @@ Goal: keep the critical path clear and avoid starting expensive but premature wo
 
 ### 7.1 Critical path
 
-- [ ] Phase 1 critical path is:
-  - [ ] semantic freeze
-  - [ ] execution read-path closure
-  - [ ] storage transaction/snapshot closure
-  - [ ] parity verification
-  - [ ] block importer readiness planning
-- [ ] Explicitly keep `P2P / sync / consensus rewrite` off the critical path
+Ordering recorded in `close_loop.phase1_freeze.md` §8.
+
+- [x] Phase 1 critical path is:
+  - [x] semantic freeze
+  - [x] execution read-path closure
+  - [x] storage transaction/snapshot closure
+  - [x] parity verification
+  - [x] block importer readiness planning
+- [x] Explicitly keep `P2P / sync / consensus rewrite` off the critical path
 
 ### 7.2 Suggested first batch
 
-- [ ] Start with these items first:
-  - [ ] 1.1 Canonical write ownership
-  - [ ] 1.2 `energy_limit` wire contract
-  - [ ] 1.3 storage transaction semantics
-  - [ ] 1.5 contract support matrix
-  - [ ] 2.1 Java `callContract/estimateEnergy`
-  - [ ] 3.1 `transaction_id` plumbing
+First batch recorded in `close_loop.phase1_freeze.md` §9. Marking this
+sub-list "done" here means the batch has been *identified*; the individual
+items remain tracked under Sections 1–3 below.
+
+- [x] Start with these items first:
+  - [x] 1.1 Canonical write ownership
+  - [x] 1.2 `energy_limit` wire contract
+  - [x] 1.3 storage transaction semantics
+  - [x] 1.5 contract support matrix
+  - [x] 2.1 Java `callContract/estimateEnergy`
+  - [x] 3.1 `transaction_id` plumbing
 
 ### 7.3 Parallelization opportunities
 
-- [ ] Run Java execution bridge work in parallel with Rust storage semantics work
-- [ ] Run Rust execution query implementation in parallel with verification harness improvements
-- [ ] Keep one owner responsible for semantic freeze so implementation work does not diverge
+Documented in `close_loop.phase1_freeze.md` §10.
+
+- [x] Run Java execution bridge work in parallel with Rust storage semantics work
+- [x] Run Rust execution query implementation in parallel with verification harness improvements
+- [x] Keep one owner responsible for semantic freeze so implementation work does not diverge
 
 ---
 
 ## 8. Explicit non-goals and defer list
 
 These items should remain out of scope until the exit criteria above are met.
+Declared in `close_loop.phase1_freeze.md` §11; marking them [x] here records
+that the defer list has been published and is authoritative.
 
-- [ ] Do not start Rust P2P handshake work
-- [ ] Do not start Rust peer/session manager work
-- [ ] Do not start Rust sync scheduler / inventory pipeline work
-- [ ] Do not start Rust consensus scheduling rewrite
-- [ ] Do not optimize for mixed execution/storage modes
-- [ ] Do not make current `SHADOW` the main acceptance path again
-- [ ] Do not treat "many system contracts already run remotely" as proof that the full execution problem is solved
-- [ ] Do not treat "storage CRUD works" as proof that storage semantics are solved
+- [x] Do not start Rust P2P handshake work
+- [x] Do not start Rust peer/session manager work
+- [x] Do not start Rust sync scheduler / inventory pipeline work
+- [x] Do not start Rust consensus scheduling rewrite
+- [x] Do not optimize for mixed execution/storage modes
+- [x] Do not make current `SHADOW` the main acceptance path again
+- [x] Do not treat "many system contracts already run remotely" as proof that the full execution problem is solved
+- [x] Do not treat "storage CRUD works" as proof that storage semantics are solved
 
 ---
 

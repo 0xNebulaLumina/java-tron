@@ -10,17 +10,24 @@ pub type SnapshotHook = Box<dyn Fn(&HashSet<Address>) + Send + Sync>;
 /// REVM Database wrapper over an EVM state store.
 /// Provides caching and state tracking for transaction execution.
 ///
-/// ## Phase 0.3: Write Consistency Model
+/// ## Phase 1 canonical write ownership
 ///
-/// The `persist_enabled` flag controls whether this database persists state changes
-/// directly to the underlying storage during `commit()`.
+/// See `planning/close_loop.phase1_freeze.md` §13 for the full write-path matrix.
 ///
-/// - When `false` (default): Changes are only tracked in memory and returned via
-///   `get_state_change_records()`. Java's RuntimeSpiImpl handles actual persistence.
-///   This is the recommended mode for avoiding double-writes.
+/// The `persist_enabled` flag controls whether this database persists state
+/// changes directly to the underlying storage during `commit()`.
 ///
-/// - When `true`: Changes are persisted directly to storage during `commit()`.
-///   Use this only when Java apply is disabled or for specific testing scenarios.
+/// - When `true` (Phase 1 RR canonical): Changes are persisted directly to
+///   storage during `commit()`. On a successful commit, the gRPC layer
+///   returns `WRITE_MODE_PERSISTED` and Java skips its sidecar appliers.
+///   Revert, error, or commit-failure paths still return
+///   `WRITE_MODE_COMPUTE_ONLY`, so Java retains its apply path for those
+///   cases.
+///
+/// - When `false` (legacy / transitional only): Changes are only tracked in
+///   memory and returned via `get_state_change_records()`. Java's sidecar
+///   appliers are responsible for persistence. Retained for Shadow-era
+///   fixtures and ad-hoc debugging; not an RR acceptance configuration.
 pub struct EvmStateDatabase<S: EvmStateStore> {
     storage: S,
     // Cache for performance

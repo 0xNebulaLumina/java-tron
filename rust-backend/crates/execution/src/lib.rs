@@ -110,21 +110,24 @@ impl ExecutionModule {
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
 
-        // TRON energy_limit wire semantics (KNOWN MISMATCH — needs spec lock):
+        // Phase 1 `energy_limit` wire contract — see
+        // planning/close_loop.phase1_freeze.md §14.
         //
-        // - Conformance fixtures: energy_limit = feeLimit in SUN → Rust divides by ENERGY_FEE
-        //   to get energy units. This path is correct for fixtures.
+        // Canonical decision (FROZEN): Java is the sole computer of the
+        // SUN → energy conversion. `TronTransaction.energy_limit` on the wire
+        // carries energy units directly; Rust must NOT divide or otherwise
+        // reconvert.
         //
-        // - Production RemoteExecutionSPI: energy_limit = computeEnergyLimitWithFixRatio()
-        //   which already returns energy units (min(availableEnergy, feeLimit/energyFee)).
-        //   Dividing again here would under-gas the transaction.
-        //
-        // TODO: Lock the wire spec for energy_limit. Options:
-        //   (a) Java always sends feeLimit (SUN); Rust converts. Requires Rust to implement
-        //       the full getTotalEnergyLimitWithFixRatio computation for caller/creator split.
-        //   (b) Java always sends energy units; Rust does NOT convert. Requires fixture
-        //       generator to match by also sending energy units.
-        //   (c) Add a proto field/flag to indicate the unit.
+        // Current code still divides by `energy_fee_rate`. This was
+        // introduced for conformance fixtures that send `feeLimit` (SUN),
+        // and is a pre-freeze artifact. It is NOT the target behavior.
+        // Follow-up implementation items tracked in freeze §14.5 / §14.6:
+        //   - remove this divide,
+        //   - regenerate conformance fixtures in energy units,
+        //   - tighten Java fallback branches that leak SUN onto the wire.
+        // These are intentionally out of scope for the semantic-freeze
+        // chunk; the freeze locks the target contract so those follow-ups
+        // can land unambiguously.
         let mut adjusted_tx = tx.clone();
         if energy_fee_rate > 0 {
             adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;

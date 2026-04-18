@@ -153,24 +153,23 @@ delegation_reward_enabled = true
 # Set this for custom/private networks with different genesis witnesses.
 # genesis_guard_representatives_base58 = ["T...", "T..."]
 
-# === Phase 0.3: Write Consistency Model ===
-# This flag controls whether Rust persists state changes directly to storage during commit.
+# === Phase 1 canonical write ownership ===
+# See planning/close_loop.phase1_freeze.md §13 for the full write-path matrix.
 #
-# The system has two potential write paths:
-# 1. Rust handler directly writes to RocksDB via storage_adapter.set_*
-# 2. Java RuntimeSpiImpl applies state_changes/sidecars to local database
+# RR (remote execution + remote storage) canonical value is true:
+#   - Rust handlers persist via the buffered storage adapter that commits on
+#     success and is dropped on revert.
+#   - On a successful commit Rust returns WRITE_MODE_PERSISTED and Java skips
+#     its sidecar appliers, so no double-writes occur.
+#   - Non-success paths (EVM revert, execution error, adapter commit failure,
+#     storage-lock failure) still return WRITE_MODE_COMPUTE_ONLY; the Java
+#     sidecar appliers remain the fallback for those cases in Phase 1.
 #
-# To ensure idempotent semantics and avoid double-writes:
-# - When false (default/recommended): Rust only computes and returns changes via gRPC
-#   Java's RuntimeSpiImpl handles all persistence. This is Option A from the planning doc.
-# - When true: Rust writes to storage AND returns changes (legacy mode, risk of double-write)
-#   Only enable for testing or when Java apply is disabled.
-#
-# Benefits of false (Option A):
-# - Single authoritative write path (Java)
-# - Works consistently for both EMBEDDED and REMOTE storage modes
-# - Avoids non-idempotent double-writes (e.g., TRC-10 delta semantics)
-# - Easier transaction rollback on validation failure
+# Setting this to false is a legacy / transitional mode retained only for
+# Shadow-era conformance fixtures and ad-hoc debugging. It is NOT an RR
+# acceptance configuration: VM txs would fall back to Java's sidecar applier
+# path, which is not part of the Phase 1 exit criteria. Non-VM txs always
+# buffer-and-commit from Rust regardless of this flag.
 rust_persist_enabled = true
 
 # Dynamic property strictness (Task 5 - Java parity)

@@ -789,20 +789,31 @@ public interface ExecutionSPI {
   }
 
   /**
-   * Write mode for Phase B conformance alignment.
-   * Determines how Java should handle state changes from remote execution.
+   * Write mode returned by remote execution.
+   * Determines how Java should handle state changes from the Rust backend.
+   *
+   * <p>See planning/close_loop.phase1_freeze.md §13 for the canonical
+   * write-ownership policy.
    */
   enum WriteMode {
     /**
-     * Compute-only mode (Phase A): Rust only computes, Java applies state changes.
-     * This is the default and current behavior.
+     * Rust computed state changes but did not persist them.
+     * Java must apply the returned state_changes / sidecars.
+     *
+     * <p>In Phase 1 this path is reached for VM txs when
+     * {@code rust_persist_enabled=false} (legacy / transitional only), and
+     * for any revert / error / commit-failure path regardless of the flag.
      */
     COMPUTE_ONLY(0),
 
     /**
-     * Persist mode (Phase B): Rust has already persisted state changes.
-     * Java should NOT apply state changes to avoid double-apply.
+     * Rust already persisted state changes on a successful commit.
+     * Java must NOT re-apply state_changes / sidecars to avoid double-apply.
      * Java can use touched_keys to mirror remote state to local revoking head.
+     *
+     * <p>Under the Phase 1 RR canonical config
+     * ({@code rust_persist_enabled=true}), successful VM txs and non-VM txs
+     * return this mode.
      */
     PERSISTED(1);
 
