@@ -1554,60 +1554,55 @@ impl crate::backend::backend_server::Backend for BackendService {
                             // Continue with original result
                         }
 
-                        // Phase 2.I L2: Persist SmartContract metadata after successful contract creation
-                        // Note: We need to create a new storage adapter since execute_transaction_with_storage consumes it
-                        if is_create_smart_contract
-                            && result.success
-                            && result.contract_address.is_some()
-                        {
-                            // Phase B: Use buffered adapter if rust_persist_enabled to track metadata writes
-                            let mut persist_storage_adapter = if let Some(ref buffer) = write_buffer
+                        // Phase 2.I L2: Persist SmartContract metadata after successful contract creation.
+                        // Metadata writes are part of Rust write ownership and must use the same buffer.
+                        let metadata_result: anyhow::Result<()> = (|| {
+                            if !is_create_smart_contract
+                                || !result.success
+                                || result.contract_address.is_none()
                             {
-                                let mut adapter =
-                                    tron_backend_execution::EngineBackedEvmStateStore::new(
-                                        storage_engine.clone(),
-                                    );
-                                adapter.set_write_buffer(buffer.clone());
-                                adapter
-                            } else {
+                                return Ok(());
+                            }
+
+                            let buffer = write_buffer.as_ref().ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "CreateSmartContract metadata persistence requires buffered Rust write ownership"
+                                )
+                            })?;
+                            let mut persist_storage_adapter =
                                 tron_backend_execution::EngineBackedEvmStateStore::new(
                                     storage_engine.clone(),
-                                )
-                            };
-                            if let Err(e) = self.persist_smart_contract_metadata(
+                                );
+                            persist_storage_adapter.set_write_buffer(buffer.clone());
+
+                            self.persist_smart_contract_metadata(
                                 &mut persist_storage_adapter,
                                 &transaction,
                                 &context,
                                 result.contract_address.as_ref().unwrap(),
-                            ) {
-                                warn!("Failed to persist SmartContract metadata: {}", e);
-                                // Continue - contract was created, but metadata wasn't persisted
-                                // This is recoverable as Java can still access via embedded mode
-                            }
+                            )
+                            .map_err(|e| anyhow::anyhow!("Failed to persist SmartContract metadata: {}", e))?;
 
-                            // Phase 2: Emit TRC-10 call_token_value transfer if applicable
-                            // Java's VMActuator transfers TRC-10 tokens from owner to contract before execution.
-                            // We emit the Trc10Change on success so Java can apply the token transfer.
                             match self.extract_create_contract_trc10_transfer(
                                 &persist_storage_adapter,
                                 &transaction,
                                 result.contract_address.as_ref().unwrap(),
                             ) {
-                                Ok(Some(trc10_change)) => {
-                                    result.trc10_changes.push(trc10_change);
-                                    debug!("Added TRC-10 transfer change for CreateSmartContract");
-                                }
-                                Ok(None) => {
-                                    // No TRC-10 transfer needed (call_token_value <= 0 or TRC-10 disabled)
-                                }
-                                Err(e) => {
-                                    warn!("Failed to extract TRC-10 transfer for CreateSmartContract: {}", e);
-                                    // Continue - contract was created, but TRC-10 transfer wasn't emitted
-                                }
+                                Ok(Some(_)) => Err(anyhow::anyhow!(
+                                    "CreateSmartContract TRC-10 transfer is not implemented for Rust persisted write ownership"
+                                )),
+                                Ok(None) => Ok(()),
+                                Err(e) => Err(anyhow::anyhow!(
+                                    "Failed to extract TRC-10 transfer for CreateSmartContract: {}",
+                                    e
+                                )),
                             }
+                        })();
+                        if let Err(e) = metadata_result {
+                            Err(e)
+                        } else {
+                            Ok(result)
                         }
-
-                        Ok(result)
                     }
                     Err(e) => Err(e),
                 }
@@ -1713,9 +1708,9 @@ impl crate::backend::backend_server::Backend for BackendService {
                                         write_mode: 0,
                                         touched_keys: vec![],
                                     }));
-                                } else {
-                                    match locked_buffer.commit(&storage_engine) {
-                                        Ok(()) => {
+                                }
+                                match locked_buffer.commit(&storage_engine) {
+                                    Ok(()) => {
                                             info!(
                                                 "Phase B: Committed {} writes, {} touched keys",
                                                 op_count,
@@ -1757,7 +1752,6 @@ impl crate::backend::backend_server::Backend for BackendService {
                                             }));
                                         }
                                     }
-                                }
                             } else {
                                 // Execution failed/reverted - don't commit, drop buffer
                                 info!(

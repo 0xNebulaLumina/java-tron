@@ -701,6 +701,7 @@ impl BackendService {
             touched_keys: touched_keys
                 .map(|keys| {
                     keys.iter()
+                        .filter(|tk| tk.db != "freeze-records")
                         .map(|tk| DbKey {
                             db: tk.db.clone(),
                             key: tk.key.clone(),

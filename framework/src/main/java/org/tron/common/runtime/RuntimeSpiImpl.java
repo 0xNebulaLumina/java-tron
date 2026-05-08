@@ -1617,6 +1617,10 @@ public class RuntimeSpiImpl implements Runtime {
 
     List<ExecutionSPI.TouchedKey> touchedKeys = result.getTouchedKeys();
     if (touchedKeys == null || touchedKeys.isEmpty()) {
+      if (hasPersistedMirrorEffects(result)) {
+        throw new IllegalStateException(
+            "Persisted remote execution returned effects without touched keys");
+      }
       logger.debug("No touched keys for post-exec mirror");
       return;
     }
@@ -1626,6 +1630,9 @@ public class RuntimeSpiImpl implements Runtime {
         System.getProperty(PROP_BATCH_GET_ENABLED, String.valueOf(DEFAULT_BATCH_GET_ENABLED)));
     int maxBatchKeys = Integer.parseInt(
         System.getProperty(PROP_BATCH_MAX_KEYS, String.valueOf(DEFAULT_BATCH_MAX_KEYS)));
+    if (maxBatchKeys <= 0) {
+      throw new IllegalArgumentException(PROP_BATCH_MAX_KEYS + " must be > 0");
+    }
     boolean fallbackEnabled = Boolean.parseBoolean(
         System.getProperty(PROP_FALLBACK_ENABLED, String.valueOf(DEFAULT_FALLBACK_ENABLED)));
 
@@ -1703,6 +1710,17 @@ public class RuntimeSpiImpl implements Runtime {
       logger.error("Phase B mirror: Failed to refresh local state: {}", e.getMessage(), e);
       throw new RuntimeException("Phase B mirror failed to refresh local state", e);
     }
+  }
+
+  private boolean hasPersistedMirrorEffects(ExecutionProgramResult result) {
+    return (result.getStateChanges() != null && !result.getStateChanges().isEmpty())
+        || (result.getFreezeChanges() != null && !result.getFreezeChanges().isEmpty())
+        || (result.getGlobalResourceChanges() != null
+            && !result.getGlobalResourceChanges().isEmpty())
+        || (result.getTrc10Changes() != null && !result.getTrc10Changes().isEmpty())
+        || (result.getVoteChanges() != null && !result.getVoteChanges().isEmpty())
+        || (result.getWithdrawChanges() != null && !result.getWithdrawChanges().isEmpty())
+        || (result.getContractAddress() != null && result.getContractAddress().length > 0);
   }
 
   private boolean isV1UnfreezeContract(TransactionContext context) {

@@ -1865,9 +1865,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           resource = FreezeLedgerChange.Resource.TRON_POWER;
           break;
         default:
-          logger.warn("Unknown freeze resource type: {}, skipping entry", protoFreeze.getResource());
-          // Skip unknown resource types to avoid misapplication
-          continue;
+          throw new IllegalArgumentException(
+              "Unknown freeze resource type: " + protoFreeze.getResource());
       }
 
       FreezeLedgerChange freezeChange = new FreezeLedgerChange(
