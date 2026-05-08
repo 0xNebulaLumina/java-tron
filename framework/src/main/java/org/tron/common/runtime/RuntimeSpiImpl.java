@@ -194,10 +194,9 @@ public class RuntimeSpiImpl implements Runtime {
           result.getStateChanges().size(), context.getTrxCap().getTransactionId());
           
     } catch (Exception e) {
-      logger.error("Failed to apply state changes for transaction: {}, error: {}", 
+      logger.error("Failed to apply state changes for transaction: {}, error: {}",
           context.getTrxCap().getTransactionId(), e.getMessage(), e);
-      // Don't throw exception here as it would break the transaction flow
-      // The transaction might still be valid even if state sync fails
+      throw new RuntimeException("Failed to apply remote execution state changes", e);
     }
   }
 
@@ -956,9 +955,10 @@ public class RuntimeSpiImpl implements Runtime {
       }
       
     } catch (Exception e) {
-      logger.error("Failed to apply individual state change for address: {}, error: {}", 
-          org.tron.common.utils.ByteArray.toHexString(stateChange.getAddress()), 
+      logger.error("Failed to apply individual state change for address: {}, error: {}",
+          org.tron.common.utils.ByteArray.toHexString(stateChange.getAddress()),
           e.getMessage(), e);
+      throw new RuntimeException("Failed to apply individual state change", e);
     }
   }
 
@@ -993,9 +993,9 @@ public class RuntimeSpiImpl implements Runtime {
       // Deserialize the AccountInfo from the serialized format first
       AccountInfo accountInfo = deserializeAccountInfo(newValue);
       if (accountInfo == null) {
-        logger.error("Failed to deserialize AccountInfo for address: {} from {} bytes", addressStr, newValue.length);
-        // Don't proceed if we can't deserialize the account info
-        return;
+        throw new IllegalStateException(
+            "Failed to deserialize AccountInfo for address: " + addressStr
+                + " from " + newValue.length + " bytes");
       }
       
       // Get or create account
@@ -1022,14 +1022,10 @@ public class RuntimeSpiImpl implements Runtime {
                    addressStr, oldBalance, accountInfo.balance);
       }
       
-      // Note: TRON doesn't have explicit nonce like Ethereum, so we'll just track it for logging
-      // Note: Getting/Setting contract code in TRON requires different mechanisms than just accessing AccountCapsule
-      // This would typically involve ContractStore and other TRON-specific storage
       if (accountInfo.code != null && accountInfo.code.length > 0) {
-        logger.debug("Account {} has contract code: {} bytes, codeHash: {}",
-                    addressStr, accountInfo.code.length,
-                    org.tron.common.utils.ByteArray.toHexString(accountInfo.codeHash));
-        // TODO: Handle contract code storage if needed
+        throw new UnsupportedOperationException(
+            "Remote compute-only contract code application is not supported for account "
+                + addressStr);
       }
 
       // Apply resource usage fields from AEXT tail if present
@@ -1091,8 +1087,9 @@ public class RuntimeSpiImpl implements Runtime {
       }
       
     } catch (Exception e) {
-      logger.error("Failed to update account state for address: {}, error: {}", 
+      logger.error("Failed to update account state for address: {}, error: {}",
           org.tron.common.utils.StringUtil.encode58Check(address), e.getMessage(), e);
+      throw new RuntimeException("Failed to update account state", e);
     }
   }
 
@@ -1102,17 +1099,10 @@ public class RuntimeSpiImpl implements Runtime {
   private void updateAccountStorage(byte[] address, byte[] key, byte[] newValue,
                                    ChainBaseManager chainBaseManager,
                                    TransactionContext context) {
-    try {
-      // Account storage updates would go here
-      // This is more complex and depends on how Account storage is managed
-      logger.debug("Account storage update for address: {}, key: {}", 
-          address, key);
-      // TODO: Implement account storage synchronization if needed
-      
-    } catch (Exception e) {
-      logger.warn("Failed to update account storage for address: {}, key: {}, error: {}", 
-          address, key, e.getMessage());
-    }
+    throw new UnsupportedOperationException(
+        "Remote compute-only storage slot application is not supported for address "
+            + org.tron.common.utils.ByteArray.toHexString(address)
+            + ", key " + org.tron.common.utils.ByteArray.toHexString(key));
   }
 
   /**

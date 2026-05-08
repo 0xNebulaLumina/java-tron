@@ -1683,11 +1683,36 @@ impl crate::backend::backend_server::Backend for BackendService {
                                 let op_count = locked_buffer.operation_count();
                                 let db_count = locked_buffer.database_count();
                                 if db_count > 1 {
-                                    warn!(
-                                        "Phase B: Skipping Rust persistence for {} writes across {} databases; Java will apply returned state changes",
+                                    let msg = format!(
+                                        "Buffer commit would require non-atomic multi-database persistence: {} writes across {} databases",
                                         op_count, db_count
                                     );
-                                    (None, 0)
+                                    error!("Phase B: {}", msg);
+                                    return Ok(Response::new(ExecuteTransactionResponse {
+                                        result: Some(ExecutionResult {
+                                            status: execution_result::Status::TronSpecificError
+                                                as i32,
+                                            return_data: vec![],
+                                            energy_used: 0,
+                                            energy_refunded: 0,
+                                            state_changes: vec![],
+                                            logs: vec![],
+                                            error_message: msg.clone(),
+                                            bandwidth_used: 0,
+                                            resource_usage: vec![],
+                                            freeze_changes: vec![],
+                                            global_resource_changes: vec![],
+                                            trc10_changes: vec![],
+                                            vote_changes: vec![],
+                                            withdraw_changes: vec![],
+                                            tron_transaction_result: vec![],
+                                            contract_address: vec![],
+                                        }),
+                                        success: false,
+                                        error_message: msg,
+                                        write_mode: 0,
+                                        touched_keys: vec![],
+                                    }));
                                 } else {
                                     match locked_buffer.commit(&storage_engine) {
                                         Ok(()) => {

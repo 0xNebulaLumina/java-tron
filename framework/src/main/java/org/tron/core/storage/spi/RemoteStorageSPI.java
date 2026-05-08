@@ -1058,8 +1058,7 @@ public class RemoteStorageSPI implements StorageSPI {
 
                 Map.Entry<byte[], byte[]> result = nextEntry;
 
-                // CRITICAL FIX: Properly advance the iterator position
-                currentKey = incrementKey(result.getKey());
+                currentKey = exclusiveStartKey(result.getKey());
 
                 hasNextCached = false;
                 nextEntry = null;
@@ -1119,38 +1118,15 @@ public class RemoteStorageSPI implements StorageSPI {
       logger.debug("Closed iterator for db={}", dbName);
     }
 
-    /**
-     * Increment a byte array key to get the next possible key. This is crucial for proper iterator
-     * advancement.
-     *
-     * @param key the current key
-     * @return the next key in lexicographic order
-     */
-    private byte[] incrementKey(byte[] key) {
-      if (key == null || key.length == 0) {
-        return new byte[] {0x01};
+    private byte[] exclusiveStartKey(byte[] key) {
+      if (key == null) {
+        return new byte[] {0x00};
       }
 
-      // Create a copy to avoid modifying the original
-      byte[] nextKey = new byte[key.length];
+      byte[] nextKey = new byte[key.length + 1];
       System.arraycopy(key, 0, nextKey, 0, key.length);
-
-      // Increment the key by finding the rightmost byte that can be incremented
-      for (int i = nextKey.length - 1; i >= 0; i--) {
-        if (nextKey[i] != (byte) 0xFF) {
-          nextKey[i]++;
-          return nextKey;
-        } else {
-          nextKey[i] = 0x00;
-        }
-      }
-
-      // If all bytes were 0xFF, we need to extend the key
-      byte[] extendedKey = new byte[nextKey.length + 1];
-      System.arraycopy(nextKey, 0, extendedKey, 0, nextKey.length);
-      extendedKey[nextKey.length] = 0x01;
-
-      return extendedKey;
+      nextKey[key.length] = 0x00;
+      return nextKey;
     }
   }
 }
