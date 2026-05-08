@@ -598,35 +598,11 @@ message TronTransaction {
   // Rust accepts both encodings: it prefers `contract_parameter.value` when present and
   // the type_url matches, falling back to decoding from `data`.
   bytes data = 4;
-  // FUTURE-LOCKED (close_loop Phase 1, see planning/close_loop.energy_limit.md):
-  //   The Phase 1 decision is that `energy_limit` will be expressed in ENERGY
-  //   UNITS, not fee-limit SUN. The decision is recorded; the producer/consumer
-  //   migration to that contract has NOT yet landed.
-  //
-  // Current live behavior (as of this comment):
-  //   - Java `RemoteExecutionSPI` sends energy units only for the two VM
-  //     contract types (CreateSmartContract / TriggerSmartContract) via
-  //     `computeEnergyLimitWithFixRatio`, and even then falls back to raw
-  //     fee-limit SUN if the helper hits an exception.
-  //   - Java `RemoteExecutionSPI` sends raw fee-limit SUN for every other
-  //     contract type as the default.
-  //   - Java fixture generators (`FixtureGenerator.java`,
-  //     `VmTriggerFixtureGeneratorTest.java`) still send fee-limit SUN
-  //     across the board.
-  //   - Rust `tron-backend-execution` still divides incoming `energy_limit`
-  //     by `ENERGY_FEE` to obtain energy units, which under-gases the
-  //     production VM path.
-  //
-  // Future contract once migration lands (tracked in close_loop.energy_limit.md):
-  //   - Producers will convert fee-limit SUN to energy units before sending,
-  //     or set 0 for contract types that do not consume energy.
-  //   - Consumers will treat the field as energy units and will not divide
-  //     by ENERGY_FEE a second time.
-  //   - A value of 0 will mean "no VM-side energy cap specified"; non-VM
-  //     contract types will send 0.
-  //
-  // Until the follow-up code change lands, do NOT cite this comment as
-  // proof that the live system already enforces the future-locked contract.
+  // Current close_loop wire contract: this field carries the raw transaction
+  // fee_limit in SUN for validation parity. For VM execution, Java also sends
+  // ExecutionContext.energy_limit as the Java-computed VM energy cap converted
+  // back to SUN; Rust divides that context value by ENERGY_FEE before EVM use.
+  // Fixtures may still send fee-limit SUN in both fields.
   int64 energy_limit = 5;
   int64 energy_price = 6;
   int64 nonce = 7;

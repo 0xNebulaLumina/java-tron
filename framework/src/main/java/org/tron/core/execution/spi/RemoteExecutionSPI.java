@@ -648,7 +648,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
    * This implements the same formula as Java's VMActuator for energy limit computation:
    * - availableEnergy = leftFrozenEnergy + max(balance - callValue, 0) / sunPerEnergy
    * - energyFromFeeLimit = feeLimit / sunPerEnergy
-   * - energyLimit = min(availableEnergy, energyFromFeeLimit)
+   * - vmEnergyLimit = min(availableEnergy, energyFromFeeLimit)
    *
    * @param context The transaction context containing store factory
    * @param ownerAddress The owner/caller address
@@ -793,7 +793,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       long value = 0; // Default zero value
       long feeLimit = transaction.getRawData().getFeeLimit();
       long sunPerEnergy = getSunPerEnergy(context);
-      long energyLimit = feeLimit;
+      long vmEnergyLimit = feeLimit;
       long energyPrice = 1; // Default energy price
       long nonce = 0; // TRON doesn't use nonce like Ethereum
 
@@ -929,17 +929,17 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             // SmartContract metadata (ABI, name, origin_energy_limit, etc.) after EVM execution
             data = createContract.toByteArray();
             value = createContract.getNewContract().getCallValue();
-            energyLimit = toEnergyLimitWireSun(
+            vmEnergyLimit = toEnergyLimitWireSun(
                 computeEnergyLimitWithFixRatio(context, fromAddress, feeLimit, value),
                 sunPerEnergy);
 
             logger.debug(
                 "Mapped CreateSmartContract to remote request; owner={}, name={}, "
-                    + "origin_energy_limit={}, fee_limit_sun={}",
+                    + "origin_energy_limit={}, vm_energy_limit_sun={}",
                 org.tron.common.utils.ByteArray.toHexString(fromAddress),
                 createContract.getNewContract().getName(),
                 createContract.getNewContract().getOriginEnergyLimit(),
-                energyLimit);
+                vmEnergyLimit);
           }
           txKind = TxKind.VM; // Smart contract creation requires VM
           contractType = ContractType.CREATE_SMART_CONTRACT;
@@ -951,17 +951,17 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = triggerContract.getContractAddress().toByteArray();
           data = triggerContract.getData().toByteArray();
           value = triggerContract.getCallValue();
-          energyLimit = toEnergyLimitWireSun(
+          vmEnergyLimit = toEnergyLimitWireSun(
               computeTriggerEnergyLimitWithFixRatio(
                   context, fromAddress, toAddress, feeLimit, value),
               sunPerEnergy);
 
           logger.debug(
               "Mapped TriggerSmartContract to remote request; owner={}, contract={}, "
-                  + "fee_limit_sun={}",
+                  + "vm_energy_limit_sun={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(toAddress),
-              energyLimit);
+              vmEnergyLimit);
 
           txKind = TxKind.VM; // Smart contract invocation requires VM
           contractType = ContractType.TRIGGER_SMART_CONTRACT;
@@ -1466,7 +1466,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               .setTo(ByteString.copyFrom(toAddress))
               .setValue(ByteString.copyFrom(longToBytes32(value)))
               .setData(ByteString.copyFrom(data))
-              .setEnergyLimit(energyLimit)
+              .setEnergyLimit(feeLimit)
               .setEnergyPrice(energyPrice)
               .setNonce(nonce)
               .setTxKind(txKind) // Set the transaction kind for proper processing
@@ -1495,7 +1495,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               .setBlockTimestamp(blockTimestamp)
               .setBlockHash(ByteString.copyFrom(blockHash))
               .setCoinbase(ByteString.copyFrom(coinbase))
-              .setEnergyLimit(energyLimit)
+              .setEnergyLimit(vmEnergyLimit)
               .setEnergyPrice(energyPrice)
               .setTransactionId(transactionId);
 

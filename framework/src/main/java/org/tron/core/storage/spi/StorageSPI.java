@@ -30,13 +30,19 @@ public interface StorageSPI {
 
   default CompletableFuture<Void> put(
       String dbName, byte[] key, byte[] value, String transactionId) {
-    throw new UnsupportedOperationException("transaction-scoped put is not supported");
+    CompletableFuture<Void> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException("transaction-scoped put is not supported"));
+    return future;
   }
 
   CompletableFuture<Void> delete(String dbName, byte[] key);
 
   default CompletableFuture<Void> delete(String dbName, byte[] key, String transactionId) {
-    throw new UnsupportedOperationException("transaction-scoped delete is not supported");
+    CompletableFuture<Void> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException("transaction-scoped delete is not supported"));
+    return future;
   }
 
   CompletableFuture<Boolean> has(String dbName, byte[] key);
@@ -46,7 +52,10 @@ public interface StorageSPI {
 
   default CompletableFuture<Void> batchWrite(
       String dbName, Map<byte[], byte[]> operations, String transactionId) {
-    throw new UnsupportedOperationException("transaction-scoped batchWrite is not supported");
+    CompletableFuture<Void> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException("transaction-scoped batchWrite is not supported"));
+    return future;
   }
 
   CompletableFuture<Map<byte[], byte[]>> batchGet(String dbName, List<byte[]> keys);

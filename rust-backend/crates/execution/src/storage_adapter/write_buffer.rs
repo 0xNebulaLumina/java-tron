@@ -206,7 +206,7 @@ impl ExecutionWriteBuffer {
     ///
     /// # Returns
     /// * `Ok(())` - All operations committed successfully
-    /// * `Err(...)` - Commit failed (partial writes may have occurred)
+    /// * `Err(...)` - Commit failed; committed batches are rolled back best-effort
     ///
     /// # Note
     /// After calling `commit()`, the buffer is cleared.

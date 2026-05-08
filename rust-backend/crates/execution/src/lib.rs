@@ -38,6 +38,19 @@ pub struct ExecutionModule {
 }
 
 impl ExecutionModule {
+    fn adjusted_vm_gas_limit(tx: &TronTransaction, context: &TronExecutionContext, energy_fee_rate: u64) -> u64 {
+        if energy_fee_rate == 0 {
+            return tx.gas_limit;
+        }
+
+        let wire_energy_limit = if context.block_gas_limit > 0 {
+            context.block_gas_limit
+        } else {
+            tx.gas_limit
+        };
+        wire_energy_limit / energy_fee_rate
+    }
+
     pub fn new(config: ExecutionConfig) -> Self {
         Self {
             config,
@@ -66,32 +79,12 @@ impl ExecutionModule {
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
 
-        // TRON energy_limit wire semantics (FUTURE-LOCKED — close_loop Phase 1).
-        //
-        // Phase 1 decision (see planning/close_loop.energy_limit.md):
-        //   `energy_limit` on the wire WILL be expressed in ENERGY UNITS,
-        //   and this crate WILL stop dividing by `ENERGY_FEE`. The decision
-        //   is recorded; the producer/consumer migration has NOT yet landed.
-        //
-        // Current live behavior:
-        //   - Java `RemoteExecutionSPI` sends energy units only for the two
-        //     VM contract types, and falls back to raw fee-limit SUN if its
-        //     helper hits an exception.
-        //   - Java fixture generators still send fee-limit SUN unconditionally.
-        //   - This crate divides incoming `gas_limit` by `energy_fee_rate`
-        //     to recover energy units, which is correct for the SUN-sending
-        //     paths and double-converts the energy-unit-sending paths.
-        //
-        // The division below is the transitional behavior. When the Java
-        // producer-side migration in close_loop Section 1.2 lands, delete
-        // this block and update the removal todo in
-        // `planning/close_loop.energy_limit.md`.
-        //
-        // TODO(close_loop 1.2): remove this division once all producers
-        // (Java bridge + fixture generators) emit energy units directly.
+        // Current close_loop wire contract: tx.gas_limit carries raw fee-limit SUN for
+        // validation, while context.block_gas_limit carries the VM cap in SUN. Divide
+        // the context value to recover the EVM energy-unit limit.
         let mut adjusted_tx = tx.clone();
         if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
+            adjusted_tx.gas_limit = Self::adjusted_vm_gas_limit(tx, context, energy_fee_rate);
         }
 
         let database =
@@ -584,7 +577,7 @@ impl ExecutionModule {
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
         let mut adjusted_tx = tx.clone();
         if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
+            adjusted_tx.gas_limit = Self::adjusted_vm_gas_limit(tx, context, energy_fee_rate);
         }
         let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
@@ -617,7 +610,7 @@ impl ExecutionModule {
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
         let mut adjusted_tx = tx.clone();
         if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
+            adjusted_tx.gas_limit = Self::adjusted_vm_gas_limit(tx, context, energy_fee_rate);
         }
         let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
