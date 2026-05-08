@@ -669,6 +669,17 @@ class AlignmentBreakTests(unittest.TestCase):
         d2 = [make_row({"tx_id_hex": "a"}), make_row({"tx_id_hex": "b"})]
         self.assertIsNone(cmp.find_alignment_break(CSV_HEADER, d1, d2))
 
+    def test_find_detects_block_drift_with_same_tx_id(self) -> None:
+        d1 = [make_row({"tx_id_hex": "a", "block_num": "100"})]
+        d2 = [make_row({"tx_id_hex": "a", "block_num": "101"})]
+        ab = cmp.find_alignment_break(CSV_HEADER, d1, d2)
+        self.assertIsNotNone(ab)
+        self.assertEqual(ab.row_index, 0)
+        self.assertEqual(ab.embedded_block, "100")
+        self.assertEqual(ab.remote_block, "101")
+        self.assertEqual(ab.embedded_tx_id, "a")
+        self.assertEqual(ab.remote_tx_id, "a")
+
     def test_find_detects_inserted_row(self) -> None:
         d1 = [
             make_row({"tx_id_hex": "a"}),

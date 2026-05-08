@@ -354,13 +354,13 @@ def find_alignment_break(
                 embedded_tx_id=txid1,
                 remote_tx_id=txid2,
             )
-        if txid_col is None and blk_col is not None and blk1 != blk2:
+        if blk_col is not None and blk1 != blk2:
             return AlignmentBreak(
                 row_index=i,
                 embedded_block=blk1,
                 remote_block=blk2,
-                embedded_tx_id="?",
-                remote_tx_id="?",
+                embedded_tx_id=txid1 if txid_col is not None else "?",
+                remote_tx_id=txid2 if txid_col is not None else "?",
             )
     return None
 

@@ -562,28 +562,40 @@ impl StorageEngine {
     }
 
     pub fn commit_transaction(&self, transaction_id: &str) -> Result<()> {
+        let db_name = {
+            let transactions = self.transactions.read().unwrap();
+            transactions
+                .get(transaction_id)
+                .ok_or_else(|| anyhow!("Transaction {} not found", transaction_id))?
+                .db_name
+                .clone()
+        };
+
+        let db = self.get_or_init_db(&db_name)?;
         let transaction_info = {
             let mut transactions = self.transactions.write().unwrap();
             transactions
                 .remove(transaction_id)
                 .ok_or_else(|| anyhow!("Transaction {} not found", transaction_id))?
         };
-
-        let db = self.get_or_init_db(&transaction_info.db_name)?;
         let mut batch = WriteBatch::default();
 
-        for op in transaction_info.operations {
+        for op in transaction_info.operations.iter() {
             match op {
                 BatchOp::Put { key, value } => {
-                    batch.put(&key, &value);
+                    batch.put(key, value);
                 }
                 BatchOp::Delete { key } => {
-                    batch.delete(&key);
+                    batch.delete(key);
                 }
             }
         }
 
-        db.write(batch)?;
+        if let Err(err) = db.write(batch) {
+            let mut transactions = self.transactions.write().unwrap();
+            transactions.insert(transaction_id.to_string(), transaction_info);
+            return Err(err.into());
+        }
         Ok(())
     }
 

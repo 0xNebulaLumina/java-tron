@@ -278,14 +278,13 @@ public class RemoteExecutionSPI implements ExecutionSPI {
               }
             }
             return result;
+          } catch (UnsupportedOperationException | IllegalArgumentException e) {
+            logger.warn(
+                "Remote callContract not supported for transaction {}: {}",
+                context.getTrxCap().getTransactionId(),
+                e.getMessage());
+            throw e;
           } catch (RuntimeException e) {
-            // Transport or build error. The VM never ran, so this is
-            // NOT a revert — do NOT call setRevert(). Downstream
-            // Wallet.java:3122 rewrites any setRevert()-shaped failure
-            // to "REVERT opcode executed", which would silently erase
-            // the real transport error string below. Reporting as
-            // UNKNOWN with the original exception message preserves
-            // the diagnostic.
             logger.error(
                 "Remote callContract failed for tx {}",
                 context.getTrxCap().getTransactionId(),
@@ -1701,18 +1700,19 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           touchedKeys);
     }
 
-    ExecutionResult protoResult = response.getResult();
+    tron.backend.BackendOuterClass.ExecutionResult protoResult = response.getResult();
     List<StateChange> stateChanges = new ArrayList<>();
     List<LogEntry> logs = new ArrayList<>();
 
     // Convert protobuf state changes to ExecutionSPI state changes
-    for (StateChange protoChange :
+    for (tron.backend.BackendOuterClass.StateChange protoChange :
         protoResult.getStateChangesList()) {
       
       // Handle the oneof union type
       if (protoChange.hasStorageChange()) {
         // Handle storage change
-        StorageChange storageChange = protoChange.getStorageChange();
+        tron.backend.BackendOuterClass.StorageChange storageChange =
+            protoChange.getStorageChange();
         StateChange stateChange = new StateChange(
             storageChange.getAddress().toByteArray(),
             storageChange.getKey().toByteArray(),
@@ -1728,7 +1728,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             
       } else if (protoChange.hasAccountChange()) {
         // Handle account change - serialize AccountInfo properly
-        AccountChange accountChange = protoChange.getAccountChange();
+        tron.backend.BackendOuterClass.AccountChange accountChange =
+            protoChange.getAccountChange();
         
         // For account changes, we'll use empty key to indicate it's an account-level change
         // and serialize account info in the values
@@ -1767,7 +1768,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     }
 
     // Convert protobuf logs to ExecutionSPI logs
-    for (LogEntry protoLog : protoResult.getLogsList()) {
+    for (tron.backend.BackendOuterClass.LogEntry protoLog : protoResult.getLogsList()) {
       List<byte[]> topics = new ArrayList<>();
       for (ByteString topic : protoLog.getTopicsList()) {
         topics.add(topic.toByteArray());
@@ -1779,7 +1780,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     // Convert protobuf freeze changes to ExecutionSPI freeze changes (Phase 2)
     List<FreezeLedgerChange> freezeChanges = new ArrayList<>();
-    for (FreezeLedgerChange protoFreeze : protoResult.getFreezeChangesList()) {
+    for (tron.backend.BackendOuterClass.FreezeLedgerChange protoFreeze :
+        protoResult.getFreezeChangesList()) {
       // Convert proto Resource enum to ExecutionSPI Resource enum
       FreezeLedgerChange.Resource resource;
       switch (protoFreeze.getResource()) {
@@ -1816,7 +1818,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     // Convert protobuf global resource changes (Phase 2)
     List<GlobalResourceTotalsChange> globalResourceChanges = new ArrayList<>();
-    for (GlobalResourceTotalsChange protoGlobal : protoResult.getGlobalResourceChangesList()) {
+    for (tron.backend.BackendOuterClass.GlobalResourceTotalsChange protoGlobal :
+        protoResult.getGlobalResourceChangesList()) {
       GlobalResourceTotalsChange globalChange = new GlobalResourceTotalsChange(
           protoGlobal.getTotalNetWeight(),
           protoGlobal.getTotalNetLimit(),
@@ -1858,10 +1861,12 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     // Convert protobuf TRC-10 changes (Phase 2: full TRC-10 ledger semantics)
     List<Trc10Change> trc10Changes = new ArrayList<>();
-    for (Trc10Change protoTrc10 : protoResult.getTrc10ChangesList()) {
+    for (tron.backend.BackendOuterClass.Trc10Change protoTrc10 :
+        protoResult.getTrc10ChangesList()) {
       // Handle the oneof union type
       if (protoTrc10.hasAssetIssued()) {
-        Trc10AssetIssued protoAssetIssued = protoTrc10.getAssetIssued();
+        tron.backend.BackendOuterClass.Trc10AssetIssued protoAssetIssued =
+            protoTrc10.getAssetIssued();
 
         Trc10AssetIssued assetIssued = new Trc10AssetIssued(
             protoAssetIssued.getOwnerAddress().toByteArray(),
@@ -1890,7 +1895,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             protoAssetIssued.getPrecision(),
             protoAssetIssued.getTokenId());
       } else if (protoTrc10.hasAssetTransferred()) {
-        Trc10AssetTransferred protoAssetTransferred =
+        tron.backend.BackendOuterClass.Trc10AssetTransferred protoAssetTransferred =
             protoTrc10.getAssetTransferred();
 
         Trc10AssetTransferred assetTransferred = new Trc10AssetTransferred(
@@ -1913,9 +1918,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     // Convert protobuf VoteChange (Phase 2: Account.votes update after VoteWitness)
     List<VoteChange> voteChanges = new ArrayList<>();
-    for (VoteChange protoVoteChange : protoResult.getVoteChangesList()) {
+    for (tron.backend.BackendOuterClass.VoteChange protoVoteChange :
+        protoResult.getVoteChangesList()) {
       List<VoteEntry> votes = new ArrayList<>();
-      for (Vote protoVote : protoVoteChange.getVotesList()) {
+      for (tron.backend.BackendOuterClass.Vote protoVote : protoVoteChange.getVotesList()) {
         votes.add(new VoteEntry(
             protoVote.getVoteAddress().toByteArray(),
             protoVote.getVoteCount()));
@@ -1931,7 +1937,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     // Convert protobuf WithdrawChange (WithdrawBalanceContract: allowance/latestWithdrawTime sidecar)
     List<WithdrawChange> withdrawChanges = new ArrayList<>();
-    for (WithdrawChange protoWithdrawChange : protoResult.getWithdrawChangesList()) {
+    for (tron.backend.BackendOuterClass.WithdrawChange protoWithdrawChange :
+        protoResult.getWithdrawChangesList()) {
       withdrawChanges.add(new WithdrawChange(
           protoWithdrawChange.getOwnerAddress().toByteArray(),
           protoWithdrawChange.getAmount(),
@@ -1948,7 +1955,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       metricsCallback.onMetric("remote.energy_used", protoResult.getEnergyUsed());
       metricsCallback.onMetric(
           "remote.success",
-          protoResult.getStatus() == ExecutionResult.Status.SUCCESS
+          protoResult.getStatus() == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS
               ? 1.0
               : 0.0);
       metricsCallback.onMetric("remote.freeze_changes_count", freezeChanges.size());
@@ -1977,7 +1984,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     }
 
     return new ExecutionResult(
-        protoResult.getStatus() == ExecutionResult.Status.SUCCESS,
+        protoResult.getStatus() == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS,
         protoResult.getReturnData().toByteArray(),
         protoResult.getEnergyUsed(),
         protoResult.getEnergyRefunded(),
