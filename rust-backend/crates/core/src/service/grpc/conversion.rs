@@ -703,7 +703,7 @@ impl BackendService {
                 contract_address: contract_address_bytes,
             }),
             success: true,
-            error_message,
+            error_message: String::new(),
             // Phase B: Write mode and touched keys for B-镜像 support
             write_mode,
             touched_keys: touched_keys

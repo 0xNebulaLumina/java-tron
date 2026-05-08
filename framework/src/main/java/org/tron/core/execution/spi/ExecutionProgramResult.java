@@ -134,14 +134,17 @@ public class ExecutionProgramResult extends ProgramResult {
     result.setHReturn(executionResult.getReturnData());
 
     // Set success/failure state
+    contractResult executionResultCode = executionResult.getResultCode();
     if (executionResult.isSuccess()) {
       result.setResultCode(contractResult.SUCCESS);
-    } else if (isRevertError(executionResult.getErrorMessage())) {
+    } else if (executionResultCode == contractResult.REVERT
+        || (executionResultCode == null && isRevertError(executionResult.getErrorMessage()))) {
       result.setResultCode(contractResult.REVERT);
       result.setRevert();
       result.setRuntimeError(executionResult.getErrorMessage());
     } else {
-      result.setResultCode(contractResult.UNKNOWN);
+      result.setResultCode(
+          executionResultCode != null ? executionResultCode : contractResult.UNKNOWN);
       result.setRuntimeError(executionResult.getErrorMessage());
     }
 

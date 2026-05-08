@@ -3,7 +3,9 @@ package org.tron.core.execution.spi;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
+import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -14,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.tron.common.client.ExecutionGrpcClient;
 import org.tron.core.capsule.AccountCapsule;
 import org.tron.core.capsule.BlockCapsule;
+import org.tron.core.capsule.ContractCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.ChainBaseManager;
 import org.tron.core.Constant;
@@ -24,6 +27,7 @@ import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
 import org.tron.core.store.AccountStore;
 import org.tron.core.store.DynamicPropertiesStore;
+import org.tron.core.vm.config.VMConfig;
 import org.tron.protos.Protocol.Transaction;
 import org.tron.protos.Protocol.Transaction.Result.contractResult;
 import org.tron.protos.contract.AssetIssueContractOuterClass.TransferAssetContract;
@@ -613,6 +617,31 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     }
   }
 
+  private long getSunPerEnergy(TransactionContext context) {
+    long sunPerEnergy = Constant.SUN_PER_ENERGY;
+    try {
+      if (context.getStoreFactory() != null
+          && context.getStoreFactory().getChainBaseManager() != null) {
+        long energyFee = context.getStoreFactory().getChainBaseManager()
+            .getDynamicPropertiesStore().getEnergyFee();
+        if (energyFee > 0) {
+          sunPerEnergy = energyFee;
+        }
+      }
+    } catch (Exception e) {
+      logger.warn("Failed to read energy fee, using default: {}", e.getMessage());
+    }
+    return sunPerEnergy;
+  }
+
+  private long toEnergyLimitWireSun(long energyUnits, long sunPerEnergy) {
+    try {
+      return Math.multiplyExact(energyUnits, sunPerEnergy);
+    } catch (ArithmeticException e) {
+      return Long.MAX_VALUE;
+    }
+  }
+
   /**
    * Compute energy limit with fix ratio, matching VMActuator.getAccountEnergyLimitWithFixRatio().
    *
@@ -625,21 +654,21 @@ public class RemoteExecutionSPI implements ExecutionSPI {
    * @param ownerAddress The owner/caller address
    * @param feeLimit The fee limit from the transaction
    * @param callValue The call value for contract creation/call
-   * @return The computed energy limit, or feeLimit if computation fails
+   * @return The computed energy limit in energy units
    */
   private long computeEnergyLimitWithFixRatio(TransactionContext context, byte[] ownerAddress,
       long feeLimit, long callValue) {
     try {
       // Get stores from context
       if (context.getStoreFactory() == null) {
-        logger.warn("StoreFactory is null, falling back to feeLimit for energy limit");
-        return feeLimit;
+        logger.warn("StoreFactory is null, falling back to feeLimit-derived energy limit");
+        return feeLimit / getSunPerEnergy(context);
       }
 
       ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
       if (chainBaseManager == null) {
         logger.warn("ChainBaseManager is null, falling back to feeLimit for energy limit");
-        return feeLimit;
+        return feeLimit / getSunPerEnergy(context);
       }
 
       AccountStore accountStore = chainBaseManager.getAccountStore();
@@ -647,14 +676,14 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
       if (accountStore == null || dynamicPropertiesStore == null) {
         logger.warn("AccountStore or DynamicPropertiesStore is null, falling back to feeLimit");
-        return feeLimit;
+        return feeLimit / getSunPerEnergy(context);
       }
 
       // Get account
       AccountCapsule account = accountStore.get(ownerAddress);
       if (account == null) {
         logger.warn("Owner account not found, falling back to feeLimit for energy limit");
-        return feeLimit;
+        return feeLimit / getSunPerEnergy(context);
       }
 
       // Get energy fee (SUN per energy unit)
@@ -693,7 +722,58 @@ public class RemoteExecutionSPI implements ExecutionSPI {
 
     } catch (Exception e) {
       logger.warn("Failed to compute energy limit, falling back to feeLimit: {}", e.getMessage());
-      return feeLimit;
+      return feeLimit / getSunPerEnergy(context);
+    }
+  }
+
+  private long computeTriggerEnergyLimitWithFixRatio(TransactionContext context,
+      byte[] callerAddress, byte[] contractAddress, long feeLimit, long callValue) {
+    long callerEnergyLimit = computeEnergyLimitWithFixRatio(
+        context, callerAddress, feeLimit, callValue);
+    try {
+      ChainBaseManager chainBaseManager = context.getStoreFactory().getChainBaseManager();
+      ContractCapsule contractCapsule = chainBaseManager.getContractStore().get(contractAddress);
+      if (contractCapsule == null) {
+        return callerEnergyLimit;
+      }
+
+      AccountCapsule creator = chainBaseManager.getAccountStore()
+          .get(contractCapsule.getOriginAddress());
+      AccountCapsule caller = chainBaseManager.getAccountStore().get(callerAddress);
+      if (creator == null || caller == null
+          || Arrays.equals(
+              creator.getAddress().toByteArray(), caller.getAddress().toByteArray())) {
+        return callerEnergyLimit;
+      }
+
+      long consumeUserResourcePercent = contractCapsule.getConsumeUserResourcePercent(
+          VMConfig.disableJavaLangMath());
+      long originEnergyLimit = contractCapsule.getOriginEnergyLimit();
+      if (originEnergyLimit < 0) {
+        throw new ContractValidateException("originEnergyLimit can't be < 0");
+      }
+
+      long creatorEnergyLimit = 0;
+      EnergyProcessor energyProcessor = new EnergyProcessor(
+          chainBaseManager.getDynamicPropertiesStore(), chainBaseManager.getAccountStore());
+      long originEnergyLeft = consumeUserResourcePercent < Constant.ONE_HUNDRED
+          ? energyProcessor.getAccountLeftEnergyFromFreeze(creator)
+          : 0;
+      if (consumeUserResourcePercent <= 0) {
+        creatorEnergyLimit = Math.min(originEnergyLeft, originEnergyLimit);
+      } else if (consumeUserResourcePercent < Constant.ONE_HUNDRED) {
+        long sponsoredLimit = BigInteger.valueOf(callerEnergyLimit)
+            .multiply(BigInteger.valueOf(Constant.ONE_HUNDRED - consumeUserResourcePercent))
+            .divide(BigInteger.valueOf(consumeUserResourcePercent))
+            .longValueExact();
+        creatorEnergyLimit = Math.min(
+            sponsoredLimit, Math.min(originEnergyLeft, originEnergyLimit));
+      }
+      return Math.addExact(callerEnergyLimit, creatorEnergyLimit);
+    } catch (Exception e) {
+      logger.warn(
+          "Failed to compute trigger total energy limit, using caller limit: {}", e.getMessage());
+      return callerEnergyLimit;
     }
   }
 
@@ -711,7 +791,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       byte[] toAddress = new byte[20]; // Default empty address
       byte[] data = new byte[0]; // Default empty data
       long value = 0; // Default zero value
-      long energyLimit = transaction.getRawData().getFeeLimit();
+      long feeLimit = transaction.getRawData().getFeeLimit();
+      long sunPerEnergy = getSunPerEnergy(context);
+      long energyLimit = feeLimit;
       long energyPrice = 1; // Default energy price
       long nonce = 0; // TRON doesn't use nonce like Ethereum
 
@@ -847,6 +929,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             // SmartContract metadata (ABI, name, origin_energy_limit, etc.) after EVM execution
             data = createContract.toByteArray();
             value = createContract.getNewContract().getCallValue();
+            energyLimit = toEnergyLimitWireSun(
+                computeEnergyLimitWithFixRatio(context, fromAddress, feeLimit, value),
+                sunPerEnergy);
 
             logger.debug(
                 "Mapped CreateSmartContract to remote request; owner={}, name={}, "
@@ -866,6 +951,10 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           toAddress = triggerContract.getContractAddress().toByteArray();
           data = triggerContract.getData().toByteArray();
           value = triggerContract.getCallValue();
+          energyLimit = toEnergyLimitWireSun(
+              computeTriggerEnergyLimitWithFixRatio(
+                  context, fromAddress, toAddress, feeLimit, value),
+              sunPerEnergy);
 
           logger.debug(
               "Mapped TriggerSmartContract to remote request; owner={}, contract={}, "
@@ -1637,6 +1726,31 @@ public class RemoteExecutionSPI implements ExecutionSPI {
   }
 
   /** Convert ExecuteTransactionResponse to ExecutionResult. */
+  private static contractResult mapExecutionStatusToContractResult(
+      tron.backend.BackendOuterClass.ExecutionResult.Status status) {
+    switch (status) {
+      case SUCCESS:
+        return contractResult.SUCCESS;
+      case REVERT:
+        return contractResult.REVERT;
+      case OUT_OF_ENERGY:
+        return contractResult.OUT_OF_ENERGY;
+      case INVALID_OPCODE:
+        return contractResult.ILLEGAL_OPERATION;
+      case STACK_OVERFLOW:
+        return contractResult.STACK_OVERFLOW;
+      case STACK_UNDERFLOW:
+        return contractResult.STACK_TOO_SMALL;
+      case INVALID_JUMP:
+        return contractResult.BAD_JUMP_DESTINATION;
+      case PRECOMPILE_ERROR:
+        return contractResult.PRECOMPILED_CONTRACT;
+      case TRON_SPECIFIC_ERROR:
+      default:
+        return contractResult.UNKNOWN;
+    }
+  }
+
   private ExecutionResult convertExecuteTransactionResponse(ExecuteTransactionResponse response) {
     // Extract write mode and touched keys from the response (Phase B conformance)
     ExecutionSPI.WriteMode writeMode = ExecutionSPI.WriteMode.fromValue(
@@ -1937,8 +2051,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           touchedKeys.size());
     }
 
+    tron.backend.BackendOuterClass.ExecutionResult.Status status = protoResult.getStatus();
     return new ExecutionResult(
-        protoResult.getStatus() == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS,
+        status == tron.backend.BackendOuterClass.ExecutionResult.Status.SUCCESS,
         protoResult.getReturnData().toByteArray(),
         protoResult.getEnergyUsed(),
         protoResult.getEnergyRefunded(),
@@ -1953,6 +2068,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         withdrawChanges,
         tronTransactionResult,
         contractAddress,
+        mapExecutionStatusToContractResult(status),
         writeMode,
         touchedKeys);
   }
