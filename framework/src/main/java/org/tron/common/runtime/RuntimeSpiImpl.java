@@ -160,9 +160,7 @@ public class RuntimeSpiImpl implements Runtime {
   private ExecutionProgramResult createFailedExecutionProgramResult(String errorMessage) {
     ExecutionProgramResult result = new ExecutionProgramResult();
 
-    // Set failure state
-    result.setResultCode(contractResult.REVERT);
-    result.setRevert();
+    result.setResultCode(contractResult.UNKNOWN);
     result.setRuntimeError(errorMessage);
     result.setException(new RuntimeException(errorMessage));
 

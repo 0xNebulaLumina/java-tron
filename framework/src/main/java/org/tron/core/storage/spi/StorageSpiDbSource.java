@@ -1,6 +1,5 @@
 package org.tron.core.storage.spi;
 
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
@@ -101,7 +100,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
       return storageSPI.get(dbName, key).get();
     } catch (Exception e) {
       logger.error("Failed to get data from database: {}", dbName, e);
-      return null;
+      throw new RuntimeException("Failed to get data", e);
     }
   }
 
@@ -194,7 +193,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
               Collectors.toMap(entry -> WrappedByteArray.of(entry.getKey()), Map.Entry::getValue));
     } catch (Exception e) {
       logger.error("Failed to perform prefix query in database: {}", dbName, e);
-      return new HashMap<>();
+      throw new RuntimeException("Failed to perform prefix query", e);
     }
   }
 
@@ -230,8 +229,7 @@ public class StorageSpiDbSource implements DbSourceInter<byte[]> {
           }
           hasCheckedNext = true;
         } catch (Exception e) {
-          nextEntry = null;
-          hasCheckedNext = true;
+          throw new RuntimeException("Failed to advance storage iterator", e);
         }
       }
       return nextEntry != null;

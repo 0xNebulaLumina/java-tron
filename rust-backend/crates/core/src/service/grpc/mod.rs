@@ -1681,47 +1681,56 @@ impl crate::backend::backend_server::Backend for BackendService {
                                 // Capture touched keys BEFORE commit clears the buffer.
                                 let keys = locked_buffer.touched_keys().to_vec();
                                 let op_count = locked_buffer.operation_count();
-                                match locked_buffer.commit(&storage_engine) {
-                                    Ok(()) => {
-                                        info!(
-                                            "Phase B: Committed {} writes, {} touched keys",
-                                            op_count,
-                                            keys.len()
-                                        );
-                                        (Some(keys), 1) // WRITE_MODE_PERSISTED
-                                    }
-                                    Err(e) => {
-                                        error!("Phase B: Failed to commit buffer: {}", e);
-                                        let msg = format!(
-                                            "Buffer commit failed after successful execution: {}",
-                                            e
-                                        );
-                                        return Ok(Response::new(ExecuteTransactionResponse {
-                                            result: Some(ExecutionResult {
-                                                status:
-                                                    execution_result::Status::TronSpecificError
-                                                        as i32,
-                                                return_data: vec![],
-                                                energy_used: 0,
-                                                energy_refunded: 0,
-                                                state_changes: vec![],
-                                                logs: vec![],
-                                                error_message: msg.clone(),
-                                                bandwidth_used: 0,
-                                                resource_usage: vec![],
-                                                freeze_changes: vec![],
-                                                global_resource_changes: vec![],
-                                                trc10_changes: vec![],
-                                                vote_changes: vec![],
-                                                withdraw_changes: vec![],
-                                                tron_transaction_result: vec![],
-                                                contract_address: vec![],
-                                            }),
-                                            success: false,
-                                            error_message: msg,
-                                            write_mode: 0,
-                                            touched_keys: vec![],
-                                        }));
+                                let db_count = locked_buffer.database_count();
+                                if db_count > 1 {
+                                    warn!(
+                                        "Phase B: Skipping Rust persistence for {} writes across {} databases; Java will apply returned state changes",
+                                        op_count, db_count
+                                    );
+                                    (None, 0)
+                                } else {
+                                    match locked_buffer.commit(&storage_engine) {
+                                        Ok(()) => {
+                                            info!(
+                                                "Phase B: Committed {} writes, {} touched keys",
+                                                op_count,
+                                                keys.len()
+                                            );
+                                            (Some(keys), 1) // WRITE_MODE_PERSISTED
+                                        }
+                                        Err(e) => {
+                                            error!("Phase B: Failed to commit buffer: {}", e);
+                                            let msg = format!(
+                                                "Buffer commit failed after successful execution: {}",
+                                                e
+                                            );
+                                            return Ok(Response::new(ExecuteTransactionResponse {
+                                                result: Some(ExecutionResult {
+                                                    status:
+                                                        execution_result::Status::TronSpecificError
+                                                            as i32,
+                                                    return_data: vec![],
+                                                    energy_used: 0,
+                                                    energy_refunded: 0,
+                                                    state_changes: vec![],
+                                                    logs: vec![],
+                                                    error_message: msg.clone(),
+                                                    bandwidth_used: 0,
+                                                    resource_usage: vec![],
+                                                    freeze_changes: vec![],
+                                                    global_resource_changes: vec![],
+                                                    trc10_changes: vec![],
+                                                    vote_changes: vec![],
+                                                    withdraw_changes: vec![],
+                                                    tron_transaction_result: vec![],
+                                                    contract_address: vec![],
+                                                }),
+                                                success: false,
+                                                error_message: msg,
+                                                write_mode: 0,
+                                                touched_keys: vec![],
+                                            }));
+                                        }
                                     }
                                 }
                             } else {

@@ -1105,15 +1105,10 @@ public class RemoteStorageSPI implements StorageSPI {
 
     @Override
     public CompletableFuture<Void> seekToLast() {
-      return CompletableFuture.runAsync(
-          () -> {
-            // For seekToLast, we'd need a special implementation
-            // For now, just mark as reached end since this is complex with gRPC
-            reachedEnd = true;
-            hasNextCached = false;
-            nextEntry = null;
-            logger.debug("Iterator seekToLast: db={} (not fully implemented)", dbName);
-          });
+      CompletableFuture<Void> future = new CompletableFuture<>();
+      future.completeExceptionally(
+          new UnsupportedOperationException("Remote iterator seekToLast is not supported"));
+      return future;
     }
 
     @Override
