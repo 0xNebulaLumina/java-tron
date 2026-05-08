@@ -132,6 +132,11 @@ public class RuntimeSpiImpl implements Runtime {
           context.getTrxCap().getTransactionId(),
           e);
 
+      if (executionResult != null
+          && executionResult.getWriteMode() == ExecutionSPI.WriteMode.PERSISTED) {
+        throw new IllegalStateException("Persisted remote execution state could not be mirrored", e);
+      }
+
       // Create a failed ExecutionProgramResult for compatibility
       this.executionResult = createFailedExecutionProgramResult(e.getMessage());
       context.setProgramResult(executionResult);
@@ -255,7 +260,7 @@ public class RuntimeSpiImpl implements Runtime {
     } catch (Exception e) {
       logger.error("Failed to apply freeze ledger changes for transaction: {}, error: {}",
           context.getTrxCap().getTransactionId(), e.getMessage(), e);
-      // Don't throw exception - maintain transaction flow
+      throw new RuntimeException("Failed to apply freeze ledger changes", e);
     }
   }
 
@@ -305,6 +310,7 @@ public class RuntimeSpiImpl implements Runtime {
       logger.error("Failed to apply freeze ledger change for address: {}, error: {}",
           org.tron.common.utils.StringUtil.encode58Check(freezeChange.getOwnerAddress()),
           e.getMessage(), e);
+      throw new RuntimeException("Failed to apply freeze ledger change", e);
     }
   }
 
@@ -340,7 +346,8 @@ public class RuntimeSpiImpl implements Runtime {
         break;
 
       default:
-        logger.warn("Unknown resource type for V1 freeze: {}", freezeChange.getResource());
+        throw new IllegalArgumentException("Unknown resource type for V1 freeze: "
+            + freezeChange.getResource());
     }
   }
 
@@ -367,8 +374,8 @@ public class RuntimeSpiImpl implements Runtime {
         resourceType = org.tron.protos.contract.Common.ResourceCode.TRON_POWER;
         break;
       default:
-        logger.warn("Unknown resource type for V2 freeze: {}", freezeChange.getResource());
-        return;
+        throw new IllegalArgumentException("Unknown resource type for V2 freeze: "
+            + freezeChange.getResource());
     }
 
     // Get current FrozenV2 list and find existing entry for this resource
@@ -434,8 +441,8 @@ public class RuntimeSpiImpl implements Runtime {
           chainBaseManager.getDynamicPropertiesStore();
 
       if (dynamicStore == null) {
-        logger.warn("DynamicPropertiesStore not available for global resource change");
-        return;
+        throw new IllegalStateException(
+            "DynamicPropertiesStore not available for global resource change");
       }
 
       // Update global totals
@@ -457,6 +464,7 @@ public class RuntimeSpiImpl implements Runtime {
 
     } catch (Exception e) {
       logger.error("Failed to apply global resource change, error: {}", e.getMessage(), e);
+      throw new RuntimeException("Failed to apply global resource change", e);
     }
   }
 
@@ -505,7 +513,7 @@ public class RuntimeSpiImpl implements Runtime {
     } catch (Exception e) {
       logger.error("Failed to apply TRC-10 changes for transaction: {}, error: {}",
           context.getTrxCap().getTransactionId(), e.getMessage(), e);
-      // Don't throw exception - maintain transaction flow
+      throw new RuntimeException("Failed to apply TRC-10 changes", e);
     }
   }
 
@@ -537,12 +545,10 @@ public class RuntimeSpiImpl implements Runtime {
       org.tron.core.store.VotesStore votesStore = chainBaseManager.getVotesStore();
 
       if (accountStore == null) {
-        logger.warn("AccountStore not available, cannot apply VoteChanges");
-        return;
+        throw new IllegalStateException("AccountStore not available, cannot apply VoteChanges");
       }
       if (votesStore == null) {
-        logger.warn("VotesStore not available, cannot apply VoteChanges");
-        return;
+        throw new IllegalStateException("VotesStore not available, cannot apply VoteChanges");
       }
 
       for (org.tron.core.execution.spi.ExecutionSPI.VoteChange voteChange : result.getVoteChanges()) {
@@ -550,9 +556,8 @@ public class RuntimeSpiImpl implements Runtime {
         org.tron.core.capsule.AccountCapsule accountCapsule = accountStore.get(ownerAddress);
 
         if (accountCapsule == null) {
-          logger.warn("Account not found for VoteChange: {}",
-              org.tron.common.utils.ByteArray.toHexString(ownerAddress));
-          continue;
+          throw new IllegalStateException("Account not found for VoteChange: "
+              + org.tron.common.utils.ByteArray.toHexString(ownerAddress));
         }
 
         // Get or create VotesCapsule (matches VoteWitnessActuator pattern)
@@ -595,6 +600,7 @@ public class RuntimeSpiImpl implements Runtime {
     } catch (Exception e) {
       logger.error("Failed to apply VoteChanges for transaction: {}, error: {}",
           context.getTrxCap().getTransactionId(), e.getMessage(), e);
+      throw new RuntimeException("Failed to apply VoteChanges", e);
     }
   }
 
@@ -626,8 +632,7 @@ public class RuntimeSpiImpl implements Runtime {
       org.tron.core.store.AccountStore accountStore = chainBaseManager.getAccountStore();
 
       if (accountStore == null) {
-        logger.warn("AccountStore not available, cannot apply WithdrawChanges");
-        return;
+        throw new IllegalStateException("AccountStore not available, cannot apply WithdrawChanges");
       }
 
       for (org.tron.core.execution.spi.ExecutionSPI.WithdrawChange withdrawChange : result.getWithdrawChanges()) {
@@ -635,9 +640,8 @@ public class RuntimeSpiImpl implements Runtime {
         org.tron.core.capsule.AccountCapsule accountCapsule = accountStore.get(ownerAddress);
 
         if (accountCapsule == null) {
-          logger.warn("Account not found for WithdrawChange: {}",
-              org.tron.common.utils.ByteArray.toHexString(ownerAddress));
-          continue;
+          throw new IllegalStateException("Account not found for WithdrawChange: "
+              + org.tron.common.utils.ByteArray.toHexString(ownerAddress));
         }
 
         // Get the withdrawn amount for logging
@@ -667,6 +671,7 @@ public class RuntimeSpiImpl implements Runtime {
     } catch (Exception e) {
       logger.error("Failed to apply WithdrawChanges for transaction: {}, error: {}",
           context.getTrxCap().getTransactionId(), e.getMessage(), e);
+      throw new RuntimeException("Failed to apply WithdrawChanges", e);
     }
   }
 
@@ -784,6 +789,7 @@ public class RuntimeSpiImpl implements Runtime {
       logger.error("Failed to apply AssetIssued change for owner: {}, error: {}",
           org.tron.common.utils.StringUtil.encode58Check(assetIssued.getOwnerAddress()),
           e.getMessage(), e);
+      throw new RuntimeException("Failed to apply AssetIssued change", e);
     }
   }
 
@@ -816,7 +822,7 @@ public class RuntimeSpiImpl implements Runtime {
             }
           }
         } catch (Exception e) {
-          logger.warn("Failed to derive tokenId from AssetIssueStore: {}", e.getMessage());
+          throw new RuntimeException("Failed to derive tokenId from AssetIssueStore", e);
         }
       }
 
@@ -843,8 +849,7 @@ public class RuntimeSpiImpl implements Runtime {
       // 1. Load owner account
       org.tron.core.capsule.AccountCapsule ownerAccount = accountStore.get(ownerAddress);
       if (ownerAccount == null) {
-        logger.error("Owner account not found for TRC-10 transfer: {}", ownerStr);
-        return;
+        throw new IllegalStateException("Owner account not found for TRC-10 transfer: " + ownerStr);
       }
 
       // 2. Validate owner has sufficient TRC-10 balance
@@ -859,8 +864,8 @@ public class RuntimeSpiImpl implements Runtime {
       long ownerBalance = (ownerBalanceObj != null) ? ownerBalanceObj : 0;
 
       if (ownerBalance < amount) {
-        logger.error("Insufficient TRC-10 balance: owner has {}, needs {}", ownerBalance, amount);
-        return;
+        throw new IllegalStateException(
+            "Insufficient TRC-10 balance: owner has " + ownerBalance + ", needs " + amount);
       }
 
       // 3. Load or create recipient account
@@ -893,8 +898,7 @@ public class RuntimeSpiImpl implements Runtime {
       }
 
       if (!ownerAccount.reduceAssetAmountV2(assetKeyBytes, amount, dynamicStore, assetIssueStore)) {
-        logger.error("reduceAssetAmountV2 failed for owner {}", ownerStr);
-        return;
+        throw new IllegalStateException("reduceAssetAmountV2 failed for owner " + ownerStr);
       }
       recipientAccount.addAssetAmountV2(assetKeyBytes, amount, dynamicStore, assetIssueStore);
 
@@ -917,6 +921,7 @@ public class RuntimeSpiImpl implements Runtime {
           org.tron.common.utils.StringUtil.encode58Check(assetTransferred.getOwnerAddress()),
           org.tron.common.utils.StringUtil.encode58Check(assetTransferred.getToAddress()),
           e.getMessage(), e);
+      throw new RuntimeException("Failed to apply TRC-10 transfer change", e);
     }
   }
 
@@ -1649,9 +1654,8 @@ public class RuntimeSpiImpl implements Runtime {
         // Get the local store for this database
         TronStoreWithRevoking<?> store = getStoreByDbName(dbName, chainBaseManager);
         if (store == null) {
-          logger.warn("Phase B mirror: Unknown database '{}', skipping {} keys", dbName, keyOps.size());
-          errorCount += keyOps.size();
-          continue;
+          throw new IllegalStateException(
+              "Phase B mirror: Unknown database '" + dbName + "' for " + keyOps.size() + " keys");
         }
 
         // Step B: Split keys into deletes (no remote read needed) and reads
@@ -1668,13 +1672,8 @@ public class RuntimeSpiImpl implements Runtime {
 
         // Apply deletes locally (no remote calls)
         for (KeyOperation op : deleteOps) {
-          try {
-            store.delete(op.keyBytes);
-            successCount++;
-          } catch (Exception e) {
-            logger.warn("Phase B mirror: Failed to delete key in db={}: {}", dbName, e.getMessage());
-            errorCount++;
-          }
+          store.delete(op.keyBytes);
+          successCount++;
         }
 
         // Process reads: use batchGet or per-key get based on feature flag
@@ -1701,7 +1700,8 @@ public class RuntimeSpiImpl implements Runtime {
           touchedKeys.size(), successCount, errorCount, batchGetCalls, fallbackGetCalls);
 
     } catch (Exception e) {
-      logger.error("Phase B mirror: Failed to initialize mirror: {}", e.getMessage(), e);
+      logger.error("Phase B mirror: Failed to refresh local state: {}", e.getMessage(), e);
+      throw new RuntimeException("Phase B mirror failed to refresh local state", e);
     }
   }
 
@@ -1786,19 +1786,14 @@ public class RuntimeSpiImpl implements Runtime {
 
         // Step D: Apply results using identity-based lookup (RemoteStorageSPI now preserves key identity)
         for (KeyOperation op : chunk) {
-          try {
-            byte[] value = values.get(op.keyBytes);
-            if (value != null) {
-              store.putRawBytes(op.keyBytes, value);
-            } else {
-              // Not found in remote - treat as delete (same as current per-key semantics)
-              store.delete(op.keyBytes);
-            }
-            successCount++;
-          } catch (Exception e) {
-            logger.warn("Phase B mirror: Failed to apply key in db={}: {}", dbName, e.getMessage());
-            errorCount++;
+          byte[] value = values.get(op.keyBytes);
+          if (value != null) {
+            store.putRawBytes(op.keyBytes, value);
+          } else {
+            // Not found in remote - treat as delete (same as current per-key semantics)
+            store.delete(op.keyBytes);
           }
+          successCount++;
         }
 
       } catch (Exception e) {
@@ -1813,8 +1808,7 @@ public class RuntimeSpiImpl implements Runtime {
           errorCount += fallbackCounts[1];
           fallbackGetCalls += chunk.size();
         } else {
-          // Count all keys in chunk as errors
-          errorCount += chunk.size();
+          throw new RuntimeException("Phase B mirror batchGet failed for db=" + dbName, e);
         }
       }
     }
@@ -1847,8 +1841,7 @@ public class RuntimeSpiImpl implements Runtime {
         }
         successCount++;
       } catch (Exception e) {
-        logger.warn("Phase B mirror: Failed to mirror key in db={}: {}", dbName, e.getMessage());
-        errorCount++;
+        throw new RuntimeException("Phase B mirror failed to mirror key in db=" + dbName, e);
       }
     }
 

@@ -38,12 +38,28 @@ pub struct ExecutionModule {
 }
 
 impl ExecutionModule {
-    fn adjusted_vm_gas_limit(tx: &TronTransaction, context: &TronExecutionContext, energy_fee_rate: u64) -> u64 {
-        if energy_fee_rate == 0 {
-            return tx.gas_limit;
-        }
+    const DEFAULT_SUN_PER_ENERGY: u64 = 100;
 
+    fn effective_energy_fee_rate<S: EvmStateStore>(storage: &S) -> Result<u64> {
+        Ok(storage
+            .energy_fee_rate()?
+            .filter(|fee| *fee > 0)
+            .unwrap_or(Self::DEFAULT_SUN_PER_ENERGY))
+    }
+
+    fn adjusted_vm_gas_limit(context: &TronExecutionContext, energy_fee_rate: u64) -> u64 {
         context.block_gas_limit / energy_fee_rate
+    }
+
+    fn transaction_with_adjusted_vm_gas_limit<S: EvmStateStore>(
+        storage: &S,
+        tx: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronTransaction> {
+        let energy_fee_rate = Self::effective_energy_fee_rate(storage)?;
+        let mut adjusted_tx = tx.clone();
+        adjusted_tx.gas_limit = Self::adjusted_vm_gas_limit(context, energy_fee_rate);
+        Ok(adjusted_tx)
     }
 
     pub fn new(config: ExecutionConfig) -> Self {
@@ -69,7 +85,6 @@ impl ExecutionModule {
             return Ok(early_result);
         }
 
-        let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
         let spec_id = storage
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
@@ -77,10 +92,7 @@ impl ExecutionModule {
         // Current close_loop wire contract: tx.gas_limit carries raw fee-limit SUN for
         // validation, while context.block_gas_limit carries the VM cap in SUN. Divide
         // the context value to recover the EVM energy-unit limit.
-        let mut adjusted_tx = tx.clone();
-        if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = Self::adjusted_vm_gas_limit(tx, context, energy_fee_rate);
-        }
+        let adjusted_tx = Self::transaction_with_adjusted_vm_gas_limit(&storage, tx, context)?;
 
         let database =
             EvmStateDatabase::new_with_persist(storage, self.config.remote.rust_persist_enabled);
@@ -566,14 +578,10 @@ impl ExecutionModule {
         {
             return Ok(early_result);
         }
-        let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
         let spec_id = storage
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
-        let mut adjusted_tx = tx.clone();
-        if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = Self::adjusted_vm_gas_limit(tx, context, energy_fee_rate);
-        }
+        let adjusted_tx = Self::transaction_with_adjusted_vm_gas_limit(&storage, tx, context)?;
         let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
         evm.call_contract(&adjusted_tx, context)
@@ -599,14 +607,10 @@ impl ExecutionModule {
                     .unwrap_or_else(|| "pre-execution validation failed".to_string())
             ));
         }
-        let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
         let spec_id = storage
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
-        let mut adjusted_tx = tx.clone();
-        if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = Self::adjusted_vm_gas_limit(tx, context, energy_fee_rate);
-        }
+        let adjusted_tx = Self::transaction_with_adjusted_vm_gas_limit(&storage, tx, context)?;
         let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
         evm.estimate_energy(&adjusted_tx, context)
