@@ -104,12 +104,7 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             throw e;
           } catch (Exception e) {
             logger.error("Remote execution failed", e);
-            // Create a failed ExecutionProgramResult
-            ExecutionProgramResult result = new ExecutionProgramResult();
-            result.setRuntimeError("Remote execution failed: " + e.getMessage());
-            result.setRevert();
-            result.setResultCode(contractResult.UNKNOWN);
-            return result;
+            throw new RuntimeException("Remote execution failed: " + e.getMessage(), e);
           }
         });
   }
@@ -716,21 +711,6 @@ public class RemoteExecutionSPI implements ExecutionSPI {
       byte[] toAddress = new byte[20]; // Default empty address
       byte[] data = new byte[0]; // Default empty data
       long value = 0; // Default zero value
-      // Wire contract for `energy_limit` is FUTURE-LOCKED to ENERGY UNITS
-      // (see planning/close_loop.energy_limit.md — close_loop Phase 1 Section 1.2).
-      // The decision is recorded; the producer/consumer migration has NOT
-      // yet landed. Current live behavior here:
-      //  - Default initialization sends raw fee-limit SUN (this line).
-      //  - VM contract types (Create / Trigger) override the default below
-      //    via `computeEnergyLimitWithFixRatio(...)`, which returns energy
-      //    units — but its own exception fallback drops back to raw
-      //    feeLimit SUN if any of its lookups fail.
-      //  - Non-VM contract types keep this raw fee-limit SUN default.
-      // Do not flip to 0 (or any other "energy units only" value) here
-      // without landing the coordinated Rust-side removal of the
-      // divide-by-ENERGY_FEE and regenerating fixtures, all in the same
-      // change. Mixing the two interpretations on the wire silently
-      // under- or over-gases transactions.
       long energyLimit = transaction.getRawData().getFeeLimit();
       long energyPrice = 1; // Default energy price
       long nonce = 0; // TRON doesn't use nonce like Ethereum
@@ -868,14 +848,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
             data = createContract.toByteArray();
             value = createContract.getNewContract().getCallValue();
 
-            // Phase 4: Compute energy limit with resource capping like VMActuator.getAccountEnergyLimitWithFixRatio()
-            // This ensures parity with Java's energy limit computation which caps based on:
-            // - Available frozen energy
-            // - Balance-based energy: (balance - callValue) / energyFee
-            // - Fee limit energy: feeLimit / energyFee
-            long feeLimit = transaction.getRawData().getFeeLimit();
-            energyLimit = computeEnergyLimitWithFixRatio(context, fromAddress, feeLimit, value);
-            logger.debug("Mapped CreateSmartContract to remote request; owner={}, name={}, origin_energy_limit={}, computed_energy_limit={}",
+            logger.debug(
+                "Mapped CreateSmartContract to remote request; owner={}, name={}, "
+                    + "origin_energy_limit={}, fee_limit_sun={}",
                 org.tron.common.utils.ByteArray.toHexString(fromAddress),
                 createContract.getNewContract().getName(),
                 createContract.getNewContract().getOriginEnergyLimit(),
@@ -892,14 +867,9 @@ public class RemoteExecutionSPI implements ExecutionSPI {
           data = triggerContract.getData().toByteArray();
           value = triggerContract.getCallValue();
 
-          // Phase 4: Compute energy limit with resource capping like VMActuator.getTotalEnergyLimit()
-          // For TriggerSmartContract, the energy limit is also capped based on caller's resources
-          // Note: Full parity would require getTotalEnergyLimitWithFixRatio which also considers
-          // the contract's origin_energy_limit and consume_user_resource_percent, but the basic
-          // caller-side capping provides the main protection against over-execution.
-          long triggerFeeLimit = transaction.getRawData().getFeeLimit();
-          energyLimit = computeEnergyLimitWithFixRatio(context, fromAddress, triggerFeeLimit, value);
-          logger.debug("Mapped TriggerSmartContract to remote request; owner={}, contract={}, computed_energy_limit={}",
+          logger.debug(
+              "Mapped TriggerSmartContract to remote request; owner={}, contract={}, "
+                  + "fee_limit_sun={}",
               org.tron.common.utils.ByteArray.toHexString(fromAddress),
               org.tron.common.utils.ByteArray.toHexString(toAddress),
               energyLimit);
@@ -1680,24 +1650,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
     }
 
     if (!response.getSuccess()) {
-      return new ExecutionResult(
-          false, // success
-          new byte[0], // returnData
-          0, // energyUsed
-          0, // energyRefunded
-          new ArrayList<>(), // stateChanges
-          new ArrayList<>(), // logs
-          response.getErrorMessage(), // errorMessage
-          0, // bandwidthUsed
-          new ArrayList<>(), // freezeChanges
-          new ArrayList<>(), // globalResourceChanges
-          new ArrayList<>(), // trc10Changes
-          new ArrayList<>(), // voteChanges
-          new ArrayList<>(), // withdrawChanges
-          null, // tronTransactionResult
-          null, // contractAddress
-          writeMode,
-          touchedKeys);
+      throw new IllegalStateException(
+          "Remote executeTransaction handler failed: " + response.getErrorMessage());
     }
 
     tron.backend.BackendOuterClass.ExecutionResult protoResult = response.getResult();

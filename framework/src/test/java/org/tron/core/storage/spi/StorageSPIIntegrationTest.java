@@ -198,19 +198,42 @@ public class StorageSPIIntegrationTest {
 
   @Test
   public void testTransactionOperations() throws Exception {
-    // Begin transaction
     String transactionId =
         storage.beginTransaction(testDbName).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
     Assert.assertNotNull("Transaction ID should not be null", transactionId);
     Assert.assertFalse("Transaction ID should not be empty", transactionId.isEmpty());
 
-    // Commit transaction (simplified test)
+    storage
+        .put(testDbName, "tx-key".getBytes(), "tx-value".getBytes(), transactionId)
+        .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    Assert.assertNull(
+        storage.get(testDbName, "tx-key".getBytes()).get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
     storage.commitTransaction(transactionId).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    Assert.assertArrayEquals(
+        "tx-value".getBytes(),
+        storage.get(testDbName, "tx-key".getBytes()).get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
 
-    // Test rollback with new transaction
     String rollbackTransactionId =
         storage.beginTransaction(testDbName).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    storage
+        .put(
+            testDbName,
+            "rollback-key".getBytes(),
+            "rollback-value".getBytes(),
+            rollbackTransactionId)
+        .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
     storage.rollbackTransaction(rollbackTransactionId).get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    Assert.assertNull(
+        storage.get(testDbName, "rollback-key".getBytes()).get(TIMEOUT_SECONDS, TimeUnit.SECONDS));
+
+    try {
+      storage
+          .put(testDbName, "unknown-key".getBytes(), "unknown-value".getBytes(), "unknown-tx")
+          .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+      Assert.fail("unknown transaction id must fail instead of writing directly");
+    } catch (ExecutionException expected) {
+      Assert.assertTrue(expected.getCause() instanceof RuntimeException);
+    }
   }
 
   /**

@@ -1948,19 +1948,6 @@ impl crate::backend::backend_server::Backend for BackendService {
             .downcast_ref::<ExecutionModule>()
             .ok_or_else(|| Status::internal("Failed to downcast execution module"))?;
 
-        // Convert protobuf types to execution types
-        let _transaction = match self.convert_protobuf_transaction(req.transaction.as_ref(), 0) {
-            Ok(tx) => tx,
-            Err(e) => {
-                error!("Failed to convert transaction: {}", e);
-                return Ok(Response::new(EstimateEnergyResponse {
-                    energy_estimate: 21000, // Default estimate on error
-                    success: false,
-                    error_message: format!("Transaction conversion error: {}", e),
-                }));
-            }
-        };
-
         let context = match self.convert_protobuf_context(req.context.as_ref()) {
             Ok(ctx) => ctx,
             Err(e) => {
