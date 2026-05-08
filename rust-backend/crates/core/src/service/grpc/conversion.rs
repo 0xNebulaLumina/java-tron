@@ -175,17 +175,8 @@ impl BackendService {
         debug!("Gas price conversion - original energy_price: {} SUN, final gas_price: {}, coinbase_compat: {}",
                tx.energy_price, gas_price, execution_config.evm_eth_coinbase_compat);
 
-        // Handle zero energy_limit by using a reasonable default
-        let gas_limit = if tx.energy_limit == 0 {
-            // Use a default gas limit based on transaction type and data size
-            let base_gas = 21000u64; // Basic transaction cost
-            let data_gas = tx.data.len() as u64 * 16; // 16 gas per byte of data
-            let default_limit = base_gas + data_gas + 100000; // Add buffer for contract execution
-            debug!(
-                "Using default gas limit {} for zero energy_limit transaction",
-                default_limit
-            );
-            default_limit
+        let gas_limit = if tx.energy_limit < 0 {
+            return Err("energy_limit must be >= 0".to_string());
         } else {
             tx.energy_limit as u64
         };
@@ -259,10 +250,8 @@ impl BackendService {
         let coinbase_bytes = strip_tron_address_prefix(&ctx.coinbase)?;
         let block_coinbase = revm_primitives::Address::from_slice(coinbase_bytes);
 
-        // Handle zero energy_limit by using the configured block gas limit
-        let block_gas_limit = if ctx.energy_limit == 0 {
-            // Use the configured energy_limit from config as the block gas limit
-            1000000000u64 // 1B gas limit (same as config.toml)
+        let block_gas_limit = if ctx.energy_limit < 0 {
+            return Err("context energy_limit must be >= 0".to_string());
         } else {
             ctx.energy_limit as u64
         };
@@ -363,6 +352,9 @@ impl BackendService {
             Some(error) if error.contains("StackUnderflow") => execution_result::Status::StackUnderflow,
             Some(error) if error.contains("InvalidJump") => execution_result::Status::InvalidJump,
             Some(error) if error.contains("Precompile") => execution_result::Status::PrecompileError,
+            Some(error) if error.contains("invalid code") || error.contains("InvalidCode") => {
+                execution_result::Status::InvalidCode
+            }
             _ => execution_result::Status::TronSpecificError,
         }
     }

@@ -657,6 +657,7 @@ message ExecutionResult {
     INVALID_JUMP = 6;
     PRECOMPILE_ERROR = 7;
     TRON_SPECIFIC_ERROR = 8;
+    INVALID_CODE = 9;
   }
   Status status = 1;
   bytes return_data = 2;

@@ -1745,6 +1745,8 @@ public class RemoteExecutionSPI implements ExecutionSPI {
         return contractResult.BAD_JUMP_DESTINATION;
       case PRECOMPILE_ERROR:
         return contractResult.PRECOMPILED_CONTRACT;
+      case INVALID_CODE:
+        return contractResult.INVALID_CODE;
       case TRON_SPECIFIC_ERROR:
       default:
         return contractResult.UNKNOWN;

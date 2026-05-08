@@ -43,12 +43,7 @@ impl ExecutionModule {
             return tx.gas_limit;
         }
 
-        let wire_energy_limit = if context.block_gas_limit > 0 {
-            context.block_gas_limit
-        } else {
-            tx.gas_limit
-        };
-        wire_energy_limit / energy_fee_rate
+        context.block_gas_limit / energy_fee_rate
     }
 
     pub fn new(config: ExecutionConfig) -> Self {

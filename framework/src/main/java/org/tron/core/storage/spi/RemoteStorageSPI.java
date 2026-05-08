@@ -1042,9 +1042,8 @@ public class RemoteStorageSPI implements StorageSPI {
               })
           .exceptionally(
               throwable -> {
-                logger.error("Error in hasNext() for iterator on db={}", dbName, throwable);
-                reachedEnd = true;
-                return false;
+                throw new java.util.concurrent.CompletionException(
+                    "Error in hasNext() for iterator on db=" + dbName, throwable);
               });
     }
 
