@@ -342,6 +342,31 @@ impl BackendService {
         })
     }
 
+    fn execution_status_from_result(result: &TronExecutionResult) -> execution_result::Status {
+        if result.success {
+            return execution_result::Status::Success;
+        }
+
+        match result.error.as_deref() {
+            Some("REVERT opcode executed") | Some("Call reverted") => execution_result::Status::Revert,
+            Some(error)
+                if error.contains("Not enough energy")
+                    || error.contains("OutOfGas")
+                    || error.contains("OutOfFunds") =>
+            {
+                execution_result::Status::OutOfEnergy
+            }
+            Some(error) if error.contains("OpcodeNotFound") || error.contains("InvalidFEOpcode") => {
+                execution_result::Status::InvalidOpcode
+            }
+            Some(error) if error.contains("StackOverflow") => execution_result::Status::StackOverflow,
+            Some(error) if error.contains("StackUnderflow") => execution_result::Status::StackUnderflow,
+            Some(error) if error.contains("InvalidJump") => execution_result::Status::InvalidJump,
+            Some(error) if error.contains("Precompile") => execution_result::Status::PrecompileError,
+            _ => execution_result::Status::TronSpecificError,
+        }
+    }
+
     /// Convert a TronExecutionResult to protobuf ExecuteTransactionResponse.
     ///
     /// # Arguments
@@ -361,11 +386,7 @@ impl BackendService {
         write_mode: i32,
         address_prefix: u8,
     ) -> ExecuteTransactionResponse {
-        let status = if result.success {
-            execution_result::Status::Success
-        } else {
-            execution_result::Status::Revert
-        };
+        let status = Self::execution_status_from_result(&result);
 
         let logs: Vec<LogEntry> = result
             .logs

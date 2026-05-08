@@ -440,14 +440,7 @@ impl StorageEngine {
                     });
                 }
                 Err(e) => {
-                    // Log error but continue processing other keys
-                    // This maintains partial success semantics
-                    warn!("multi_get error for key in db={}: {}", database, e);
-                    results.push(KeyValue {
-                        key: key.clone(),
-                        value: Vec::new(),
-                        found: false,
-                    });
+                    return Err(anyhow!("multi_get error for db={}: {}", database, e));
                 }
             }
         }

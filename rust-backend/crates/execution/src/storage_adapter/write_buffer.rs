@@ -222,43 +222,74 @@ impl ExecutionWriteBuffer {
             self.database_count()
         );
 
-        if self.database_count() > 1 {
-            return Err(anyhow::anyhow!(
-                "ExecutionWriteBuffer cannot atomically commit {} databases",
-                self.database_count()
-            ));
-        }
-
-        // Commit each database's operations as a batch
+        let mut planned_writes = Vec::new();
         for (db_name, ops) in &self.operations {
             if ops.is_empty() {
                 continue;
             }
 
-            // Convert to storage engine WriteOperation format
             let write_ops: Vec<tron_backend_storage::WriteOperation> = ops
                 .iter()
                 .map(|(key, op)| match op {
                     WriteOp::Put(value) => tron_backend_storage::WriteOperation {
-                        r#type: 0, // PUT
+                        r#type: 0,
                         key: key.clone(),
                         value: value.clone(),
                     },
                     WriteOp::Delete => tron_backend_storage::WriteOperation {
-                        r#type: 1, // DELETE
+                        r#type: 1,
                         key: key.clone(),
                         value: Vec::new(),
                     },
                 })
                 .collect();
 
+            let rollback_ops: Vec<tron_backend_storage::WriteOperation> = ops
+                .keys()
+                .map(|key| {
+                    engine.get(db_name, key).map(|value| match value {
+                        Some(value) => tron_backend_storage::WriteOperation {
+                            r#type: 0,
+                            key: key.clone(),
+                            value,
+                        },
+                        None => tron_backend_storage::WriteOperation {
+                            r#type: 1,
+                            key: key.clone(),
+                            value: Vec::new(),
+                        },
+                    })
+                })
+                .collect::<Result<_>>()?;
+
+            planned_writes.push((db_name.clone(), write_ops, rollback_ops));
+        }
+
+        let mut committed_rollbacks: Vec<(String, Vec<tron_backend_storage::WriteOperation>)> =
+            Vec::new();
+        for (db_name, write_ops, rollback_ops) in planned_writes {
             debug!(
                 "ExecutionWriteBuffer: batch_write to {} with {} operations",
                 db_name,
                 write_ops.len()
             );
 
-            engine.batch_write(db_name, &write_ops)?;
+            if let Err(write_err) = engine.batch_write(&db_name, &write_ops) {
+                for (rollback_db, rollback_ops) in committed_rollbacks.iter().rev() {
+                    if let Err(rollback_err) = engine.batch_write(rollback_db, rollback_ops) {
+                        return Err(anyhow::anyhow!(
+                            "ExecutionWriteBuffer commit failed for db {}: {}; rollback failed for db {}: {}",
+                            db_name,
+                            write_err,
+                            rollback_db,
+                            rollback_err
+                        ));
+                    }
+                }
+                return Err(write_err);
+            }
+
+            committed_rollbacks.push((db_name, rollback_ops));
         }
 
         // Clear the buffer after successful commit
