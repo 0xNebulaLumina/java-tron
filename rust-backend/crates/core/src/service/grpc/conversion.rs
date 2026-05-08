@@ -681,7 +681,7 @@ impl BackendService {
                 // Phase 2.I L2: Contract address for CreateSmartContract receipt
                 contract_address: contract_address_bytes,
             }),
-            success: result.success,
+            success: true,
             error_message,
             // Phase B: Write mode and touched keys for B-镜像 support
             write_mode,

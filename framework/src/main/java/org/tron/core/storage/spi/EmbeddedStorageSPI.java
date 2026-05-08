@@ -285,21 +285,26 @@ public class EmbeddedStorageSPI implements StorageSPI {
 
   @Override
   public CompletableFuture<String> beginTransaction(String dbName) {
-    // Embedded RocksDB doesn't support explicit transactions in this implementation
-    // In a full implementation, you would use RocksDB transactions
-    return CompletableFuture.completedFuture("embedded-tx-" + System.currentTimeMillis());
+    CompletableFuture<String> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException("Embedded storage transactions are not supported"));
+    return future;
   }
 
   @Override
   public CompletableFuture<Void> commitTransaction(String transactionId) {
-    // Embedded RocksDB doesn't support explicit transactions in this implementation
-    return CompletableFuture.completedFuture(null);
+    CompletableFuture<Void> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException("Embedded storage transactions are not supported"));
+    return future;
   }
 
   @Override
   public CompletableFuture<Void> rollbackTransaction(String transactionId) {
-    // Embedded RocksDB doesn't support explicit transactions in this implementation
-    return CompletableFuture.completedFuture(null);
+    CompletableFuture<Void> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException("Embedded storage transactions are not supported"));
+    return future;
   }
 
   // Storage snapshot APIs — Phase 1: explicitly UNSUPPORTED.

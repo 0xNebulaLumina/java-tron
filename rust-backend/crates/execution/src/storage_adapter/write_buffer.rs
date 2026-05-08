@@ -222,6 +222,13 @@ impl ExecutionWriteBuffer {
             self.database_count()
         );
 
+        if self.database_count() > 1 {
+            return Err(anyhow::anyhow!(
+                "ExecutionWriteBuffer cannot atomically commit {} databases",
+                self.database_count()
+            ));
+        }
+
         // Commit each database's operations as a batch
         for (db_name, ops) in &self.operations {
             if ops.is_empty() {
