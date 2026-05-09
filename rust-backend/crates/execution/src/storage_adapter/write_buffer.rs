@@ -460,6 +460,25 @@ mod tests {
     }
 
     #[test]
+    fn test_commit_multiple_databases() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let engine = StorageEngine::new(temp_dir.path()).expect("storage engine");
+        let mut buffer = ExecutionWriteBuffer::new();
+
+        buffer.put("account", vec![1], vec![2]);
+        buffer.put("witness", vec![3], vec![4]);
+        buffer.put("properties", vec![5], vec![6]);
+
+        assert_eq!(buffer.database_count(), 3);
+        buffer.commit(&engine).expect("commit");
+
+        assert!(buffer.is_empty());
+        assert_eq!(engine.get("account", &[1]).unwrap(), Some(vec![2]));
+        assert_eq!(engine.get("witness", &[3]).unwrap(), Some(vec![4]));
+        assert_eq!(engine.get("properties", &[5]).unwrap(), Some(vec![6]));
+    }
+
+    #[test]
     fn test_overwrite_same_key() {
         let mut buffer = ExecutionWriteBuffer::new();
         buffer.put("account", vec![1, 2, 3], vec![1]);
