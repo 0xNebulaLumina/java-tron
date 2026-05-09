@@ -11,9 +11,9 @@ PROGRESS_INTERVAL=${PROGRESS_INTERVAL:-300}
 # If set to 0, wait until java-tron exits (e.g., via node.shutdown BlockHeight).
 SLEEP_DURATION=${1:-1200}
 # Configurable embedded Java log path
-EMBEDDED_JAVA_LOG=${2:-621c89c.embedded-java.log}
+EMBEDDED_JAVA_LOG=${2:-940e16944f.embedded-java.log}
 # Configurable embedded-embedded CSV path
-EMBEDDED_CSV=${3:-output-directory/execution-csv/20260128-131248-9835b834-embedded-embedded.csv}
+EMBEDDED_CSV=${3:-output-directory/execution-csv/20260509-083850-c3743b71-embedded-embedded.csv}
 
 # ResourceSync debug/confirm flags (default false). Override via env vars:
 #   REMOTE_RESOURCE_SYNC_DEBUG=true
