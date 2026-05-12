@@ -7,13 +7,14 @@ WAIT_INTERVAL=${WAIT_INTERVAL:-30}
 # How often to print a progress line while waiting (seconds).
 PROGRESS_INTERVAL=${PROGRESS_INTERVAL:-300}
 
-# Configurable max wait duration (in seconds), default 1200 (20 minutes).
+# Configurable max wait duration (in seconds), default 0 (no timeout).
 # If set to 0, wait until java-tron exits (e.g., via node.shutdown BlockHeight).
-SLEEP_DURATION=${1:-1200}
+# Pass a positive value only for explicit timeout-limited debug runs.
+SLEEP_DURATION=${1:-0}
 # Configurable embedded Java log path
-EMBEDDED_JAVA_LOG=${2:-621c89c.embedded-java.log}
+EMBEDDED_JAVA_LOG=${2:-940e16944f.embedded-java.log}
 # Configurable embedded-embedded CSV path
-EMBEDDED_CSV=${3:-output-directory/execution-csv/20260128-131248-9835b834-embedded-embedded.csv}
+EMBEDDED_CSV=${3:-output-directory/execution-csv/20260509-083850-c3743b71-embedded-embedded.csv}
 
 # ResourceSync debug/confirm flags (default false). Override via env vars:
 #   REMOTE_RESOURCE_SYNC_DEBUG=true
@@ -23,6 +24,9 @@ REMOTE_RESOURCE_SYNC_CONFIRM=${REMOTE_RESOURCE_SYNC_CONFIRM:-false}
 
 JAVA_PID=""
 RUST_PID=""
+RUN_INCOMPLETE=false
+WAIT_END_REASON="not-started"
+INCOMPLETE_EXIT_CODE=3
 
 get_shutdown_height() {
     local conf_file=${1}
@@ -177,32 +181,34 @@ echo "Rust-backend started with PID: $RUST_PID"
 echo "Current time: $(date '+%Y-%m-%d %H:%M:%S')"
 if [ "${SLEEP_DURATION}" -eq 0 ]; then
     echo "Waiting for java-tron to exit (no timeout; SLEEP_DURATION=0)..."
-    print_wait_status
-    last_progress=${SECONDS}
-    while kill -0 $JAVA_PID 2>/dev/null; do
-        if [ $((SECONDS - last_progress)) -ge "${PROGRESS_INTERVAL}" ]; then
-            print_wait_status
-            last_progress=${SECONDS}
-        fi
-        sleep "${WAIT_INTERVAL}"
-    done
 else
     echo "Waiting up to ${SLEEP_DURATION} seconds for java-tron to exit..."
     end_time=$((SECONDS + SLEEP_DURATION))
-    print_wait_status
-    last_progress=${SECONDS}
-    while kill -0 $JAVA_PID 2>/dev/null; do
-        if [ "${SECONDS}" -ge "${end_time}" ]; then
-            echo "Timeout reached; java-tron still running."
-            break
-        fi
-        if [ $((SECONDS - last_progress)) -ge "${PROGRESS_INTERVAL}" ]; then
-            print_wait_status
-            last_progress=${SECONDS}
-        fi
-        sleep "${WAIT_INTERVAL}"
-    done
 fi
+
+print_wait_status
+last_progress=${SECONDS}
+while kill -0 "${JAVA_PID}" 2>/dev/null; do
+    if [ "${SLEEP_DURATION}" -gt 0 ] && [ "${SECONDS}" -ge "${end_time}" ]; then
+        java_head=$(get_java_head_block || true)
+        RUN_INCOMPLETE=true
+        WAIT_END_REASON="timeout"
+        echo "REMOTE_RUN_INCOMPLETE: timeout_after=${SLEEP_DURATION}s latest_java_head=${java_head:-?} shutdown_height=${SHUTDOWN_HEIGHT:-?}"
+        echo "REMOTE_RUN_INCOMPLETE: stopping services now; logs and CSV will still be collected, then the script will exit ${INCOMPLETE_EXIT_CODE}."
+        break
+    fi
+    if [ $((SECONDS - last_progress)) -ge "${PROGRESS_INTERVAL}" ]; then
+        print_wait_status
+        last_progress=${SECONDS}
+    fi
+    sleep "${WAIT_INTERVAL}"
+done
+
+if [ "${WAIT_END_REASON}" != "timeout" ]; then
+    WAIT_END_REASON="java-exited"
+fi
+
+echo "Step 6 wait result: ${WAIT_END_REASON}"
 
 echo "Step 6: Stopping services..."
 stop_process "${JAVA_PID}" "java-tron"
@@ -270,25 +276,41 @@ echo ""
 
 # Step 11: Run CSV comparison
 echo "Step 11: Running CSV comparison..."
-python3 scripts/compare_exec_csv.py "$EMBEDDED_CSV" "$NEWEST_CSV"
+set +e
+COMPARE_OUTPUT=$(python3 scripts/compare_exec_csv.py --classify-all "$EMBEDDED_CSV" "$NEWEST_CSV" 2>&1)
+COMPARE_EXIT=$?
+set -e
+if [ -n "${COMPARE_OUTPUT}" ]; then
+    printf '%s\n' "${COMPARE_OUTPUT}"
+fi
+echo "Comparator exit code: ${COMPARE_EXIT}"
 
-echo ""
-echo "’‘’"
-echo "Think harder."
-echo ""
-echo "I want to compare the (embedded execution + embedded storage) results vs the (remote execution + remote storage) results,"
-echo ""
-echo "The result csv are"
-echo "+ $EMBEDDED_CSV"
-echo "+ $NEWEST_CSV"
-echo "respectively."
-echo ""
-python3 scripts/compare_exec_csv.py "$EMBEDDED_CSV" "$NEWEST_CSV"
-echo ""
-echo "Logs:"
-echo "(embedded execution + embedded storage) java log: $EMBEDDED_JAVA_LOG"
-echo "(remote execution + remote storage) java log: $JAVA_LOG_PATH"
-echo "(remote execution + remote storage) rust log: $RUST_LOG_PATH"
-echo ""
-echo "You will help me debug and figure out why there are mismatches."
-echo "’‘’"
+if [ "${RUN_INCOMPLETE}" = "true" ]; then
+    echo ""
+    echo "REMOTE_RUN_INCOMPLETE: remote collection stopped before java-tron exited naturally."
+    echo "REMOTE_RUN_INCOMPLETE: returning ${INCOMPLETE_EXIT_CODE}; comparator exit code ${COMPARE_EXIT} is informational for this incomplete run."
+    exit "${INCOMPLETE_EXIT_CODE}"
+fi
+
+if [ "${COMPARE_EXIT}" -eq 1 ]; then
+    echo ""
+    echo "’‘’"
+    echo "Think harder."
+    echo ""
+    echo "I want to compare the (embedded execution + embedded storage) results vs the (remote execution + remote storage) results,"
+    echo ""
+    echo "The result csv are"
+    echo "+ $EMBEDDED_CSV"
+    echo "+ $NEWEST_CSV"
+    echo "respectively."
+    echo ""
+    echo "Logs:"
+    echo "(embedded execution + embedded storage) java log: $EMBEDDED_JAVA_LOG"
+    echo "(remote execution + remote storage) java log: $JAVA_LOG_PATH"
+    echo "(remote execution + remote storage) rust log: $RUST_LOG_PATH"
+    echo ""
+    echo "You will help me debug and figure out why there are mismatches."
+    echo "’‘’"
+fi
+
+exit "${COMPARE_EXIT}"

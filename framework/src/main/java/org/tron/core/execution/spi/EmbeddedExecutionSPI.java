@@ -189,34 +189,45 @@ public class EmbeddedExecutionSPI implements ExecutionSPI {
         });
   }
 
+  // close_loop §1.4 / planning/close_loop.snapshot.md:
+  // EVM-level SPI snapshot/revert is explicitly UNSUPPORTED in
+  // Phase 1 across ALL ExecutionSPI implementations, not just
+  // remote. The previous embedded placeholders returned a
+  // synthetic id and a literal `true`, which is the "fake
+  // success" state Section 1.4 explicitly bans — a caller could
+  // believe it had a usable snapshot handle and silently desync.
+  // Both methods now fail the future with an explicit
+  // UnsupportedOperationException so any consumer either stops
+  // calling these APIs or gets a loud, deterministic failure.
+  // REVM/REVM-style intra-transaction journaling (which is what
+  // the actual EVM uses for in-VM revert) is unaffected — it
+  // does not go through this SPI surface.
   @Override
   public CompletableFuture<String> createSnapshot() {
-    return CompletableFuture.supplyAsync(
-        () -> {
-          try {
-            // TODO: Implement snapshot creation
-            logger.debug("Creating EVM snapshot");
-            return "embedded_snapshot_" + System.currentTimeMillis();
-          } catch (Exception e) {
-            logger.error("Failed to create snapshot", e);
-            return null;
-          }
-        });
+    CompletableFuture<String> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "EVM snapshot is not supported in close_loop Phase 1 "
+                + "(EmbeddedExecutionSPI) — see planning/close_loop.snapshot.md. "
+                + "The previous placeholder returned a synthetic "
+                + "embedded_snapshot_<millis> id without taking a real "
+                + "point-in-time handle; it has been replaced with an "
+                + "explicit unsupported error."));
+    return future;
   }
 
   @Override
   public CompletableFuture<Boolean> revertToSnapshot(String snapshotId) {
-    return CompletableFuture.supplyAsync(
-        () -> {
-          try {
-            // TODO: Implement snapshot revert
-            logger.debug("Reverting to snapshot: {}", snapshotId);
-            return true; // Placeholder
-          } catch (Exception e) {
-            logger.error("Failed to revert to snapshot", e);
-            return false;
-          }
-        });
+    CompletableFuture<Boolean> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException(
+            "EVM revert-to-snapshot is not supported in close_loop Phase 1 "
+                + "(EmbeddedExecutionSPI) — see planning/close_loop.snapshot.md. "
+                + "The previous placeholder silently returned true; it has "
+                + "been replaced with an explicit unsupported error. "
+                + "Requested snapshotId="
+                + snapshotId));
+    return future;
   }
 
   @Override

@@ -6,6 +6,7 @@ import org.tron.core.db.TransactionContext;
 import org.tron.core.exception.ContractExeException;
 import org.tron.core.exception.ContractValidateException;
 import org.tron.core.exception.VMIllegalException;
+import org.tron.protos.Protocol.Transaction.Result.contractResult;
 
 /**
  * Execution Service Provider Interface (SPI) for abstracting EVM execution operations. This
@@ -121,6 +122,7 @@ public interface ExecutionSPI {
     private final List<StateChange> stateChanges;
     private final List<LogEntry> logs;
     private final String errorMessage;
+    private final contractResult resultCode;
     private final long bandwidthUsed;
     private final List<FreezeLedgerChange> freezeChanges;
     private final List<GlobalResourceTotalsChange> globalResourceChanges;
@@ -202,7 +204,7 @@ public interface ExecutionSPI {
       this(success, returnData, energyUsed, energyRefunded, stateChanges, logs,
            errorMessage, bandwidthUsed, freezeChanges, globalResourceChanges,
            trc10Changes, voteChanges, withdrawChanges, tronTransactionResult, contractAddress,
-           WriteMode.COMPUTE_ONLY, new java.util.ArrayList<>());
+           null, WriteMode.COMPUTE_ONLY, new java.util.ArrayList<>());
     }
 
     // Full constructor with writeMode and touchedKeys (Phase B conformance)
@@ -224,6 +226,31 @@ public interface ExecutionSPI {
         byte[] contractAddress,
         WriteMode writeMode,
         List<TouchedKey> touchedKeys) {
+      this(success, returnData, energyUsed, energyRefunded, stateChanges, logs,
+          errorMessage, bandwidthUsed, freezeChanges, globalResourceChanges,
+          trc10Changes, voteChanges, withdrawChanges, tronTransactionResult, contractAddress,
+          null, writeMode, touchedKeys);
+    }
+
+    public ExecutionResult(
+        boolean success,
+        byte[] returnData,
+        long energyUsed,
+        long energyRefunded,
+        List<StateChange> stateChanges,
+        List<LogEntry> logs,
+        String errorMessage,
+        long bandwidthUsed,
+        List<FreezeLedgerChange> freezeChanges,
+        List<GlobalResourceTotalsChange> globalResourceChanges,
+        List<Trc10Change> trc10Changes,
+        List<VoteChange> voteChanges,
+        List<WithdrawChange> withdrawChanges,
+        byte[] tronTransactionResult,
+        byte[] contractAddress,
+        contractResult resultCode,
+        WriteMode writeMode,
+        List<TouchedKey> touchedKeys) {
       this.success = success;
       this.returnData = returnData;
       this.energyUsed = energyUsed;
@@ -231,6 +258,7 @@ public interface ExecutionSPI {
       this.stateChanges = stateChanges;
       this.logs = logs;
       this.errorMessage = errorMessage;
+      this.resultCode = resultCode;
       this.bandwidthUsed = bandwidthUsed;
       this.freezeChanges = freezeChanges;
       this.globalResourceChanges = globalResourceChanges;
@@ -270,6 +298,10 @@ public interface ExecutionSPI {
 
     public String getErrorMessage() {
       return errorMessage;
+    }
+
+    public contractResult getResultCode() {
+      return resultCode;
     }
 
     public long getBandwidthUsed() {

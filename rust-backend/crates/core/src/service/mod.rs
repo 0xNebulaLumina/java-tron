@@ -46,13 +46,9 @@ fn u256_to_i64(val: revm_primitives::U256) -> Result<i64, String> {
     Ok(limbs[0] as i64)
 }
 
-/// Safely convert a non-negative i64 to U256.
-/// Returns Err("long overflow") if the value is negative.
-fn i64_to_u256(val: i64) -> Result<revm_primitives::U256, String> {
-    if val < 0 {
-        return Err("long overflow".to_string());
-    }
-    Ok(revm_primitives::U256::from(val as u64))
+/// Convert a Java signed long balance to U256, preserving the low 64-bit pattern.
+fn i64_to_u256(val: i64) -> revm_primitives::U256 {
+    revm_primitives::U256::from(val as u64)
 }
 
 pub struct BackendService {
@@ -1224,7 +1220,7 @@ impl BackendService {
         let new_sender_balance_i64 = sender_balance_i64
             .checked_sub(total_cost_i64)
             .ok_or_else(|| "long overflow".to_string())?;
-        let new_sender_balance_u256 = i64_to_u256(new_sender_balance_i64)?;
+        let new_sender_balance_u256 = i64_to_u256(new_sender_balance_i64);
 
         // Track AEXT for bandwidth if in tracked mode (after validation to ensure validate_fail has 0 writes)
         let mut aext_map = std::collections::HashMap::new();
@@ -1478,7 +1474,7 @@ impl BackendService {
                     .checked_add(create_account_fee)
                     .ok_or("long overflow")?;
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: i64_to_u256(new_blackhole_balance)?,
+                    balance: i64_to_u256(new_blackhole_balance),
                     nonce: blackhole_account.nonce,
                     code_hash: blackhole_account.code_hash,
                     code: blackhole_account.code.clone(),
@@ -1769,7 +1765,7 @@ impl BackendService {
             ));
         }
         let new_owner_account = revm_primitives::AccountInfo {
-            balance: i64_to_u256(new_balance_i64)?,
+            balance: i64_to_u256(new_balance_i64),
             nonce: owner_account.nonce,
             code_hash: owner_account.code_hash,
             code: owner_account.code.clone(),
@@ -1827,7 +1823,7 @@ impl BackendService {
                     .checked_add(account_upgrade_cost)
                     .ok_or_else(|| "long overflow".to_string())?;
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: i64_to_u256(new_blackhole_balance)?,
+                    balance: i64_to_u256(new_blackhole_balance),
                     nonce: blackhole_account.nonce,
                     code_hash: blackhole_account.code_hash,
                     code: blackhole_account.code.clone(),
@@ -3127,7 +3123,7 @@ impl BackendService {
                 ));
             }
             let new_owner_account = revm_primitives::AccountInfo {
-                balance: i64_to_u256(new_balance_i64)?,
+                balance: i64_to_u256(new_balance_i64),
                 nonce: owner_account.nonce,
                 code_hash: owner_account.code_hash,
                 code: owner_account.code.clone(),
@@ -3264,7 +3260,7 @@ impl BackendService {
                         ));
                     }
                     let new_blackhole_account = revm_primitives::AccountInfo {
-                        balance: i64_to_u256(new_blackhole_balance)?,
+                        balance: i64_to_u256(new_blackhole_balance),
                         nonce: blackhole_account.nonce,
                         code_hash: blackhole_account.code_hash,
                         code: blackhole_account.code.clone(),
@@ -5054,7 +5050,7 @@ impl BackendService {
                 .checked_sub(create_account_fee)
                 .ok_or("Owner balance underflow for create-account fee".to_string())?;
             let new_owner_evm = revm_primitives::AccountInfo {
-                balance: i64_to_u256(new_owner_balance_i64)?,
+                balance: i64_to_u256(new_owner_balance_i64),
                 nonce: old_owner_account.nonce,
                 code_hash: old_owner_account.code_hash,
                 code: old_owner_account.code.clone(),
@@ -5084,7 +5080,7 @@ impl BackendService {
                     .checked_add(create_account_fee)
                     .ok_or("long overflow")?;
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: i64_to_u256(new_blackhole_balance)?,
+                    balance: i64_to_u256(new_blackhole_balance),
                     nonce: old_blackhole_account.nonce,
                     code_hash: old_blackhole_account.code_hash,
                     code: old_blackhole_account.code.clone(),
@@ -5517,7 +5513,7 @@ impl BackendService {
         let new_owner_balance_i64 = owner_balance_i64
             .checked_sub(fee_i64)
             .ok_or_else(|| "long overflow".to_string())?;
-        let new_owner_balance = i64_to_u256(new_owner_balance_i64)?;
+        let new_owner_balance = i64_to_u256(new_owner_balance_i64);
         let new_owner_account = revm_primitives::AccountInfo {
             balance: new_owner_balance,
             nonce: owner_account.nonce,
@@ -5605,15 +5601,8 @@ impl BackendService {
                 let new_bh_balance_i64 = bh_balance_i64
                     .checked_add(fee_i64)
                     .ok_or_else(|| "long overflow".to_string())?;
-                if new_bh_balance_i64 < 0 {
-                    let bh_hex = hex::encode(storage_adapter.to_tron_address_21(&blackhole_addr));
-                    return Err(format!(
-                        "{} insufficient balance, balance: {}, amount: {}",
-                        bh_hex, bh_balance_i64, fee_i64
-                    ));
-                }
                 let new_blackhole_account = revm_primitives::AccountInfo {
-                    balance: i64_to_u256(new_bh_balance_i64)?,
+                    balance: i64_to_u256(new_bh_balance_i64),
                     nonce: blackhole_account.nonce,
                     code_hash: blackhole_account.code_hash,
                     code: blackhole_account.code.clone(),

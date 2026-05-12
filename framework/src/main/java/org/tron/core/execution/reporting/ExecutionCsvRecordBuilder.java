@@ -291,7 +291,7 @@ public class ExecutionCsvRecordBuilder {
             }
           }
           if (tokenId == null || tokenId.isEmpty()) {
-            log.warn("token_id unresolved for TRC-10 transfer, skipping balance delta "
+            logger.warn("token_id unresolved for TRC-10 transfer, skipping balance delta "
                 + "emission to avoid key collision");
             continue; // Skip: empty key would collide across unresolved assets
           }
@@ -374,10 +374,10 @@ public class ExecutionCsvRecordBuilder {
                 tokenId = String.valueOf(dynamicStore.getTokenIdNum());
               }
             } catch (Exception e) {
-              log.warn("Failed to read tokenIdNum from DynamicPropertiesStore", e);
+              logger.warn("Failed to read tokenIdNum from DynamicPropertiesStore", e);
             }
             if (tokenId == null || tokenId.isEmpty()) {
-              log.warn("token_id unresolved for TRC-10 asset issuance, leaving empty");
+              logger.warn("token_id unresolved for TRC-10 asset issuance, leaving empty");
               tokenId = "";
             }
           }

@@ -38,6 +38,30 @@ pub struct ExecutionModule {
 }
 
 impl ExecutionModule {
+    const DEFAULT_SUN_PER_ENERGY: u64 = 100;
+
+    fn effective_energy_fee_rate<S: EvmStateStore>(storage: &S) -> Result<u64> {
+        Ok(storage
+            .energy_fee_rate()?
+            .filter(|fee| *fee > 0)
+            .unwrap_or(Self::DEFAULT_SUN_PER_ENERGY))
+    }
+
+    fn adjusted_vm_gas_limit(context: &TronExecutionContext, energy_fee_rate: u64) -> u64 {
+        context.block_gas_limit / energy_fee_rate
+    }
+
+    fn transaction_with_adjusted_vm_gas_limit<S: EvmStateStore>(
+        storage: &S,
+        tx: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<TronTransaction> {
+        let energy_fee_rate = Self::effective_energy_fee_rate(storage)?;
+        let mut adjusted_tx = tx.clone();
+        adjusted_tx.gas_limit = Self::adjusted_vm_gas_limit(context, energy_fee_rate);
+        Ok(adjusted_tx)
+    }
+
     pub fn new(config: ExecutionConfig) -> Self {
         Self {
             config,
@@ -56,79 +80,19 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
-        // TRON parity: TriggerSmartContract validation must match java-tron's VMActuator.call()
-        // error ordering: (1) supportVM, (2) decode+address checks, (3) contract existence,
-        // (4) callValue/token/feeLimit checks.
-        if tx.metadata.contract_type == Some(TronContractType::TriggerSmartContract) {
-            // Step 1: VM enabled check (java: VMActuator.call() line 456 — checked FIRST).
-            Self::validate_trigger_vm_enabled(&storage)?;
-
-            // Step 2: Contract existence (java: VMActuator.call() line 472-476).
-            if let Some(to) = tx.to {
-                let mut tron_contract_key = Vec::with_capacity(21);
-                let prefix = storage.tron_address_prefix()?;
-                tron_contract_key.push(prefix);
-                tron_contract_key.extend_from_slice(to.as_slice());
-
-                let is_smart_contract = match storage.tron_has_smart_contract(&tron_contract_key)? {
-                    Some(v) => v,
-                    None => storage.get_code(&to)?.is_some(),
-                };
-
-                if !is_smart_contract {
-                    return Ok(TronExecutionResult {
-                        success: false,
-                        return_data: revm::primitives::Bytes::new(),
-                        energy_used: 0,
-                        bandwidth_used: 32 + tx.data.len() as u64,
-                        logs: Vec::new(),
-                        state_changes: Vec::new(),
-                        error: Some("No contract or not a smart contract".to_string()),
-                        aext_map: HashMap::new(),
-                        freeze_changes: Vec::new(),
-                        global_resource_changes: Vec::new(),
-                        trc10_changes: Vec::new(),
-                        vote_changes: Vec::new(),
-                        withdraw_changes: Vec::new(),
-                        tron_transaction_result: None,
-                        contract_address: None,
-                    });
-                }
-            }
-
-            // Step 3: Remaining validation (owner, feeLimit, callValue, tokens).
-            Self::validate_trigger_smart_contract(&storage, tx)?;
+        if let Some(early_result) = Self::validate_transaction_pre_execution(&storage, tx, context)?
+        {
+            return Ok(early_result);
         }
 
-        // TRON parity: CreateSmartContract validation must match java-tron's VMActuator.create().
-        if tx.metadata.contract_type == Some(TronContractType::CreateSmartContract) {
-            Self::validate_create_smart_contract(&storage, tx, context)?;
-        }
-
-        let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
         let spec_id = storage
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
 
-        // TRON energy_limit wire semantics (KNOWN MISMATCH — needs spec lock):
-        //
-        // - Conformance fixtures: energy_limit = feeLimit in SUN → Rust divides by ENERGY_FEE
-        //   to get energy units. This path is correct for fixtures.
-        //
-        // - Production RemoteExecutionSPI: energy_limit = computeEnergyLimitWithFixRatio()
-        //   which already returns energy units (min(availableEnergy, feeLimit/energyFee)).
-        //   Dividing again here would under-gas the transaction.
-        //
-        // TODO: Lock the wire spec for energy_limit. Options:
-        //   (a) Java always sends feeLimit (SUN); Rust converts. Requires Rust to implement
-        //       the full getTotalEnergyLimitWithFixRatio computation for caller/creator split.
-        //   (b) Java always sends energy units; Rust does NOT convert. Requires fixture
-        //       generator to match by also sending energy units.
-        //   (c) Add a proto field/flag to indicate the unit.
-        let mut adjusted_tx = tx.clone();
-        if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
-        }
+        // Current close_loop wire contract: tx.gas_limit carries raw fee-limit SUN for
+        // validation, while context.block_gas_limit carries the VM cap in SUN. Divide
+        // the context value to recover the EVM energy-unit limit.
+        let adjusted_tx = Self::transaction_with_adjusted_vm_gas_limit(&storage, tx, context)?;
 
         let database =
             EvmStateDatabase::new_with_persist(storage, self.config.remote.rust_persist_enabled);
@@ -532,6 +496,76 @@ impl ExecutionModule {
         Ok(())
     }
 
+    /// Shared pre-execution validation for Trigger/Create contracts, matching
+    /// java-tron's VMActuator error ordering. Returns:
+    ///   - `Ok(None)` — execution may proceed.
+    ///   - `Ok(Some(result))` — an "early-return" failure result (currently
+    ///     only the "not a smart contract" soft failure used by the execute
+    ///     path to match Java's recorded sidecar for a missing contract).
+    ///   - `Err(..)` — a hard validation failure (invalid arguments, missing
+    ///     owner account, feeLimit out of bounds, etc.).
+    ///
+    /// This helper is called by `execute_transaction_with_storage`,
+    /// `call_contract_with_storage`, and `estimate_energy_with_storage` so the
+    /// read-only entry points do not silently succeed where the write path
+    /// (and therefore Java) would fail.
+    fn validate_transaction_pre_execution<S: EvmStateStore>(
+        storage: &S,
+        tx: &TronTransaction,
+        context: &TronExecutionContext,
+    ) -> Result<Option<TronExecutionResult>> {
+        // TRON parity: TriggerSmartContract validation must match java-tron's VMActuator.call()
+        // error ordering: (1) supportVM, (2) decode+address checks, (3) contract existence,
+        // (4) callValue/token/feeLimit checks.
+        if tx.metadata.contract_type == Some(TronContractType::TriggerSmartContract) {
+            // Step 1: VM enabled check (java: VMActuator.call() line 456 — checked FIRST).
+            Self::validate_trigger_vm_enabled(storage)?;
+
+            // Step 2: Contract existence (java: VMActuator.call() line 472-476).
+            if let Some(to) = tx.to {
+                let mut tron_contract_key = Vec::with_capacity(21);
+                let prefix = storage.tron_address_prefix()?;
+                tron_contract_key.push(prefix);
+                tron_contract_key.extend_from_slice(to.as_slice());
+
+                let is_smart_contract = match storage.tron_has_smart_contract(&tron_contract_key)? {
+                    Some(v) => v,
+                    None => storage.get_code(&to)?.is_some(),
+                };
+
+                if !is_smart_contract {
+                    return Ok(Some(TronExecutionResult {
+                        success: false,
+                        return_data: revm::primitives::Bytes::new(),
+                        energy_used: 0,
+                        bandwidth_used: 32 + tx.data.len() as u64,
+                        logs: Vec::new(),
+                        state_changes: Vec::new(),
+                        error: Some("No contract or not a smart contract".to_string()),
+                        aext_map: HashMap::new(),
+                        freeze_changes: Vec::new(),
+                        global_resource_changes: Vec::new(),
+                        trc10_changes: Vec::new(),
+                        vote_changes: Vec::new(),
+                        withdraw_changes: Vec::new(),
+                        tron_transaction_result: None,
+                        contract_address: None,
+                    }));
+                }
+            }
+
+            // Step 3: Remaining validation (owner, feeLimit, callValue, tokens).
+            Self::validate_trigger_smart_contract(storage, tx)?;
+        }
+
+        // TRON parity: CreateSmartContract validation must match java-tron's VMActuator.create().
+        if tx.metadata.contract_type == Some(TronContractType::CreateSmartContract) {
+            Self::validate_create_smart_contract(storage, tx, context)?;
+        }
+
+        Ok(None)
+    }
+
     /// Call a contract without state changes
     pub fn call_contract_with_storage<S: EvmStateStore + 'static>(
         &self,
@@ -539,14 +573,15 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<TronExecutionResult> {
-        let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
+        if let Some(early_result) =
+            Self::validate_transaction_pre_execution(&storage, tx, context)?
+        {
+            return Ok(early_result);
+        }
         let spec_id = storage
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
-        let mut adjusted_tx = tx.clone();
-        if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
-        }
+        let adjusted_tx = Self::transaction_with_adjusted_vm_gas_limit(&storage, tx, context)?;
         let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
         evm.call_contract(&adjusted_tx, context)
@@ -559,14 +594,23 @@ impl ExecutionModule {
         tx: &TronTransaction,
         context: &TronExecutionContext,
     ) -> Result<u64> {
-        let energy_fee_rate = storage.energy_fee_rate()?.unwrap_or(0);
+        if let Some(early_result) =
+            Self::validate_transaction_pre_execution(&storage, tx, context)?
+        {
+            // Early-return cases (currently "not a smart contract") have no
+            // meaningful energy estimate; surface the backend error verbatim
+            // so the Java bridge can map it to a handler-level failure.
+            return Err(anyhow::anyhow!(
+                "{}",
+                early_result
+                    .error
+                    .unwrap_or_else(|| "pre-execution validation failed".to_string())
+            ));
+        }
         let spec_id = storage
             .tvm_spec_id()?
             .unwrap_or_else(|| TronEvm::<EvmStateDatabase<S>>::spec_id_from_config(&self.config));
-        let mut adjusted_tx = tx.clone();
-        if energy_fee_rate > 0 {
-            adjusted_tx.gas_limit = adjusted_tx.gas_limit / energy_fee_rate;
-        }
+        let adjusted_tx = Self::transaction_with_adjusted_vm_gas_limit(&storage, tx, context)?;
         let database = EvmStateDatabase::new(storage);
         let mut evm = TronEvm::new_with_spec_id(database, &self.config, spec_id)?;
         evm.estimate_energy(&adjusted_tx, context)

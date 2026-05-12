@@ -206,7 +206,7 @@ impl ExecutionWriteBuffer {
     ///
     /// # Returns
     /// * `Ok(())` - All operations committed successfully
-    /// * `Err(...)` - Commit failed (partial writes may have occurred)
+    /// * `Err(...)` - Commit failed; committed batches are rolled back best-effort
     ///
     /// # Note
     /// After calling `commit()`, the buffer is cleared.
@@ -222,36 +222,74 @@ impl ExecutionWriteBuffer {
             self.database_count()
         );
 
-        // Commit each database's operations as a batch
+        let mut planned_writes = Vec::new();
         for (db_name, ops) in &self.operations {
             if ops.is_empty() {
                 continue;
             }
 
-            // Convert to storage engine WriteOperation format
             let write_ops: Vec<tron_backend_storage::WriteOperation> = ops
                 .iter()
                 .map(|(key, op)| match op {
                     WriteOp::Put(value) => tron_backend_storage::WriteOperation {
-                        r#type: 0, // PUT
+                        r#type: 0,
                         key: key.clone(),
                         value: value.clone(),
                     },
                     WriteOp::Delete => tron_backend_storage::WriteOperation {
-                        r#type: 1, // DELETE
+                        r#type: 1,
                         key: key.clone(),
                         value: Vec::new(),
                     },
                 })
                 .collect();
 
+            let rollback_ops: Vec<tron_backend_storage::WriteOperation> = ops
+                .keys()
+                .map(|key| {
+                    engine.get(db_name, key).map(|value| match value {
+                        Some(value) => tron_backend_storage::WriteOperation {
+                            r#type: 0,
+                            key: key.clone(),
+                            value,
+                        },
+                        None => tron_backend_storage::WriteOperation {
+                            r#type: 1,
+                            key: key.clone(),
+                            value: Vec::new(),
+                        },
+                    })
+                })
+                .collect::<Result<_>>()?;
+
+            planned_writes.push((db_name.clone(), write_ops, rollback_ops));
+        }
+
+        let mut committed_rollbacks: Vec<(String, Vec<tron_backend_storage::WriteOperation>)> =
+            Vec::new();
+        for (db_name, write_ops, rollback_ops) in planned_writes {
             debug!(
                 "ExecutionWriteBuffer: batch_write to {} with {} operations",
                 db_name,
                 write_ops.len()
             );
 
-            engine.batch_write(db_name, &write_ops)?;
+            if let Err(write_err) = engine.batch_write(&db_name, &write_ops) {
+                for (rollback_db, rollback_ops) in committed_rollbacks.iter().rev() {
+                    if let Err(rollback_err) = engine.batch_write(rollback_db, rollback_ops) {
+                        return Err(anyhow::anyhow!(
+                            "ExecutionWriteBuffer commit failed for db {}: {}; rollback failed for db {}: {}",
+                            db_name,
+                            write_err,
+                            rollback_db,
+                            rollback_err
+                        ));
+                    }
+                }
+                return Err(write_err);
+            }
+
+            committed_rollbacks.push((db_name, rollback_ops));
         }
 
         // Clear the buffer after successful commit
@@ -419,6 +457,25 @@ mod tests {
         assert_eq!(buffer.database_count(), 3);
         assert_eq!(buffer.operation_count(), 3);
         assert_eq!(buffer.touched_keys().len(), 3);
+    }
+
+    #[test]
+    fn test_commit_multiple_databases() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let engine = StorageEngine::new(temp_dir.path()).expect("storage engine");
+        let mut buffer = ExecutionWriteBuffer::new();
+
+        buffer.put("account", vec![1], vec![2]);
+        buffer.put("witness", vec![3], vec![4]);
+        buffer.put("properties", vec![5], vec![6]);
+
+        assert_eq!(buffer.database_count(), 3);
+        buffer.commit(&engine).expect("commit");
+
+        assert!(buffer.is_empty());
+        assert_eq!(engine.get("account", &[1]).unwrap(), Some(vec![2]));
+        assert_eq!(engine.get("witness", &[3]).unwrap(), Some(vec![4]));
+        assert_eq!(engine.get("properties", &[5]).unwrap(), Some(vec![6]));
     }
 
     #[test]

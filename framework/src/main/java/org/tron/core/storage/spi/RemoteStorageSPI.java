@@ -26,11 +26,15 @@ import tron.backend.BackendOuterClass.BatchWriteResponse;
 import tron.backend.BackendOuterClass.BeginTransactionRequest;
 import tron.backend.BackendOuterClass.BeginTransactionResponse;
 import tron.backend.BackendOuterClass.CloseDBRequest;
+import tron.backend.BackendOuterClass.CloseDBResponse;
 import tron.backend.BackendOuterClass.CommitTransactionRequest;
+import tron.backend.BackendOuterClass.CommitTransactionResponse;
 import tron.backend.BackendOuterClass.CreateSnapshotRequest;
 import tron.backend.BackendOuterClass.CreateSnapshotResponse;
 import tron.backend.BackendOuterClass.DeleteRequest;
+import tron.backend.BackendOuterClass.DeleteResponse;
 import tron.backend.BackendOuterClass.DeleteSnapshotRequest;
+import tron.backend.BackendOuterClass.DeleteSnapshotResponse;
 import tron.backend.BackendOuterClass.GetFromSnapshotRequest;
 import tron.backend.BackendOuterClass.GetFromSnapshotResponse;
 import tron.backend.BackendOuterClass.GetKeysNextRequest;
@@ -48,6 +52,7 @@ import tron.backend.BackendOuterClass.HasResponse;
 import tron.backend.BackendOuterClass.HealthRequest;
 import tron.backend.BackendOuterClass.HealthResponse;
 import tron.backend.BackendOuterClass.InitDBRequest;
+import tron.backend.BackendOuterClass.InitDBResponse;
 import tron.backend.BackendOuterClass.IsAliveRequest;
 import tron.backend.BackendOuterClass.IsAliveResponse;
 import tron.backend.BackendOuterClass.IsEmptyRequest;
@@ -58,8 +63,11 @@ import tron.backend.BackendOuterClass.ListDatabasesResponse;
 import tron.backend.BackendOuterClass.PrefixQueryRequest;
 import tron.backend.BackendOuterClass.PrefixQueryResponse;
 import tron.backend.BackendOuterClass.PutRequest;
+import tron.backend.BackendOuterClass.PutResponse;
 import tron.backend.BackendOuterClass.ResetDBRequest;
+import tron.backend.BackendOuterClass.ResetDBResponse;
 import tron.backend.BackendOuterClass.RollbackTransactionRequest;
+import tron.backend.BackendOuterClass.RollbackTransactionResponse;
 import tron.backend.BackendOuterClass.SizeRequest;
 import tron.backend.BackendOuterClass.SizeResponse;
 import tron.backend.BackendOuterClass.WriteOperation;
@@ -120,6 +128,10 @@ public class RemoteStorageSPI implements StorageSPI {
                     .build();
 
             GetResponse response = blockingStub.get(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage get failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             logger.debug(
                 "Get operation: db={}, key.length={}, found={}",
                 dbName,
@@ -136,6 +148,12 @@ public class RemoteStorageSPI implements StorageSPI {
 
   @Override
   public CompletableFuture<Void> put(String dbName, byte[] key, byte[] value) {
+    return put(dbName, key, value, "");
+  }
+
+  @Override
+  public CompletableFuture<Void> put(
+      String dbName, byte[] key, byte[] value, String transactionId) {
     return CompletableFuture.runAsync(
         () -> {
           try {
@@ -144,9 +162,14 @@ public class RemoteStorageSPI implements StorageSPI {
                     .setDatabase(dbName)
                     .setKey(ByteString.copyFrom(key))
                     .setValue(ByteString.copyFrom(value))
+                    .setTransactionId(transactionId == null ? "" : transactionId)
                     .build();
 
-            blockingStub.put(request);
+            PutResponse response = blockingStub.put(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage put failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             logger.debug(
                 "Put operation: db={}, key.length={}, value.length={}",
                 dbName,
@@ -161,6 +184,11 @@ public class RemoteStorageSPI implements StorageSPI {
 
   @Override
   public CompletableFuture<Void> delete(String dbName, byte[] key) {
+    return delete(dbName, key, "");
+  }
+
+  @Override
+  public CompletableFuture<Void> delete(String dbName, byte[] key, String transactionId) {
     return CompletableFuture.runAsync(
         () -> {
           try {
@@ -168,9 +196,14 @@ public class RemoteStorageSPI implements StorageSPI {
                 DeleteRequest.newBuilder()
                     .setDatabase(dbName)
                     .setKey(ByteString.copyFrom(key))
+                    .setTransactionId(transactionId == null ? "" : transactionId)
                     .build();
 
-            blockingStub.delete(request);
+            DeleteResponse response = blockingStub.delete(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage delete failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             logger.debug("Delete operation: db={}, key.length={}", dbName, key.length);
           } catch (StatusRuntimeException e) {
             logger.error("gRPC delete failed: db={}, error={}", dbName, e.getStatus());
@@ -191,6 +224,10 @@ public class RemoteStorageSPI implements StorageSPI {
                     .build();
 
             HasResponse response = blockingStub.has(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage has failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             logger.debug(
                 "Has operation: db={}, key.length={}, exists={}",
                 dbName,
@@ -207,11 +244,19 @@ public class RemoteStorageSPI implements StorageSPI {
 
   @Override
   public CompletableFuture<Void> batchWrite(String dbName, Map<byte[], byte[]> operations) {
+    return batchWrite(dbName, operations, "");
+  }
+
+  @Override
+  public CompletableFuture<Void> batchWrite(
+      String dbName, Map<byte[], byte[]> operations, String transactionId) {
     return CompletableFuture.runAsync(
         () -> {
           try {
             BatchWriteRequest.Builder requestBuilder =
-                BatchWriteRequest.newBuilder().setDatabase(dbName);
+                BatchWriteRequest.newBuilder()
+                    .setDatabase(dbName)
+                    .setTransactionId(transactionId == null ? "" : transactionId);
 
             for (Map.Entry<byte[], byte[]> entry : operations.entrySet()) {
               WriteOperation.Builder opBuilder =
@@ -367,6 +412,11 @@ public class RemoteStorageSPI implements StorageSPI {
                     .build();
 
             GetKeysNextResponse response = blockingStub.getKeysNext(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage getKeysNext failed for db=" + dbName + ": "
+                      + response.getErrorMessage());
+            }
             List<byte[]> keys =
                 response.getKeysList().stream()
                     .map(ByteString::toByteArray)
@@ -399,6 +449,11 @@ public class RemoteStorageSPI implements StorageSPI {
                     .build();
 
             GetValuesNextResponse response = blockingStub.getValuesNext(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage getValuesNext failed for db=" + dbName + ": "
+                      + response.getErrorMessage());
+            }
             List<byte[]> values =
                 response.getValuesList().stream()
                     .map(ByteString::toByteArray)
@@ -431,6 +486,10 @@ public class RemoteStorageSPI implements StorageSPI {
                     .build();
 
             GetNextResponse response = blockingStub.getNext(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage getNext failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             Map<byte[], byte[]> result = new HashMap<>();
             for (KeyValue kv : response.getPairsList()) {
               result.put(kv.getKey().toByteArray(), kv.getValue().toByteArray());
@@ -462,6 +521,11 @@ public class RemoteStorageSPI implements StorageSPI {
                     .build();
 
             PrefixQueryResponse response = blockingStub.prefixQuery(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage prefixQuery failed for db=" + dbName + ": "
+                      + response.getErrorMessage());
+            }
             Map<byte[], byte[]> result = new HashMap<>();
             for (KeyValue kv : response.getPairsList()) {
               result.put(kv.getKey().toByteArray(), kv.getValue().toByteArray());
@@ -506,7 +570,11 @@ public class RemoteStorageSPI implements StorageSPI {
                     .setConfig(configBuilder.build())
                     .build();
 
-            blockingStub.initDB(request);
+            InitDBResponse response = blockingStub.initDB(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage initDB failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             logger.info("Init DB operation: db={}, config={}", dbName, config);
           } catch (StatusRuntimeException e) {
             logger.error("gRPC init DB failed: db={}, error={}", dbName, e.getStatus());
@@ -522,7 +590,11 @@ public class RemoteStorageSPI implements StorageSPI {
           try {
             CloseDBRequest request = CloseDBRequest.newBuilder().setDatabase(dbName).build();
 
-            blockingStub.closeDB(request);
+            CloseDBResponse response = blockingStub.closeDB(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage closeDB failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             logger.info("Close DB operation: db={}", dbName);
           } catch (StatusRuntimeException e) {
             logger.error("gRPC close DB failed: db={}, error={}", dbName, e.getStatus());
@@ -538,7 +610,11 @@ public class RemoteStorageSPI implements StorageSPI {
           try {
             ResetDBRequest request = ResetDBRequest.newBuilder().setDatabase(dbName).build();
 
-            blockingStub.resetDB(request);
+            ResetDBResponse response = blockingStub.resetDB(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage resetDB failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             logger.info("Reset DB operation: db={}", dbName);
           } catch (StatusRuntimeException e) {
             logger.error("gRPC reset DB failed: db={}, error={}", dbName, e.getStatus());
@@ -559,12 +635,16 @@ public class RemoteStorageSPI implements StorageSPI {
             IsAliveRequest request = IsAliveRequest.newBuilder().setDatabase(dbName).build();
 
             IsAliveResponse response = blockingStub.isAlive(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage isAlive failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             logger.debug("Is alive operation: db={}, alive={}", dbName, response.getAlive());
 
             return response.getAlive();
           } catch (StatusRuntimeException e) {
             logger.error("gRPC is alive failed: db={}, error={}", dbName, e.getStatus());
-            return false;
+            throw new RuntimeException("Storage is alive operation failed", e);
           }
         });
   }
@@ -577,6 +657,10 @@ public class RemoteStorageSPI implements StorageSPI {
             SizeRequest request = SizeRequest.newBuilder().setDatabase(dbName).build();
 
             SizeResponse response = blockingStub.size(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage size failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             logger.debug("Size operation: db={}, size={}", dbName, response.getSize());
 
             return response.getSize();
@@ -595,6 +679,10 @@ public class RemoteStorageSPI implements StorageSPI {
             IsEmptyRequest request = IsEmptyRequest.newBuilder().setDatabase(dbName).build();
 
             IsEmptyResponse response = blockingStub.isEmpty(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage isEmpty failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             logger.debug("Is empty operation: db={}, empty={}", dbName, response.getEmpty());
 
             return response.getEmpty();
@@ -614,6 +702,14 @@ public class RemoteStorageSPI implements StorageSPI {
                 BeginTransactionRequest.newBuilder().setDatabase(dbName).build();
 
             BeginTransactionResponse response = blockingStub.beginTransaction(request);
+            if (!response.getSuccess()) {
+              logger.error(
+                  "Begin transaction reported failure: db={}, error={}",
+                  dbName,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage begin transaction failed: " + response.getErrorMessage());
+            }
             logger.debug(
                 "Begin transaction operation: db={}, txId={}", dbName, response.getTransactionId());
 
@@ -633,7 +729,15 @@ public class RemoteStorageSPI implements StorageSPI {
             CommitTransactionRequest request =
                 CommitTransactionRequest.newBuilder().setTransactionId(transactionId).build();
 
-            blockingStub.commitTransaction(request);
+            CommitTransactionResponse response = blockingStub.commitTransaction(request);
+            if (!response.getSuccess()) {
+              logger.error(
+                  "Commit transaction reported failure: txId={}, error={}",
+                  transactionId,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage commit transaction failed: " + response.getErrorMessage());
+            }
             logger.debug("Commit transaction operation: txId={}", transactionId);
           } catch (StatusRuntimeException e) {
             logger.error(
@@ -651,7 +755,15 @@ public class RemoteStorageSPI implements StorageSPI {
             RollbackTransactionRequest request =
                 RollbackTransactionRequest.newBuilder().setTransactionId(transactionId).build();
 
-            blockingStub.rollbackTransaction(request);
+            RollbackTransactionResponse response = blockingStub.rollbackTransaction(request);
+            if (!response.getSuccess()) {
+              logger.error(
+                  "Rollback transaction reported failure: txId={}, error={}",
+                  transactionId,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage rollback transaction failed: " + response.getErrorMessage());
+            }
             logger.debug("Rollback transaction operation: txId={}", transactionId);
           } catch (StatusRuntimeException e) {
             logger.error(
@@ -663,6 +775,23 @@ public class RemoteStorageSPI implements StorageSPI {
         });
   }
 
+  // ===========================================================================
+  // Storage snapshot APIs — Phase 1: explicitly UNSUPPORTED.
+  //
+  // The Rust storage engine returns an explicit error from every snapshot
+  // method (see `rust-backend/crates/storage/src/engine.rs` and
+  // `planning/close_loop.snapshot.md`). The gRPC server forwards that as
+  // `success = false` plus an `error_message` field in the response. The
+  // earlier client implementations dropped the `success` field on the floor,
+  // returning empty ids / null values to callers — that re-introduced the
+  // fake-success behavior on the Java SPI side.
+  //
+  // The implementations below now check the `success` field and surface
+  // failures by completing the future exceptionally with a
+  // `RuntimeException` whose cause is an `UnsupportedOperationException`,
+  // matching the policy in close_loop.snapshot.md.
+  // ===========================================================================
+
   @Override
   public CompletableFuture<String> createSnapshot(String dbName) {
     return CompletableFuture.supplyAsync(
@@ -672,6 +801,16 @@ public class RemoteStorageSPI implements StorageSPI {
                 CreateSnapshotRequest.newBuilder().setDatabase(dbName).build();
 
             CreateSnapshotResponse response = blockingStub.createSnapshot(request);
+            if (!response.getSuccess()) {
+              logger.warn(
+                  "Remote createSnapshot rejected: db={}, error={}",
+                  dbName,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage createSnapshot rejected by remote backend: "
+                      + response.getErrorMessage(),
+                  new UnsupportedOperationException(response.getErrorMessage()));
+            }
             logger.debug(
                 "Create snapshot operation: db={}, snapId={}", dbName, response.getSnapshotId());
 
@@ -691,7 +830,17 @@ public class RemoteStorageSPI implements StorageSPI {
             DeleteSnapshotRequest request =
                 DeleteSnapshotRequest.newBuilder().setSnapshotId(snapshotId).build();
 
-            blockingStub.deleteSnapshot(request);
+            DeleteSnapshotResponse response = blockingStub.deleteSnapshot(request);
+            if (!response.getSuccess()) {
+              logger.warn(
+                  "Remote deleteSnapshot rejected: snapId={}, error={}",
+                  snapshotId,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage deleteSnapshot rejected by remote backend: "
+                      + response.getErrorMessage(),
+                  new UnsupportedOperationException(response.getErrorMessage()));
+            }
             logger.debug("Delete snapshot operation: snapId={}", snapshotId);
           } catch (StatusRuntimeException e) {
             logger.error(
@@ -713,6 +862,16 @@ public class RemoteStorageSPI implements StorageSPI {
                     .build();
 
             GetFromSnapshotResponse response = blockingStub.getFromSnapshot(request);
+            if (!response.getSuccess()) {
+              logger.warn(
+                  "Remote getFromSnapshot rejected: snapId={}, error={}",
+                  snapshotId,
+                  response.getErrorMessage());
+              throw new RuntimeException(
+                  "Storage getFromSnapshot rejected by remote backend: "
+                      + response.getErrorMessage(),
+                  new UnsupportedOperationException(response.getErrorMessage()));
+            }
             logger.debug(
                 "Get from snapshot operation: snapId={}, key.length={}, found={}",
                 snapshotId,
@@ -736,6 +895,10 @@ public class RemoteStorageSPI implements StorageSPI {
             GetStatsRequest request = GetStatsRequest.newBuilder().setDatabase(dbName).build();
 
             GetStatsResponse response = blockingStub.getStats(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage getStats failed for db=" + dbName + ": " + response.getErrorMessage());
+            }
             tron.backend.BackendOuterClass.StorageStats protoStats = response.getStats();
 
             org.tron.core.storage.spi.StorageStats stats =
@@ -761,6 +924,10 @@ public class RemoteStorageSPI implements StorageSPI {
           try {
             ListDatabasesRequest request = ListDatabasesRequest.newBuilder().build();
             ListDatabasesResponse response = blockingStub.listDatabases(request);
+            if (!response.getSuccess()) {
+              throw new RuntimeException(
+                  "Storage listDatabases failed: " + response.getErrorMessage());
+            }
 
             List<String> databases = new ArrayList<>(response.getDatabasesList());
             logger.debug("List databases operation: count={}", databases.size());
@@ -875,9 +1042,8 @@ public class RemoteStorageSPI implements StorageSPI {
               })
           .exceptionally(
               throwable -> {
-                logger.error("Error in hasNext() for iterator on db={}", dbName, throwable);
-                reachedEnd = true;
-                return false;
+                throw new java.util.concurrent.CompletionException(
+                    "Error in hasNext() for iterator on db=" + dbName, throwable);
               });
     }
 
@@ -892,8 +1058,7 @@ public class RemoteStorageSPI implements StorageSPI {
 
                 Map.Entry<byte[], byte[]> result = nextEntry;
 
-                // CRITICAL FIX: Properly advance the iterator position
-                currentKey = incrementKey(result.getKey());
+                currentKey = exclusiveStartKey(result.getKey());
 
                 hasNextCached = false;
                 nextEntry = null;
@@ -939,15 +1104,10 @@ public class RemoteStorageSPI implements StorageSPI {
 
     @Override
     public CompletableFuture<Void> seekToLast() {
-      return CompletableFuture.runAsync(
-          () -> {
-            // For seekToLast, we'd need a special implementation
-            // For now, just mark as reached end since this is complex with gRPC
-            reachedEnd = true;
-            hasNextCached = false;
-            nextEntry = null;
-            logger.debug("Iterator seekToLast: db={} (not fully implemented)", dbName);
-          });
+      CompletableFuture<Void> future = new CompletableFuture<>();
+      future.completeExceptionally(
+          new UnsupportedOperationException("Remote iterator seekToLast is not supported"));
+      return future;
     }
 
     @Override
@@ -958,38 +1118,15 @@ public class RemoteStorageSPI implements StorageSPI {
       logger.debug("Closed iterator for db={}", dbName);
     }
 
-    /**
-     * Increment a byte array key to get the next possible key. This is crucial for proper iterator
-     * advancement.
-     *
-     * @param key the current key
-     * @return the next key in lexicographic order
-     */
-    private byte[] incrementKey(byte[] key) {
-      if (key == null || key.length == 0) {
-        return new byte[] {0x01};
+    private byte[] exclusiveStartKey(byte[] key) {
+      if (key == null) {
+        return new byte[] {0x00};
       }
 
-      // Create a copy to avoid modifying the original
-      byte[] nextKey = new byte[key.length];
+      byte[] nextKey = new byte[key.length + 1];
       System.arraycopy(key, 0, nextKey, 0, key.length);
-
-      // Increment the key by finding the rightmost byte that can be incremented
-      for (int i = nextKey.length - 1; i >= 0; i--) {
-        if (nextKey[i] != (byte) 0xFF) {
-          nextKey[i]++;
-          return nextKey;
-        } else {
-          nextKey[i] = 0x00;
-        }
-      }
-
-      // If all bytes were 0xFF, we need to extend the key
-      byte[] extendedKey = new byte[nextKey.length + 1];
-      System.arraycopy(nextKey, 0, extendedKey, 0, nextKey.length);
-      extendedKey[nextKey.length] = 0x01;
-
-      return extendedKey;
+      nextKey[key.length] = 0x00;
+      return nextKey;
     }
   }
 }

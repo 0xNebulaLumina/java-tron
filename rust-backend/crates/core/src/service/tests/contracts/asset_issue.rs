@@ -5,7 +5,8 @@ use super::common::{encode_varint, new_test_context, seed_dynamic_properties};
 use revm_primitives::{AccountInfo, Address, Bytes, U256};
 use tron_backend_common::{ExecutionConfig, ModuleManager, RemoteExecutionConfig};
 use tron_backend_execution::{
-    EngineBackedEvmStateStore, TronContractParameter, TronExecutionContext, TronTransaction, TxMetadata,
+    EngineBackedEvmStateStore, TronContractParameter, TronExecutionContext, TronStateChange,
+    TronTransaction, TxMetadata,
 };
 use tron_backend_storage::StorageEngine;
 
@@ -261,6 +262,101 @@ fn test_asset_issue_contract_trc10_change_emission() {
         }
         _ => panic!("Expected AssetIssued change"),
     }
+}
+
+#[test]
+fn test_asset_issue_blackhole_credit_preserves_signed_long_balance() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let storage_engine = StorageEngine::new(temp_dir.path()).unwrap();
+    seed_dynamic_properties(&storage_engine);
+    storage_engine
+        .put("properties", b"ALLOW_BLACKHOLE_OPTIMIZATION", &0i64.to_be_bytes())
+        .unwrap();
+    let mut storage_adapter = EngineBackedEvmStateStore::new(storage_engine);
+    let service = new_test_service_with_trc10_enabled();
+
+    let owner_address = Address::from([
+        0x4d, 0x1e, 0xf8, 0x67, 0x3f, 0x91, 0x6d, 0xeb, 0xb7, 0xe2, 0x51, 0x5a, 0x8f, 0x3e,
+        0xca, 0xf2, 0x61, 0x10, 0x34, 0xaa,
+    ]);
+    let blackhole_address = Address::from([
+        0x77, 0x94, 0x4d, 0x19, 0xc0, 0x52, 0xb7, 0x3e, 0xe2, 0x28, 0x68, 0x23, 0xaa, 0x83,
+        0xf8, 0x13, 0x8c, 0xb7, 0x03, 0x2f,
+    ]);
+    let old_blackhole_balance = -9_223_371_986_754_375_808i64;
+    let asset_issue_fee = 1_024_000_000i64;
+    let new_blackhole_balance = old_blackhole_balance + asset_issue_fee;
+
+    storage_adapter
+        .set_account(
+            owner_address,
+            AccountInfo {
+                balance: U256::from(5_001_000_000u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
+    storage_adapter
+        .set_account(
+            blackhole_address,
+            AccountInfo {
+                balance: U256::from(old_blackhole_balance as u64),
+                nonce: 0,
+                code_hash: revm::primitives::B256::ZERO,
+                code: None,
+            },
+        )
+        .unwrap();
+
+    let contract_data = build_asset_issue_contract_data(
+        owner_address,
+        b"SEED",
+        100_000_000_000,
+        1_000_000,
+        1,
+        1_529_987_043_000,
+        1_530_342_060_000,
+        b"http://www.sesameseed.org",
+    );
+    let transaction = TronTransaction {
+        from: owner_address,
+        to: None,
+        value: U256::ZERO,
+        data: contract_data.clone(),
+        gas_limit: 0,
+        gas_price: U256::ZERO,
+        nonce: 0,
+        metadata: TxMetadata {
+            contract_type: Some(tron_backend_execution::TronContractType::AssetIssueContract),
+            asset_id: None,
+            contract_parameter: Some(TronContractParameter {
+                type_url: "protocol.AssetIssueContract".to_string(),
+                value: contract_data.to_vec(),
+            }),
+            ..Default::default()
+        },
+    };
+    let context = new_test_context();
+
+    let result = service
+        .execute_asset_issue_contract(&mut storage_adapter, &transaction, &context)
+        .expect("asset issue should credit high-bit blackhole balance");
+
+    let blackhole_change = result.state_changes.iter().find(|change| {
+        matches!(change, TronStateChange::AccountChange { address, .. } if *address == blackhole_address)
+    });
+    let Some(TronStateChange::AccountChange {
+        old_account: Some(old_account),
+        new_account: Some(new_account),
+        ..
+    }) = blackhole_change else {
+        panic!("blackhole account change should be present");
+    };
+
+    assert_eq!(old_account.balance, U256::from(old_blackhole_balance as u64));
+    assert_eq!(new_account.balance, U256::from(new_blackhole_balance as u64));
 }
 
 #[test]

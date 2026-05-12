@@ -7,6 +7,19 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Storage Service Provider Interface (SPI) for abstracting database operations. This interface
  * supports both embedded and remote storage implementations.
+ *
+ * <p>Phase 1 semantics for {@code beginTransaction} / {@code commitTransaction} /
+ * {@code rollbackTransaction} and {@code createSnapshot} are frozen in
+ * {@code planning/close_loop.storage_transactions.md} and
+ * {@code planning/close_loop.snapshot.md}. The Javadoc on each method intentionally
+ * does not duplicate the spec — the planning notes are the source of truth, and
+ * the implementations must match them, not the other way around.
+ *
+ * <p>Notable anti-goals (do not reach for these without updating the planning notes):
+ * cross-DB transactions, transactional iterators, read-your-writes on
+ * {@code get}/{@code has}/{@code batchGet}, savepoints, and generic DB-product
+ * semantics. This SPI is a narrow helper for execution atomicity and future
+ * block-importer needs only.
  */
 public interface StorageSPI {
 
@@ -15,12 +28,35 @@ public interface StorageSPI {
 
   CompletableFuture<Void> put(String dbName, byte[] key, byte[] value);
 
+  default CompletableFuture<Void> put(
+      String dbName, byte[] key, byte[] value, String transactionId) {
+    CompletableFuture<Void> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException("transaction-scoped put is not supported"));
+    return future;
+  }
+
   CompletableFuture<Void> delete(String dbName, byte[] key);
+
+  default CompletableFuture<Void> delete(String dbName, byte[] key, String transactionId) {
+    CompletableFuture<Void> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException("transaction-scoped delete is not supported"));
+    return future;
+  }
 
   CompletableFuture<Boolean> has(String dbName, byte[] key);
 
   // Batch Operations
   CompletableFuture<Void> batchWrite(String dbName, Map<byte[], byte[]> operations);
+
+  default CompletableFuture<Void> batchWrite(
+      String dbName, Map<byte[], byte[]> operations, String transactionId) {
+    CompletableFuture<Void> future = new CompletableFuture<>();
+    future.completeExceptionally(
+        new UnsupportedOperationException("transaction-scoped batchWrite is not supported"));
+    return future;
+  }
 
   CompletableFuture<Map<byte[], byte[]>> batchGet(String dbName, List<byte[]> keys);
 

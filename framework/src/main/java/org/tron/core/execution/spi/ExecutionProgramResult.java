@@ -111,6 +111,10 @@ public class ExecutionProgramResult extends ProgramResult {
     return result;
   }
 
+  private static boolean isRevertError(String errorMessage) {
+    return "REVERT opcode executed".equals(errorMessage) || "Call reverted".equals(errorMessage);
+  }
+
   /**
    * Create ExecutionProgramResult from ExecutionSPI.ExecutionResult.
    * This converts ExecutionResult data to ProgramResult format.
@@ -130,11 +134,17 @@ public class ExecutionProgramResult extends ProgramResult {
     result.setHReturn(executionResult.getReturnData());
 
     // Set success/failure state
+    contractResult executionResultCode = executionResult.getResultCode();
     if (executionResult.isSuccess()) {
       result.setResultCode(contractResult.SUCCESS);
-    } else {
+    } else if (executionResultCode == contractResult.REVERT
+        || (executionResultCode == null && isRevertError(executionResult.getErrorMessage()))) {
       result.setResultCode(contractResult.REVERT);
       result.setRevert();
+      result.setRuntimeError(executionResult.getErrorMessage());
+    } else {
+      result.setResultCode(
+          executionResultCode != null ? executionResultCode : contractResult.UNKNOWN);
       result.setRuntimeError(executionResult.getErrorMessage());
     }
 
