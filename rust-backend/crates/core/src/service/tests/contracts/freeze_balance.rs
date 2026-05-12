@@ -2036,7 +2036,6 @@ fn test_freeze_delegation_optimized_preserves_ordering() {
 ///
 /// This test sets up:
 /// - CHANGE_DELEGATION=1 (enables delegation rewards)
-/// - delegation_reward_enabled=true (config gate for Rust)
 /// - An account with votes and a non-zero reward for a past cycle
 /// - A frozen bandwidth balance that has expired
 ///
@@ -2178,11 +2177,9 @@ fn test_unfreeze_balance_withdraw_reward_updates_allowance() {
         transaction_id: None,
     };
 
-    // Create service with delegation_reward_enabled=true
     let exec_config = ExecutionConfig {
         remote: tron_backend_common::RemoteExecutionConfig {
             unfreeze_balance_enabled: true,
-            delegation_reward_enabled: true,
             ..Default::default()
         },
         ..Default::default()
@@ -2319,7 +2316,6 @@ fn test_unfreeze_balance_no_reward_when_delegation_disabled() {
     let exec_config = ExecutionConfig {
         remote: tron_backend_common::RemoteExecutionConfig {
             unfreeze_balance_enabled: true,
-            delegation_reward_enabled: true, // enabled in config, but CHANGE_DELEGATION=0
             ..Default::default()
         },
         ..Default::default()
@@ -3325,7 +3321,6 @@ fn test_unfreeze_v2_withdraw_reward_updates_allowance() {
     let exec_config = ExecutionConfig {
         remote: tron_backend_common::RemoteExecutionConfig {
             unfreeze_balance_v2_enabled: true,
-            delegation_reward_enabled: true,
             ..Default::default()
         },
         ..Default::default()
@@ -3454,7 +3449,6 @@ fn test_unfreeze_v2_no_reward_when_delegation_disabled() {
     let exec_config = ExecutionConfig {
         remote: tron_backend_common::RemoteExecutionConfig {
             unfreeze_balance_v2_enabled: true,
-            delegation_reward_enabled: true, // enabled in config, but CHANGE_DELEGATION=0
             ..Default::default()
         },
         ..Default::default()

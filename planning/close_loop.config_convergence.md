@@ -30,8 +30,6 @@ Columns:
   - `RR canonical-ready` — would only apply once a contract reaches
     canonical-ready in `close_loop.contract_matrix.md`. **No flag is
     canonical-ready today** — see Section 1.5.
-  - `legacy / removable` — kept for backward compatibility but should
-    be deleted in a follow-up cleanup.
 
 | Flag                                       | config.toml | code default | classification |
 | ------------------------------------------ | ----------- | ------------ | -------------- |
@@ -55,7 +53,6 @@ Columns:
 | `emit_global_resource_changes`             | `true`      | `false`      | RR experimental (sidecar parity in 5.2) |
 | `emit_storage_changes`                     | `false`     | `false`      | RR experimental |
 | `accountinfo_aext_mode`                    | `"hybrid"`  | `"none"`     | RR experimental (CSV parity for AEXT — set to `"hybrid"` for Phase 1 parity runs) |
-| `delegation_reward_enabled`                | `true`      | `false`      | **legacy / removable** (the field is documented as deprecated in `config.rs`; delegation reward is now always computed when the dynamic property is enabled) |
 | `proposal_create_enabled`                  | (absent)    | `false`      | RR experimental |
 | `proposal_approve_enabled`                 | (absent)    | `false`      | RR experimental |
 | `proposal_delete_enabled`                  | (absent)    | `false`      | RR experimental |
@@ -213,10 +210,10 @@ relevant contract has reached `RR canonical-ready` in
 - Adopt profile A as the conservative comparison baseline. It does
   not need its own checked-in config file; engineers running a
   conservative comparison should set the values explicitly per run.
-- Mark `delegation_reward_enabled` as legacy / removable. A follow-up
-  task in this section deletes the field; for this iteration we
-  only flag it.
-- Mark every other flag in the `RR experimental` row as off-the-Phase-1-
+- Remove the deprecated delegation-reward config field. Delegation
+  reward behavior is governed by the `CHANGE_DELEGATION` dynamic
+  property, matching Java's `MortgageService.withdrawReward()` gate.
+- Mark every flag in the `RR experimental` row as off-the-Phase-1-
   acceptance-path until the corresponding contract reaches
   canonical-ready. Section 6.5 (contract readiness dashboard) is the
   feedback loop that drives flips.
@@ -228,7 +225,8 @@ The accepted state is:
 - `config.toml` clearly identifies itself as the experimental profile.
 - The conservative profile is documented in this file but not
   duplicated as a separate checked-in file.
-- The `delegation_reward_enabled` field is tagged for removal.
+- The deprecated delegation-reward config surface has been removed;
+  delegation reward behavior is controlled by `CHANGE_DELEGATION`.
 - The `close_loop.contract_matrix.md` "Default enabled" column
   matches the audit table above (already done in iteration 1's
   matrix work).
@@ -248,9 +246,8 @@ iteration-2 follow-ups below track the small comment edits needed.
       `RemoteExecutionConfig` (`config.rs`) pointing at this file.
       (Done in iter 2 — see the doc comment on
       `RemoteExecutionConfig` in `crates/common/src/config.rs`.)
-- [ ] Delete the deprecated `delegation_reward_enabled` field in a
-      follow-up cleanup PR (and remove the corresponding row from
-      `config.toml`). Tracked under Section 5.3 cleanup.
+- [x] Delete the deprecated delegation-reward field and remove the
+      corresponding `config.toml` row. (Done in Section 5.3 cleanup.)
 - [ ] When a contract reaches `RR canonical-ready` in
       `close_loop.contract_matrix.md`, flip its row above from
       "RR experimental" to "RR canonical-ready" in the same change.

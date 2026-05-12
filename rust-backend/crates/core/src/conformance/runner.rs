@@ -273,7 +273,6 @@ impl ConformanceRunner {
                 withdraw_balance_enabled: true,
                 account_create_enabled: true,
                 trc10_enabled: true,
-                delegation_reward_enabled: true,
                 // Metadata-driven overrides
                 strict_dynamic_properties: strict,
                 accountinfo_aext_mode: aext_mode,

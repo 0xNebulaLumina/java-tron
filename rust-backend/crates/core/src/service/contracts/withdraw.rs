@@ -599,9 +599,6 @@ impl BackendService {
     /// `allowChangeDelegation()` from dynamic properties, matching Java's
     /// `MortgageService.withdrawReward()` behavior exactly.
     ///
-    /// Note: The `delegation_reward_enabled` config flag is deprecated and ignored.
-    /// Delegation rewards are always computed when the dynamic property allows it.
-    ///
     /// # Returns
     /// * `Ok(reward)` - Delegation reward in SUN (0 if delegation not allowed)
     pub(crate) fn compute_delegation_reward_if_enabled(

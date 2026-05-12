@@ -164,12 +164,6 @@ pub struct RemoteExecutionConfig {
     /// Creates new accounts with proper fee charging and blackhole handling
     /// Default: false for safe rollout - falls back to Java embedded execution when disabled
     pub account_create_enabled: bool,
-    /// DEPRECATED: Delegation reward is now always computed when CHANGE_DELEGATION is enabled,
-    /// matching Java's MortgageService.withdrawReward() which self-gates on allowChangeDelegation().
-    /// This field is kept for backward config compatibility but has no effect.
-    #[serde(default)]
-    pub delegation_reward_enabled: bool,
-
     /// Genesis guard representative addresses (Base58-encoded TRON addresses).
     /// These addresses are blocked from WithdrawBalance operations, matching Java's
     /// `CommonParameter.getInstance().getGenesisBlock().getWitnesses()` check.
@@ -618,7 +612,6 @@ impl Config {
         builder =
             builder.set_default("execution.remote.vote_witness_seed_old_from_account", true)?;
         builder = builder.set_default("execution.remote.account_create_enabled", false)?;
-        builder = builder.set_default("execution.remote.delegation_reward_enabled", false)?;
         // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
         builder = builder.set_default("execution.remote.rust_persist_enabled", false)?;
 
@@ -691,7 +684,6 @@ impl Default for RemoteExecutionConfig {
             accountinfo_aext_mode: "none".to_string(), // Default to current behavior
             vote_witness_seed_old_from_account: true,  // Default true to match embedded semantics
             account_create_enabled: false,             // Default false for safe rollout
-            delegation_reward_enabled: false, // Deprecated: delegation reward is always computed
             genesis_guard_representatives_base58: Vec::new(), // Empty = use hardcoded fallback
             // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
             rust_persist_enabled: false,

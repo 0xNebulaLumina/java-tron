@@ -159,11 +159,6 @@ vote_witness_seed_old_from_account = true
 # Default: false for safe rollout - falls back to Java embedded execution when disabled
 account_create_enabled = true
 
-# DEPRECATED: Delegation reward is now always computed when CHANGE_DELEGATION dynamic property
-# is enabled, matching Java's MortgageService.withdrawReward() which self-gates on
-# allowChangeDelegation(). This field is kept for backward config compatibility but has no effect.
-delegation_reward_enabled = true
-
 # Genesis guard representative addresses (Base58-encoded TRON addresses)
 # These witnesses from the genesis block are not allowed to withdraw balance, matching Java's
 # CommonParameter.getInstance().getGenesisBlock().getWitnesses() check.
