@@ -36,18 +36,18 @@ public class ExecutionProgramResult extends ProgramResult {
   // Additional ExecutionSPI-specific fields
   @Getter @Setter private List<StateChange> stateChanges;
   @Getter @Setter private long bandwidthUsed;
-  // Phase 2: Freeze/resource ledger changes for Java-side application
+  // Freeze/resource ledger metadata for reporting, pre-state snapshots, and mirror validation.
   @Getter @Setter private List<ExecutionSPI.FreezeLedgerChange> freezeChanges;
   @Getter @Setter private List<ExecutionSPI.GlobalResourceTotalsChange> globalResourceChanges;
-  // Phase 2: TRC-10 semantic changes for Java-side application
+  // TRC-10 semantic metadata for reporting, pre-state snapshots, and mirror validation.
   @Getter @Setter private List<ExecutionSPI.Trc10Change> trc10Changes;
-  // Phase 2: Vote changes for Account.votes update after VoteWitness
+  // VoteWitness metadata for reporting and pre-state snapshots.
   @Getter @Setter private List<ExecutionSPI.VoteChange> voteChanges;
-  // WithdrawBalanceContract: allowance/latestWithdrawTime sidecar changes
+  // WithdrawBalanceContract metadata for reporting and pre-state snapshots.
   @Getter @Setter private List<ExecutionSPI.WithdrawChange> withdrawChanges;
-  // Phase B conformance: Write mode indicates whether Rust has persisted state changes
+  // Write mode indicates whether Rust has persisted state changes.
   @Getter @Setter private ExecutionSPI.WriteMode writeMode;
-  // Phase B conformance: Touched keys for B-镜像 (B-mirror) support
+  // Touched keys for B3 read-side mirror support.
   @Getter @Setter private List<ExecutionSPI.TouchedKey> touchedKeys;
 
   /** Default constructor creates an empty result. */

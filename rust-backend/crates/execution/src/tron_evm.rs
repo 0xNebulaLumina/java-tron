@@ -539,9 +539,9 @@ pub enum FreezeLedgerResource {
     TronPower = 2,
 }
 
-/// Global resource totals snapshot for Phase 2 emission
-/// Sent to Java to update DynamicPropertiesStore TOTAL_NET_WEIGHT/TOTAL_NET_LIMIT/etc
-/// immediately after freeze/unfreeze operations, fixing FREE_NET vs ACCOUNT_NET divergence
+/// Global resource totals snapshot for Phase 2 emission.
+/// Used for reporting, pre-state snapshots, and Java read-side mirror validation
+/// after Rust persists freeze/unfreeze operations.
 #[derive(Debug, Clone)]
 pub struct GlobalResourceTotalsChange {
     pub total_net_weight: i64, // Sum of all BANDWIDTH freezes / TRX_PRECISION
@@ -551,7 +551,7 @@ pub struct GlobalResourceTotalsChange {
 }
 
 /// TRC-10 Asset Issued (Phase 2: full TRC-10 ledger semantics)
-/// Describes a new TRC-10 asset issuance operation for Java-side persistence
+/// Describes a new TRC-10 asset issuance operation for reporting and mirror validation
 #[derive(Debug, Clone)]
 pub struct Trc10AssetIssued {
     pub owner_address: revm::primitives::Address,
@@ -569,11 +569,11 @@ pub struct Trc10AssetIssued {
     pub public_free_asset_net_limit: i64,
     pub public_free_asset_net_usage: i64,
     pub public_latest_free_net_time: i64,
-    pub token_id: Option<String>, // Optional; if None, Java computes via TOKEN_ID_NUM
+    pub token_id: Option<String>, // Optional; reports may derive from existing stores when absent
 }
 
 /// TRC-10 Asset Transferred (Phase 2: TRC-10 transfer operation)
-/// Describes a TRC-10 transfer for Java-side persistence of asset balance changes
+/// Describes a TRC-10 transfer for reporting and mirror validation
 #[derive(Debug, Clone)]
 pub struct Trc10AssetTransferred {
     pub owner_address: revm::primitives::Address, // Sender address (20-byte EVM format)
@@ -600,17 +600,17 @@ pub struct VoteEntry {
 }
 
 /// VoteChange carries updated votes for an account after VoteWitness execution.
-/// Java should apply this to Account.votes to maintain parity with embedded mode.
-/// This ensures correct old_votes seeding on subsequent votes in the same or later epochs.
+/// Used for reporting, pre-state snapshots, and mirror validation after Rust persistence.
+/// This keeps vote metadata visible for parity checks across epochs.
 #[derive(Debug, Clone)]
 pub struct VoteChange {
     pub owner_address: revm::primitives::Address, // Voter address (20-byte EVM format)
     pub votes: Vec<VoteEntry>,                    // New votes list (replaces Account.votes)
 }
 
-/// WithdrawChange carries withdrawal info for applying allowance and latestWithdrawTime updates.
-/// Used for WithdrawBalanceContract remote execution - Java applies this to Account fields.
-/// Balance delta is already handled by AccountChange; this sidecar handles the allowance/time reset.
+/// WithdrawChange carries withdrawal info for allowance and latestWithdrawTime parity metadata.
+/// Used for reporting, pre-state snapshots, and mirror validation after Rust persistence.
+/// Balance delta is represented separately by AccountChange metadata.
 #[derive(Debug, Clone)]
 pub struct WithdrawChange {
     pub owner_address: revm::primitives::Address, // Witness address (20-byte EVM format)
@@ -637,22 +637,21 @@ pub struct TronExecutionResult {
         ),
     >,
     /// Freeze/resource ledger changes (Phase 2: emit_freeze_ledger_changes)
-    /// Emitted when config flag is enabled, for Java-side application
+    /// Emitted when config flag is enabled for reporting and mirror validation
     pub freeze_changes: Vec<FreezeLedgerChange>,
     /// Global resource totals changes (Phase 2: emit_global_resource_changes)
-    /// Emitted when flag is enabled, for Java to update DynamicPropertiesStore totals
-    /// Fixes FREE_NET vs ACCOUNT_NET divergence by ensuring totalNetWeight/totalNetLimit
-    /// are current before next tx in same block
+    /// Emitted when flag is enabled for reporting, pre-state snapshots, and mirror validation
+    /// so totalNetWeight/totalNetLimit parity can be checked across same-block transactions
     pub global_resource_changes: Vec<GlobalResourceTotalsChange>,
     /// TRC-10 semantic changes (Phase 2: full TRC-10 ledger persistence)
-    /// Rust emits high-level TRC-10 operations; Java applies them to existing stores
+    /// Rust emits high-level TRC-10 operations for reporting and mirror validation
     pub trc10_changes: Vec<Trc10Change>,
-    /// Vote changes (Phase 2: Account.votes update after VoteWitness)
-    /// Rust emits the new votes list; Java applies it to Account.votes
-    /// This ensures correct old_votes seeding for subsequent epochs
+    /// Vote changes (Phase 2: Account.votes metadata after VoteWitness)
+    /// Rust emits the new votes list for reporting and mirror validation
+    /// This supports old_votes parity checks for subsequent epochs
     pub vote_changes: Vec<VoteChange>,
     /// Withdraw changes (WithdrawBalanceContract: allowance/latestWithdrawTime sidecar)
-    /// Rust emits the withdrawal info; Java applies allowance=0 and latestWithdrawTime update
+    /// Rust emits the withdrawal info for reporting and mirror validation
     pub withdraw_changes: Vec<WithdrawChange>,
     /// Phase 0.4: Receipt passthrough - serialized Protocol.Transaction.Result bytes
     /// Contains system contract-specific fields like exchange_id, withdraw_amount,

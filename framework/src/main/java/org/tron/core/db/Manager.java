@@ -50,18 +50,6 @@ import org.bouncycastle.util.encoders.Hex;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.tron.api.GrpcAPI.TransactionInfoList;
-import org.tron.core.execution.reporting.ExecutionCsvLogger;
-import org.tron.core.execution.reporting.ExecutionCsvRecord;
-import org.tron.core.execution.reporting.ExecutionCsvRecordBuilder;
-import org.tron.core.execution.reporting.JournalPreseedUtil;
-import org.tron.core.execution.reporting.StateChangeJournalRegistry;
-import org.tron.core.execution.reporting.StateChangeRecorderBridge;
-import org.tron.core.execution.reporting.DomainChangeJournalRegistry;
-import org.tron.core.execution.reporting.DomainChangeRecorderBridge;
-import org.tron.core.execution.reporting.PreStateSnapshotRegistry;
-import org.tron.core.db.StateChangeRecorderContext;
-import org.tron.core.db.DomainChangeRecorderContext;
-import org.tron.core.storage.sync.ResourceSyncContext;
 import org.tron.common.args.GenesisBlock;
 import org.tron.common.bloom.Bloom;
 import org.tron.common.cron.CronExpression;
@@ -115,7 +103,9 @@ import org.tron.core.capsule.utils.TransactionUtil;
 import org.tron.core.config.Parameter.ChainConstant;
 import org.tron.core.config.args.Args;
 import org.tron.core.consensus.ProposalController;
+import org.tron.core.db.DomainChangeRecorderContext;
 import org.tron.core.db.KhaosDatabase.KhaosBlock;
+import org.tron.core.db.StateChangeRecorderContext;
 import org.tron.core.db.accountstate.TrieService;
 import org.tron.core.db.accountstate.callback.AccountStateCallBack;
 import org.tron.core.db.api.AssetUpdateHelper;
@@ -148,12 +138,24 @@ import org.tron.core.exception.VMIllegalException;
 import org.tron.core.exception.ValidateScheduleException;
 import org.tron.core.exception.ValidateSignatureException;
 import org.tron.core.exception.ZksnarkException;
+import org.tron.core.execution.reporting.DomainChangeJournalRegistry;
+import org.tron.core.execution.reporting.DomainChangeRecorderBridge;
+import org.tron.core.execution.reporting.ExecutionCsvLogger;
+import org.tron.core.execution.reporting.ExecutionCsvRecord;
+import org.tron.core.execution.reporting.ExecutionCsvRecordBuilder;
+import org.tron.core.execution.reporting.JournalPreseedUtil;
+import org.tron.core.execution.reporting.PreStateSnapshotRegistry;
+import org.tron.core.execution.reporting.StateChangeJournalRegistry;
+import org.tron.core.execution.reporting.StateChangeRecorderBridge;
+import org.tron.core.execution.spi.ExecutionMode;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
 import org.tron.core.metrics.MetricsKey;
 import org.tron.core.metrics.MetricsUtil;
 import org.tron.core.service.MortgageService;
 import org.tron.core.service.RewardViCalService;
 import org.tron.core.services.event.exception.EventException;
+import org.tron.core.storage.sync.ResourceSyncContext;
+import org.tron.core.storage.sync.ResourceSyncService;
 import org.tron.core.store.AccountAssetStore;
 import org.tron.core.store.AccountIdIndexStore;
 import org.tron.core.store.AccountIndexStore;
@@ -178,7 +180,6 @@ import org.tron.core.store.TransactionRetStore;
 import org.tron.core.store.VotesStore;
 import org.tron.core.store.WitnessScheduleStore;
 import org.tron.core.store.WitnessStore;
-import org.tron.core.storage.sync.ResourceSyncService;
 import org.tron.core.utils.TransactionRegister;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Permission;
@@ -2778,27 +2779,25 @@ public class Manager {
   }
 
   /**
-   * Create a Runtime implementation based on configuration. This method determines whether to use
-   * the traditional RuntimeImpl or the new ExecutionSPI-aware RuntimeSpiImpl.
+   * Create a Runtime implementation based on configuration. This method uses RuntimeSpiImpl only
+   * for REMOTE ExecutionSPI block execution.
    *
    * @return Runtime implementation (RuntimeImpl or RuntimeSpiImpl)
    */
   private Runtime createRuntime() {
-    try {
-      // Check if ExecutionSPI should be used
-      if (shouldUseExecutionSpi()) {
-        logger.debug("Using ExecutionSPI-aware runtime (RuntimeSpiImpl)");
-        // RuntimeSpiImpl constructor will automatically initialize the factory with the correct mode
-        return new RuntimeSpiImpl();
-      } else {
-        logger.debug("Using traditional runtime (RuntimeImpl)");
-        return new RuntimeImpl();
-      }
-    } catch (Exception e) {
-      logger.warn(
-          "Failed to create ExecutionSPI runtime, falling back to RuntimeImpl: {}", e.getMessage());
+    if (!CommonParameter.getInstance().isExecutionSpiEnabled()
+        || ExecutionSpiFactory.determineExecutionMode() != ExecutionMode.REMOTE) {
+      logger.debug("Using traditional runtime (RuntimeImpl)");
       return new RuntimeImpl();
     }
+
+    if (!shouldUseExecutionSpi()) {
+      throw new IllegalStateException(
+          "REMOTE ExecutionSPI is enabled but not initialized for REMOTE mode");
+    }
+
+    logger.debug("Using REMOTE ExecutionSPI runtime (RuntimeSpiImpl)");
+    return new RuntimeSpiImpl();
   }
 
   /**
@@ -2807,21 +2806,19 @@ public class Manager {
    * @return true if ExecutionSPI should be used, false otherwise
    */
   private boolean shouldUseExecutionSpi() {
-    // Check if ExecutionSPI is explicitly disabled
     if (!CommonParameter.getInstance().isExecutionSpiEnabled()) {
       return false;
     }
 
-    // Check if ExecutionSPI factory is initialized and mode is not EMBEDDED
     try {
-      if (ExecutionSpiFactory.getInstance() != null) {
-        return true;
+      if (ExecutionSpiFactory.getInstance() == null) {
+        ExecutionSpiFactory.initialize();
       }
+      return ExecutionSpiFactory.getInstance() != null
+          && ExecutionSpiFactory.getInitializedMode() == ExecutionMode.REMOTE;
     } catch (Exception e) {
-      logger.debug("ExecutionSPI not available: {}", e.getMessage());
+      throw new IllegalStateException("ExecutionSPI not available for REMOTE mode", e);
     }
-
-    return false;
   }
 
   /**

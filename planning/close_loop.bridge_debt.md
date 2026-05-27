@@ -66,54 +66,46 @@ Open risks (tracked here, not fixed in Phase 1):
   state mutation must add itself to the dirty-key collection, or the
   bridge will hide the bug.
 
-### B2. `RuntimeSpiImpl` `apply*` family — Java applies Rust state changes
+### B2. `RuntimeSpiImpl` Java-side apply family — removed
 
-Primary touchpoints:
+Primary historical touchpoints:
 
-- `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java:177`
-  `applyStateChangesToLocalDatabase`
-- `...:211` `applyFreezeLedgerChanges` (+ `applyGlobalResourceChange` at `:432`)
-- `...:470` `applyTrc10Changes`
-- `...:519` `applyVoteChanges`
-- `...:609` `applyWithdrawChanges`
+- `applyStateChangesToLocalDatabase`
+- `applyFreezeLedgerChanges` / `applyGlobalResourceChange`
+- `applyTrc10Changes`
+- `applyVoteChanges`
+- `applyWithdrawChanges`
 
-What it does: when `executionResult.getWriteMode() == COMPUTE_ONLY`
-(i.e. Rust computed the state change but did not persist it), Java
-reads every `StateChange`, `FreezeLedgerChange`, `TRC10Change`,
-`VoteChange`, and `WithdrawChange` off the response and writes the
-matching rows into Java's local stores (`AccountStore`,
-`DynamicPropertiesStore`, `AssetIssueStore`, etc.).
+What it did: when Rust returned a non-persisted execution result, Java
+read `StateChange`, `FreezeLedgerChange`, `TRC10Change`, `VoteChange`,
+and `WithdrawChange` sidecars from the response and wrote matching rows
+into Java's local stores.
 
-Why it exists: it is the only way to make Java's local stores visible
-to subsequent reads on the Java side when Rust is not the authoritative
-writer. It is also the path that still matches the "Rust is a remote
-accelerator, Java is canonical" mental model from earlier phases.
+Why it existed: it represented the earlier "Rust computes, Java writes"
+model used while execution and storage migration were validated
+separately.
 
-Classification: **transitional**.
+Classification: **removed from current runtime**.
 
-- In the **`RR` canonical profile** (`rust_persist_enabled=true`), the
-  whole family is **off** — Java sees `PERSISTED`, skips every apply
-  call, and relies on `postExecMirror` (B3) to keep its local stores
-  coherent.
-- In the **`RR` compute-only profile** (`rust_persist_enabled=false`),
-  the family is **still the writer**, because Rust did not persist.
-  That is the development / diagnostic mode and is not the Phase 1
-  acceptance path (see `close_loop.write_ownership.md`).
+- In **canonical `RR`** (`rust_persist_enabled=true`), Rust is the only
+  authoritative writer. Java accepts `PERSISTED` remote results and runs
+  `postExecMirror` (B3) as a read-side cache refresh.
+- Successful non-`PERSISTED` remote execution is not a sanctioned runtime
+  profile. Java fails fast if a non-`PERSISTED` result succeeds or carries
+  remote state effects.
+- Sidecars remain available for CSV/reporting, pre-state snapshots, and
+  mirror-validation metadata; they are not Java write instructions.
 
-Post-Phase-1 plan: remove the `apply*` family **once the canonical
-`RR` profile is the only supported mode**. As long as we still want
-the compute-only profile for debugging individual contracts, the
-family has to stay — we just stop treating it as the canonical
-writer in `RR`.
-
-Do not add new `apply*` variants. Any new state channel from Rust to
-Java should travel through the mirror (B3), not through a fresh apply.
+Removal plan status: **complete for the current runtime**. Do not add new
+Java-side apply variants. Any new state channel from Rust to Java must be
+represented through Rust persistence plus touched-key mirror refresh, not
+through a fresh apply path.
 
 ### B3. `postExecMirror` — Java refreshes from Rust touched keys
 
 Primary touchpoint:
 
-- `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java:1615`
+- `framework/src/main/java/org/tron/common/runtime/RuntimeSpiImpl.java`
 
 What it does: when `writeMode = PERSISTED`, Java reads the
 `touched_keys` list from the execution response and refreshes each
@@ -230,8 +222,8 @@ row, the bug is almost certainly in execution, not in seeding.
 | Bridge | Location | Phase 1 | Post-Phase-1 |
 | ------ | -------- | ------- | ------------- |
 | B1 `ResourceSyncService` | `framework/.../storage/sync/` | required | removable once block importer takes over maintenance + rewards |
-| B2 `RuntimeSpiImpl.apply*` family | `RuntimeSpiImpl.java` | transitional (off in canonical RR) | removable once compute-only profile is retired |
-| B3 `postExecMirror` | `RuntimeSpiImpl.java:1615` | required | must survive into importer phase until Java stops reading chainbase |
+| B2 historical Java apply family | `RuntimeSpiImpl.java` | removed from current runtime | complete; do not reintroduce |
+| B3 `postExecMirror` | `RuntimeSpiImpl.java` | required | must survive into importer phase until Java stops reading chainbase |
 | B4 Pre-exec AEXT snapshot | `RemoteExecutionSPI.java` | required | removable once Rust has a native BandwidthProcessor |
 | B5 Genesis account seeding | `rust-backend/config.toml` + `main.rs` | required | must survive until importer supports "load initial snapshot" |
 
@@ -240,9 +232,9 @@ row, the bug is almost certainly in execution, not in seeding.
 This is the order in which we expect each bridge to disappear during
 Phase 2+ work. It is not a schedule — it is a dependency graph.
 
-1. **B2 (`apply*` family)** can be deleted immediately after we retire
-   the compute-only profile (`rust_persist_enabled=false` as a
-   sanctioned mode). Nothing downstream blocks on it.
+1. **B2 (Java-side apply family)** is already removed from the current
+   runtime. Keep it out; successful or effectful non-`PERSISTED` remote
+   results must remain fail-fast.
 2. **B4 (pre-exec AEXT)** can be deleted once Rust has a native
    `BandwidthProcessor` equivalent for every contract type tagged
    `RR candidate` in `close_loop.contract_matrix.md`. This is the
@@ -268,17 +260,11 @@ Phase 2+ work. It is not a schedule — it is a dependency graph.
   maintenance.
 - Removing B1 before the importer means `RR` has no way to ingest
   Java-side maintenance mutations at all.
-- Removing B4 before B2 is premature. `collectPreExecutionAext` fires
-  on every remote transaction regardless of `rust_persist_enabled`,
-  so it is just as active under the compute-only profile as under
-  the canonical `RR` profile. As long as B2 (the compute-only apply
-  family) is still sanctioned, the compute-only profile is still a
-  valid way to run individual contracts — and each of those runs
-  still needs the AEXT snapshot to keep CSV parity. Wait to retire
-  B4 until the Rust native bandwidth model covers every
-  `RR candidate` contract type AND the compute-only profile is no
-  longer used to debug contracts against Java-applied state. That
-  means B2 must be retired first.
+- B4 is still independent bridge debt even after B2 removal.
+  `collectPreExecutionAext` fires on every remote transaction, and the
+  hybrid AEXT snapshot remains necessary until the Rust native bandwidth
+  model covers every `RR candidate` contract type. Do not treat B2
+  removal as permission to remove B4.
 
 ## Anti-regression rule (durable)
 

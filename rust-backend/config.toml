@@ -106,27 +106,24 @@ unfreeze_balance_v2_enabled = true
 # WithdrawBalanceContract execution (Phase 1: uses Account.allowance only)
 # Set to true to enable remote execution of WithdrawBalanceContract
 # Phase 1 uses allowance only - skips delegation/mortgage reward computation
-# Balance delta applied by AccountChange; Java applies allowance=0 and latestWithdrawTime via sidecar
+# Rust persists balance/allowance/time changes; Java mirrors touched stores in canonical RR.
 # Default: false for safe rollout - falls back to Java embedded execution when disabled
 withdraw_balance_enabled = true
 
-# Emit freeze/resource ledger changes in ExecutionResult (Phase 2)
-# When true, emits FreezeLedgerChange messages describing freeze/unfreeze operations
-# These changes are applied to Java's local stores (AccountStore, DynamicPropertiesStore)
-# so BandwidthProcessor sees updated netLimit for subsequent txs in the same block.
+# Emit freeze/resource ledger metadata in ExecutionResult (Phase 2)
+# When true, emits FreezeLedgerChange messages describing freeze/unfreeze operations.
+# In canonical RR, Rust persists these changes and Java uses them for reporting,
+# pre-state snapshots, and persisted-mirror validation, not as write instructions.
 # Default: false to maintain CSV parity with Phase 1 (only AccountChange)
-# When enabled, Java applies these changes via RuntimeSpiImpl.applyFreezeLedgerChanges()
 # Affects: FreezeBalance, UnfreezeBalance, FreezeBalanceV2, UnfreezeBalanceV2,
 #          DelegateResource, UnDelegateResource, WithdrawExpireUnfreeze, CancelAllUnfreezeV2
 emit_freeze_ledger_changes = true
 
 # Emit GlobalResourceTotalsChange alongside freeze/unfreeze operations (Phase 2)
-# When true, backend computes and sends total net/energy weight and limits after each freeze/unfreeze
-# so Java can update DynamicPropertiesStore.totalNetWeight/totalNetLimit immediately.
-# This fixes the FREE_NET vs ACCOUNT_NET divergence where Java's BandwidthProcessor computed netLimit=0
-# because totalNetWeight hadn't been updated yet for freeze operations in the same block.
+# When true, backend computes and sends total net/energy weight and limits after each freeze/unfreeze.
+# In canonical RR, Rust persists these totals and Java sees them through B3 postExecMirror.
+# The sidecar remains available for reporting, pre-state snapshots, and mirror validation.
 # Default: false for backward compatibility; set true for Phase 2 parity runs.
-# When enabled, Java applies these changes via RuntimeSpiImpl.applyGlobalResourceChange()
 # Affects: FreezeBalance, UnfreezeBalance, FreezeBalanceV2, UnfreezeBalanceV2
 emit_global_resource_changes = true
 
@@ -171,20 +168,19 @@ account_create_enabled = true
 # This flag controls whether Rust persists state changes directly to storage during commit.
 # The canonical policy is defined in planning/close_loop.write_ownership.md.
 #
-# The system has two potential write paths:
-# 1. Rust handler directly writes to RocksDB via the buffered storage adapter
-# 2. Java RuntimeSpiImpl.apply* reflects state_changes/sidecars into the local chainbase
+# Canonical RR has one write path:
+# 1. Rust handler writes to RocksDB via the buffered storage adapter.
+# 2. Java RuntimeSpiImpl runs postExecMirror as a read-side cache refresh only.
 #
-# Double-write is prevented by the `write_mode` guard in RuntimeSpiImpl:
-# when Rust returns `write_mode = PERSISTED`, Java skips apply* and only runs postExecMirror.
+# RuntimeSpiImpl no longer contains Java-side apply* writers. Successful or effectful
+# non-PERSISTED remote results are rejected by the Java ownership guard.
 #
 # Profile mapping:
-# - RR canonical (Phase 1 acceptance):    rust_persist_enabled = true
+# - RR canonical:                         rust_persist_enabled = true
 #     Rust is the authoritative writer; Java is a read-side mirror.
-# - RR compute-only (development only):   rust_persist_enabled = false
-#     Rust computes, Java applies. Not an acceptance profile — results from
-#     this mode are NOT citable as RR parity.
-# - EE baseline:                           flag is ignored, Rust backend is not hit.
+# - RR non-persisted legacy/unsupported:  rust_persist_enabled = false
+#     Not a sanctioned canonical RR profile and not citable as RR parity.
+# - EE baseline:                          flag is ignored, Rust backend is not hit.
 #
 # This checked-in value is the RR canonical profile. Do not flip it to false
 # without first updating close_loop.write_ownership.md and notifying the phase

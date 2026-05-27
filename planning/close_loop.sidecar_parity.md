@@ -21,41 +21,41 @@ A **sidecar** in this planning is any field on
 `ExecutionResult` (`framework/src/main/proto/backend.proto`) other than
 the raw `logs` / `energy_used` / `energy_refunded` / `return_data` /
 `error_message` / `status` core. `state_changes` is included as S1
-because it is the primary apply channel even though it is not
-"side" of anything — it is part of the same audit so the readiness
-gates for an `AccountChange`-only contract still flow through this
-file. Flat-int counters like `bandwidth_used` (S10) and the unused
+because it is the primary state-effect metadata channel even though it
+is not "side" of anything — it is part of the same audit so the
+readiness gates for an `AccountChange`-only contract still flow through
+this file. Flat-int counters like `bandwidth_used` (S10) and the unused
 `resource_usage` (S11) are also catalogued so the audit covers every
 field on `ExecutionResult`. Sidecars exist because:
 
 1. Java still owns some state-mutation paths (maintenance, rewards,
-   bandwidth processor) that Rust has not absorbed. Sidecars carry
-   the Rust-computed deltas back to Java so Java can apply them to
-   its local `AccountStore` / `DynamicPropertiesStore` / etc.
+   bandwidth processor) that Rust has not absorbed. Sidecars expose
+   Rust-computed metadata for CSV/reporting, pre-state snapshots, and
+   mirror-validation checks while Rust owns persisted remote writes.
 2. Some invariants (e.g. `Account.allowance` + `latestWithdrawTime`
-   on WithdrawBalance) live on Java capsules and cannot currently be
-   expressed as a straight `StateChange` / `AccountChange`.
-3. Some operations (e.g. TRC-10 AssetIssue) require Java-side store
-   creation or index updates that `AccountChange` does not cover.
+   on WithdrawBalance) are important for parity reports even when the
+   final state is read back through touched-key mirror refresh.
+3. Some operations (e.g. TRC-10 AssetIssue) have domain-specific state
+   that needs explicit audit coverage beyond raw account bytes.
 
-Every sidecar is a symptom of split ownership. The long-term goal in
-Phase 2+ is to reduce the sidecar surface to zero by moving the
-affected state fully into Rust. Phase 1's job is to stop the existing
-sidecars from silently drifting.
+Every sidecar is a symptom of split ownership or incomplete native Rust
+coverage. The long-term goal in Phase 2+ is to reduce the sidecar
+surface by moving the affected state and read paths fully into Rust.
+Phase 1's job is to stop the existing sidecars from silently drifting
+and to ensure they are not mistaken for Java write instructions.
 
 ## Sidecar inventory
 
 The fields below are all defined on
-`backend.proto` `message ExecutionResult` and applied by Java inside
-`RuntimeSpiImpl.apply*` (when `rust_persist_enabled = false`) or
-mirrored via `postExecMirror` / `ResourceSyncService` (when
-`rust_persist_enabled = true`).
+`backend.proto` `message ExecutionResult`. In current canonical `RR`,
+Rust persists state and Java uses sidecars for reporting, pre-state
+snapshots, and ownership/mirror validation; Java no longer treats these
+fields as write instructions.
 
 ### S1. `state_changes` — `StorageChange` + `AccountChange`
 
 Proto: `repeated StateChange state_changes = 5;`
-Java applier: `RuntimeSpiImpl.applyStateChangesToLocalDatabase`
-(line ~177).
+Current Java role: reporting, pre-state snapshots, and mirror-validation metadata.
 
 Payload:
 
@@ -75,19 +75,15 @@ Java target stores: `AccountStore`; VM storage writes go through the
 storage adapter layer.
 
 Completeness assessment: **partial**. Balance and nonce on
-`AccountChange` are robust. The other corners are fragile or missing:
+`AccountChange` are robust as parity metadata. The other corners are
+fragile or missing:
 
-- `code_hash` / `code` round-trip is **not yet wired through the
-  Java applier**: `RuntimeSpiImpl.applyStateChangesToLocalDatabase`
-  has a TODO around line ~1030 for contract code application and
-  `updateAccountStorage()` is a no-op around line ~1104. New
-  contract bytecode persists today via the `EmbeddedExecutionSPI`
-  path, not via `RuntimeSpiImpl.apply*` from a remote result.
-- `StorageChange` storage-slot writes are emitted by Rust but the
-  Java applier is similarly a no-op for storage rows. VM storage
-  effectively round-trips only because `rust_persist_enabled = true`
-  is the canonical RR profile and Rust persists directly to its
-  own RocksDB; the compute-only profile would silently drop these.
+- `code_hash` / `code` round-trip still needs parity coverage against
+  the persisted Rust write plus touched-key mirror path. New contract
+  bytecode persists through canonical Rust writes, not Java-side apply.
+- `StorageChange` storage-slot writes are emitted by Rust, but canonical
+  RR correctness depends on Rust persistence plus touched-key mirror
+  refresh. Successful compute-only storage writes are no longer accepted.
 - The AEXT fields rely on the iter 4 B4 pre-exec AEXT snapshot
   bridge (`collectPreExecutionAext`) to round-trip for unchanged
   fields, which is explicitly "we did not port BandwidthProcessor".
@@ -103,9 +99,7 @@ Known gaps:
 - `is_creation` / `is_deletion` flags have not been exercised for
   `SELFDESTRUCT` on the Rust side against the full Java actuator
   deletion logic.
-- Contract code and storage application on the Java side
-  (`applyStateChangesToLocalDatabase` TODO + no-op
-  `updateAccountStorage`) — see above.
+- Contract code and storage mirror coverage on the Java side — see above.
 
 Readiness gating: any contract family that mutates non-`AccountInfo`
 fields cannot be declared `RR canonical-ready` until its specific
@@ -114,7 +108,7 @@ subset of `AccountChange` coverage is verified in a parity test.
 ### S2. `freeze_changes` — `FreezeLedgerChange`
 
 Proto: `repeated FreezeLedgerChange freeze_changes = 10;`
-Java applier: `RuntimeSpiImpl.applyFreezeLedgerChanges` (line ~211).
+Current Java role: reporting, pre-state snapshots, and mirror-validation metadata.
 Gated by Rust config flag `emit_freeze_ledger_changes` (default `true`
 in `rust-backend/config.toml`, default `false` in `config.rs` —
 see `close_loop.config_convergence.md`).
@@ -142,9 +136,9 @@ freeze state):
 (`WithdrawBalanceContract` is a balance / allowance operation, not a
 freeze operation, and is correctly listed under S6/S7 instead.)
 
-Java target stores: directly on `AccountStore` fields (`frozen`,
-`frozen_supply`, `unfrozen_v2`, etc.) via `AccountCapsule` setters,
-plus `DynamicPropertiesStore` freeze aggregates.
+Persisted/mirrored stores: Rust-owned account and dynamic-property rows,
+then Java's `AccountStore` / `DynamicPropertiesStore` read-side mirror via
+touched keys.
 
 Completeness assessment: **partial**. The field is an "absolute value
 after operation" snapshot of the freeze row, not a delta — so it
@@ -158,9 +152,9 @@ Known gaps:
 - The V2 unfrozen list is a repeated sub-message on `AccountCapsule`,
   not a single row. The current sidecar shape can only describe one
   row at a time; multi-row operations (e.g. `CancelAllUnfreezeV2`
-  which touches every pending unfreeze entry on the account) are
-  either dropped to the legacy `apply*` path or forced to emit many
-  `FreezeLedgerChange` rows per transaction.
+  which touches every pending unfreeze entry on the account) are not
+  `RR canonical-ready` until Rust persists the full shape and touched-key
+  mirror coverage proves Java's read-side rows refresh correctly.
 - `TRON_POWER` resource emission is defined but not yet exercised
   end-to-end in the parity tests.
 - The `v2_model` boolean collapses "V1 vs V2" into one bit; it does
@@ -175,8 +169,7 @@ tests. All freeze-family contracts are `RR candidate` in
 ### S3. `global_resource_changes` — `GlobalResourceTotalsChange`
 
 Proto: `repeated GlobalResourceTotalsChange global_resource_changes = 11;`
-Java applier: `RuntimeSpiImpl.applyGlobalResourceChange`
-(line ~432, called from inside `applyFreezeLedgerChanges`).
+Current Java role: reporting, pre-state snapshots, and mirror-validation metadata.
 Gated by Rust config flag `emit_global_resource_changes` (default
 `true` in `config.toml`, `false` in `config.rs`).
 
@@ -206,8 +199,8 @@ mutate alongside the net/energy totals. Adding this would be a
 proto schema change, tracked as a follow-up rather than fixed in
 Phase 1.
 
-Java target stores: `DynamicPropertiesStore.totalNetWeight` /
-`totalNetLimit` / `totalEnergyWeight` / `totalEnergyLimit`.
+Persisted/mirrored stores: Rust-owned dynamic-property rows, then Java's
+`DynamicPropertiesStore` read-side mirror via touched keys.
 
 Completeness assessment: **robust for the freeze/unfreeze path**,
 **missing on the cancel-all path**, **n/a for delegation and
@@ -243,7 +236,7 @@ withdraw-expire are `n/a`) or have their own missing-row entry
 ### S4. `trc10_changes` — `Trc10Change`
 
 Proto: `repeated Trc10Change trc10_changes = 12;`
-Java applier: `RuntimeSpiImpl.applyTrc10Changes` (line ~470).
+Current Java role: reporting, pre-state snapshots, and mirror-validation metadata.
 Gated by Rust config flag `trc10_enabled` (plus per-contract flags
 for ParticipateAssetIssue / UnfreezeAsset / UpdateAsset).
 
@@ -256,8 +249,9 @@ Emitted by: AssetIssue (`asset_issued`), TransferAsset
 (`asset_transferred`), CreateSmartContract with non-zero
 `call_token_value` (`asset_transferred`).
 
-Java target stores: `AccountStore` (asset maps), `AssetIssueStore` /
-`AssetIssueV2Store`, plus the asset-issue indices managed by Java.
+Persisted/mirrored stores: Rust-owned account and asset-issue rows, then
+Java's `AccountStore`, `AssetIssueStore`, and `AssetIssueV2Store` read-side
+mirror via touched keys.
 
 Completeness assessment: **partial**. The proto `oneof` has only two
 variants (`asset_issued`, `asset_transferred`). The proto itself
@@ -290,7 +284,7 @@ parity tests OR the missing `Trc10Change` variants are added.
 ### S5. `vote_changes` — `VoteChange`
 
 Proto: `repeated VoteChange vote_changes = 13;`
-Java applier: `RuntimeSpiImpl.applyVoteChanges` (line ~519).
+Current Java role: reporting, pre-state snapshots, and mirror-validation metadata.
 
 Payload: `{ owner_address, repeated Vote votes }` where `Vote =
 { vote_address, vote_count }`. The list replaces `Account.votes`
@@ -298,8 +292,8 @@ wholesale — it is not a diff.
 
 Emitted by: VoteWitness.
 
-Java target stores: `AccountStore` (`Account.votes` field) AND
-`VotesStore` (`VotesCapsule` with old_votes and new_votes).
+Persisted/mirrored stores: Rust-owned account/vote rows, then Java's
+`AccountStore` and `VotesStore` read-side mirror via touched keys.
 
 Completeness assessment: **robust for the common case**, but the
 two-store update pattern was itself a parity fix (see the CLAUDE.md
@@ -330,7 +324,7 @@ not just a single-vote round-trip.
 ### S6. `withdraw_changes` — `WithdrawChange`
 
 Proto: `repeated WithdrawChange withdraw_changes = 14;`
-Java applier: `RuntimeSpiImpl.applyWithdrawChanges` (line ~609).
+Current Java role: reporting, pre-state snapshots, and mirror-validation metadata.
 
 Payload: `{ owner_address, amount, latest_withdraw_time }`. The
 `amount` is the withdrawn amount (equal to `Account.allowance`
@@ -339,8 +333,8 @@ to set as `Account.latestWithdrawTime`.
 
 Emitted by: WithdrawBalance.
 
-Java target stores: `AccountStore` fields `allowance` (reset to 0)
-and `latestWithdrawTime`.
+Persisted/mirrored stores: Rust-owned account rows, then Java's
+`AccountStore` read-side mirror via touched keys.
 
 Completeness assessment: **narrow but correct** for Phase 1
 WithdrawBalance. The balance delta itself is still handled via
@@ -366,7 +360,7 @@ tracked against the contract matrix, not against this sidecar.
 ### S7. `tron_transaction_result` — receipt passthrough
 
 Proto: `bytes tron_transaction_result = 15;`
-Java applier: read inside `ExecutionProgramResult.fromExecutionResult`;
+Java consumer: read inside `ExecutionProgramResult.fromExecutionResult`;
 the serialized `Protocol.Transaction.Result` is deserialized into
 a `TransactionResultCapsule` and set on `ProgramResult.ret`.
 
@@ -418,7 +412,7 @@ without a receipt-passthrough parity check.
 ### S8. `contract_address` — new contract address for CreateSmartContract
 
 Proto: `bytes contract_address = 16;`
-Java applier: set on `ProgramResult.contractAddress`.
+Java consumer: set on `ProgramResult.contractAddress`.
 
 Payload: 20-byte EVM address of the newly created contract.
 
@@ -650,14 +644,15 @@ ready* and *what cannot be declared ready* until later phases.
    added to the proto in Phase 1. The decision instead is that
    Participate / Update / UnfreezeAsset remain `RR candidate` and
    are NOT on the Phase 1 whitelist target. Adding those proto
-   variants is Phase 2 work because it touches the Java applier
-   API at the same time.
+   variants is Phase 2 work because it touches the Java/Rust sidecar
+   contract at the same time.
 
 3. **Multi-row freeze changes stay out of scope in Phase 1.** Any
    transaction that would need to emit more than one
    `FreezeLedgerChange` per account per call (e.g.
-   `CancelAllUnfreezeV2`) must fall back to the legacy `apply*`
-   path for now. The Rust handler should be audited to confirm it
+   `CancelAllUnfreezeV2`) is not `RR canonical-ready` until Rust
+   persistence and touched-key mirror coverage prove every affected row
+   is represented. The Rust handler should be audited to confirm it
    does not silently drop the extra rows — this is tracked as a
    follow-up, not closed here.
 
@@ -694,7 +689,8 @@ NOT closed in Phase 1; they are listed to make the debt visible.
       not a Phase 1 deliverable.
 - [ ] Decide whether `Trc10Participated` / `Trc10Updated` /
       `Trc10Unfrozen` proto variants land in Phase 2 or whether the
-      affected contracts stay on `apply*` forever.
+      affected contracts rely on Rust persistence plus touched-key mirror
+      coverage without dedicated sidecar variants.
 - [ ] Add receipt-passthrough parity assertions for
       `WithdrawBalance.withdraw_amount` and
       `UnfreezeBalance.unfreeze_amount` in the existing parity tests.

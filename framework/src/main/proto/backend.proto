@@ -490,13 +490,12 @@ message ExecuteTransactionRequest {
   int64 transaction_bytes_size = 4;
 }
 
-// Write mode for Phase B conformance alignment.
-// Determines how Java should handle state changes from remote execution.
+// Write mode for remote execution ownership.
+// Canonical RR uses persisted Rust writes plus Java touched-key mirror refresh.
 enum WriteMode {
-  // Compute-only mode (Phase A): Rust only computes, Java applies state changes
+  // Legacy metadata-only mode. Java rejects successful or effectful non-persisted results.
   WRITE_MODE_COMPUTE_ONLY = 0;
-  // Persist mode (Phase B): Rust has already persisted state changes
-  // Java should NOT apply state changes to avoid double-apply
+  // Rust has already persisted state changes; Java mirrors touched keys only.
   WRITE_MODE_PERSISTED = 1;
 }
 
@@ -523,9 +522,9 @@ message ExecuteTransactionResponse {
   // Transaction-level errors are in result.error_message.
   string error_message = 3;
 
-  // Write mode: indicates whether Rust has already persisted state changes.
-  // - WRITE_MODE_COMPUTE_ONLY (default): Java should apply state_changes
-  // - WRITE_MODE_PERSISTED: Java should NOT apply state_changes (already done by Rust)
+  // Write mode: indicates remote write ownership.
+  // - WRITE_MODE_COMPUTE_ONLY: legacy metadata-only result; Java rejects success/effects
+  // - WRITE_MODE_PERSISTED: Rust persisted state; Java mirrors touched keys only
   WriteMode write_mode = 4;
 
   // Touched keys: all (db, key) pairs modified during execution.
@@ -784,7 +783,7 @@ message GlobalResourceTotalsChange {
 }
 
 // TRC-10 Asset Issued (Phase 2: full TRC-10 ledger semantics)
-// Describes a new TRC-10 asset issuance operation for Java-side persistence
+// Describes a new TRC-10 asset issuance operation for reporting and mirror validation
 message Trc10AssetIssued {
   bytes owner_address = 1;              // 21-byte Tron address (issuer)
   bytes name = 2;                       // Asset name
@@ -801,11 +800,11 @@ message Trc10AssetIssued {
   int64 public_free_asset_net_limit = 13; // Public free bandwidth limit
   int64 public_free_asset_net_usage = 14; // Current public usage
   int64 public_latest_free_net_time = 15; // Last public usage timestamp
-  string token_id = 16;                 // Token ID (optional; if empty, Java computes via TOKEN_ID_NUM)
+  string token_id = 16;                 // Token ID (optional; reports may derive from existing stores)
 }
 
 // TRC-10 Asset Transferred (Phase 2: TRC-10 transfer operation)
-// Describes a TRC-10 transfer for Java-side persistence of asset balance changes
+// Describes a TRC-10 transfer for reporting and mirror validation
 message Trc10AssetTransferred {
   bytes owner_address = 1;              // 21-byte Tron address (sender)
   bytes to_address = 2;                 // 21-byte Tron address (recipient)
@@ -831,16 +830,16 @@ message Vote {
 }
 
 // VoteChange carries updated votes for an account after VoteWitness execution.
-// Java should apply this to Account.votes to maintain parity with embedded mode.
-// This ensures correct old_votes seeding on subsequent votes in the same or later epochs.
+// Used for reporting, pre-state snapshots, and mirror validation after Rust persistence.
+// This supports old_votes parity checks across epochs.
 message VoteChange {
   bytes owner_address = 1;   // 21-byte Tron address of the voter
   repeated Vote votes = 2;   // New votes list (replaces Account.votes)
 }
 
-// WithdrawChange carries withdrawal info for applying allowance and latestWithdrawTime updates.
-// Used for WithdrawBalanceContract remote execution - Java applies this to Account fields.
-// Balance delta is already handled by AccountChange; this sidecar handles the allowance/time reset.
+// WithdrawChange carries withdrawal info for allowance and latestWithdrawTime parity metadata.
+// Used for reporting, pre-state snapshots, and mirror validation after Rust persistence.
+// Balance delta is represented separately by AccountChange metadata.
 message WithdrawChange {
   bytes owner_address = 1;       // 21-byte Tron address of the witness withdrawing
   int64 amount = 2;              // The withdrawn amount (= Account.allowance before operation)

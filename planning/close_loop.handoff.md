@@ -152,27 +152,22 @@ follow-ups:
 
 ### Phase 2.B — Bridge removal sequence start
 
-Once verification can prove that EE and RR produce identical
-outputs on the whitelist target, the project can start removing
-the transitional bridges from `close_loop.bridge_debt.md` in
+B2 has already been removed from the current runtime: Java no longer
+contains `RuntimeSpiImpl.apply*` writers, and successful or effectful
+non-`PERSISTED` remote results fail fast. Once verification can prove
+that EE and RR produce identical outputs on the whitelist target, the
+remaining bridges from `close_loop.bridge_debt.md` can be removed in
 the documented order:
 
-1. **B2** (`RuntimeSpiImpl.apply*` family) — first to go,
-   because it is purely transitional and only the compute-only
-   profile depends on it. Removing B2 forces every RR run to
-   be the canonical `rust_persist_enabled = true` profile.
-2. **B4** (pre-exec AEXT handshake) — second, after a Rust
-   native bandwidth processor exists for every contract type
-   on the (eventually-grown) whitelist target.
-3. **B1** (`ResourceSyncService`) — third, after the block
-   importer takes over Java-side maintenance + reward
-   mutations.
-4. **B5** (genesis seeding) — fourth, after the importer
-   supports "load initial snapshot" from a known starting
-   point.
-5. **B3** (`postExecMirror`) — last, only after Java stops
-   reading from `chainbase` at all (which is outside Phase 2
-   scope).
+1. **B4** (pre-exec AEXT handshake) — after a Rust native bandwidth
+   processor exists for every contract type on the (eventually-grown)
+   whitelist target.
+2. **B1** (`ResourceSyncService`) — after the block importer takes over
+   Java-side maintenance + reward mutations.
+3. **B5** (genesis seeding) — after the importer supports "load initial
+   snapshot" from a known starting point.
+4. **B3** (`postExecMirror`) — last, only after Java stops reading from
+   `chainbase` at all (which is outside Phase 2 scope).
 
 ### Phase 2.C — Block importer / block executor
 
@@ -186,9 +181,9 @@ responsibilities:
   plumbing (already substantial).
 - Receipt assembly with the iter-6 `tron_transaction_result`
   receipt passthrough.
-- Sidecar application via the existing `RuntimeSpiImpl.apply*`
-  family until B2 is removed; via the canonical RR mirror
-  path after B2 is removed.
+- Sidecar metadata extraction and validation through the existing
+  `ExecutionSPI` result model; state is persisted by Rust and
+  refreshed into Java through the canonical RR mirror path.
 - Maintenance / reward mutation handoff (the prerequisite for
   removing B1).
 

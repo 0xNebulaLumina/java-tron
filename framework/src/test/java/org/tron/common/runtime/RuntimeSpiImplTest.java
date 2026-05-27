@@ -2,12 +2,15 @@ package org.tron.common.runtime;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import com.google.protobuf.ByteString;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -16,7 +19,6 @@ import org.tron.common.utils.ByteArray;
 import org.tron.core.Constant;
 import org.tron.core.Wallet;
 import org.tron.core.capsule.AccountCapsule;
-import org.tron.core.capsule.AssetIssueCapsule;
 import org.tron.core.capsule.TransactionCapsule;
 import org.tron.core.config.args.Args;
 import org.tron.core.db.TransactionContext;
@@ -25,6 +27,7 @@ import org.tron.core.execution.spi.ExecutionMode;
 import org.tron.core.execution.spi.ExecutionProgramResult;
 import org.tron.core.execution.spi.ExecutionSPI;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
+import org.tron.core.storage.spi.StorageSPI;
 import org.tron.core.store.StoreFactory;
 import org.tron.protos.Protocol.AccountType;
 import org.tron.protos.Protocol.Transaction.Contract.ContractType;
@@ -33,7 +36,7 @@ import org.tron.protos.contract.BalanceContract.UnfreezeBalanceContract;
 import org.tron.protos.contract.Common.ResourceCode;
 
 /**
- * Test class for RuntimeSpiImpl to verify ExecutionSPI integration and TRC-10 changes application.
+ * Test class for RuntimeSpiImpl ownership, pre-state snapshots, and sidecar parsing.
  */
 public class RuntimeSpiImplTest extends BaseTest {
 
@@ -74,7 +77,8 @@ public class RuntimeSpiImplTest extends BaseTest {
     dbManager.getAccountStore().put(ownerCapsule.getAddress().toByteArray(), ownerCapsule);
 
     // Set up dynamic properties
-    dbManager.getDynamicPropertiesStore().saveLatestBlockHeaderTimestamp(System.currentTimeMillis());
+    dbManager.getDynamicPropertiesStore()
+        .saveLatestBlockHeaderTimestamp(System.currentTimeMillis());
     dbManager.getDynamicPropertiesStore().saveTokenIdNum(1000000L); // Start from 1000000
   }
 
@@ -125,7 +129,7 @@ public class RuntimeSpiImplTest extends BaseTest {
         PUBLIC_FREE_ASSET_NET_LIMIT,
         PUBLIC_FREE_ASSET_NET_USAGE,
         PUBLIC_LATEST_FREE_NET_TIME,
-        "" // Empty token ID - will be computed by Java
+        "" // Empty token ID - reports may derive it from existing stores
     );
 
     ExecutionSPI.Trc10Change trc10Change = new ExecutionSPI.Trc10Change(assetIssued);
@@ -154,217 +158,7 @@ public class RuntimeSpiImplTest extends BaseTest {
   }
 
   /**
-   * Test TRC-10 AssetIssued application to stores with ALLOW_SAME_TOKEN_NAME=0 (V1 enabled).
-   * Verifies that both V1 (by name) and V2 (by token ID) entries are created.
-   */
-  @Test
-  public void testTrc10AssetIssuedApplicationWithV1() {
-    // Set ALLOW_SAME_TOKEN_NAME=0 to enable V1 storage
-    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(0);
-    long initialTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
-
-    // Create a Trc10AssetIssued change
-    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
-    ExecutionSPI.Trc10AssetIssued assetIssued = new ExecutionSPI.Trc10AssetIssued(
-        ownerAddress,
-        NAME.getBytes(),
-        ABBR.getBytes(),
-        TOTAL_SUPPLY,
-        TRX_NUM,
-        PRECISION,
-        NUM,
-        System.currentTimeMillis(),
-        System.currentTimeMillis() + 86400000L,
-        DESCRIPTION.getBytes(),
-        URL.getBytes(),
-        FREE_ASSET_NET_LIMIT,
-        PUBLIC_FREE_ASSET_NET_LIMIT,
-        PUBLIC_FREE_ASSET_NET_USAGE,
-        PUBLIC_LATEST_FREE_NET_TIME,
-        "" // Empty token ID
-    );
-
-    ExecutionSPI.Trc10Change trc10Change = new ExecutionSPI.Trc10Change(assetIssued);
-    List<ExecutionSPI.Trc10Change> trc10Changes = new ArrayList<>();
-    trc10Changes.add(trc10Change);
-
-    ExecutionProgramResult result = new ExecutionProgramResult();
-    result.setTrc10Changes(trc10Changes);
-
-    // Apply TRC-10 changes via reflection (simulating RuntimeSpiImpl.applyTrc10Changes)
-    // Note: In real usage, this would be called by RuntimeSpiImpl.execute()
-    try {
-      RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
-      java.lang.reflect.Method method = RuntimeSpiImpl.class.getDeclaredMethod(
-          "applyTrc10Changes",
-          ExecutionProgramResult.class,
-          TransactionContext.class);
-      method.setAccessible(true);
-
-      // Create a mock TransactionContext - for this test we'll directly manipulate stores
-      // Instead of using reflection, let's directly verify the store state after manual application
-
-      // Manually apply the change to test the logic
-      String tokenId = String.valueOf(initialTokenId + 1);
-      dbManager.getDynamicPropertiesStore().saveTokenIdNum(initialTokenId + 1);
-
-      // Create AssetIssueCapsule
-      org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.Builder contractBuilder =
-          org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.newBuilder()
-              .setOwnerAddress(ByteString.copyFrom(ownerAddress))
-              .setName(ByteString.copyFrom(NAME.getBytes()))
-              .setAbbr(ByteString.copyFrom(ABBR.getBytes()))
-              .setTotalSupply(TOTAL_SUPPLY)
-              .setTrxNum(TRX_NUM)
-              .setPrecision(PRECISION)
-              .setNum(NUM)
-              .setStartTime(assetIssued.getStartTime())
-              .setEndTime(assetIssued.getEndTime())
-              .setDescription(ByteString.copyFrom(DESCRIPTION.getBytes()))
-              .setUrl(ByteString.copyFrom(URL.getBytes()))
-              .setFreeAssetNetLimit(FREE_ASSET_NET_LIMIT)
-              .setPublicFreeAssetNetLimit(PUBLIC_FREE_ASSET_NET_LIMIT)
-              .setPublicFreeAssetNetUsage(PUBLIC_FREE_ASSET_NET_USAGE)
-              .setPublicLatestFreeNetTime(PUBLIC_LATEST_FREE_NET_TIME)
-              .setId(tokenId);
-
-      AssetIssueCapsule assetIssueCapsule = new AssetIssueCapsule(contractBuilder.build());
-
-      // Store in V1 (by name)
-      dbManager.getAssetIssueStore().put(NAME.getBytes(), assetIssueCapsule);
-
-      // Store in V2 (by token ID)
-      dbManager.getAssetIssueV2Store().put(tokenId.getBytes(), assetIssueCapsule);
-
-      // Update account asset maps
-      AccountCapsule ownerAccount = dbManager.getAccountStore().get(ownerAddress);
-      ownerAccount.addAsset(NAME.getBytes(), TOTAL_SUPPLY);
-      ownerAccount.addAssetV2(tokenId.getBytes(), TOTAL_SUPPLY);
-      dbManager.getAccountStore().put(ownerAddress, ownerAccount);
-
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
-
-    // Verify TOKEN_ID_NUM was incremented
-    long finalTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
-    assertEquals("TOKEN_ID_NUM should be incremented", initialTokenId + 1, finalTokenId);
-
-    // Verify V1 store (by name)
-    AssetIssueCapsule v1Asset = dbManager.getAssetIssueStore().get(NAME.getBytes());
-    assertNotNull("V1 asset should exist", v1Asset);
-    assertEquals("V1 name should match", NAME, ByteArray.toStr(v1Asset.getName().toByteArray()));
-    assertEquals("V1 total supply should match", TOTAL_SUPPLY, v1Asset.getInstance().getTotalSupply());
-    assertEquals("V1 precision should match", PRECISION, v1Asset.getPrecision());
-
-    // Verify V2 store (by token ID)
-    String newTokenId = String.valueOf(finalTokenId);
-    AssetIssueCapsule v2Asset = dbManager.getAssetIssueV2Store().get(newTokenId.getBytes());
-    assertNotNull("V2 asset should exist", v2Asset);
-    assertEquals("V2 token ID should match", newTokenId, v2Asset.getId());
-    assertEquals("V2 total supply should match", TOTAL_SUPPLY, v2Asset.getInstance().getTotalSupply());
-
-    // Verify account asset maps
-    AccountCapsule ownerAccount = dbManager.getAccountStore().get(ByteArray.fromHexString(OWNER_ADDRESS));
-    assertNotNull("Owner account should exist", ownerAccount);
-    assertEquals("V1 asset map should contain token",
-        TOTAL_SUPPLY, ownerAccount.getAssetMapForTest().get(NAME).longValue());
-    assertEquals("V2 asset map should contain token",
-        TOTAL_SUPPLY, ownerAccount.getAssetV2MapForTest().get(newTokenId).longValue());
-  }
-
-  /**
-   * Test TRC-10 AssetIssued application to stores with ALLOW_SAME_TOKEN_NAME=1 (V1 disabled).
-   * Verifies that only V2 (by token ID) entry is created.
-   */
-  @Test
-  public void testTrc10AssetIssuedApplicationWithoutV1() {
-    // Set ALLOW_SAME_TOKEN_NAME=1 to disable V1 storage
-    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
-    long initialTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
-
-    // Create a Trc10AssetIssued change
-    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
-    ExecutionSPI.Trc10AssetIssued assetIssued = new ExecutionSPI.Trc10AssetIssued(
-        ownerAddress,
-        NAME.getBytes(),
-        ABBR.getBytes(),
-        TOTAL_SUPPLY,
-        TRX_NUM,
-        PRECISION,
-        NUM,
-        System.currentTimeMillis(),
-        System.currentTimeMillis() + 86400000L,
-        DESCRIPTION.getBytes(),
-        URL.getBytes(),
-        FREE_ASSET_NET_LIMIT,
-        PUBLIC_FREE_ASSET_NET_LIMIT,
-        PUBLIC_FREE_ASSET_NET_USAGE,
-        PUBLIC_LATEST_FREE_NET_TIME,
-        "" // Empty token ID
-    );
-
-    // Manually apply the change (simulating ALLOW_SAME_TOKEN_NAME=1 behavior)
-    String tokenId = String.valueOf(initialTokenId + 1);
-    dbManager.getDynamicPropertiesStore().saveTokenIdNum(initialTokenId + 1);
-
-    // Create AssetIssueCapsule
-    org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.Builder contractBuilder =
-        org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.newBuilder()
-            .setOwnerAddress(ByteString.copyFrom(ownerAddress))
-            .setName(ByteString.copyFrom(NAME.getBytes()))
-            .setAbbr(ByteString.copyFrom(ABBR.getBytes()))
-            .setTotalSupply(TOTAL_SUPPLY)
-            .setTrxNum(TRX_NUM)
-            .setPrecision(PRECISION)
-            .setNum(NUM)
-            .setStartTime(assetIssued.getStartTime())
-            .setEndTime(assetIssued.getEndTime())
-            .setDescription(ByteString.copyFrom(DESCRIPTION.getBytes()))
-            .setUrl(ByteString.copyFrom(URL.getBytes()))
-            .setFreeAssetNetLimit(FREE_ASSET_NET_LIMIT)
-            .setPublicFreeAssetNetLimit(PUBLIC_FREE_ASSET_NET_LIMIT)
-            .setPublicFreeAssetNetUsage(PUBLIC_FREE_ASSET_NET_USAGE)
-            .setPublicLatestFreeNetTime(PUBLIC_LATEST_FREE_NET_TIME)
-            .setId(tokenId);
-
-    AssetIssueCapsule assetIssueCapsule = new AssetIssueCapsule(contractBuilder.build());
-
-    // Store ONLY in V2 (by token ID) - skip V1
-    dbManager.getAssetIssueV2Store().put(tokenId.getBytes(), assetIssueCapsule);
-
-    // Update account asset maps (only V2)
-    AccountCapsule ownerAccount = dbManager.getAccountStore().get(ownerAddress);
-    ownerAccount.addAssetV2(tokenId.getBytes(), TOTAL_SUPPLY);
-    dbManager.getAccountStore().put(ownerAddress, ownerAccount);
-
-    // Verify TOKEN_ID_NUM was incremented
-    long finalTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
-    assertEquals("TOKEN_ID_NUM should be incremented", initialTokenId + 1, finalTokenId);
-
-    // Verify V1 store is empty (should NOT be created)
-    AssetIssueCapsule v1Asset = dbManager.getAssetIssueStore().get(NAME.getBytes());
-    assertNull("V1 asset should NOT exist when ALLOW_SAME_TOKEN_NAME=1", v1Asset);
-
-    // Verify V2 store (by token ID)
-    String newTokenId = String.valueOf(finalTokenId);
-    AssetIssueCapsule v2Asset = dbManager.getAssetIssueV2Store().get(newTokenId.getBytes());
-    assertNotNull("V2 asset should exist", v2Asset);
-    assertEquals("V2 token ID should match", newTokenId, v2Asset.getId());
-    assertEquals("V2 total supply should match", TOTAL_SUPPLY, v2Asset.getInstance().getTotalSupply());
-
-    // Verify account asset maps (only V2, no V1)
-    AccountCapsule finalOwnerAccount = dbManager.getAccountStore().get(ownerAddress);
-    assertNotNull("Owner account should exist", finalOwnerAccount);
-    assertNull("V1 asset map should NOT contain token",
-        finalOwnerAccount.getAssetMapForTest().get(NAME));
-    assertEquals("V2 asset map should contain token",
-        TOTAL_SUPPLY, finalOwnerAccount.getAssetV2MapForTest().get(newTokenId).longValue());
-  }
-
-  /**
-   * Test TOKEN_ID_NUM management during TRC-10 asset issuance.
-   * Verifies that TOKEN_ID_NUM is correctly read, incremented, and saved.
+   * Test TOKEN_ID_NUM store access used by TRC-10 reporting and parity fixtures.
    */
   @Test
   public void testTokenIdNumManagement() {
@@ -394,143 +188,263 @@ public class RuntimeSpiImplTest extends BaseTest {
         initialTokenId + 6, dbManager.getDynamicPropertiesStore().getTokenIdNum());
   }
 
-  /**
-   * Test that a non-empty tokenId from Rust is consumed directly by applyAssetIssuedChange
-   * without incrementing TOKEN_ID_NUM again.
-   */
   @Test
-  public void testTrc10AssetIssuedWithProvidedTokenIdSkipsIncrement() throws Exception {
-    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
-    long initialTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
-    String providedTokenId = "1000042"; // Simulate Rust-provided token ID
-
-    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
-    ExecutionSPI.Trc10AssetIssued assetIssued = new ExecutionSPI.Trc10AssetIssued(
-        ownerAddress,
-        NAME.getBytes(),
-        ABBR.getBytes(),
-        TOTAL_SUPPLY,
-        TRX_NUM,
-        PRECISION,
-        NUM,
-        System.currentTimeMillis(),
-        System.currentTimeMillis() + 86400000L,
-        DESCRIPTION.getBytes(),
-        URL.getBytes(),
-        FREE_ASSET_NET_LIMIT,
-        PUBLIC_FREE_ASSET_NET_LIMIT,
-        PUBLIC_FREE_ASSET_NET_USAGE,
-        PUBLIC_LATEST_FREE_NET_TIME,
-        providedTokenId // Non-empty: Java should use this directly
-    );
-
-    ExecutionSPI.Trc10Change trc10Change = new ExecutionSPI.Trc10Change(assetIssued);
-    List<ExecutionSPI.Trc10Change> trc10Changes = new ArrayList<>();
-    trc10Changes.add(trc10Change);
-
+  public void testSuccessfulComputeOnlyRemoteResultFailsFast() throws Exception {
     ExecutionProgramResult result = new ExecutionProgramResult();
-    result.setTrc10Changes(trc10Changes);
+    result.setWriteMode(ExecutionSPI.WriteMode.COMPUTE_ONLY);
 
-    // Create a TransactionContext with AssetIssueContract
-    org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract issueContract =
-        org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.newBuilder()
-            .setOwnerAddress(ByteString.copyFrom(ownerAddress))
-            .setName(ByteString.copyFrom(NAME.getBytes()))
-            .build();
-    TransactionContext context = buildContext(issueContract, ContractType.AssetIssueContract);
-
-    // Invoke applyTrc10Changes via reflection
-    RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
-    java.lang.reflect.Method applyMethod = RuntimeSpiImpl.class.getDeclaredMethod(
-        "applyTrc10Changes",
-        ExecutionProgramResult.class,
-        TransactionContext.class);
-    applyMethod.setAccessible(true);
-    applyMethod.invoke(runtimeSpi, result, context);
-
-    // 1. TOKEN_ID_NUM should NOT have been incremented
-    long finalTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
-    assertEquals("TOKEN_ID_NUM should remain unchanged when Rust provides tokenId",
-        initialTokenId, finalTokenId);
-
-    // 2. V2 store should have an entry keyed by the provided tokenId
-    AssetIssueCapsule v2Asset = dbManager.getAssetIssueV2Store().get(providedTokenId.getBytes());
-    assertNotNull("V2 asset should exist with provided token ID", v2Asset);
-    assertEquals("V2 token ID should match provided value", providedTokenId, v2Asset.getId());
-    assertEquals("V2 total supply should match", TOTAL_SUPPLY, v2Asset.getInstance().getTotalSupply());
-
-    // 3. Issuer account assetV2 map should use the provided tokenId
-    AccountCapsule ownerAccount = dbManager.getAccountStore().get(ownerAddress);
-    assertNotNull("Owner account should exist", ownerAccount);
-    assertEquals("V2 asset map should contain token with provided ID",
-        TOTAL_SUPPLY, ownerAccount.getAssetV2MapForTest().get(providedTokenId).longValue());
-
-    // Cleanup the asset we created
-    dbManager.getAssetIssueV2Store().delete(providedTokenId.getBytes());
+    ExecutionSPI originalSpi = setExecutionSpiInstance(new FakeExecutionSPI(result));
+    ExecutionMode originalMode = setExecutionSpiInitializedMode(ExecutionMode.REMOTE);
+    try {
+      RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
+      try {
+        runtimeSpi.execute(buildFreezeContext());
+        fail("Successful non-persisted remote result should fail fast");
+      } catch (IllegalStateException e) {
+        assertTrue(e.getMessage().contains("non-persisted state"));
+      }
+    } finally {
+      setExecutionSpiInstance(originalSpi);
+      setExecutionSpiInitializedMode(originalMode);
+    }
   }
 
-  /**
-   * Test that the empty-tokenId fallback path still works (TOKEN_ID_NUM is incremented).
-   * This keeps both branches covered alongside the provided-tokenId test above.
-   */
   @Test
-  public void testTrc10AssetIssuedFallbackIncrementTokenIdNum() throws Exception {
-    dbManager.getDynamicPropertiesStore().saveAllowSameTokenName(1);
-    long initialTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
+  public void testEffectfulFailedComputeOnlyRemoteResultFailsFast() throws Exception {
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setWriteMode(ExecutionSPI.WriteMode.COMPUTE_ONLY);
+    result.setRuntimeError("remote execution failed");
+    List<ExecutionSPI.StateChange> stateChanges = new ArrayList<>();
+    stateChanges.add(new ExecutionSPI.StateChange(
+        ByteArray.fromHexString(OWNER_ADDRESS), new byte[0], new byte[0], new byte[]{1}));
+    result.setStateChanges(stateChanges);
 
+    ExecutionSPI originalSpi = setExecutionSpiInstance(new FakeExecutionSPI(result));
+    ExecutionMode originalMode = setExecutionSpiInitializedMode(ExecutionMode.REMOTE);
+    try {
+      RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
+      try {
+        runtimeSpi.execute(buildFreezeContext());
+        fail("Effectful non-persisted remote result should fail fast");
+      } catch (IllegalStateException e) {
+        assertTrue(e.getMessage().contains("non-persisted state"));
+      }
+    } finally {
+      setExecutionSpiInstance(originalSpi);
+      setExecutionSpiInitializedMode(originalMode);
+    }
+  }
+
+  @Test
+  public void testTouchedKeyFailedComputeOnlyRemoteResultFailsFast() throws Exception {
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setWriteMode(ExecutionSPI.WriteMode.COMPUTE_ONLY);
+    result.setRuntimeError("remote execution failed");
+    List<ExecutionSPI.TouchedKey> touchedKeys = new ArrayList<>();
+    touchedKeys.add(new ExecutionSPI.TouchedKey(
+        "account", ByteArray.fromHexString(OWNER_ADDRESS), false));
+    result.setTouchedKeys(touchedKeys);
+
+    ExecutionSPI originalSpi = setExecutionSpiInstance(new FakeExecutionSPI(result));
+    ExecutionMode originalMode = setExecutionSpiInitializedMode(ExecutionMode.REMOTE);
+    try {
+      RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
+      try {
+        runtimeSpi.execute(buildFreezeContext());
+        fail("Touched-key non-persisted remote result should fail fast");
+      } catch (IllegalStateException e) {
+        assertTrue(e.getMessage().contains("non-persisted state"));
+      }
+    } finally {
+      setExecutionSpiInstance(originalSpi);
+      setExecutionSpiInitializedMode(originalMode);
+    }
+  }
+
+  @Test
+  public void testAllSidecarFailedComputeOnlyRemoteResultsFailFast() throws Exception {
     byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
-    ExecutionSPI.Trc10AssetIssued assetIssued = new ExecutionSPI.Trc10AssetIssued(
-        ownerAddress,
-        NAME.getBytes(),
-        ABBR.getBytes(),
-        TOTAL_SUPPLY,
-        TRX_NUM,
-        PRECISION,
-        NUM,
-        System.currentTimeMillis(),
-        System.currentTimeMillis() + 86400000L,
-        DESCRIPTION.getBytes(),
-        URL.getBytes(),
-        FREE_ASSET_NET_LIMIT,
-        PUBLIC_FREE_ASSET_NET_LIMIT,
-        PUBLIC_FREE_ASSET_NET_USAGE,
-        PUBLIC_LATEST_FREE_NET_TIME,
-        "" // Empty: Java should compute from TOKEN_ID_NUM
-    );
 
-    ExecutionSPI.Trc10Change trc10Change = new ExecutionSPI.Trc10Change(assetIssued);
+    ExecutionProgramResult freezeResult = failedComputeOnlyResult();
+    freezeResult.setFreezeChanges(singletonFreezeChange(
+        ownerAddress, ExecutionSPI.FreezeLedgerChange.Resource.BANDWIDTH, 1L, 0L, false));
+    assertNonPersistedEffectFailsFast(freezeResult, "freeze sidecar");
+
+    ExecutionProgramResult globalResult = failedComputeOnlyResult();
+    List<ExecutionSPI.GlobalResourceTotalsChange> globalChanges = new ArrayList<>();
+    globalChanges.add(new ExecutionSPI.GlobalResourceTotalsChange(1L, 2L, 3L, 4L));
+    globalResult.setGlobalResourceChanges(globalChanges);
+    assertNonPersistedEffectFailsFast(globalResult, "global resource sidecar");
+
+    ExecutionProgramResult trc10Result = failedComputeOnlyResult();
     List<ExecutionSPI.Trc10Change> trc10Changes = new ArrayList<>();
-    trc10Changes.add(trc10Change);
+    trc10Changes.add(new ExecutionSPI.Trc10Change(new ExecutionSPI.Trc10AssetTransferred(
+        ownerAddress, ownerAddress, NAME.getBytes(), "1000001", 1L)));
+    trc10Result.setTrc10Changes(trc10Changes);
+    assertNonPersistedEffectFailsFast(trc10Result, "TRC-10 sidecar");
+
+    ExecutionProgramResult voteResult = failedComputeOnlyResult();
+    List<ExecutionSPI.VoteEntry> votes = new ArrayList<>();
+    votes.add(new ExecutionSPI.VoteEntry(ownerAddress, 1L));
+    List<ExecutionSPI.VoteChange> voteChanges = new ArrayList<>();
+    voteChanges.add(new ExecutionSPI.VoteChange(ownerAddress, votes));
+    voteResult.setVoteChanges(voteChanges);
+    assertNonPersistedEffectFailsFast(voteResult, "vote sidecar");
+
+    ExecutionProgramResult withdrawResult = failedComputeOnlyResult();
+    List<ExecutionSPI.WithdrawChange> withdrawChanges = new ArrayList<>();
+    withdrawChanges.add(new ExecutionSPI.WithdrawChange(ownerAddress, 1L, 2L));
+    withdrawResult.setWithdrawChanges(withdrawChanges);
+    assertNonPersistedEffectFailsFast(withdrawResult, "withdraw sidecar");
+
+    ExecutionProgramResult contractAddressResult = failedComputeOnlyResult();
+    contractAddressResult.setContractAddress(new byte[]{1});
+    assertNonPersistedEffectFailsFast(contractAddressResult, "contract address");
+  }
+
+  @Test
+  public void testFailedComputeOnlyRemoteResultWithoutEffectsPassesThrough() throws Exception {
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setWriteMode(ExecutionSPI.WriteMode.COMPUTE_ONLY);
+    result.setRuntimeError("remote execution failed");
+
+    ExecutionSPI originalSpi = setExecutionSpiInstance(new FakeExecutionSPI(result));
+    ExecutionMode originalMode = setExecutionSpiInitializedMode(ExecutionMode.REMOTE);
+    try {
+      TransactionContext context = buildFreezeContext();
+      new RuntimeSpiImpl().execute(context);
+      assertEquals(result, context.getProgramResult());
+    } finally {
+      setExecutionSpiInstance(originalSpi);
+      setExecutionSpiInitializedMode(originalMode);
+    }
+  }
+
+  @Test
+  public void testPersistedRemoteEffectsWithoutTouchedKeysFailFastBeforeStorageRead()
+      throws Exception {
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setWriteMode(ExecutionSPI.WriteMode.PERSISTED);
+    List<ExecutionSPI.StateChange> stateChanges = new ArrayList<>();
+    stateChanges.add(new ExecutionSPI.StateChange(
+        ByteArray.fromHexString(OWNER_ADDRESS), new byte[0], new byte[0], new byte[]{1}));
+    result.setStateChanges(stateChanges);
+
+    FakeStorageSPI storageSPI = new FakeStorageSPI();
+    ExecutionSPI originalSpi = setExecutionSpiInstance(new FakeExecutionSPI(result));
+    ExecutionMode originalMode = setExecutionSpiInitializedMode(ExecutionMode.REMOTE);
+    StorageSPI originalStorageSpi = setMirrorRemoteStorageSPI(storageSPI);
+    try {
+      try {
+        new RuntimeSpiImpl().execute(buildFreezeContext());
+        fail("Persisted effects without touched keys should fail fast");
+      } catch (IllegalStateException e) {
+        assertTrue(e.getMessage().contains("could not be mirrored"));
+        assertTrue(e.getCause().getMessage().contains("without touched keys"));
+      }
+      assertEquals("Remote storage should not be read", 0, storageSPI.getReadCount());
+    } finally {
+      setMirrorRemoteStorageSPI(originalStorageSpi);
+      setExecutionSpiInstance(originalSpi);
+      setExecutionSpiInitializedMode(originalMode);
+    }
+  }
+
+  @Test
+  public void testPersistedTouchedKeyRefreshesMirrorFromRemoteStorage() throws Exception {
+    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
+    long remoteBalance = 123_456_789L;
+    AccountCapsule remoteAccount = new AccountCapsule(
+        ByteString.copyFromUtf8("remoteOwner"),
+        ByteString.copyFrom(ownerAddress),
+        AccountType.Normal,
+        remoteBalance);
 
     ExecutionProgramResult result = new ExecutionProgramResult();
-    result.setTrc10Changes(trc10Changes);
+    result.setWriteMode(ExecutionSPI.WriteMode.PERSISTED);
+    List<ExecutionSPI.TouchedKey> touchedKeys = new ArrayList<>();
+    touchedKeys.add(new ExecutionSPI.TouchedKey("account", ownerAddress, false));
+    result.setTouchedKeys(touchedKeys);
 
-    org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract issueContract =
-        org.tron.protos.contract.AssetIssueContractOuterClass.AssetIssueContract.newBuilder()
-            .setOwnerAddress(ByteString.copyFrom(ownerAddress))
-            .setName(ByteString.copyFrom(NAME.getBytes()))
-            .build();
-    TransactionContext context = buildContext(issueContract, ContractType.AssetIssueContract);
+    FakeStorageSPI storageSPI = new FakeStorageSPI();
+    storageSPI.putRemoteValue("account", ownerAddress, remoteAccount.getData());
+    ExecutionSPI originalSpi = setExecutionSpiInstance(new FakeExecutionSPI(result));
+    ExecutionMode originalMode = setExecutionSpiInitializedMode(ExecutionMode.REMOTE);
+    StorageSPI originalStorageSpi = setMirrorRemoteStorageSPI(storageSPI);
+    try {
+      new RuntimeSpiImpl().execute(buildFreezeContext());
 
-    RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
-    java.lang.reflect.Method applyMethod = RuntimeSpiImpl.class.getDeclaredMethod(
-        "applyTrc10Changes",
-        ExecutionProgramResult.class,
-        TransactionContext.class);
-    applyMethod.setAccessible(true);
-    applyMethod.invoke(runtimeSpi, result, context);
+      AccountCapsule mirroredAccount = dbManager.getAccountStore().get(ownerAddress);
+      assertNotNull("Account should be refreshed from remote storage", mirroredAccount);
+      assertEquals("Mirrored account balance should match remote storage",
+          remoteBalance, mirroredAccount.getBalance());
+      assertEquals("Batch remote storage read should be used", 1, storageSPI.batchGetCalls);
+    } finally {
+      setMirrorRemoteStorageSPI(originalStorageSpi);
+      setExecutionSpiInstance(originalSpi);
+      setExecutionSpiInitializedMode(originalMode);
+    }
+  }
 
-    // TOKEN_ID_NUM should have been incremented
-    long finalTokenId = dbManager.getDynamicPropertiesStore().getTokenIdNum();
-    assertEquals("TOKEN_ID_NUM should be incremented when tokenId is empty",
-        initialTokenId + 1, finalTokenId);
+  @Test
+  public void testPersistedTouchedKeyDeletesMirrorEntry() throws Exception {
+    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setWriteMode(ExecutionSPI.WriteMode.PERSISTED);
+    List<ExecutionSPI.TouchedKey> touchedKeys = new ArrayList<>();
+    touchedKeys.add(new ExecutionSPI.TouchedKey("account", ownerAddress, true));
+    result.setTouchedKeys(touchedKeys);
 
-    String computedTokenId = String.valueOf(finalTokenId);
-    AssetIssueCapsule v2Asset = dbManager.getAssetIssueV2Store().get(computedTokenId.getBytes());
-    assertNotNull("V2 asset should exist with computed token ID", v2Asset);
+    FakeStorageSPI storageSPI = new FakeStorageSPI();
+    ExecutionSPI originalSpi = setExecutionSpiInstance(new FakeExecutionSPI(result));
+    ExecutionMode originalMode = setExecutionSpiInitializedMode(ExecutionMode.REMOTE);
+    StorageSPI originalStorageSpi = setMirrorRemoteStorageSPI(storageSPI);
+    try {
+      new RuntimeSpiImpl().execute(buildFreezeContext());
 
-    // Cleanup the asset we created
-    dbManager.getAssetIssueV2Store().delete(computedTokenId.getBytes());
+      assertEquals("Delete touched key should not read remote storage",
+          0, storageSPI.getReadCount());
+      assertEquals("Account should be deleted from local mirror", null,
+          dbManager.getAccountStore().get(ownerAddress));
+    } finally {
+      setMirrorRemoteStorageSPI(originalStorageSpi);
+      setExecutionSpiInstance(originalSpi);
+      setExecutionSpiInitializedMode(originalMode);
+    }
+  }
+
+  @Test
+  public void testPersistedTouchedKeyFailsWhenMirrorDisabled() throws Exception {
+    byte[] ownerAddress = ByteArray.fromHexString(OWNER_ADDRESS);
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setWriteMode(ExecutionSPI.WriteMode.PERSISTED);
+    List<ExecutionSPI.TouchedKey> touchedKeys = new ArrayList<>();
+    touchedKeys.add(new ExecutionSPI.TouchedKey("account", ownerAddress, false));
+    result.setTouchedKeys(touchedKeys);
+
+    FakeStorageSPI storageSPI = new FakeStorageSPI();
+    FakeExecutionSPI executionSPI = new FakeExecutionSPI(result);
+    ExecutionSPI originalSpi = setExecutionSpiInstance(executionSPI);
+    ExecutionMode originalMode = setExecutionSpiInitializedMode(ExecutionMode.REMOTE);
+    StorageSPI originalStorageSpi = setMirrorRemoteStorageSPI(storageSPI);
+    String originalMirrorProperty = System.getProperty("remote.exec.postexec.mirror");
+    System.setProperty("remote.exec.postexec.mirror", "false");
+    try {
+      try {
+        new RuntimeSpiImpl().execute(buildFreezeContext());
+        fail("Persisted touched keys should fail when post-exec mirror is disabled");
+      } catch (IllegalStateException e) {
+        assertTrue(e.getMessage().contains("post-exec mirror"));
+      }
+      assertEquals("Disabled mirror should not dispatch remote execution",
+          0, executionSPI.executeTransactionCalls);
+      assertEquals("Disabled mirror should not read remote storage", 0, storageSPI.getReadCount());
+    } finally {
+      restoreSystemProperty("remote.exec.postexec.mirror", originalMirrorProperty);
+      setMirrorRemoteStorageSPI(originalStorageSpi);
+      setExecutionSpiInstance(originalSpi);
+      setExecutionSpiInitializedMode(originalMode);
+    }
   }
 
   @Test
@@ -658,6 +572,37 @@ public class RuntimeSpiImplTest extends BaseTest {
         snapshot.getExpireTimeMs());
   }
 
+  private ExecutionProgramResult failedComputeOnlyResult() {
+    ExecutionProgramResult result = new ExecutionProgramResult();
+    result.setWriteMode(ExecutionSPI.WriteMode.COMPUTE_ONLY);
+    result.setRuntimeError("remote execution failed");
+    return result;
+  }
+
+  private void assertNonPersistedEffectFailsFast(ExecutionProgramResult result, String effect)
+      throws Exception {
+    ExecutionSPI originalSpi = setExecutionSpiInstance(new FakeExecutionSPI(result));
+    ExecutionMode originalMode = setExecutionSpiInitializedMode(ExecutionMode.REMOTE);
+    try {
+      new RuntimeSpiImpl().execute(buildFreezeContext());
+      fail(effect + " should fail fast");
+    } catch (IllegalStateException e) {
+      assertTrue(e.getMessage().contains("non-persisted state"));
+    } finally {
+      setExecutionSpiInstance(originalSpi);
+      setExecutionSpiInitializedMode(originalMode);
+    }
+  }
+
+  private TransactionContext buildFreezeContext() {
+    FreezeBalanceContract contract = FreezeBalanceContract.newBuilder()
+        .setOwnerAddress(ByteString.copyFrom(ByteArray.fromHexString(OWNER_ADDRESS)))
+        .setFrozenBalance(1_000_000L)
+        .setFrozenDuration(3)
+        .build();
+    return buildContext(contract, ContractType.FreezeBalanceContract);
+  }
+
   private List<ExecutionSPI.FreezeLedgerChange> singletonFreezeChange(
       byte[] ownerAddress,
       ExecutionSPI.FreezeLedgerChange.Resource resource,
@@ -681,14 +626,294 @@ public class RuntimeSpiImplTest extends BaseTest {
 
   private void invokeCapturePreStateSnapshot(ExecutionProgramResult result,
                                              TransactionContext context) throws Exception {
-    RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
-    java.lang.reflect.Method method = RuntimeSpiImpl.class.getDeclaredMethod(
-        "capturePreStateSnapshot",
-        ExecutionProgramResult.class,
-        TransactionContext.class);
-    method.setAccessible(true);
+    ExecutionSPI originalSpi = setExecutionSpiInstance(
+        new FakeExecutionSPI(new ExecutionProgramResult()));
+    ExecutionMode originalMode = setExecutionSpiInitializedMode(ExecutionMode.REMOTE);
+    try {
+      RuntimeSpiImpl runtimeSpi = new RuntimeSpiImpl();
+      java.lang.reflect.Method method = RuntimeSpiImpl.class.getDeclaredMethod(
+          "capturePreStateSnapshot",
+          ExecutionProgramResult.class,
+          TransactionContext.class);
+      method.setAccessible(true);
 
-    PreStateSnapshotRegistry.initializeForCurrentTransaction();
-    method.invoke(runtimeSpi, result, context);
+      PreStateSnapshotRegistry.initializeForCurrentTransaction();
+      method.invoke(runtimeSpi, result, context);
+    } finally {
+      setExecutionSpiInstance(originalSpi);
+      setExecutionSpiInitializedMode(originalMode);
+    }
+  }
+
+  private ExecutionMode setExecutionSpiInitializedMode(ExecutionMode mode) throws Exception {
+    java.lang.reflect.Field field = ExecutionSpiFactory.class.getDeclaredField("initializedMode");
+    field.setAccessible(true);
+    ExecutionMode originalMode = (ExecutionMode) field.get(null);
+    field.set(null, mode);
+    return originalMode;
+  }
+
+  private ExecutionSPI setExecutionSpiInstance(ExecutionSPI executionSPI) throws Exception {
+    java.lang.reflect.Field field = ExecutionSpiFactory.class.getDeclaredField("instance");
+    field.setAccessible(true);
+    ExecutionSPI originalSpi = (ExecutionSPI) field.get(null);
+    field.set(null, executionSPI);
+    return originalSpi;
+  }
+
+  private StorageSPI setMirrorRemoteStorageSPI(StorageSPI storageSPI) throws Exception {
+    java.lang.reflect.Field field = RuntimeSpiImpl.class.getDeclaredField("mirrorRemoteStorageSPI");
+    field.setAccessible(true);
+    StorageSPI originalStorageSPI = (StorageSPI) field.get(null);
+    field.set(null, storageSPI);
+    return originalStorageSPI;
+  }
+
+  private void restoreSystemProperty(String key, String value) {
+    if (value == null) {
+      System.clearProperty(key);
+    } else {
+      System.setProperty(key, value);
+    }
+  }
+
+  private static class FakeStorageSPI implements StorageSPI {
+    private final Map<String, Map<String, byte[]>> values = new HashMap<>();
+    private int getCalls;
+    private int batchGetCalls;
+
+    void putRemoteValue(String dbName, byte[] key, byte[] value) {
+      values.computeIfAbsent(dbName, ignored -> new HashMap<>())
+          .put(ByteArray.toHexString(key), value);
+    }
+
+    int getReadCount() {
+      return getCalls + batchGetCalls;
+    }
+
+    @Override
+    public CompletableFuture<byte[]> get(String dbName, byte[] key) {
+      getCalls++;
+      return CompletableFuture.completedFuture(getValue(dbName, key));
+    }
+
+    @Override
+    public CompletableFuture<Map<byte[], byte[]>> batchGet(String dbName, List<byte[]> keys) {
+      batchGetCalls++;
+      Map<byte[], byte[]> result = new HashMap<>();
+      for (byte[] key : keys) {
+        result.put(key, getValue(dbName, key));
+      }
+      return CompletableFuture.completedFuture(result);
+    }
+
+    private byte[] getValue(String dbName, byte[] key) {
+      Map<String, byte[]> dbValues = values.get(dbName);
+      return dbValues == null ? null : dbValues.get(ByteArray.toHexString(key));
+    }
+
+    @Override
+    public CompletableFuture<Void> put(String dbName, byte[] key, byte[] value) {
+      return CompletableFuture.completedFuture(null);
+    }
+
+    @Override
+    public CompletableFuture<Void> delete(String dbName, byte[] key) {
+      return CompletableFuture.completedFuture(null);
+    }
+
+    @Override
+    public CompletableFuture<Boolean> has(String dbName, byte[] key) {
+      return CompletableFuture.completedFuture(getValue(dbName, key) != null);
+    }
+
+    @Override
+    public CompletableFuture<Void> batchWrite(String dbName, Map<byte[], byte[]> operations) {
+      return CompletableFuture.completedFuture(null);
+    }
+
+    @Override
+    public CompletableFuture<org.tron.core.storage.spi.StorageIterator> iterator(String dbName) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<org.tron.core.storage.spi.StorageIterator> iterator(
+        String dbName, byte[] startKey) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<List<byte[]>> getKeysNext(String dbName, byte[] startKey, int limit) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<List<byte[]>> getValuesNext(
+        String dbName, byte[] startKey, int limit) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<Map<byte[], byte[]>> getNext(
+        String dbName, byte[] startKey, int limit) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<Map<byte[], byte[]>> prefixQuery(String dbName, byte[] prefix) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<Void> initDB(
+        String dbName, org.tron.core.storage.spi.StorageConfig config) {
+      return CompletableFuture.completedFuture(null);
+    }
+
+    @Override
+    public CompletableFuture<Void> closeDB(String dbName) {
+      return CompletableFuture.completedFuture(null);
+    }
+
+    @Override
+    public CompletableFuture<Void> resetDB(String dbName) {
+      return CompletableFuture.completedFuture(null);
+    }
+
+    @Override
+    public CompletableFuture<Boolean> isAlive(String dbName) {
+      return CompletableFuture.completedFuture(true);
+    }
+
+    @Override
+    public CompletableFuture<Long> size(String dbName) {
+      return CompletableFuture.completedFuture(0L);
+    }
+
+    @Override
+    public CompletableFuture<Boolean> isEmpty(String dbName) {
+      return CompletableFuture.completedFuture(false);
+    }
+
+    @Override
+    public CompletableFuture<String> beginTransaction(String dbName) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<Void> commitTransaction(String transactionId) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<Void> rollbackTransaction(String transactionId) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<String> createSnapshot(String dbName) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<Void> deleteSnapshot(String snapshotId) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<byte[]> getFromSnapshot(String snapshotId, byte[] key) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<org.tron.core.storage.spi.StorageStats> getStats(String dbName) {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<List<String>> listDatabases() {
+      return unsupportedFuture();
+    }
+
+    @Override
+    public CompletableFuture<org.tron.core.storage.spi.HealthStatus> healthCheck() {
+      return CompletableFuture.completedFuture(org.tron.core.storage.spi.HealthStatus.HEALTHY);
+    }
+
+    @Override
+    public void registerMetricsCallback(org.tron.core.storage.spi.MetricsCallback callback) {
+    }
+
+    private <T> CompletableFuture<T> unsupportedFuture() {
+      CompletableFuture<T> future = new CompletableFuture<>();
+      future.completeExceptionally(new UnsupportedOperationException());
+      return future;
+    }
+  }
+
+  private static class FakeExecutionSPI implements ExecutionSPI {
+    private final ExecutionProgramResult result;
+    private int executeTransactionCalls;
+
+    FakeExecutionSPI(ExecutionProgramResult result) {
+      this.result = result;
+    }
+
+    @Override
+    public CompletableFuture<ExecutionProgramResult> executeTransaction(
+        TransactionContext context) {
+      executeTransactionCalls++;
+      return CompletableFuture.completedFuture(result);
+    }
+
+    @Override
+    public CompletableFuture<ExecutionProgramResult> callContract(TransactionContext context) {
+      return CompletableFuture.completedFuture(result);
+    }
+
+    @Override
+    public CompletableFuture<Long> estimateEnergy(TransactionContext context) {
+      return CompletableFuture.completedFuture(0L);
+    }
+
+    @Override
+    public CompletableFuture<byte[]> getCode(byte[] address, String snapshotId) {
+      return CompletableFuture.completedFuture(new byte[0]);
+    }
+
+    @Override
+    public CompletableFuture<byte[]> getStorageAt(byte[] address, byte[] key, String snapshotId) {
+      return CompletableFuture.completedFuture(new byte[0]);
+    }
+
+    @Override
+    public CompletableFuture<Long> getNonce(byte[] address, String snapshotId) {
+      return CompletableFuture.completedFuture(0L);
+    }
+
+    @Override
+    public CompletableFuture<byte[]> getBalance(byte[] address, String snapshotId) {
+      return CompletableFuture.completedFuture(new byte[0]);
+    }
+
+    @Override
+    public CompletableFuture<String> createSnapshot() {
+      return CompletableFuture.completedFuture("snapshot");
+    }
+
+    @Override
+    public CompletableFuture<Boolean> revertToSnapshot(String snapshotId) {
+      return CompletableFuture.completedFuture(true);
+    }
+
+    @Override
+    public CompletableFuture<HealthStatus> healthCheck() {
+      return CompletableFuture.completedFuture(new HealthStatus(true, "ok"));
+    }
+
+    @Override
+    public void registerMetricsCallback(MetricsCallback callback) {
+    }
   }
 }

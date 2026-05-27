@@ -141,9 +141,9 @@ pub struct RemoteExecutionConfig {
     /// Default: false to maintain CSV parity with Phase 1
     pub emit_freeze_ledger_changes: bool,
     /// Emit GlobalResourceTotalsChange alongside freeze/unfreeze operations
-    /// When enabled, backend computes and sends total net/energy weight and limits
-    /// so Java can update DynamicPropertiesStore immediately (fixes FREE_NET vs ACCOUNT_NET divergence)
-    /// Default: false for backward compatibility; enable true for Phase 2 parity runs
+    /// When enabled, backend reports total net/energy weight and limits for
+    /// reporting, pre-state snapshots, and Java read-side mirror validation.
+    /// Default: false for backward compatibility; canonical RR config enables true.
     pub emit_global_resource_changes: bool,
     /// Emit storage changes for witness/vote data (may affect CSV output)
     pub emit_storage_changes: bool,
@@ -177,30 +177,28 @@ pub struct RemoteExecutionConfig {
     //
     // Canonical policy: planning/close_loop.write_ownership.md.
     //
-    // The system has two potential write paths:
+    // Canonical RR has one write path:
     // 1. Rust handler writes to RocksDB via the buffered storage adapter.
-    // 2. Java `RuntimeSpiImpl.apply*` reflects state changes back into the local chainbase.
+    // 2. Java `RuntimeSpiImpl.postExecMirror` refreshes read-side cache only.
     //
-    // Double-write is prevented by the `write_mode` guard: when Rust returns
-    // `write_mode = PERSISTED`, Java skips `apply*` and only runs `postExecMirror`.
+    // RuntimeSpiImpl no longer contains Java-side apply* writers. Successful or
+    // effectful non-PERSISTED remote results are rejected by Java ownership checks.
     //
     // Phase 1 profile mapping:
-    // - `RR` canonical (Phase 1 acceptance):   rust_persist_enabled = true
+    // - `RR` canonical:                         rust_persist_enabled = true
     //     Rust is the authoritative writer. Java is a read-side mirror.
-    // - `RR` compute-only (development only):  rust_persist_enabled = false
-    //     Rust computes, Java applies. Developer/diagnostic mode only.
-    //     Results from this mode are NOT citable as RR parity.
+    // - `RR` non-persisted legacy/unsupported: rust_persist_enabled = false
+    //     Not a sanctioned canonical RR profile and not citable as RR parity.
     // - `EE` baseline:                          flag ignored, Rust backend not hit.
     //
-    // The code default is `false` so a fresh install without any config
-    // changes is the conservative compute-only profile. The checked-in
-    // `rust-backend/config.toml` sets `true` for the Phase 1 canonical
-    // RR profile. Do not flip the checked-in value without updating
+    // The code default is `false` for conservative legacy startup, but canonical
+    // RR requires the checked-in `rust-backend/config.toml` value of `true`.
+    // Do not flip the checked-in value without updating
     // `close_loop.write_ownership.md` in the same change.
     /// Whether Rust handlers should persist state changes directly to storage.
     ///
     /// See planning/close_loop.write_ownership.md for the policy.
-    /// Code default: `false` (compute-only / development profile).
+    /// Code default: `false` (legacy non-persisted profile, unsupported for canonical RR).
     /// `rust-backend/config.toml` default: `true` (canonical `RR` profile).
     pub rust_persist_enabled: bool,
 
@@ -612,7 +610,7 @@ impl Config {
         builder =
             builder.set_default("execution.remote.vote_witness_seed_old_from_account", true)?;
         builder = builder.set_default("execution.remote.account_create_enabled", false)?;
-        // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
+        // Default false is legacy; canonical RR config must set this to true.
         builder = builder.set_default("execution.remote.rust_persist_enabled", false)?;
 
         // Phase 2.A: Proposal contracts (16/17/18)
@@ -685,7 +683,7 @@ impl Default for RemoteExecutionConfig {
             vote_witness_seed_old_from_account: true,  // Default true to match embedded semantics
             account_create_enabled: false,             // Default false for safe rollout
             genesis_guard_representatives_base58: Vec::new(), // Empty = use hardcoded fallback
-            // Phase 0.3: Default false - Rust computes only, Java apply handles persistence
+            // Default false is legacy; canonical RR config must set this to true.
             rust_persist_enabled: false,
             // Phase 2.A: Proposal contracts (16/17/18)
             proposal_create_enabled: false, // Default false for safe rollout

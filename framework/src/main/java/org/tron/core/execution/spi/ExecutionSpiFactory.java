@@ -29,6 +29,7 @@ public class ExecutionSpiFactory {
   private static final Logger logger = LoggerFactory.getLogger(ExecutionSpiFactory.class);
 
   private static volatile ExecutionSPI instance;
+  private static volatile ExecutionMode initializedMode;
 
   // Configuration keys
   private static final String SYSTEM_PROPERTY_KEY = "execution.mode";
@@ -54,8 +55,11 @@ public class ExecutionSpiFactory {
     if (instance == null) {
       synchronized (ExecutionSpiFactory.class) {
         if (instance == null) {
-          instance = createExecution();
-          logger.info("ExecutionSPI factory initialized with mode: {}", determineExecutionMode());
+          ExecutionMode mode = determineExecutionMode();
+          ExecutionSPI created = createExecution(mode);
+          initializedMode = mode;
+          instance = created;
+          logger.info("ExecutionSPI factory initialized with mode: {}", mode);
         }
       }
     }
@@ -68,6 +72,10 @@ public class ExecutionSpiFactory {
    */
   public static ExecutionSPI getInstance() {
     return instance;
+  }
+
+  public static ExecutionMode getInitializedMode() {
+    return initializedMode;
   }
 
   /**

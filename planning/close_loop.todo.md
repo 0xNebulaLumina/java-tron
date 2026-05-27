@@ -1005,13 +1005,13 @@ Audit and removal sequence are frozen in sibling note `close_loop.bridge_debt.md
 
 - [x] Audit every place where Java mutates state and then pushes/synchronizes it to Rust
       (iter 4: 5 bridges identified — B1 ResourceSyncService, B2
-      RuntimeSpiImpl.apply* family, B3 postExecMirror, B4 pre-exec
+      historical Java apply family, B3 postExecMirror, B4 pre-exec
       AEXT snapshot, B5 genesis account seeding.)
 - [x] Classify each bridge as:
   - [x] required in Phase 1
         (B1 ResourceSyncService, B3 postExecMirror, B4 pre-exec AEXT, B5 genesis seeding)
-  - [x] removable once write ownership is frozen
-        (B2 apply* family — transitional; compute-only profile only)
+  - [x] removed after write ownership was frozen
+        (B2 historical Java apply family — deleted from the current runtime)
   - [x] must survive into block importer phase
         (B3 postExecMirror, B5 genesis seeding — both are removable
         only after Phase 2+ capabilities land)

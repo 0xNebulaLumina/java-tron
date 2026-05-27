@@ -3,7 +3,11 @@ package org.tron.core.db;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.concurrent.CompletableFuture;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -11,6 +15,7 @@ import org.tron.common.parameter.CommonParameter;
 import org.tron.common.runtime.Runtime;
 import org.tron.common.runtime.RuntimeImpl;
 import org.tron.core.execution.spi.ExecutionMode;
+import org.tron.core.execution.spi.ExecutionProgramResult;
 import org.tron.core.execution.spi.ExecutionSPI;
 import org.tron.core.execution.spi.ExecutionSpiFactory;
 import org.tron.common.runtime.RuntimeSpiImpl;
@@ -24,12 +29,22 @@ public class ExecutionSpiIntegrationTest {
 
   private boolean originalExecutionSpiEnabled;
   private String originalExecutionMode;
+  private String originalExecutionModeProperty;
+  private ExecutionSPI originalExecutionSpi;
+  private ExecutionMode originalInitializedMode;
 
   @Before
   public void setUp() {
     // Save original configuration
     originalExecutionSpiEnabled = CommonParameter.getInstance().isExecutionSpiEnabled();
     originalExecutionMode = CommonParameter.getInstance().getExecutionMode();
+    originalExecutionModeProperty = System.getProperty("execution.mode");
+    try {
+      originalExecutionSpi = getExecutionSpiInstance();
+      originalInitializedMode = getExecutionSpiInitializedMode();
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
 
     // Initialize ExecutionSPI factory
     try {
@@ -44,6 +59,13 @@ public class ExecutionSpiIntegrationTest {
     // Restore original configuration
     CommonParameter.getInstance().setExecutionSpiEnabled(originalExecutionSpiEnabled);
     CommonParameter.getInstance().setExecutionMode(originalExecutionMode);
+    restoreSystemProperty("execution.mode", originalExecutionModeProperty);
+    try {
+      setExecutionSpiInstance(originalExecutionSpi);
+      setExecutionSpiInitializedMode(originalInitializedMode);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
   }
 
   @Test
@@ -207,6 +229,46 @@ public class ExecutionSpiIntegrationTest {
   }
 
   @Test
+  public void testManagerCreateRuntimeUsesRuntimeImplForEmbeddedMode() throws Exception {
+    setRuntimeSelectionState("EMBEDDED", ExecutionMode.REMOTE);
+
+    Runtime runtime = invokeCreateRuntime(new Manager());
+
+    assertTrue("EMBEDDED mode should use RuntimeImpl", runtime instanceof RuntimeImpl);
+  }
+
+  @Test
+  public void testManagerCreateRuntimeUsesRuntimeImplForShadowMode() throws Exception {
+    setRuntimeSelectionState("SHADOW", ExecutionMode.REMOTE);
+
+    Runtime runtime = invokeCreateRuntime(new Manager());
+
+    assertTrue("SHADOW mode should use RuntimeImpl", runtime instanceof RuntimeImpl);
+  }
+
+  @Test
+  public void testManagerCreateRuntimeUsesRuntimeSpiImplForRemoteMode() throws Exception {
+    setRuntimeSelectionState("REMOTE", ExecutionMode.REMOTE);
+
+    Runtime runtime = invokeCreateRuntime(new Manager());
+
+    assertTrue("REMOTE mode should use RuntimeSpiImpl", runtime instanceof RuntimeSpiImpl);
+  }
+
+  @Test
+  public void testManagerCreateRuntimeRejectsStaleInitializedMode() throws Exception {
+    setRuntimeSelectionState("REMOTE", ExecutionMode.EMBEDDED);
+
+    try {
+      invokeCreateRuntime(new Manager());
+      fail("REMOTE mode should reject stale initialized ExecutionSPI mode");
+    } catch (InvocationTargetException e) {
+      assertTrue(e.getCause() instanceof IllegalStateException);
+      assertTrue(e.getCause().getMessage().contains("not initialized for REMOTE mode"));
+    }
+  }
+
+  @Test
   public void testConfigurationInfo() {
     // Test configuration information retrieval
     String configInfo = ExecutionSpiFactory.getConfigurationInfo();
@@ -252,6 +314,53 @@ public class ExecutionSpiIntegrationTest {
     }
   }
 
+  private void setRuntimeSelectionState(String mode, ExecutionMode initializedMode)
+      throws Exception {
+    CommonParameter.getInstance().setExecutionSpiEnabled(true);
+    CommonParameter.getInstance().setExecutionMode(mode);
+    System.setProperty("execution.mode", mode);
+    setExecutionSpiInstance(new FakeExecutionSPI());
+    setExecutionSpiInitializedMode(initializedMode);
+  }
+
+  private Runtime invokeCreateRuntime(Manager manager) throws Exception {
+    Method method = Manager.class.getDeclaredMethod("createRuntime");
+    method.setAccessible(true);
+    return (Runtime) method.invoke(manager);
+  }
+
+  private ExecutionSPI getExecutionSpiInstance() throws Exception {
+    java.lang.reflect.Field field = ExecutionSpiFactory.class.getDeclaredField("instance");
+    field.setAccessible(true);
+    return (ExecutionSPI) field.get(null);
+  }
+
+  private void setExecutionSpiInstance(ExecutionSPI executionSPI) throws Exception {
+    java.lang.reflect.Field field = ExecutionSpiFactory.class.getDeclaredField("instance");
+    field.setAccessible(true);
+    field.set(null, executionSPI);
+  }
+
+  private ExecutionMode getExecutionSpiInitializedMode() throws Exception {
+    java.lang.reflect.Field field = ExecutionSpiFactory.class.getDeclaredField("initializedMode");
+    field.setAccessible(true);
+    return (ExecutionMode) field.get(null);
+  }
+
+  private void setExecutionSpiInitializedMode(ExecutionMode mode) throws Exception {
+    java.lang.reflect.Field field = ExecutionSpiFactory.class.getDeclaredField("initializedMode");
+    field.setAccessible(true);
+    field.set(null, mode);
+  }
+
+  private void restoreSystemProperty(String key, String value) {
+    if (value == null) {
+      System.clearProperty(key);
+    } else {
+      System.setProperty(key, value);
+    }
+  }
+
   @Test
   public void testExecutionModeFromCommonParameter() {
     // Test that ExecutionSpiFactory.determineExecutionMode() now considers CommonParameter
@@ -274,6 +383,62 @@ public class ExecutionSpiIntegrationTest {
     } finally {
       // Restore original mode
       params.setExecutionMode(originalMode);
+    }
+  }
+
+  private static class FakeExecutionSPI implements ExecutionSPI {
+    @Override
+    public CompletableFuture<ExecutionProgramResult> executeTransaction(TransactionContext context) {
+      return CompletableFuture.completedFuture(new ExecutionProgramResult());
+    }
+
+    @Override
+    public CompletableFuture<ExecutionProgramResult> callContract(TransactionContext context) {
+      return CompletableFuture.completedFuture(new ExecutionProgramResult());
+    }
+
+    @Override
+    public CompletableFuture<Long> estimateEnergy(TransactionContext context) {
+      return CompletableFuture.completedFuture(0L);
+    }
+
+    @Override
+    public CompletableFuture<byte[]> getCode(byte[] address, String snapshotId) {
+      return CompletableFuture.completedFuture(new byte[0]);
+    }
+
+    @Override
+    public CompletableFuture<byte[]> getStorageAt(byte[] address, byte[] key, String snapshotId) {
+      return CompletableFuture.completedFuture(new byte[0]);
+    }
+
+    @Override
+    public CompletableFuture<Long> getNonce(byte[] address, String snapshotId) {
+      return CompletableFuture.completedFuture(0L);
+    }
+
+    @Override
+    public CompletableFuture<byte[]> getBalance(byte[] address, String snapshotId) {
+      return CompletableFuture.completedFuture(new byte[0]);
+    }
+
+    @Override
+    public CompletableFuture<String> createSnapshot() {
+      return CompletableFuture.completedFuture("snapshot");
+    }
+
+    @Override
+    public CompletableFuture<Boolean> revertToSnapshot(String snapshotId) {
+      return CompletableFuture.completedFuture(true);
+    }
+
+    @Override
+    public CompletableFuture<HealthStatus> healthCheck() {
+      return CompletableFuture.completedFuture(new HealthStatus(true, "ok"));
+    }
+
+    @Override
+    public void registerMetricsCallback(MetricsCallback callback) {
     }
   }
 }

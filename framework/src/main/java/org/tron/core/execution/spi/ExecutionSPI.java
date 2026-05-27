@@ -135,11 +135,11 @@ public interface ExecutionSPI {
     // Phase 2.I L2: Contract creation address (20-byte EVM address)
     // For CreateSmartContract, this is the newly created contract's address
     private final byte[] contractAddress;
-    // Phase B conformance: Write mode indicates whether Rust has persisted state changes
-    // When PERSISTED, Java should NOT apply state_changes to avoid double-apply
+    // Write ownership marker for remote execution results.
+    // PERSISTED means Rust already wrote state and Java may only mirror touched keys.
     private final WriteMode writeMode;
-    // Phase B conformance: Touched keys for B-镜像 (B-mirror) support
-    // Only populated when writeMode == PERSISTED
+    // Touched keys used by Java's post-exec read-side mirror after persisted execution.
+    // Only populated when writeMode == PERSISTED.
     private final List<TouchedKey> touchedKeys;
 
     public ExecutionResult(
@@ -350,11 +350,11 @@ public interface ExecutionSPI {
     }
 
     /**
-     * Get the write mode for Phase B conformance alignment.
-     * - COMPUTE_ONLY (default): Java should apply state changes
-     * - PERSISTED: Rust has already persisted, Java should NOT apply to avoid double-apply
+     * Get the remote write ownership mode.
+     * - COMPUTE_ONLY: legacy metadata-only result with no persisted remote state
+     * - PERSISTED: Rust has already persisted state; Java may only mirror touched keys
      *
-     * @return WriteMode indicating how Java should handle state changes
+     * @return WriteMode indicating remote write ownership
      */
     public WriteMode getWriteMode() {
       return writeMode;
@@ -554,8 +554,8 @@ public interface ExecutionSPI {
   }
 
   /**
-   * TRC-10 Asset Issued (Phase 2: full TRC-10 ledger semantics).
-   * Describes a new TRC-10 asset issuance operation for Java-side persistence.
+   * TRC-10 Asset Issued sidecar.
+   * Describes issuance metadata for reporting, pre-state snapshots, and mirror validation.
    */
   class Trc10AssetIssued {
     private final byte[] ownerAddress;
@@ -573,7 +573,7 @@ public interface ExecutionSPI {
     private final long publicFreeAssetNetLimit;
     private final long publicFreeAssetNetUsage;
     private final long publicLatestFreeNetTime;
-    private final String tokenId; // Empty if Java needs to compute via TOKEN_ID_NUM
+    private final String tokenId; // Empty when reports derive token id from existing stores
 
     public Trc10AssetIssued(byte[] ownerAddress, byte[] name, byte[] abbr, long totalSupply,
                             int trxNum, int precision, int num, long startTime, long endTime,
@@ -665,8 +665,8 @@ public interface ExecutionSPI {
   }
 
   /**
-   * TRC-10 Asset Transferred (Phase 2: TRC-10 transfer operation).
-   * Describes a TRC-10 transfer for Java-side persistence of asset balance changes.
+   * TRC-10 Asset Transferred sidecar.
+   * Describes transfer metadata for reporting, pre-state snapshots, and mirror validation.
    */
   class Trc10AssetTransferred {
     private final byte[] ownerAddress;  // Sender address
@@ -765,8 +765,7 @@ public interface ExecutionSPI {
 
   /**
    * VoteChange carries updated votes for an account after VoteWitness execution.
-   * Java should apply this to Account.votes to maintain parity with embedded mode.
-   * This ensures correct old_votes seeding on subsequent votes in the same or later epochs.
+   * Used as reporting and pre-state metadata; persisted remote execution mirrors touched stores.
    */
   class VoteChange {
     private final byte[] ownerAddress;  // 21-byte Tron address of the voter
@@ -787,9 +786,8 @@ public interface ExecutionSPI {
   }
 
   /**
-   * WithdrawChange carries withdrawal info for applying allowance and latestWithdrawTime updates.
-   * Used for WithdrawBalanceContract remote execution - Java applies this to Account fields.
-   * Balance delta is already handled by AccountChange; this sidecar handles the allowance/time reset.
+   * WithdrawChange carries withdrawal info for reporting and pre-state metadata.
+   * Rust persists allowance/latestWithdrawTime; Java mirrors touched stores after persisted execution.
    */
   class WithdrawChange {
     private final byte[] ownerAddress;       // 21-byte Tron address of the witness withdrawing
@@ -821,20 +819,18 @@ public interface ExecutionSPI {
   }
 
   /**
-   * Write mode for Phase B conformance alignment.
-   * Determines how Java should handle state changes from remote execution.
+   * Write mode for remote execution ownership.
    */
   enum WriteMode {
     /**
-     * Compute-only mode (Phase A): Rust only computes, Java applies state changes.
-     * This is the default and current behavior.
+     * Legacy metadata-only result. Canonical REMOTE block execution rejects successful
+     * or effectful non-persisted results after Java-side apply removal.
      */
     COMPUTE_ONLY(0),
 
     /**
-     * Persist mode (Phase B): Rust has already persisted state changes.
-     * Java should NOT apply state changes to avoid double-apply.
-     * Java can use touched_keys to mirror remote state to local revoking head.
+     * Rust has already persisted state changes.
+     * Java uses touched_keys to mirror remote state to its local revoking head.
      */
     PERSISTED(1);
 

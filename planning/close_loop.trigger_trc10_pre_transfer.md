@@ -379,8 +379,8 @@ Two emission paths exist on paper, but only one is viable today:
   produces the success-shaped `TronExecutionResult`, and skip
   it on the revert/halt arms. This keeps the sidecar consistent
   with the buffered balance writes regardless of how the outer
-  gRPC handler decides to commit / fall back to Java apply via
-  `write_mode = COMPUTE_ONLY`.
+  gRPC handler decides to commit. Java no longer falls back to a
+  local apply path for successful or effectful non-`PERSISTED` results.
 
 ## Test plan
 
@@ -479,25 +479,20 @@ the test plan above is designed to catch. The pre-transfer must
 go through the same buffer that the VM uses for its own state
 changes.
 
-**The buffer's commit-vs-discard machinery only covers the
-rollback case automatically once the Phase 2 prerequisite has
-landed** — namely, attaching `EngineBackedEvmStateStore::new_with_buffer`
-for VM trigger execution in the compute-only RR profile. Today,
-`grpc/mod.rs:1431` only attaches the buffer when
-`rust_persist_enabled == true` OR `tx_kind == NonVm`. Until
-that prerequisite lands, the canonical RR profile gets buffered
-rollback for free but the compute-only profile does NOT, and
-the reject path in `lib.rs:523-538` is the only thing keeping
-compute-only mode honest. Do not enable the pre-transfer hook
-in compute-only mode without first wiring through the buffer
-for VM execution paths.
+**The buffer's commit-vs-discard machinery depends on the canonical
+persisted RR path** — namely, attaching `EngineBackedEvmStateStore::new_with_buffer`
+for VM trigger execution before any TRC-10 pre-transfer hook can mutate
+state. Today, `grpc/mod.rs:1431` only attaches the buffer when
+`rust_persist_enabled == true` OR `tx_kind == NonVm`. The canonical RR
+profile gets buffered rollback through Rust persistence; successful or
+effectful non-`PERSISTED` results are rejected by Java. Do not enable the
+pre-transfer hook on any non-persisted path.
 
 **Do not emit the `Trc10Change` sidecar before the VM call.**
 The sidecar must only land on the success-shaped
 `TronExecutionResult` arm. Putting it in the result struct
 before the VM runs would let a reverted transaction produce a
-non-empty `trc10_changes` vector that the Java applier would
-then apply to its local stores, silently transferring tokens
-that the VM rolled back. Build the sidecar inside the same
-`Ok(...)` arm that produces the success result; on revert /
+non-empty `trc10_changes` vector that falsely reports a token
+transfer that the VM rolled back. Build the sidecar inside the
+same `Ok(...)` arm that produces the success result; on revert /
 halt arms, populate `trc10_changes: vec![]`.
